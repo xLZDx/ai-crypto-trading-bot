@@ -1,0 +1,20 @@
+# Virtual Environment
+venv/
+env/
+
+# Sensitive Information (API Keys)
+.env
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# Data & Logs (Dynamically generated)
+data/raw/
+data/state.json
+data/trades.json
+data/control.json
+logs/
+
+# Models (Large binary files)
+models/*.joblib
