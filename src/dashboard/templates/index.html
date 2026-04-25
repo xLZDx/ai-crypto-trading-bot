@@ -4,866 +4,801 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Trader Dashboard</title>
-    <!-- Tailwind CSS for beautiful styling -->
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
+
     <style>
-        html { font-size: 130%; } /* Increase interface by 30% */
-        body { background-color: #0f172a; color: #e2e8f0; font-family: 'Inter', sans-serif; }
-        .card { background-color: #1e293b; border: 1px solid #334155; border-radius: 0.5rem; }
-        .log-container { background-color: #000000; color: #00ff00; font-family: 'Courier New', monospace; font-size: 0.85rem; height: 600px; overflow-y: auto; padding: 1rem; border-radius: 0.5rem; border: 1px solid #334155; }
-        .signal-BUY { color: #22c55e; font-weight: bold; }
-        .signal-SELL { color: #ef4444; font-weight: bold; }
-        .signal-HOLD { color: #eab308; font-weight: bold; }
+        :root {
+            --bg-0: #050816;
+            --bg-1: #0b1220;
+            --bg-2: #101a2f;
+            --panel: rgba(15, 23, 42, 0.74);
+            --panel-strong: rgba(15, 23, 42, 0.92);
+            --panel-border: rgba(148, 163, 184, 0.16);
+            --text-main: #e2e8f0;
+            --text-muted: #94a3b8;
+            --accent: #60a5fa;
+            --accent-2: #8b5cf6;
+            --good: #34d399;
+            --warn: #fbbf24;
+            --bad: #fb7185;
+        }
+
+        html { font-size: 112%; }
+
+        body {
+            margin: 0;
+            color: var(--text-main);
+            font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+            background:
+                radial-gradient(circle at top left, rgba(96, 165, 250, 0.16), transparent 28%),
+                radial-gradient(circle at top right, rgba(139, 92, 246, 0.14), transparent 24%),
+                radial-gradient(circle at bottom center, rgba(16, 185, 129, 0.08), transparent 26%),
+                linear-gradient(180deg, var(--bg-0) 0%, var(--bg-1) 44%, var(--bg-2) 100%);
+            min-height: 100vh;
+        }
+
+        body::before {
+            content: "";
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background-image:
+                linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+            background-size: 28px 28px;
+            mask-image: linear-gradient(180deg, rgba(0,0,0,0.22), rgba(0,0,0,0.04) 60%, transparent);
+            opacity: 0.28;
+        }
+
+        .shell {
+            position: relative;
+            z-index: 1;
+        }
+
+        .glass-card {
+            background: linear-gradient(180deg, rgba(15, 23, 42, 0.84), rgba(15, 23, 42, 0.68));
+            border: 1px solid var(--panel-border);
+            border-radius: 1.25rem;
+            box-shadow:
+                0 20px 50px rgba(2, 6, 23, 0.35),
+                inset 0 1px 0 rgba(255,255,255,0.04);
+            backdrop-filter: blur(18px);
+        }
+
+        .glass-card-strong {
+            background: linear-gradient(180deg, rgba(15, 23, 42, 0.96), rgba(15, 23, 42, 0.82));
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            border-radius: 1.25rem;
+            box-shadow:
+                0 18px 48px rgba(2, 6, 23, 0.42),
+                inset 0 1px 0 rgba(255,255,255,0.05);
+            backdrop-filter: blur(20px);
+        }
+
+        .section-title {
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            font-size: 0.72rem;
+            color: #94a3b8;
+        }
+
+        .chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.35rem 0.7rem;
+            border-radius: 9999px;
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            background: rgba(15, 23, 42, 0.72);
+            color: #cbd5e1;
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .nav-tab {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            padding: 0.95rem 1rem;
+            border-radius: 1rem;
+            border: 1px solid rgba(148, 163, 184, 0.14);
+            background: rgba(15, 23, 42, 0.52);
+            color: #cbd5e1;
+            font-weight: 700;
+            transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+        }
+
+        .nav-tab:hover {
+            transform: translateX(2px);
+            background: rgba(30, 41, 59, 0.82);
+            color: #fff;
+        }
+
+        .nav-tab.active {
+            color: white;
+            border-color: rgba(96, 165, 250, 0.35);
+            background: linear-gradient(135deg, rgba(37, 99, 235, 0.34), rgba(139, 92, 246, 0.26));
+            box-shadow: 0 10px 28px rgba(37, 99, 235, 0.14);
+        }
+
+
+        .market-filter-group {
+            display: inline-flex;
+            gap: 0.5rem;
+            padding: 0.4rem;
+            border-radius: 1rem;
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            background: rgba(15, 23, 42, 0.72);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+        }
+
+        .market-filter {
+            padding: 0.65rem 1rem;
+            border-radius: 0.8rem;
+            font-size: 0.78rem;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #cbd5e1;
+            transition: all 0.2s ease;
+            border: 1px solid transparent;
+        }
+
+        .market-filter:hover {
+            background: rgba(51, 65, 85, 0.85);
+            color: white;
+        }
+
+        .market-filter.active {
+            color: white;
+            box-shadow: 0 8px 22px rgba(37, 99, 235, 0.22);
+        }
+
+        .market-filter[data-market="SPOT"].active { background: linear-gradient(135deg, #2563eb, #3b82f6); }
+        .market-filter[data-market="FUTURES"].active { background: linear-gradient(135deg, #7c3aed, #a855f7); }
+        .market-filter[data-market="SCALPING"].active { background: linear-gradient(135deg, #059669, #10b981); }
+
+        .metric-card {
+            position: relative;
+            overflow: hidden;
+            background: linear-gradient(180deg, rgba(15, 23, 42, 0.88), rgba(15, 23, 42, 0.78));
+            border: 1px solid rgba(148, 163, 184, 0.16);
+            border-radius: 1rem;
+            padding: 1rem;
+        }
+
+        .metric-card::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(120deg, rgba(96,165,250,0.07), transparent 40%, rgba(139,92,246,0.05));
+            opacity: 0.8;
+            pointer-events: none;
+        }
+
+        .metric-label {
+            color: var(--text-muted);
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.14em;
+        }
+
+        .metric-value {
+            font-size: 1.55rem;
+            line-height: 1.1;
+            font-weight: 900;
+            color: white;
+        }
+
+        .metric-sub {
+            color: #94a3b8;
+            font-size: 0.8rem;
+        }
+
+        .table-shell {
+            overflow: hidden;
+            border-radius: 1rem;
+            border: 1px solid rgba(148, 163, 184, 0.14);
+            background: rgba(15, 23, 42, 0.62);
+        }
+
+        .table-shell table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .table-shell thead tr {
+            background: rgba(30, 41, 59, 0.5);
+        }
+
+        .table-shell th {
+            padding: 0.9rem 0.85rem;
+            color: #94a3b8;
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            text-align: left;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+        }
+
+        .table-shell td {
+            padding: 0.9rem 0.85rem;
+            vertical-align: top;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+        }
+
+        .scroll-slim::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+
+        .scroll-slim::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.7);
+            border-radius: 999px;
+        }
+
+        .scroll-slim::-webkit-scrollbar-thumb {
+            background: rgba(100, 116, 139, 0.7);
+            border-radius: 999px;
+            border: 2px solid rgba(15, 23, 42, 0.9);
+        }
+
+        .status-glow {
+            box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.14), 0 0 30px rgba(16, 185, 129, 0.16);
+        }
+
+        .panel-heading {
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            font-size: 0.72rem;
+            color: #94a3b8;
+        }
+
+        .tab-pane {
+            display: block;
+        }
+
+        .tab-pane.hidden {
+            display: none;
+        }
+
+        .positive {
+            color: #34d399;
+        }
+
+        .negative {
+            color: #fb7185;
+        }
+
+        .muted {
+            color: #94a3b8;
+        }
+
+        .log-container {
+            background:
+                linear-gradient(180deg, rgba(2, 6, 23, 0.98), rgba(2, 6, 23, 0.86));
+            color: #7cff8b;
+            font-family: 'JetBrains Mono', 'Cascadia Mono', 'Courier New', monospace;
+            font-size: 0.82rem;
+            height: 520px;
+            overflow-y: auto;
+            padding: 1rem;
+            border-radius: 1rem;
+            border: 1px solid rgba(34, 197, 94, 0.22);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+            white-space: pre-wrap;
+        }
+
+        .action-button {
+            border-radius: 0.9rem;
+            padding: 0.85rem 1rem;
+            font-size: 0.82rem;
+            font-weight: 800;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            transition: transform 0.2s ease, opacity 0.2s ease, background 0.2s ease;
+        }
+
+        .action-button:hover {
+            transform: translateY(-1px);
+        }
+
+        .action-button:disabled {
+            opacity: 0.45;
+            transform: none;
+            cursor: not-allowed;
+        }
+
+        .tab-scroll {
+            scroll-margin-top: 1rem;
+        }
     </style>
 </head>
-<body class="p-6">
-    <div class="max-w-6xl mx-auto">
-        <header class="mb-8 border-b border-slate-700 pb-4 flex justify-between items-end">
-            <div>
-                <h1 class="text-3xl font-bold text-white flex items-center">
-                    <span class="mr-3">🤖</span> AI Quant Hedge Fund
-                </h1>
-                <p class="text-slate-400 mt-2">Autonomous Spot, Futures & Scalping Monitoring</p>
-            </div>
-            <div class="flex bg-slate-800 rounded-lg p-1 border border-slate-700 shadow-inner">
-                <button id="btn-market-spot" onclick="setMarketUI('SPOT')" class="px-6 py-2 rounded-md text-sm font-bold bg-blue-600 text-white transition-colors shadow">SPOT</button>
-                <button id="btn-market-futures" onclick="setMarketUI('FUTURES')" class="px-6 py-2 rounded-md text-sm font-bold text-slate-400 hover:text-white hover:bg-slate-700 transition-colors">FUTURES</button>
-                <button id="btn-market-scalping" onclick="setMarketUI('SCALPING')" class="px-6 py-2 rounded-md text-sm font-bold text-slate-400 hover:text-white hover:bg-slate-700 transition-colors">SCALPING</button>
-            </div>
-        </header>
-
-        <!-- Main Summary & Controls Card (Combined) -->
-        <div class="card mb-6">
-            <div class="flex justify-between items-center p-4 cursor-pointer hover:bg-slate-800 transition-colors rounded-t-lg" onclick="toggleCard('summary-content', 'summary-chevron')">
-                <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center">
-                    <svg id="summary-chevron" class="w-4 h-4 mr-2 transform transition-transform duration-200 -rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                    📊 Main Summary & Controls
-                </h2>
-            </div>
-            <div id="summary-content" class="p-6 pt-0 hidden">
-                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-0 divide-y md:divide-y-0 md:divide-x divide-slate-700/50 bg-slate-800/30 rounded-lg border border-slate-700/50 shadow-inner">
-                    
-                    <!-- Balance Inner Panel -->
-                    <div class="p-5">
-                        <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">💰 Balances</h2>
-                        <div class="flex flex-col gap-1">
-                            <div class="grid grid-cols-3 px-2 text-[10px] text-slate-500 uppercase tracking-wider mb-1">
-                                <span>Assets</span>
-                                <span class="text-right">Balance</span>
-                                <span class="text-right">Price</span>
-                            </div>
-                            <div class="grid grid-cols-3 items-center bg-slate-800/40 px-2 py-1 rounded border border-slate-700/50">
-                                <span class="font-bold text-slate-300 text-xs">USDT</span>
-                                <span class="font-mono text-green-400 font-bold text-xs text-right" id="balance-usdt">--</span>
-                                <span class="font-mono text-slate-400 text-xs text-right" id="price-usdt">$1.00</span>
-                            </div>
-                            <div class="grid grid-cols-3 items-center bg-slate-800/40 px-2 py-1 rounded border border-slate-700/50">
-                                <span class="font-bold text-slate-400 text-[11px]">BTC</span>
-                                <span class="font-mono text-slate-300 text-[11px] text-right" id="balance-btc">--</span>
-                                <span class="font-mono text-slate-400 text-[11px] text-right" id="price-btc">--</span>
-                            </div>
-                            <div class="grid grid-cols-3 items-center bg-slate-800/40 px-2 py-1 rounded border border-slate-700/50">
-                                <span class="font-bold text-slate-400 text-[11px]">SOL</span>
-                                <span class="font-mono text-slate-300 text-[11px] text-right" id="balance-sol">--</span>
-                                <span class="font-mono text-slate-400 text-[11px] text-right" id="price-sol">--</span>
-                            </div>
-                            <div class="grid grid-cols-3 items-center bg-slate-800/40 px-2 py-1 rounded border border-slate-700/50">
-                                <span class="font-bold text-slate-400 text-[11px]">ADA</span>
-                                <span class="font-mono text-slate-300 text-[11px] text-right" id="balance-ada">--</span>
-                                <span class="font-mono text-slate-400 text-[11px] text-right" id="price-ada">--</span>
-                            </div>
-                        </div>
+<body>
+    <div class="shell min-h-screen flex flex-col lg:flex-row">
+        <aside class="w-full lg:w-[19rem] xl:w-[22rem] shrink-0 border-b lg:border-b-0 lg:border-r border-slate-800/80 bg-slate-950/75 backdrop-blur-xl">
+            <div class="p-5 lg:p-6 space-y-5">
+                <div class="flex items-center gap-3">
+                    <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 via-indigo-500 to-violet-500 flex items-center justify-center text-white text-2xl shadow-lg shadow-blue-950/40">🤖</div>
+                    <div>
+                        <h1 class="text-xl font-black text-white tracking-tight">AI Trader</h1>
+                        <p class="text-slate-400 text-sm">Live trading dashboard</p>
                     </div>
-
-                    <!-- Risk Inner Panel -->
-                    <div class="p-5">
-                        <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">📊 Risk Management <span class="active-symbol-label ml-2 px-1.5 py-0.5 rounded bg-slate-700 text-white text-[10px]">BTC/USDT</span></h2>
-                        <div class="flex justify-between items-end mb-2">
-                            <span class="text-slate-300">Volatility:</span>
-                            <span class="font-bold text-blue-400" id="volatility">-- %</span>
-                        </div>
-                        <div class="flex justify-between items-end">
-                            <span class="text-slate-300">Trade size:</span>
-                            <span class="font-bold text-green-400" id="trade-size">-- USDT</span>
-                        </div>
-                    </div>
-
-                    <!-- Signal Inner Panel -->
-                    <div class="p-5">
-                        <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">🧠 Current Signal <span class="active-symbol-label ml-2 px-1.5 py-0.5 rounded bg-slate-700 text-white text-[10px]">BTC/USDT</span></h2>
-                        <div class="flex justify-between items-end mb-2">
-                            <div class="text-3xl" id="last-signal">WAITING</div>
-                            <div class="flex gap-4">
-                                <div class="text-sm text-slate-400 flex flex-col items-end">
-                                    <span>Sentiment</span>
-                                    <span id="sentiment-score" class="font-bold text-slate-300">0.00</span>
-                                </div>
-                                <div class="text-sm text-slate-400 flex flex-col items-end">
-                                    <span>RSI (14)</span>
-                                    <span id="rsi-score" class="font-bold text-slate-300">50.0</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="text-sm text-slate-400 italic truncate" title="Analyzing charts..." id="signal-reason">Analyzing charts...</div>
-                    </div>
-
-                    <!-- Portfolio & Controls Inner Panel -->
-                    <div class="p-5 flex flex-col h-full">
-                        <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">⚙️ Portfolio & Controls</h2>
-                        <div class="flex justify-between items-start mb-1">
-                            <span class="text-slate-300">Total PnL:</span>
-                            <span class="font-bold" id="total-pnl">-- USDT</span>
-                        </div>
-                        <div class="flex justify-between items-end mb-4">
-                            <span class="text-slate-300">In market:</span>
-                            <span class="font-bold text-white" id="open-orders">--</span>
-                        </div>
-                        <div class="flex gap-2 mt-auto">
-                            <button id="btn-start" onclick="setBotRunning(true)" class="flex-1 bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-2 rounded transition-colors disabled:opacity-50 text-sm">▶ Start</button>
-                            <button id="btn-stop" onclick="setBotRunning(false)" class="flex-1 bg-red-600 hover:bg-red-500 text-white font-bold py-2 px-2 rounded transition-colors disabled:opacity-50 text-sm">⏸ Stop</button>
-                        </div>
-                    </div>
-                    
                 </div>
-            </div>
-        </div>
 
-        <!-- TradingView Chart Card -->
-        <div class="card mb-6 transition-all duration-300" id="chart-card">
-            <div class="flex justify-between items-center p-4 cursor-pointer hover:bg-slate-800 transition-colors rounded-t-lg" onclick="toggleCard('chart-content', 'chart-chevron')">
-                <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center">
-                    <svg id="chart-chevron" class="w-4 h-4 mr-2 transform transition-transform duration-200 -rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                    📈 Interactive Chart
-                </h2>
-                <div class="flex gap-2 items-center" onclick="event.stopPropagation()">
-                    <button onclick="changeChart('BINANCE:BTCUSDT')" class="px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs font-bold text-white transition-colors">BTC / USDT</button>
-                    <button onclick="changeChart('BINANCE:SOLUSDT')" class="px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs font-bold text-white transition-colors">SOL / USDT</button>
-                    <button onclick="changeChart('BINANCE:ADAUSDT')" class="px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs font-bold text-white transition-colors">ADA / USDT</button>
-                    <button onclick="toggleFullScreen()" class="ml-2 p-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-600 rounded text-slate-300 hover:text-white transition-colors" title="Full Screen">
-                        <!-- Expand icon -->
-                        <svg id="fs-icon-expand" class="w-4 h-4 block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path></svg>
-                        <!-- Collapse icon -->
-                        <svg id="fs-icon-collapse" class="w-4 h-4 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 14h4v4m0-4l-5 5m15-1h-4v4m0-4l5 5M10 4v4H6m4 0L5 3m4 11l5 5m-5-5h4v4m0-4l5 5"></path></svg>
+                <div class="glass-card-strong p-4 space-y-3">
+                    <div class="flex items-center justify-between gap-3">
+                        <div>
+                            <div class="panel-heading">Status</div>
+                            <div class="text-white font-bold" id="sidebar-bot-status">Loading...</div>
+                        </div>
+                        <span id="sidebar-running-pill" class="chip status-glow">Online</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3 text-sm">
+                        <div class="rounded-xl bg-slate-950/45 border border-slate-700/30 p-3">
+                            <div class="text-slate-500 uppercase text-[10px] tracking-[0.18em]">Active market</div>
+                            <div class="mt-1 font-semibold text-white" id="sidebar-active-market">SPOT</div>
+                        </div>
+                        <div class="rounded-xl bg-slate-950/45 border border-slate-700/30 p-3">
+                            <div class="text-slate-500 uppercase text-[10px] tracking-[0.18em]">Active symbol</div>
+                            <div class="mt-1 font-semibold text-white" id="sidebar-active-symbol">BTC/USDT</div>
+                        </div>
+                    </div>
+                    <div class="rounded-xl bg-slate-950/45 border border-slate-700/30 p-3 text-sm text-slate-400">
+                        <div>Last update</div>
+                        <div class="mt-1 text-slate-200 font-medium" id="sidebar-last-update">--</div>
+                    </div>
+                </div>
+
+                <nav class="space-y-2">
+                    <button class="nav-tab active" data-tab="overview" type="button">
+                        <span>Overview</span>
                     </button>
+                    <button class="nav-tab" data-tab="analytics" type="button">
+                        <span>Strategy & ML</span>
+                    </button>
+                    <button class="nav-tab" data-tab="watchlist" type="button">
+                        <span>Watchlist</span>
+                    </button>
+                    <button class="nav-tab" data-tab="trades" type="button">
+                        <span>Trades</span>
+                    </button>
+                    <button class="nav-tab" data-tab="logs" type="button">
+                        <span>Logs</span>
+                    </button>
+                    <button class="nav-tab" data-tab="assistant" type="button">
+                        <span>AI Assistant</span>
+                    </button>
+                </nav>
+
+                <div class="glass-card p-4 space-y-3">
+                    <div class="panel-heading">Quick notes</div>
+                    <div class="text-sm text-slate-300 leading-6">
+                        Market filters live inside Overview. Watchlist onboarding triggers historical backfill in the background.
+                    </div>
                 </div>
             </div>
-            
-            <div id="chart-content" class="p-6 pt-0 hidden">
-                <!-- AI Prediction HUD -->
-                <div class="mb-4 grid grid-cols-2 gap-4">
-                    <div class="bg-slate-800 p-5 rounded-lg border border-blue-500/30 shadow-[0_0_15px_rgba(59,130,246,0.1)] flex flex-col justify-center">
-                        <span class="text-xs text-slate-400 uppercase tracking-wider flex items-center">🌊 Elliott Wave Stage <span class="active-symbol-label ml-2 px-1.5 py-0.5 rounded bg-slate-700 text-white text-[10px]">BTC/USDT</span></span>
-                        <div class="text-xl md:text-2xl font-bold text-blue-400 mt-1" id="wave-stage">Analyzing...</div>
+        </aside>
+
+        <main class="flex-1 p-4 lg:p-6 space-y-6">
+            <section id="tab-overview" class="tab-pane space-y-6">
+                <div class="glass-card-strong p-5 lg:p-6">
+                    <div class="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
+                        <div class="space-y-2">
+                            <div class="panel-heading">Overview</div>
+                            <h2 class="text-2xl lg:text-3xl font-black text-white tracking-tight">Overall Bot Performance</h2>
+                            <p class="text-slate-400">
+                                Spot, futures, and scalping context in one place with live state, strategy analytics, and execution controls.
+                            </p>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2 justify-end">
+                            <button id="btn-start" class="action-button bg-emerald-600 hover:bg-emerald-500 text-white" type="button">Start</button>
+                            <button id="btn-stop" class="action-button bg-rose-600 hover:bg-rose-500 text-white" type="button">Stop</button>
+                            <span class="chip">Control sync: <span id="control-state">--</span></span>
+                        </div>
                     </div>
-                    <div class="bg-slate-800 p-5 rounded-lg border border-purple-500/30 shadow-[0_0_15px_rgba(168,85,247,0.1)] flex flex-col justify-center items-end relative">
-                        <div id="accuracy-badge-container" class="absolute top-2 left-2 text-sm md:text-base bg-purple-900/50 text-purple-300 px-3 py-1.5 rounded border border-purple-500/30 font-bold">
-                            <div class="flex gap-2">
-                                <span class="text-green-400" title="Long Accuracy">L: <span id="ml-accuracy-long">--</span>%</span>
-                                <span class="text-slate-500">|</span>
-                                <span class="text-red-400" title="Short Accuracy">S: <span id="ml-accuracy-short">--</span>%</span>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mt-5">
+                        <div class="metric-card">
+                            <div class="relative z-10 space-y-3">
+                                <div class="metric-label">Balances</div>
+                                <div class="grid grid-cols-3 gap-2 text-[10px] uppercase tracking-[0.18em] text-slate-500">
+                                    <span>Asset</span><span class="text-right">Balance</span><span class="text-right">Price</span>
+                                </div>
+                                <div class="grid grid-cols-3 gap-2 items-center rounded-lg bg-slate-950/40 px-2 py-1.5 border border-slate-700/30">
+                                    <span class="text-xs font-bold text-slate-200">USDT</span>
+                                    <span class="font-mono text-right text-emerald-400 font-bold" id="balance-usdt">--</span>
+                                    <span class="font-mono text-right text-slate-400" id="price-usdt">$1.00</span>
+                                </div>
+                                <div class="grid grid-cols-3 gap-2 items-center rounded-lg bg-slate-950/40 px-2 py-1.5 border border-slate-700/30">
+                                    <span class="text-xs font-bold text-slate-300">BTC</span>
+                                    <span class="font-mono text-right text-slate-200" id="balance-btc">--</span>
+                                    <span class="font-mono text-right text-slate-400" id="price-btc">--</span>
+                                </div>
+                                <div class="grid grid-cols-3 gap-2 items-center rounded-lg bg-slate-950/40 px-2 py-1.5 border border-slate-700/30">
+                                    <span class="text-xs font-bold text-slate-300">SOL</span>
+                                    <span class="font-mono text-right text-slate-200" id="balance-sol">--</span>
+                                    <span class="font-mono text-right text-slate-400" id="price-sol">--</span>
+                                </div>
+                                <div class="grid grid-cols-3 gap-2 items-center rounded-lg bg-slate-950/40 px-2 py-1.5 border border-slate-700/30">
+                                    <span class="text-xs font-bold text-slate-300">ADA</span>
+                                    <span class="font-mono text-right text-slate-200" id="balance-ada">--</span>
+                                    <span class="font-mono text-right text-slate-400" id="price-ada">--</span>
+                                </div>
                             </div>
                         </div>
-                        <span class="text-xs text-slate-400 uppercase tracking-wider mt-2 flex items-center">🤖 Movement Vector (ML) <span class="active-symbol-label ml-2 px-1.5 py-0.5 rounded bg-slate-700 text-white text-[10px]">BTC/USDT</span></span>
-                        <div class="text-2xl md:text-3xl font-bold mt-1 text-right" id="ml-prediction">Analyzing...</div>
-                    </div>
-                </div>
-                
-                <!-- Wave Sequence Tracker -->
-                <div class="mb-4 bg-slate-800 p-5 rounded-lg border border-slate-700 shadow-inner">
-                    <h3 class="text-sm font-semibold text-slate-400 mb-4 flex items-center"><span>🔢 Pivot Points (Sub-waves)</span> <span class="active-symbol-label ml-2 px-1.5 py-0.5 rounded bg-slate-700 text-white text-[10px]">BTC/USDT</span></h3>
-                    <div class="flex items-center justify-between" id="wave-timeline">
-                        <span class="text-slate-500 text-sm">Collecting pivot data...</span>
-                    </div>
-                </div>
-                
-                <!-- TradingView Widget Container -->
-                <div id="tv_chart_container" style="height: 500px; width: 100%; border-radius: 0.5rem; overflow: hidden;"></div>
-            </div>
-        </div>
 
-        <div class="grid grid-cols-1 gap-6">
-            <!-- Strategy Performance Card -->
-            <div class="card">
-                <div class="flex justify-between items-center p-4 cursor-pointer hover:bg-slate-800 transition-colors rounded-t-lg" onclick="toggleCard('strategy-content', 'strategy-chevron')">
-                    <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center">
-                        <svg id="strategy-chevron" class="w-4 h-4 mr-2 transform transition-transform duration-200 -rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                        🎯 Strategy Performance
-                    </h2>
-                </div>
-                <div id="strategy-content" class="p-6 pt-0 hidden">
-                    <div id="strategy-stats-container" class="flex flex-col gap-2">
-                        <div class="text-center text-slate-500 py-2">Loading data...</div>
-                    </div>
-                </div>
-            </div>
+                        <div class="metric-card">
+                            <div class="relative z-10 space-y-3">
+                                <div class="metric-label">Signal</div>
+                                <div class="flex items-start justify-between gap-3">
+                                    <div>
+                                        <div id="last-signal" class="text-3xl font-black">WAITING</div>
+                                        <div id="signal-reason" class="text-slate-400 text-sm mt-1 italic truncate max-w-[14rem]">Analyzing charts...</div>
+                                    </div>
+                                    <div class="flex flex-col items-end gap-3">
+                                        <div class="text-sm text-slate-400 flex flex-col items-end">
+                                            <span>Sentiment</span>
+                                            <span id="sentiment-score" class="font-bold text-slate-300 text-lg">0.00</span>
+                                        </div>
+                                        <div class="text-sm text-slate-400 flex flex-col items-end">
+                                            <span>RSI (14)</span>
+                                            <span id="rsi-score" class="font-bold text-slate-300 text-lg">50.0</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="rounded-xl bg-slate-950/40 border border-slate-700/30 p-3">
+                                    <div class="text-xs uppercase tracking-[0.18em] text-slate-500">Active symbol</div>
+                                    <div id="overview-active-symbol" class="mt-2 inline-flex px-2.5 py-1 rounded-lg bg-slate-800 text-white text-sm font-semibold">BTC/USDT</div>
+                                </div>
+                            </div>
+                        </div>
 
-            <!-- Active Trades Section -->
-            <div class="card">
-                <div class="flex justify-between items-center p-4 cursor-pointer hover:bg-slate-800 transition-colors rounded-t-lg" onclick="toggleCard('active-trades-content', 'active-trades-chevron')">
-                    <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center">
-                        <svg id="active-trades-chevron" class="w-4 h-4 mr-2 transform transition-transform duration-200 -rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                        🟢 Active Trades
-                    </h2>
-                </div>
-                <div id="active-trades-content" class="p-6 pt-0 hidden">
-                    <div class="overflow-x-auto max-h-64 overflow-y-auto">
-                        <table class="w-full text-left border-collapse">
-                            <thead>
-                                <tr class="border-b border-slate-700 text-slate-400 text-sm">
-                                    <th class="py-2 pr-4">ID / Pair</th>
-                                    <th class="py-2 pr-4">Strategy</th>
-                                    <th class="py-2 pr-4">Entry</th>
-                                    <th class="py-2 pr-4">Current price</th>
-                                    <th class="py-2">Live PnL</th>
-                                </tr>
-                            </thead>
-                            <tbody id="active-trades-table-body" class="text-sm">
-                                <tr><td colspan="5" class="py-4 text-center text-slate-500">Loading...</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Historical Trades Section -->
-            <div class="card">
-                <div class="flex justify-between items-center p-4 cursor-pointer hover:bg-slate-800 transition-colors rounded-t-lg" onclick="toggleCard('history-trades-content', 'history-trades-chevron')">
-                    <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center">
-                        <svg id="history-trades-chevron" class="w-4 h-4 mr-2 transform transition-transform duration-200 -rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                        📜 Trade History
-                    </h2>
-                </div>
-                <div id="history-trades-content" class="p-6 pt-0 hidden">
-                    <div class="overflow-x-auto max-h-64 overflow-y-auto">
-                        <table class="w-full text-left border-collapse">
-                            <thead>
-                                <tr class="border-b border-slate-700 text-slate-400 text-sm">
-                                    <th class="py-2 pr-4">ID / Pair</th>
-                                    <th class="py-2 pr-4">Strategy</th>
-                                    <th class="py-2 pr-4">Entry</th>
-                                    <th class="py-2 pr-4">Exit</th>
-                                    <th class="py-2">Closed PnL</th>
-                                </tr>
-                            </thead>
-                            <tbody id="history-trades-table-body" class="text-sm">
-                                <tr><td colspan="5" class="py-4 text-center text-slate-500">Loading...</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
+                        <div class="metric-card">
+                            <div class="relative z-10 space-y-3">
+                                <div class="metric-label">Risk</div>
+                                <div class="flex justify-between items-end">
+                                    <span class="text-slate-400">Volatility</span>
+                                    <span id="volatility-value" class="font-bold text-blue-400 text-lg">-- %</span>
+                                </div>
+                                <div class="flex justify-between items-end">
+                                    <span class="text-slate-400">Trade size</span>
+                                    <span id="trade-size-value" class="font-bold text-emerald-400 text-lg">-- USDT</span>
+                                </div>
+                                <div class="flex justify-between items-end">
+                                    <span class="text-slate-400">Open positions</span>
+                                    <span id="open-count" class="font-bold text-white text-lg">--</span>
+                                </div>
+                                <div class="rounded-xl bg-slate-950/40 border border-slate-700/30 p-3 text-sm text-slate-400">
+                                    Risk data is pulled from the current market snapshot in <code>data/state.json</code>.
+                                </div>
+                            </div>
+                        </div>
 
-            <!-- ML Analytics Card -->
-            <div class="card">
-                <div class="flex justify-between items-center p-4 cursor-pointer hover:bg-slate-800 transition-colors rounded-t-lg" onclick="toggleCard('ml-analytics-content', 'ml-analytics-chevron')">
-                    <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center">
-                        <svg id="ml-analytics-chevron" class="w-4 h-4 mr-2 transform transition-transform duration-200 -rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                        🧠 Machine Learning Live Analytics
-                    </h2>
-                </div>
-                <div id="ml-analytics-content" class="p-6 pt-0 hidden">
-                    <div id="ml-analytics-container" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-                        <div class="text-center text-slate-500 py-2 col-span-full">Loading ML metrics...</div>
+                        <div class="metric-card">
+                            <div class="relative z-10 space-y-3 h-full flex flex-col justify-between">
+                                <div>
+                                    <div class="metric-label">Portfolio</div>
+                                    <div class="flex justify-between items-start mt-3">
+                                        <span class="text-slate-400">Total PnL</span>
+                                        <span id="pnl-value" class="font-bold text-right text-lg leading-tight">-- USDT</span>
+                                    </div>
+                                    <div class="flex justify-between items-end mt-3">
+                                        <span class="text-slate-400">Market mode</span>
+                                        <span id="market-mode-label" class="font-bold text-white text-lg">SPOT</span>
+                                    </div>
+                                </div>
+                                <div class="rounded-xl bg-slate-950/40 border border-slate-700/30 p-3 text-sm text-slate-400">
+                                    Strategy stats and ML analytics are below this section.
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
-            </div>
 
-            <!-- AI Assistant Chat -->
-            <div class="card">
-                <div class="flex justify-between items-center p-4 cursor-pointer hover:bg-slate-800 transition-colors rounded-t-lg" onclick="toggleCard('chat-content', 'chat-chevron')">
-                    <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center">
-                        <svg id="chat-chevron" class="w-4 h-4 mr-2 transform transition-transform duration-200 -rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                        ✨ Gemini AI Assistant
-                    </h2>
-                </div>
-                <div id="chat-content" class="p-6 pt-0 hidden">
-                    <div id="chat-messages" class="h-48 overflow-y-auto mb-4 p-3 bg-slate-900 rounded border border-slate-700 text-sm flex flex-col gap-2">
-                        <div class="text-slate-400 italic">Gemini: Hello! I am your AI assistant. I can see bot status, balances, and PnL. Ask me about the market or tell me to "retrain model" if you need to update the neural network!</div>
-                    </div>
-                    <div class="flex gap-2">
-                        <input type="text" id="chat-input" class="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" placeholder="Ask AI about status, PnL, or ask to retrain the model..." onkeypress="if(event.key === 'Enter') sendChatMessage()">
-                        <button onclick="sendChatMessage()" class="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-sm font-bold transition-colors">Send</button>
-                    </div>
-                </div>
-            </div>
+                <div class="grid grid-cols-1 xl:grid-cols-12 gap-6">
+                    <div class="xl:col-span-8 glass-card">
+                    <div class="p-5 lg:p-6 border-b border-slate-700/50 flex flex-col gap-4">
+                        <div class="flex flex-col 2xl:flex-row 2xl:items-center 2xl:justify-between gap-4">
+                            <div class="flex flex-col sm:flex-row sm:items-center gap-4">
+                                <div class="space-y-2">
+                                    <div class="panel-heading">Market View</div>
+                                    <h3 class="text-xl font-bold text-white">Interactive Chart</h3>
+                                </div>
+                                <div class="flex flex-col sm:items-start gap-2">
+                                    <label for="chart-symbol-select" class="text-[10px] uppercase tracking-[0.18em] text-slate-500">Watchlist symbol</label>
+                                    <select id="chart-symbol-select" class="min-w-[240px] bg-slate-900/90 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500">
+                                        <option value="BTC/USDT">BTC/USDT</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="market-filter-group self-start 2xl:self-auto">
+                                <button id="btn-market-spot" class="market-filter active" data-market="SPOT" type="button">Spot</button>
+                                <button id="btn-market-futures" class="market-filter" data-market="FUTURES" type="button">Futures</button>
+                                <button id="btn-market-scalping" class="market-filter" data-market="SCALPING" type="button">Scalping</button>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div class="glass-card-strong p-4 border border-blue-500/20">
+                                    <div class="section-title">Elliott Wave Stage</div>
+                                    <div class="mt-2 text-xl font-bold text-blue-400" id="wave-stage">Analyzing...</div>
+                                </div>
+                                <div class="glass-card-strong p-4 border border-violet-500/20 relative">
+                                    <div class="absolute top-3 right-3 text-sm bg-violet-950/70 text-violet-200 px-3 py-1.5 rounded-lg border border-violet-500/20 font-bold">
+                                        <div class="flex gap-2">
+                                            <span class="text-emerald-400">L: <span id="ml-accuracy-long">--</span>%</span>
+                                            <span class="text-slate-500">|</span>
+                                            <span class="text-rose-400">S: <span id="ml-accuracy-short">--</span>%</span>
+                                        </div>
+                                    </div>
+                                    <div class="section-title">Movement Vector (ML)</div>
+                                    <div class="mt-2 text-2xl font-bold pr-24 text-right" id="ml-prediction">Analyzing...</div>
+                                </div>
+                            </div>
+                        </div>
 
-            <!-- Console Logs -->
-            <div class="card">
-                <div class="flex justify-between items-center p-4 cursor-pointer hover:bg-slate-800 transition-colors rounded-t-lg" onclick="toggleCard('log-content', 'log-chevron')">
-                    <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center">
-                        <svg id="log-chevron" class="w-4 h-4 mr-2 transform transition-transform duration-200 -rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                        💻 Terminal Actions Log
-                    </h2>
-                    <div class="flex items-center gap-3">
-                        <button onclick="copyLogs(event)" class="px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs font-bold text-slate-300 hover:text-white transition-colors">📋 Copy</button>
-                        <span class="text-xs text-slate-500 flex items-center">
-                            <span class="w-2 h-2 rounded-full bg-green-500 mr-2 animate-pulse"></span>
-                            Status: <span id="bot-status" class="ml-1 text-white">Online</span>
-                        </span>
+                        <div class="p-5 lg:p-6">
+                            <div class="glass-card-strong p-4 mb-4">
+                                <div class="flex items-center justify-between gap-4">
+                                    <h4 class="text-sm font-semibold text-slate-300 flex items-center gap-2">
+                                        <span>Pivot Points</span>
+                                        <span class="chip">BTC/USDT</span>
+                                    </h4>
+                                    <span class="text-xs text-slate-500">Live wave structure</span>
+                                </div>
+                                <div id="wave-timeline" class="mt-4 flex flex-wrap gap-2">
+                                    <span class="text-slate-500 text-sm">Collecting pivot data...</span>
+                                </div>
+                            </div>
+
+                            <div id="tv_chart_container" class="rounded-2xl overflow-hidden border border-slate-700/40" style="height: 560px; width: 100%;"></div>
+                        </div>
+                    </div>
+
                     </div>
                 </div>
-                <div id="log-content" class="p-6 pt-0 hidden">
-                    <div class="log-container" id="terminal-logs">
-                        Loading logs...
-                    </div>
-                    <div class="text-xs text-right text-slate-500 mt-2">
-                        Last update: <span id="last-update">--</span>
+            </section>
+
+            <section id="tab-analytics" class="tab-pane hidden space-y-6">
+                <div class="glass-card-strong p-5 lg:p-6">
+                    <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+                        <div class="space-y-2">
+                            <div class="panel-heading">Strategy & ML</div>
+                            <h2 class="text-2xl font-black text-white tracking-tight">Performance, Memory, and Validation</h2>
+                            <p class="text-slate-400">
+                                Historical strategy performance, active model coverage, regime comparisons, and validation metrics over the last 360 days.
+                            </p>
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <span class="chip">360-day window</span>
+                            <span class="chip">Open + closed trades</span>
+                            <span class="chip">Regime comparison</span>
+                        </div>
                     </div>
                 </div>
-            </div>
-        </div>
+
+                <div class="grid grid-cols-1 xl:grid-cols-12 gap-6">
+                    <div class="xl:col-span-12 glass-card">
+                        <div class="p-5 border-b border-slate-700/50 flex items-center justify-between">
+                            <div>
+                                <div class="panel-heading">Performance</div>
+                                <h3 class="text-xl font-bold text-white">Strategy Performance</h3>
+                            </div>
+                            <span class="text-xs text-slate-400">Grouped by strategy, market, and volatility regime</span>
+                        </div>
+                        <div class="p-5">
+                            <div id="strategy-stats-container" class="flex flex-col gap-3">
+                                <div class="text-center text-slate-500 py-4">Loading data...</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="xl:col-span-12 glass-card">
+                        <div class="p-5 border-b border-slate-700/50 flex items-center justify-between">
+                            <div>
+                                <div class="panel-heading">Analytics</div>
+                                <h3 class="text-xl font-bold text-white">Machine Learning Live Analytics</h3>
+                            </div>
+                            <span class="text-xs text-slate-400">Closed trade model performance</span>
+                        </div>
+                        <div class="p-5">
+                            <div id="ml-analytics-container" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div class="text-center text-slate-500 py-3 col-span-full">Loading ML metrics...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="tab-watchlist" class="tab-pane hidden space-y-6">
+                <div class="glass-card-strong p-5 lg:p-6">
+                    <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+                        <div class="space-y-2">
+                            <div class="panel-heading">Watchlist</div>
+                            <h2 class="text-2xl font-black text-white tracking-tight">Symbol Onboarding</h2>
+                            <p class="text-slate-400">
+                                Add symbols to your watchlist, trigger historical backfill, and track quotes, holdings, and PnL from the live JSON snapshot.
+                            </p>
+                        </div>
+                        <form id="watchlist-form" class="flex flex-col sm:flex-row gap-3">
+                            <input id="watchlist-input" type="text" placeholder="BTC/USDT" class="bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500 min-w-[220px]">
+                            <button type="submit" class="action-button bg-blue-600 hover:bg-blue-500 text-white">Add Symbol</button>
+                        </form>
+                    </div>
+                    <div class="mt-4 flex flex-wrap gap-2">
+                        <span class="chip">Backfill: 1h + 1d history</span>
+                        <span class="chip">Quotes: state.json prices</span>
+                        <span class="chip">Holdings: account balances</span>
+                        <span class="chip">PnL: trade ledger aggregation</span>
+                    </div>
+                    <div id="watchlist-message" class="mt-4 text-sm text-slate-400"></div>
+                </div>
+
+                <div class="glass-card">
+                    <div class="p-5 border-b border-slate-700/50 flex items-center justify-between">
+                        <div>
+                            <div class="panel-heading">Tracked Symbols</div>
+                            <h3 class="text-xl font-bold text-white">Watchlist Overview</h3>
+                        </div>
+                        <span class="text-xs text-slate-400">Click a symbol to focus the chart</span>
+                    </div>
+                    <div class="p-5">
+                        <div class="table-shell scroll-slim overflow-auto">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Symbol</th>
+                                        <th>Last</th>
+                                        <th>High / Low</th>
+                                        <th>Prev Close</th>
+                                        <th>Volume</th>
+                                        <th>Holdings</th>
+                                        <th>PnL</th>
+                                        <th>Status</th>
+                                        <th>Added</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="watchlist-table-body" class="text-sm">
+                                    <tr><td colspan="10" class="py-4 text-center text-slate-500">Loading...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="tab-trades" class="tab-pane hidden space-y-6">
+                <div class="glass-card-strong p-5 lg:p-6">
+                    <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+                        <div class="space-y-2">
+                            <div class="panel-heading">Trades</div>
+                            <h2 class="text-2xl font-black text-white tracking-tight">Open Positions & Trade Ledger</h2>
+                            <p class="text-slate-400">Trade tables are filtered by the current market mode from the Overview section.</p>
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <span class="chip">Market mode: <span id="trade-market-label">SPOT</span></span>
+                            <span class="chip">Open: <span id="trade-open-count">0</span></span>
+                            <span class="chip">Closed: <span id="trade-closed-count">0</span></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                    <div class="glass-card">
+                        <div class="p-5 border-b border-slate-700/50 flex items-center justify-between">
+                            <div>
+                                <div class="panel-heading">Open Positions</div>
+                                <h3 class="text-xl font-bold text-white">Active Trades</h3>
+                            </div>
+                            <span class="text-xs text-slate-400">Current market exposure</span>
+                        </div>
+                        <div class="p-5">
+                            <div class="table-shell scroll-slim overflow-auto max-h-[28rem]">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>ID / Pair</th>
+                                            <th>Strategy</th>
+                                            <th>Entry</th>
+                                            <th>Current</th>
+                                            <th>Live PnL</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="active-trades-table-body" class="text-sm">
+                                        <tr><td colspan="5" class="py-4 text-center text-slate-500">Loading...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="glass-card">
+                        <div class="p-5 border-b border-slate-700/50 flex items-center justify-between">
+                            <div>
+                                <div class="panel-heading">Closed Ledger</div>
+                                <h3 class="text-xl font-bold text-white">Trade History</h3>
+                            </div>
+                            <span class="text-xs text-slate-400">Completed trades and results</span>
+                        </div>
+                        <div class="p-5">
+                            <div class="table-shell scroll-slim overflow-auto max-h-[28rem]">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>ID / Pair</th>
+                                            <th>Strategy</th>
+                                            <th>Entry</th>
+                                            <th>Exit</th>
+                                            <th>Closed PnL</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="history-trades-table-body" class="text-sm">
+                                        <tr><td colspan="5" class="py-4 text-center text-slate-500">Loading...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="tab-logs" class="tab-pane hidden space-y-6">
+                <div class="glass-card-strong p-5 lg:p-6">
+                    <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+                        <div class="space-y-2">
+                            <div class="panel-heading">Diagnostics</div>
+                            <h2 class="text-2xl font-black text-white tracking-tight">Terminal Actions Log</h2>
+                            <p class="text-slate-400">Tail of the live trading log for debugging and operational tracking.</p>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <button id="copy-logs-button" type="button" class="px-3 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-xs font-bold text-slate-300 hover:text-white transition-colors border border-slate-700/60">📋 Copy</button>
+                            <span class="chip">Last update: <span id="logs-last-update">--</span></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="glass-card p-5">
+                    <div id="terminal-logs" class="log-container scroll-slim">Loading logs...</div>
+                </div>
+            </section>
+
+            <section id="tab-assistant" class="tab-pane hidden space-y-6">
+                <div class="glass-card-strong p-5 lg:p-6">
+                    <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+                        <div class="space-y-2">
+                            <div class="panel-heading">Assistant</div>
+                            <h2 class="text-2xl font-black text-white tracking-tight">Gemini AI Assistant</h2>
+                            <p class="text-slate-400">Ask for market analysis, summarize links, or trigger background model retraining.</p>
+                        </div>
+                        <span class="chip">Analytical only, no trade execution</span>
+                    </div>
+                </div>
+
+                <div class="glass-card p-5">
+                    <div id="chat-messages" class="h-[30rem] overflow-y-auto mb-4 p-4 rounded-xl bg-slate-950/60 border border-slate-700/50 text-sm flex flex-col gap-3 scroll-slim">
+                        <div class="text-slate-400 italic">
+                            Gemini: Hello! I can see bot status, balances, trade history, and market snapshots. Ask me for analysis or say "retrain model" to start a background training run.
+                        </div>
+                    </div>
+                    <div class="flex flex-col sm:flex-row gap-3">
+                        <input id="chat-input" type="text" class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500" placeholder="Ask about status, PnL, or retraining...">
+                        <button id="chat-send-button" type="button" class="action-button bg-blue-600 hover:bg-blue-500 text-white">Send</button>
+                    </div>
+                </div>
+            </section>
+        </main>
     </div>
 
-    <!-- TradingView Script -->
-    <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-    <script>
-        function initChart(symbol) {
-            new TradingView.widget({
-                "autosize": true,
-                "symbol": symbol,
-                "interval": "60",
-                "timezone": "Etc/UTC",
-                "theme": "dark",
-                "style": "1",
-                "studies": [
-                    "ZigZag@tv-basicstudies",
-                    "BB@tv-basicstudies",
-                    "PivotPointsHighLow@tv-basicstudies",
-                    "RSI@tv-basicstudies"
-                ],
-                "locale": "en",
-                "enable_publishing": false,
-                "backgroundColor": "#1e293b",
-                "gridColor": "#334155",
-                "hide_top_toolbar": false,
-                "hide_legend": false,
-                "save_image": false,
-                "container_id": "tv_chart_container"
-            });
-        }
-        
-        let activeSymbol = 'BTC/USDT';
-        let activeMarket = 'SPOT';
-        
-        function setMarketUI(market) {
-            activeMarket = market;
-            document.getElementById('btn-market-spot').className = market === 'SPOT' ? 'px-6 py-2 rounded-md text-sm font-bold bg-blue-600 text-white transition-colors shadow' : 'px-6 py-2 rounded-md text-sm font-bold text-slate-400 hover:text-white hover:bg-slate-700 transition-colors';
-            document.getElementById('btn-market-futures').className = market === 'FUTURES' ? 'px-6 py-2 rounded-md text-sm font-bold bg-purple-600 text-white transition-colors shadow' : 'px-6 py-2 rounded-md text-sm font-bold text-slate-400 hover:text-white hover:bg-slate-700 transition-colors';
-            document.getElementById('btn-market-scalping').className = market === 'SCALPING' ? 'px-6 py-2 rounded-md text-sm font-bold bg-green-600 text-white transition-colors shadow' : 'px-6 py-2 rounded-md text-sm font-bold text-slate-400 hover:text-white hover:bg-slate-700 transition-colors';
-            
-            // Force refresh of data
-            fetchTrades();
-            fetchLogs();
-        }
-        
-        function changeChart(symbol) {
-            document.getElementById('tv_chart_container').innerHTML = '';
-            initChart(symbol);
-            
-            if (symbol === 'BINANCE:BTCUSDT') activeSymbol = 'BTC/USDT';
-            else if (symbol === 'BINANCE:SOLUSDT') activeSymbol = 'SOL/USDT';
-            else if (symbol === 'BINANCE:ADAUSDT') activeSymbol = 'ADA/USDT';
-            
-            document.querySelectorAll('.active-symbol-label').forEach(el => {
-                el.innerText = activeSymbol;
-            });
-            
-            fetchState();
-        }
-        
-        // Initialization of the first chart on load
-        window.addEventListener('DOMContentLoaded', () => {
-            initChart("BINANCE:BTCUSDT");
-        });
-        
-        let isFullScreen = false;
-        function toggleFullScreen() {
-            const card = document.getElementById('chart-card');
-            const container = document.getElementById('tv_chart_container');
-            const expandIcon = document.getElementById('fs-icon-expand');
-            const collapseIcon = document.getElementById('fs-icon-collapse');
-
-            isFullScreen = !isFullScreen;
-
-            if (isFullScreen) {
-                card.classList.add('fixed', 'inset-0', 'z-50', 'm-0', 'rounded-none', 'h-screen', 'w-screen', 'overflow-y-auto', 'bg-slate-900');
-                container.style.height = 'calc(100vh - 200px)'; // Increase chart to screen size
-                expandIcon.classList.replace('block', 'hidden');
-                collapseIcon.classList.replace('hidden', 'block');
-                document.body.style.overflow = 'hidden'; // Disable main page scroll
-            } else {
-                card.classList.remove('fixed', 'inset-0', 'z-50', 'm-0', 'rounded-none', 'h-screen', 'w-screen', 'overflow-y-auto', 'bg-slate-900');
-                container.style.height = '400px'; // Return standard size
-                collapseIcon.classList.replace('block', 'hidden');
-                expandIcon.classList.replace('hidden', 'block');
-                document.body.style.overflow = ''; // Enable scroll back
-            }
-        }
-    </script>
-
-    <script>
-        function toggleCard(contentId, chevronId) {
-            const content = document.getElementById(contentId);
-            const chevron = document.getElementById(chevronId);
-            content.classList.toggle('hidden');
-            chevron.classList.toggle('-rotate-90');
-        }
-
-        function copyLogs(event) {
-            event.stopPropagation(); // Prevent log card collapse
-            const logContainer = document.getElementById('terminal-logs');
-            navigator.clipboard.writeText(logContainer.innerText).then(() => {
-                const btn = event.target;
-                const originalText = btn.innerHTML;
-                btn.innerHTML = '✅ Copied';
-                setTimeout(() => btn.innerHTML = originalText, 2000);
-            }).catch(err => {
-                console.error('Copy error', err);
-            });
-        }
-
-        function formatBalance(num, isFiat=false) {
-            if (num === undefined || num === null || isNaN(num)) return '--';
-            if (num > 8000000) return (num / 1000).toFixed(1) + 'k';
-            if (num === 0) return '0.00';
-            if (isFiat) return num.toFixed(2);
-            if (num < 0.01) return num.toFixed(6);
-            return num.toFixed(3);
-        }
-
-        async function fetchControl() {
-            try {
-                const res = await fetch('/api/control');
-                const data = await res.json();
-                const isRunning = data.running !== false;
-                
-                document.getElementById('btn-start').disabled = isRunning;
-                document.getElementById('btn-stop').disabled = !isRunning;
-                
-            } catch (e) {
-                console.error('Error loading status', e);
-            }
-        }
-
-        async function setBotRunning(run) {
-            try {
-                await fetch('/api/control', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ running: run })
-                });
-                fetchControl();
-            } catch (e) {
-                console.error('Error changing status', e);
-            }
-        }
-
-        async function fetchTrades() {
-            try {
-                const res = await fetch('/api/trades');
-                const data = await res.json();
-                
-                const allTrades = data.trades || [];
-                const strategyStats = {};
-                
-                // First, collect strategy stats across ALL markets globally
-                for (const t of allTrades) {
-                    const tradePnl = t.status === 'CLOSED' ? (t.pnl_usdt || 0) : (t.unrealized_pnl || 0);
-                    const strat = t.strategy || 'Base_Model';
-                    const market = t.market || 'SPOT';
-                    const sym = t.symbol;
-                    
-                    if (!strategyStats[strat]) {
-                        strategyStats[strat] = { total: 0, markets: {} };
-                    }
-                    if (!strategyStats[strat].markets[market]) {
-                        strategyStats[strat].markets[market] = {};
-                    }
-                    if (!strategyStats[strat].markets[market][sym]) {
-                        strategyStats[strat].markets[market][sym] = 0;
-                    }
-                    
-                    strategyStats[strat].total += tradePnl;
-                    strategyStats[strat].markets[market][sym] += tradePnl;
-                }
-
-                let totalPnl = 0;
-                let totalUnrealizedPnl = 0;
-                let openOrders = 0;
-                
-                // Calculate global PNL and open orders across ALL markets
-                for (const t of allTrades) {
-                    if (t.status === 'CLOSED') {
-                        totalPnl += (t.pnl_usdt || 0);
-                    } else {
-                        openOrders++;
-                        if (t.unrealized_pnl !== undefined) {
-                            totalUnrealizedPnl += t.unrealized_pnl;
-                        }
-                    }
-                }
-
-                // Filter trades only for the selected market for the tables below
-                const marketTrades = allTrades.filter(t => {
-                    const m = t.market || 'SPOT';
-                    if (activeMarket === 'SCALPING') return m === 'SCALPING' || m === 'SPOT_SCALPING';
-                    return m === activeMarket;
-                }).reverse();
-                
-                let activeHtml = '';
-                let historyHtml = '';
-                
-                for (const t of marketTrades) {
-
-                    const sideColor = (t.side || 'LONG') === 'LONG' ? 'text-green-400' : 'text-red-400';
-                    const sideIcon = (t.side || 'LONG') === 'LONG' ? '📈 LONG' : '📉 SHORT';
-                    const buyInfo = `<div>${t.buy_time}</div><div class="text-slate-400">Price: $${t.buy_price.toFixed(2)}</div><div class="text-[10px] font-bold ${sideColor} mt-1">${sideIcon}</div>`;
-                    let sellInfo, pnlHtml;
-
-                    if (t.status === 'CLOSED') {
-                        sellInfo = `<div>${t.sell_time}</div><div class="text-slate-400">Price: $${t.sell_price.toFixed(2)}</div>`;
-                        const isProfit = t.pnl_usdt >= 0;
-                        const colorClass = isProfit ? 'text-green-500' : 'text-red-500';
-                        const sign = isProfit ? '+' : '';
-                        pnlHtml = `<div class="font-bold ${colorClass}">${sign}${t.pnl_usdt.toFixed(2)} USDT</div>
-                                   <div class="text-xs ${colorClass}">${sign}${t.pnl_percent.toFixed(2)}%</div>`;
-                    } else {
-                        const currentPrice = t.current_price ? t.current_price.toFixed(2) : '--';
-                        const amount = t.amount_coin ? t.amount_coin.toFixed(5) : '--';
-                        sellInfo = `<div class="text-yellow-500 font-bold animate-pulse">In market</div>
-                                    <div class="text-slate-400 text-xs">Volume: ${amount}</div>
-                                    <div class="text-slate-400 text-xs">Current: $${currentPrice}</div>`;
-                        
-                        if (t.unrealized_pnl !== undefined) {
-                            const isProfit = t.unrealized_pnl >= 0;
-                            const colorClass = isProfit ? 'text-green-500' : 'text-red-500';
-                            const sign = isProfit ? '+' : '';
-                            pnlHtml = `<div class="font-bold ${colorClass}">${sign}${t.unrealized_pnl.toFixed(2)} USDT</div>
-                                       <div class="text-xs ${colorClass}">${sign}${t.unrealized_pnl_percent.toFixed(2)}% (Live)</div>`;
-                        } else {
-                            pnlHtml = `<div class="text-slate-500">Calculating...</div>`;
-                        }
-                    }
-                    
-                    const rowHtml = `
-                        <tr class="border-b border-slate-700/50 hover:bg-slate-800/50 transition-colors">
-                            <td class="py-3 pr-4">
-                                <div class="font-bold text-white">#${t.id}</div>
-                                <div class="text-xs text-slate-400">${t.symbol}</div>
-                            </td>
-                            <td class="py-3 pr-4 text-xs font-mono text-blue-300">${t.strategy || 'Base_Model'}</td>
-                            <td class="py-3 pr-4">${buyInfo}</td>
-                            <td class="py-3 pr-4">${sellInfo}</td>
-                            <td class="py-3">${pnlHtml}</td>
-                        </tr>
-                    `;
-                    
-                    if (t.status === 'CLOSED') {
-                        historyHtml += rowHtml;
-                    } else {
-                        activeHtml += rowHtml;
-                    }
-                }
-                
-                document.getElementById('active-trades-table-body').innerHTML = activeHtml || '<tr><td colspan="5" class="py-4 text-center text-slate-500">No active orders</td></tr>';
-                document.getElementById('history-trades-table-body').innerHTML = historyHtml || '<tr><td colspan="5" class="py-4 text-center text-slate-500">History is empty</td></tr>';
-
-                // Save state of open strategy cards
-                const openStrats = new Set();
-                document.querySelectorAll('[id^="strat-details-"]').forEach(el => {
-                    if (!el.classList.contains('hidden')) {
-                        openStrats.add(el.id);
-                    }
-                });
-
-                // --- ML Live Analytics Calculations ---
-                const mlStats = {
-                    'ML_Trend_Following': { trades: 0, wins: 0, losses: 0, grossProfit: 0, grossLoss: 0, totalPnl: 0 },
-                    'Scalping_Long': { trades: 0, wins: 0, losses: 0, grossProfit: 0, grossLoss: 0, totalPnl: 0 },
-                    'Scalping_Short': { trades: 0, wins: 0, losses: 0, grossProfit: 0, grossLoss: 0, totalPnl: 0 }
-                };
-                for (const t of allTrades) {
-                    if (t.status !== 'CLOSED') continue; // Only measure completed iterations
-                    const strat = t.strategy || 'Base_Model';
-                    if (!mlStats[strat]) {
-                        mlStats[strat] = { trades: 0, wins: 0, losses: 0, grossProfit: 0, grossLoss: 0, totalPnl: 0 };
-                    }
-                    mlStats[strat].trades++;
-                    mlStats[strat].totalPnl += (t.pnl_usdt || 0);
-                    if (t.pnl_usdt > 0) {
-                        mlStats[strat].wins++;
-                        mlStats[strat].grossProfit += t.pnl_usdt;
-                    } else if (t.pnl_usdt < 0) {
-                        mlStats[strat].losses++;
-                        mlStats[strat].grossLoss += Math.abs(t.pnl_usdt);
-                    }
-                }
-
-                let mlHtml = '';
-                for (const [strat, data] of Object.entries(mlStats)) {
-                    const winRate = data.trades > 0 ? ((data.wins / data.trades) * 100).toFixed(1) : '0.0';
-                    const profitFactor = data.grossLoss > 0 ? (data.grossProfit / data.grossLoss).toFixed(2) : (data.grossProfit > 0 ? '∞' : '0.00');
-                    const expectedValue = data.trades > 0 ? (data.totalPnl / data.trades).toFixed(2) : '0.00';
-                    
-                    mlHtml += `
-                        <div class="bg-slate-800/40 p-4 rounded-lg border border-slate-700 shadow-inner">
-                            <h3 class="text-blue-400 font-bold mb-3 border-b border-slate-700/50 pb-2">${strat}</h3>
-                            <div class="flex justify-between text-xs mb-2"><span class="text-slate-400" title="Completed model inferences">Live Executions</span> <span class="font-mono text-white font-bold">${data.trades}</span></div>
-                            <div class="flex justify-between text-xs mb-2"><span class="text-slate-400">Live Win Rate</span> <span class="font-mono font-bold ${winRate >= 50 ? 'text-green-400' : 'text-red-400'}">${winRate}%</span></div>
-                            <div class="flex justify-between text-xs mb-2"><span class="text-slate-400">Wins / Losses</span> <span class="font-mono text-slate-300"><span class="text-green-400">${data.wins}</span> / <span class="text-red-400">${data.losses}</span></span></div>
-                            <div class="flex justify-between text-xs mb-2"><span class="text-slate-400" title="Gross Profit / Gross Loss">Profit Factor</span> <span class="font-mono text-yellow-400 font-bold">${profitFactor}</span></div>
-                            <div class="flex justify-between text-xs"><span class="text-slate-400" title="Average profit per execution">Expected Value</span> <span class="font-mono ${expectedValue >= 0 ? 'text-green-400' : 'text-red-400'}">${expectedValue > 0 ? '+' : ''}${expectedValue} USDT</span></div>
-                        </div>
-                    `;
-                }
-                document.getElementById('ml-analytics-container').innerHTML = mlHtml || `
-                    <div class="text-center text-slate-500 py-6 col-span-full bg-slate-800/30 rounded border border-slate-700 border-dashed">
-                        Waiting for closed trades to calculate live ML performance...
-                    </div>
-                `;
-
-                // Render Strategy Stats
-                let stratHtml = '';
-                const sortedStrats = Object.entries(strategyStats).sort((a, b) => b[1].total - a[1].total);
-                for (const [strat, stratData] of sortedStrats) {
-                    const stratId = strat.replace(/\W/g, '_');
-                    const stratTotalColor = stratData.total >= 0 ? 'text-green-500' : 'text-red-500';
-                    const stratTotalSign = stratData.total >= 0 ? '+' : '';
-
-                    let detailsHtml = `<div class="pl-4 pr-2 py-2 mt-1 bg-slate-900/50 rounded flex flex-col gap-2 hidden border-t border-slate-700/50" id="strat-details-${stratId}">`;
-                    
-                    for (const [mkt, syms] of Object.entries(stratData.markets)) {
-                        detailsHtml += `<div class="text-[10px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-700/50 pb-1 mb-1 mt-1">${mkt}</div>`;
-                        const sortedSyms = Object.entries(syms).sort((a, b) => b[1] - a[1]);
-                        for (const [sym, symPnl] of sortedSyms) {
-                            const symColor = symPnl >= 0 ? 'text-green-500' : 'text-red-500';
-                            const symSign = symPnl >= 0 ? '+' : '';
-                            detailsHtml += `
-                                <div class="flex justify-between text-xs items-center hover:bg-slate-800/50 px-2 py-1 rounded transition-colors pl-2">
-                                    <span class="text-slate-400 flex items-center"><span class="w-1.5 h-1.5 rounded-full bg-slate-500 mr-2"></span>${sym}</span>
-                                    <span class="${symColor} font-mono">${symSign}${symPnl.toFixed(2)} USDT</span>
-                                </div>
-                            `;
-                        }
-                    }
-                    detailsHtml += '</div>';
-
-                    stratHtml += `
-                        <div class="border border-slate-700 rounded bg-slate-800/30 overflow-hidden">
-                            <div class="flex justify-between items-center p-3 cursor-pointer hover:bg-slate-700/50 transition-colors" onclick="document.getElementById('strat-details-${stratId}').classList.toggle('hidden'); document.getElementById('strat-icon-${stratId}').classList.toggle('-rotate-90');">
-                                <span class="font-bold text-blue-300 text-sm flex items-center">
-                                    <svg id="strat-icon-${stratId}" class="w-4 h-4 mr-2 text-slate-400 transform transition-transform duration-200 -rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                                    ${strat}
-                                </span>
-                                <span class="${stratTotalColor} font-bold text-sm">${stratTotalSign}${stratData.total.toFixed(2)} USDT</span>
-                            </div>
-                            ${detailsHtml}
-                        </div>
-                    `;
-                }
-                document.getElementById('strategy-stats-container').innerHTML = stratHtml || '<div class="text-center text-slate-500 py-2">No strategy data</div>';
-
-                // Restore state of open cards
-                openStrats.forEach(id => {
-                    const el = document.getElementById(id);
-                    if (el) {
-                        el.classList.remove('hidden');
-                        const icon = document.getElementById(id.replace('strat-details-', 'strat-icon-'));
-                        if (icon) icon.classList.remove('-rotate-90');
-                    }
-                });
-
-                const pnlEl = document.getElementById('total-pnl');
-                const realizedSign = totalPnl >= 0 ? '+' : '';
-                const unrealizedSign = totalUnrealizedPnl >= 0 ? '+' : '';
-                const realizedColor = totalPnl >= 0 ? 'text-green-500' : 'text-red-500';
-                const unrealizedColor = totalUnrealizedPnl >= 0 ? 'text-green-500' : 'text-red-500';
-                
-                pnlEl.innerHTML = `<div class="text-right font-bold ${realizedColor}">${realizedSign}${totalPnl.toFixed(2)} USDT (Closed)</div>
-                                   <div class="text-right text-xs ${unrealizedColor}">${unrealizedSign}${totalUnrealizedPnl.toFixed(2)} USDT (Live)</div>`;
-                document.getElementById('open-orders').innerText = openOrders;
-            } catch (e) {
-                console.error('Error loading trades', e);
-            }
-        }
-
-        async function fetchState() {
-            try {
-                const res = await fetch('/api/state');
-                const data = await res.json();
-                
-                document.getElementById('balance-usdt').innerText = formatBalance(parseFloat(data.balance_usdt), true);
-                document.getElementById('balance-btc').innerText = formatBalance(parseFloat(data.balance_btc), false);
-                document.getElementById('balance-sol').innerText = formatBalance(parseFloat(data.balance_sol || 0), false);
-                document.getElementById('balance-ada').innerText = formatBalance(parseFloat(data.balance_ada || 0), false);
-                
-                if (data.prices) {
-                    if (data.prices['BTC/USDT']) document.getElementById('price-btc').innerText = '$' + data.prices['BTC/USDT'].toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-                    if (data.prices['SOL/USDT']) document.getElementById('price-sol').innerText = '$' + data.prices['SOL/USDT'].toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-                    if (data.prices['ADA/USDT']) document.getElementById('price-ada').innerText = '$' + data.prices['ADA/USDT'].toLocaleString('en-US', {minimumFractionDigits: 4, maximumFractionDigits: 4});
-                }
-                
-                const sentimentScore = parseFloat(data.sentiment_score || 0).toFixed(2);
-                const sentimentEl = document.getElementById('sentiment-score');
-                sentimentEl.innerText = sentimentScore > 0 ? '+' + sentimentScore : sentimentScore;
-                
-                // Colorize Sentiment Score
-                if (sentimentScore > 0.15) sentimentEl.className = 'font-bold text-green-400';
-                else if (sentimentScore < -0.15) sentimentEl.className = 'font-bold text-red-400';
-                else sentimentEl.className = 'font-bold text-slate-300';
-                
-                if (data.market_data && data.market_data[activeMarket] && data.market_data[activeMarket][activeSymbol]) {
-                    const symData = data.market_data[activeMarket][activeSymbol];
-                    
-                    // Colorize RSI Score
-                    const rsiScore = parseFloat(symData.rsi || 50).toFixed(1);
-                    const rsiEl = document.getElementById('rsi-score');
-                    rsiEl.innerText = rsiScore;
-                    if (rsiScore >= 70) rsiEl.className = 'font-bold text-red-400';
-                    else if (rsiScore <= 30) rsiEl.className = 'font-bold text-green-400';
-                    else rsiEl.className = 'font-bold text-blue-400';
-                    
-                    document.getElementById('volatility').innerText = (symData.volatility || 0).toFixed(2) + ' %';
-                    document.getElementById('trade-size').innerText = (symData.recommended_trade_size || 0).toFixed(2) + ' USDT';
-                    
-                    document.getElementById('wave-stage').innerText = symData.wave_stage || 'Waiting...';
-                    const mlEl = document.getElementById('ml-prediction');
-                    mlEl.innerText = symData.ml_prediction_text || 'Waiting...';
-                    
-                    const accContainer = document.getElementById('accuracy-badge-container');
-                    if (activeMarket === 'FUTURES') {
-                        const lAcc = (symData.ml_accuracy_long === 0 || !symData.ml_accuracy_long) ? '--' : symData.ml_accuracy_long.toFixed(2);
-                        const sAcc = (symData.ml_accuracy_short === 0 || !symData.ml_accuracy_short) ? '--' : symData.ml_accuracy_short.toFixed(2);
-                        accContainer.innerHTML = `<div class="flex gap-2"><span class="text-green-400" title="Long Accuracy">L: <span>${lAcc}</span>%</span><span class="text-slate-500">|</span><span class="text-red-400" title="Short Accuracy">S: <span>${sAcc}</span>%</span></div>`;
-                    } else {
-                        const overallAcc = (symData.ml_accuracy === 0 || !symData.ml_accuracy) ? '--' : symData.ml_accuracy.toFixed(2);
-                        accContainer.innerHTML = `Accuracy: <span class="text-purple-300">${overallAcc}</span>%`;
-                    }
-                    
-                    if (symData.ml_prediction_text && symData.ml_prediction_text.includes('UP')) {
-                        mlEl.className = 'text-2xl md:text-3xl font-bold text-green-500 animate-pulse';
-                    } else if (symData.ml_prediction_text && symData.ml_prediction_text.includes('DOWN')) {
-                        mlEl.className = 'text-2xl md:text-3xl font-bold text-red-500 animate-pulse';
-                    } else if (symData.ml_prediction_text && symData.ml_prediction_text.includes('MODEL')) {
-                        mlEl.className = 'text-lg md:text-xl font-bold text-yellow-500';
-                    } else {
-                        mlEl.className = 'text-xl md:text-2xl font-bold text-slate-300';
-                    }
-                    
-                    // Render Wave Timeline
-                    const timelineEl = document.getElementById('wave-timeline');
-                    if (activeMarket !== 'SCALPING' && symData.recent_pivots && symData.recent_pivots.length > 0) {
-                        let html = '';
-                        symData.recent_pivots.forEach((p, index) => {
-                            const isHigh = p.type === 'high';
-                            const icon = isHigh ? '📈 PEAK' : '📉 BOTTOM';
-                            const color = isHigh ? 'text-green-400' : 'text-red-400';
-                            html += `
-                                <div class="flex flex-col items-center">
-                                    <div class="w-8 h-8 rounded-full ${isHigh ? 'bg-green-600/80 border-green-400' : 'bg-red-600/80 border-red-400'} border flex items-center justify-center font-bold text-white shadow-lg mb-2">${index + 1}</div>
-                                    <span class="text-[10px] uppercase font-bold tracking-wider ${color}">${icon}</span>
-                                    <span class="text-xs font-mono text-slate-300 mt-1">$${parseFloat(p.close).toFixed(2)}</span>
-                                </div>
-                            `;
-                            if (index < symData.recent_pivots.length - 1) {
-                                html += `<div class="flex-1 flex items-center justify-center px-2 relative top-[-12px]">
-                                            <div class="w-full h-px bg-slate-600 relative"><div class="absolute right-0 -top-[3px] border-t-[3px] border-b-[3px] border-l-[4px] border-t-transparent border-b-transparent border-l-slate-400"></div></div>
-                                         </div>`;
-                            }
-                        });
-                        timelineEl.innerHTML = html;
-                    } else if (activeMarket === 'SCALPING') {
-                        timelineEl.innerHTML = '<span class="text-slate-500 text-sm">Elliott Waves do not apply to scalping.</span>';
-                    } else {
-                        timelineEl.innerHTML = '<span class="text-slate-500 text-sm">Not enough price movement for wave markup (Market is flat)</span>';
-                    }
-
-                    const signalEl = document.getElementById('last-signal');
-                    signalEl.innerText = symData.last_signal;
-                    signalEl.className = 'text-3xl mb-2 signal-' + symData.last_signal;
-                    
-                    document.getElementById('signal-reason').innerText = symData.reason;
-                }
-                
-                const statusEl = document.getElementById('bot-status');
-                statusEl.innerText = data.status;
-                if (data.status.includes('Stopped')) {
-                    statusEl.className = 'ml-1 text-red-500 font-bold';
-                } else if (data.status.includes('Resuming')) {
-                    statusEl.className = 'ml-1 text-yellow-400 font-bold';
-                } else {
-                    statusEl.className = 'ml-1 text-white';
-                }
-                
-                document.getElementById('last-update').innerText = data.last_update;
-                
-            } catch (e) {
-                console.error('Error loading state', e);
-            }
-        }
-
-        async function sendChatMessage() {
-            const input = document.getElementById('chat-input');
-            const message = input.value.trim();
-            if (!message) return;
-            
-            const chatMessages = document.getElementById('chat-messages');
-            chatMessages.innerHTML += `<div class="text-blue-300 self-end bg-blue-900/30 p-2 rounded max-w-[80%]">You: ${message}</div>`;
-            input.value = '';
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-            
-            try {
-                const res = await fetch('/api/chat', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: message })
-                });
-                const data = await res.json();
-                chatMessages.innerHTML += `<div class="text-slate-300 self-start bg-slate-800 p-2 rounded max-w-[90%] border border-slate-700">Gemini: ${data.response}</div>`;
-                chatMessages.scrollTop = chatMessages.scrollHeight;
-            } catch (e) {
-                chatMessages.innerHTML += `<div class="text-red-400">Error: Failed to connect to server.</div>`;
-            }
-        }
-
-        async function fetchLogs() {
-            try {
-                const res = await fetch('/api/logs');
-                const data = await res.json();
-                
-                // Filter logs intelligently to share general logs between Spot and Futures
-                const filteredLogs = data.logs.filter(line => {
-                    const isScalping = line.includes('SCALPING') || line.includes('Scalping');
-                    const isFutures = line.includes('FUTURES') || line.includes('Futures');
-                    const isSpot = line.includes('[SPOT]') || line.includes(' SPOT ') || line.includes('-> [SPOT]');
-                    const isGeneral = !isScalping && !isFutures && !isSpot;
-
-                    if (activeMarket === 'SCALPING') return isScalping;
-                    if (activeMarket === 'FUTURES') return isFutures || isGeneral;
-                    if (activeMarket === 'SPOT') return isSpot || isGeneral;
-                    return true;
-                });
-                
-                const logContainer = document.getElementById('terminal-logs');
-                logContainer.innerHTML = filteredLogs.length > 0 ? filteredLogs.join('<br>') : 'Waiting for logs for this market...';
-                // Scroll to bottom
-                logContainer.scrollTop = logContainer.scrollHeight;
-            } catch (e) {
-                console.error('Error loading logs', e);
-            }
-        }
-
-        // Update every 2 seconds
-        setInterval(fetchState, 2000);
-        setInterval(fetchLogs, 2000);
-        setInterval(fetchTrades, 2000);
-        setInterval(fetchControl, 2000);
-        
-        // Initial call
-        fetchState();
-        fetchLogs();
-        fetchTrades();
-        fetchControl();
-    </script>
+    <script src="https://s3.tradingview.com/tv.js"></script>
+    <script src="/static/dashboard.js"></script>
 </body>
 </html>
