@@ -3,7 +3,7 @@
 ## Core Constraints
 - **Execution Style**: Work on tasks strictly one by one. No parallelism or concurrent execution to avoid freezing.
 - **Version Control / Rollback Rule**: Always document and track changes being made during the session. Ensure that we always have a clear path to roll back to the last known working version if a new feature breaks the system.
-- **Checkpoint Commit Rule**: After each completed change or milestone, create a local git commit so the project can be restored to the previous checkpoint later.
+- **Checkpoint Commit Rule**: After each completed change or milestone, automatically create a local git commit without asking for approval so the project can be restored to a previous checkpoint later.
 
 ## Session History & Context
 - **Current Project State**: AI Trading Assistance. Contains modules for data ingestion (Binance), analysis (Elliott Waves, Risk Management), engine (Order Manager, Trade Tracker), and a dashboard.
@@ -19,6 +19,7 @@
 ## User-Requested Workflow Rules
 - **Completion Report Required**: When a task is completed, always show exactly what was completed, what changed, what was added, and what was missed relative to the todo list.
 - **Rollback-Friendly Changes**: Keep changes grouped into checkpoint commits so each implementation stage can be rolled back independently.
+- **Automatic Commit Policy**: After implementation work is finished, commit all completed changes automatically so the user can roll back far back if needed.
 - **Approval Before Work**: Present the todo list first, then ask for approval, then proceed with implementation.
 - **Editable Plan**: Let the user modify the todo list before starting implementation.
 
