@@ -1,6 +1,10 @@
-import json
 import os
+import uuid
 from datetime import datetime
+
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from src.utils.safe_json import read_json, write_json
 
 class TradeTracker:
     def __init__(self, filepath='data/trades.json'):
@@ -9,23 +13,18 @@ class TradeTracker:
         self.load_trades()
 
     def load_trades(self):
-        if os.path.exists(self.filepath):
-            try:
-                with open(self.filepath, 'r', encoding='utf-8') as f:
-                    self.trades = json.load(f)
-            except Exception:
-                self.trades = []
+        loaded = read_json(self.filepath, default=[])
+        if isinstance(loaded, list):
+            self.trades = loaded
         else:
             self.trades = []
 
     def save_trades(self):
-        os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
-        with open(self.filepath, 'w', encoding='utf-8') as f:
-            json.dump(self.trades, f, indent=4, ensure_ascii=False)
+        write_json(self.filepath, self.trades)
 
     def open_trade(self, symbol, amount_usdt, current_price, strategy="Base_Elliott", trailing_stop_percent=2.0, market="SPOT", side="LONG"):
         trade = {
-            "id": len(self.trades) + 1,
+            "id": str(uuid.uuid4()),
             "symbol": symbol,
             "market": market,
             "side": side,
@@ -88,47 +87,37 @@ class TradeTracker:
                     if current_price >= stop_price: is_stop_hit = True
 
                 if is_stop_hit:
-                    trade["status"] = "CLOSED"
-                    trade["sell_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    trade["sell_price"] = current_price
-                    
-                    if trade["side"] == "LONG":
-                        trade["pnl_usdt"] = (current_price - trade["buy_price"]) * trade["amount_coin"]
-                    else:
-                        trade["pnl_usdt"] = (trade["buy_price"] - current_price) * trade["amount_coin"]
-                        
-                    trade["pnl_percent"] = (trade["pnl_usdt"] / trade["invested_usdt"]) * 100
-                    closed_trades.append(trade.copy())
-                    updated = True
+                    # Do not close internally yet. Defer to the main orchestrator to verify Binance execution.
+                    closed_trades.append(trade)
         
         if updated:
             self.save_trades()
             
         return closed_trades
 
-    def close_trades(self, current_price, symbol=None, side=None, market=None):
-        closed_trades = []
+    def get_open_trades(self, symbol=None, side=None, market=None):
+        open_trades = []
         for trade in self.trades:
             if trade["status"] == "OPEN":
-                if symbol and trade["symbol"] != symbol:
-                    continue
-                if side and trade.get("side", "LONG") != side:
-                    continue
-                if market and trade.get("market", "SPOT") != market:
-                    continue
+                if symbol and trade["symbol"] != symbol: continue
+                if side and trade.get("side", "LONG") != side: continue
+                if market and trade.get("market", "SPOT") != market: continue
+                open_trades.append(trade)
+        return open_trades
+
+    def close_trade_by_id(self, trade_id, real_sell_price):
+        for trade in self.trades:
+            if trade["id"] == trade_id and trade["status"] == "OPEN":
                 trade["status"] = "CLOSED"
                 trade["sell_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                trade["sell_price"] = current_price
+                trade["sell_price"] = real_sell_price
                 
                 if trade.get("side", "LONG") == "LONG":
-                    trade["pnl_usdt"] = (current_price - trade["buy_price"]) * trade["amount_coin"]
+                    trade["pnl_usdt"] = (real_sell_price - trade["buy_price"]) * trade["amount_coin"]
                 else:
-                    trade["pnl_usdt"] = (trade["buy_price"] - current_price) * trade["amount_coin"]
+                    trade["pnl_usdt"] = (trade["buy_price"] - real_sell_price) * trade["amount_coin"]
                     
                 trade["pnl_percent"] = (trade["pnl_usdt"] / trade["invested_usdt"]) * 100
-                closed_trades.append(trade.copy())
-        
-        if closed_trades:
-            self.save_trades()
-            
-        return closed_trades
+                self.save_trades()
+                return trade
+        return None

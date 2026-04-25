@@ -42,11 +42,6 @@ class OrderManager:
 
     def get_balance(self, asset='USDT'):
         """Returns the free balance of the specified asset."""
-        # If there are no keys, simulate test balance to avoid spam errors from Binance
-        if not self.api_key or self.api_key == 'your_api_key_here':
-            if asset == 'USDT': return 10000.0
-            return 0.0
-            
         try:
             balance = self.exchange.fetch_balance()
             if asset in balance:
@@ -58,8 +53,6 @@ class OrderManager:
 
     def execute_spot_order(self, symbol, side, amount_coin):
         """Sends a real market order to the Spot account"""
-        if not self.api_key or self.api_key == 'your_api_key_here':
-            return True # Simulate success for tests without keys
         try:
             self.exchange.load_markets()
             amount_coin = self.exchange.amount_to_precision(symbol, amount_coin)
@@ -74,13 +67,22 @@ class OrderManager:
             logging.error(f"❌ Error in Spot order {side} on {symbol}: {e}")
             return None
 
+    @staticmethod
+    def to_futures_symbol(symbol: str) -> str:
+        """Convert a spot symbol to its perpetual futures equivalent.
+        Examples: 'BTC/USDT' -> 'BTC/USDT:USDT', 'BTC/BUSD' -> 'BTC/BUSD:BUSD'
+        """
+        parts = symbol.split('/')
+        if len(parts) != 2:
+            raise ValueError(f"Cannot convert symbol to futures format: {symbol!r}")
+        base, quote = parts
+        return f"{base}/{quote}:{quote}"
+
     def execute_futures_order(self, symbol, side, amount_coin, reduce_only=False):
         """Sends a real market order to the Futures account (LONG / SHORT)"""
-        if not self.futures_api_key or self.futures_api_key == 'your_api_key_here':
-            return True # Simulate success
         try:
             self.futures_exchange.load_markets()
-            futures_symbol = f"{symbol.split('/')[0]}/USDT:USDT" # Convert format BTC/USDT -> BTC/USDT:USDT
+            futures_symbol = self.to_futures_symbol(symbol)
             amount_coin = self.futures_exchange.amount_to_precision(futures_symbol, amount_coin)
             params = {'reduceOnly': True} if reduce_only else {}
             
@@ -95,12 +97,9 @@ class OrderManager:
             return None
 
 if __name__ == "__main__":
-    # Engine testing: try to buy some Bitcoin for 15 test dollars
     manager = OrderManager()
-    
     usdt_bal = manager.get_balance('USDT')
     logging.info(f"Free USDT balance: {usdt_bal}")
-    
-    # Buy BTC/USDT for $15 (we have $10,000 in testnet, so risk manager will allow it)
     if usdt_bal >= 15:
-        manager.buy_market_safe('BTC/USDT', 15.0, max_risk_percent=5.0)
+        amount = 15.0 / 50000  # approximate BTC amount for $15
+        manager.execute_spot_order('BTC/USDT', 'BUY', amount)

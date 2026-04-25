@@ -22,6 +22,15 @@ try:
     from src.analysis.sentiment import NewsSentimentAnalyzer
     from src.analysis.ml_predictor import MLPredictor
     from src.engine.agentic_llm import AgenticLLM
+    from src.utils.safe_json import read_json, write_json
+    from src.utils.config import (
+        MIN_TRADE_USDT, SCALPING_TRADE_FRACTION, MTF_SMA200_REFRESH,
+        FUNDING_RATE_REFRESH, SENTIMENT_BOOST_THRESHOLD, SENTIMENT_DRAG_THRESHOLD,
+        RSI_OVERBOUGHT, RSI_OVERSOLD, SCALPING_RSI_OVERBOUGHT, SCALPING_RSI_OVERSOLD,
+        FUNDING_SQUEEZE_THRESHOLD, VOLATILITY_BREAKOUT_VOLUME_MULT,
+        WAVE_DEVIATION_DEFAULT, WAVE_DEVIATION_MIN, WAVE_DEVIATION_STEP,
+        WEBSOCKET_RECONNECT_DELAY
+    )
     import pandas as pd
     import ccxt
     import debugpy
@@ -63,13 +72,15 @@ class MultiAssetTrader:
     def __init__(self, symbols=['BTC/USDT', 'SOL/USDT', 'ADA/USDT'], timeframe='1h'):
         self.symbols = symbols
         self.timeframe = timeframe
-        self.analyzers = {sym: ElliottWaveAnalyzer(deviation_percent=1.5) for sym in symbols}
+        self.analyzers = {sym: ElliottWaveAnalyzer(deviation_percent=WAVE_DEVIATION_DEFAULT) for sym in symbols}
         self.risk_managers = {sym: HullRiskManager(default_risk_usd=20.0) for sym in symbols}
         self.engine = OrderManager()
         self.tracker = TradeTracker()
         self.sentiment_analyzer = NewsSentimentAnalyzer()
         self.ml_predictor = MLPredictor()
         self.scalping_predictor = MLPredictor(model_filename='scalping_model.joblib', model_type='scalping')
+        self.futures_predictor = MLPredictor(model_filename='futures_short_model.joblib', model_type='futures')
+        self.trend_predictor = MLPredictor(model_filename='trend_model.joblib', model_type='trend')
         self.agent = AgenticLLM()
         self.state_file = 'data/state.json'
         
@@ -98,34 +109,18 @@ class MultiAssetTrader:
         self._update_state()
 
     def get_real_or_sim_balance(self, asset):
-        """Returns the real Binance balance or dynamically simulated (accounting for PnL)"""
-        if not self.engine.api_key or self.engine.api_key == 'your_api_key_here':
-            if asset == 'USDT':
-                bal = 10000.0
-                for t in self.tracker.trades:
-                    if t.get('status') == 'CLOSED':
-                        bal += t.get('pnl_usdt', 0.0)
-                    elif t.get('status') == 'OPEN':
-                        bal -= t.get('invested_usdt', 0.0)
-                return bal
-            else:
-                bal = 0.0
-                for t in self.tracker.trades:
-                    if t.get('status') == 'OPEN' and t.get('symbol', '').startswith(asset):
-                        side = t.get('side', 'LONG')
-                        bal += t.get('amount_coin', 0.0) if side == 'LONG' else -t.get('amount_coin', 0.0)
-                return bal
+        """Returns the real Binance balance"""
         return self.engine.get_balance(asset)
 
     def get_default_market_state(self):
-        return {"last_signal": "NONE", "reason": "Waiting for data...", "wave_stage": "Initializing...", "ml_prediction_text": "Analyzing...", "ml_accuracy": 0.0, "rsi": 50.0, "volatility": 0.0, "recommended_trade_size": 0.0, "recent_pivots": []}
+        return {"last_signal": "NONE", "reason": "Waiting for data...", "wave_stage": "Initializing...", "ml_prediction_text": "Analyzing...", "ml_accuracy": 0.0, "ml_accuracy_long": 0.0, "ml_accuracy_short": 0.0, "rsi": 50.0, "volatility": 0.0, "recommended_trade_size": 0.0, "recent_pivots": []}
 
     async def update_market_context(self):
         """Asynchronously updates the macro context: 1D SMA200 (once an hour) and Funding Rates (every 5 minutes)"""
         current_time = time.time()
         
         # 1. Multi-Timeframe: Update 1-day SMA200 every hour
-        if current_time - self.daily_sma_last_update > 3600:
+        if current_time - self.daily_sma_last_update > MTF_SMA200_REFRESH:
             for sym in self.symbols:
                 try:
                     ohlcv = await asyncio.to_thread(self.engine.exchange.fetch_ohlcv, sym, '1d', limit=200)
@@ -137,7 +132,7 @@ class MultiAssetTrader:
             self.daily_sma_last_update = current_time
 
         # 2. Derivatives: Update Funding Rates every 5 minutes
-        if current_time - self.funding_last_update > 300:
+        if current_time - self.funding_last_update > FUNDING_RATE_REFRESH:
             for sym in self.symbols:
                 try:
                     future_sym = f"{sym.split('/')[0]}/USDT:USDT"
@@ -170,7 +165,7 @@ class MultiAssetTrader:
         prev = df.iloc[-2]
         
         squeeze_active = (prev['bb_upper'] < prev['kc_upper']) and (prev['bb_lower'] > prev['kc_lower'])
-        vol_surge = last['volume'] > (df['volume'].rolling(20).mean().iloc[-1] * 1.5)
+        vol_surge = last['volume'] > (df['volume'].rolling(20).mean().iloc[-1] * VOLATILITY_BREAKOUT_VOLUME_MULT)
         
         if squeeze_active and last['close'] > last['bb_upper'] and vol_surge: return "BUY"
         if squeeze_active and last['close'] < last['bb_lower'] and vol_surge: return "SELL"
@@ -199,8 +194,7 @@ class MultiAssetTrader:
         self.current_state.update(kwargs)
         self.current_state['last_update'] = time.strftime("%Y-%m-%d %H:%M:%S")
         try:
-            with open(self.state_file, 'w', encoding='utf-8') as f:
-                json.dump(self.current_state, f, indent=4, ensure_ascii=False)
+            write_json(self.state_file, self.current_state)
         except Exception as e:
             logger.error(f"Failed to save state: {e}")
 
@@ -211,8 +205,8 @@ class MultiAssetTrader:
 
         p1, p2, p3, p4 = pivots[-4:]
         
-        sentiment_boost = sentiment_score > 0.15
-        sentiment_drag = sentiment_score < -0.15
+        sentiment_boost = sentiment_score > SENTIMENT_BOOST_THRESHOLD
+        sentiment_drag = sentiment_score < SENTIMENT_DRAG_THRESHOLD
         
         ml_bullish = ml_prediction == 1
         ml_bearish = ml_prediction == 0
@@ -226,7 +220,7 @@ class MultiAssetTrader:
                     return "HOLD", "Bullish impulse, but negative news sentiment.", wave_stage, "Neutral"
                 if ml_bearish:
                     return "HOLD", "Bullish impulse, but ML model expects drop.", wave_stage, "Neutral"
-                if rsi > 70:
+                if rsi > RSI_OVERBOUGHT:
                     return "HOLD", f"Bullish impulse, but asset is overbought (RSI: {rsi:.1f}).", wave_stage, "Neutral"
                 
                 # Determine what made the decisive contribution to the signal
@@ -240,7 +234,7 @@ class MultiAssetTrader:
                     return "HOLD", "Bearish structure, but positive news sentiment.", wave_stage, "Neutral"
                 if ml_bullish:
                     return "HOLD", "Bearish structure, but ML model expects rise.", wave_stage, "Neutral"
-                if rsi < 30:
+                if rsi < RSI_OVERSOLD:
                     return "HOLD", f"Bearish structure, but asset is oversold (RSI: {rsi:.1f}).", wave_stage, "Neutral"
                 return "SELL", "Bearish structure detected (ABC correction).", wave_stage, "Elliott_Wave_Correction"
 
@@ -269,9 +263,9 @@ class MultiAssetTrader:
             
         # --- STRATEGY 3: Derivatives Sentiment (Counter-trend Squeeze on funding) ---
         funding = self.funding_rates.get(symbol, 0.0)
-        if funding < -0.015 and rsi_value < 40:
+        if funding < -FUNDING_SQUEEZE_THRESHOLD and rsi_value < 40:
             return "BUY", f"Short-squeeze: Negative funding ({funding*100:.3f}%) + RSI bottom", "Shorts Reversal 🚀", "Funding_Contrarian"
-        elif funding > 0.015 and rsi_value > 60:
+        elif funding > FUNDING_SQUEEZE_THRESHOLD and rsi_value > 60:
             return "SELL", f"Long-squeeze: Extreme positive funding ({funding*100:.3f}%) + Overheated", "Longs Liquidation 📉", "Funding_Contrarian"
 
         return signal, reason, wave_stage, strategy_used
@@ -298,42 +292,53 @@ class MultiAssetTrader:
         if scalp_pred is None and hasattr(self.scalping_predictor, 'last_error') and self.scalping_predictor.last_error:
             return "HOLD", self.scalping_predictor.last_error, "ML_Error"
 
-        if scalp_pred == 1 and rsi_7_val < 65: # Buy only if not in hard overbought
+        if scalp_pred == 1 and rsi_7_val < SCALPING_RSI_OVERBOUGHT:
             return "BUY", f"Scalping signal UP (RSI: {rsi_7_val:.1f})", "Scalping_Long"
-        
-        # Logic for short scalping (Playing the downside)
-        if scalp_pred == 0 and rsi_7_val > 35:
+
+        if scalp_pred == 0 and rsi_7_val > SCALPING_RSI_OVERSOLD:
             return "SELL", f"Scalping signal DOWN (RSI: {rsi_7_val:.1f})", "Scalping_Short"
 
         return "HOLD", "No scalping signal", "Neutral"
 
-    def _execute_close(self, trade):
-        """Helper method: physically closes the order on the exchange"""
+    def _execute_close(self, trade, current_price):
+        """Helper method: physically closes the order on the exchange AND locally"""
         symbol = trade['symbol']
         amount_coin = trade['amount_coin']
         market = trade.get('market', 'SPOT')
         side = trade.get('side', 'LONG')
+        order = None
+        
         if market in ['SPOT', 'SPOT_SCALPING']:
-            self.engine.execute_spot_order(symbol, 'SELL', amount_coin)
+            order = self.engine.execute_spot_order(symbol, 'SELL', amount_coin)
         elif market in ['FUTURES', 'SCALPING']:
             close_side = 'SELL' if side == 'LONG' else 'BUY'
-            self.engine.execute_futures_order(symbol, close_side, amount_coin, reduce_only=True)
+            order = self.engine.execute_futures_order(symbol, close_side, amount_coin, reduce_only=True)
+            
+        if order:
+            real_price = order.get('average') or order.get('price') or current_price
+            closed_trade = self.tracker.close_trade_by_id(trade['id'], real_price)
+            if closed_trade:
+                logger.info(f"[{symbol}] Closed {market} position ID {trade['id']} on Binance. PnL: {closed_trade['pnl_usdt']:.2f} USDT")
+            return True
+        else:
+            logger.warning(f"[{symbol}] Failed to close {market} position ID {trade['id']} on Binance. Keeping open.")
+            return False
 
     async def process_kline(self, symbol, current_price):
         logger.info(f"[{symbol}] WebSocket tick processed - Price: {current_price}")
         self.current_state["prices"][symbol] = current_price
         await self.update_market_context()
         
-        # 1. Risk priority: Check trailing stops for open positions before new analysis
-        closed_trades = self.tracker.update_trailing_stops(symbol, current_price)
-        for t in closed_trades:
-            logger.info(f"[{symbol}] 🛡️ TRAILING STOP: Closed position ID {t['id']} ({t['market']}). PnL: {t['pnl_usdt']:.2f} USDT")
-            self._execute_close(t)
+        # 1. Risk priority: Check trailing stops. Execute on Binance before closing internally.
+        triggered_stops = self.tracker.update_trailing_stops(symbol, current_price)
+        for t in triggered_stops:
+            logger.info(f"[{symbol}] 🛡️ TRAILING STOP TRIGGERED for ID {t['id']} ({t['market']}). Executing on Binance...")
+            self._execute_close(t, current_price)
 
         sentiment = self.sentiment_analyzer.get_average_sentiment()
         
-        # --- SPOT & FUTURES ANALYSIS (1h timeframe) ---
-        logger.info(f"[{symbol}][SPOT] Starting 1h analysis...")
+        # --- MACRO ANALYSIS (1h timeframe for Spot & Futures) ---
+        logger.info(f"[{symbol}][1h] Starting macro analysis...")
         data_filepath = f"data/raw/{symbol.replace('/', '_')}_{self.timeframe}.csv.gz"
         data = self.analyzers[symbol].load_data(data_filepath)
         
@@ -352,9 +357,9 @@ class MultiAssetTrader:
         pivots = self.analyzers[symbol].calculate_zigzag(data)
         
         # Automatic scaling: if there are less than 5 waves (flat market), look for micro-waves
-        current_dev = 1.5
-        while (not pivots or len(pivots) < 5) and current_dev >= 0.3:
-            current_dev -= 0.3
+        current_dev = WAVE_DEVIATION_DEFAULT
+        while (not pivots or len(pivots) < 5) and current_dev >= WAVE_DEVIATION_MIN:
+            current_dev -= WAVE_DEVIATION_STEP
             fallback_analyzer = ElliottWaveAnalyzer(deviation_percent=current_dev)
             pivots = fallback_analyzer.calculate_zigzag(data)
             
@@ -363,12 +368,13 @@ class MultiAssetTrader:
             
         volatility = self.risk_managers[symbol].calculate_historical_volatility(data)
         trade_amount = self.risk_managers[symbol].get_position_size(data)
-        trade_amount = max(55.0, trade_amount) # Protection against error "-4164 MIN_NOTIONAL" (Min order 50 USDT)
+        trade_amount = max(MIN_TRADE_USDT, trade_amount)
         
         ml_pred = self.ml_predictor.predict(data)
+        trend_pred = self.trend_predictor.predict(data)
         rsi_value = self.calculate_rsi(data)
         
-        signal, reason, wave_stage, strategy_used = self.evaluate_all_strategies(symbol, data, pivots, sentiment, ml_pred, rsi_value)
+        signal, reason, wave_stage, strategy_used = self.evaluate_all_strategies(symbol, data, pivots, sentiment, trend_pred, rsi_value)
         
         if not self.ml_predictor.is_loaded:
             ml_text = "MODEL NOT FOUND"
@@ -395,13 +401,32 @@ class MultiAssetTrader:
             "wave_stage": wave_stage,
             "ml_prediction_text": ml_text,
             "ml_accuracy": round(self.ml_predictor.accuracy, 2),
+            "ml_accuracy_long": round(self.ml_predictor.long_accuracy, 2),
+            "ml_accuracy_short": round(self.ml_predictor.short_accuracy, 2),
             "rsi": round(rsi_value, 2),
             "volatility": round(volatility*100, 2), 
             "recommended_trade_size": trade_amount,
             "recent_pivots": formatted_pivots
         }
-        # Temporarily duplicate in FUTURES, since there is no separate logic for them
-        self.current_state["market_data"]["FUTURES"][symbol] = self.current_state["market_data"]["SPOT"][symbol]
+        
+        # Build FUTURES state with specific Futures ML Model predictions
+        fut_pred = self.futures_predictor.predict(data)
+        if not self.futures_predictor.is_loaded:
+            fut_ml_text = "MODEL NOT FOUND"
+        elif fut_pred is None:
+            fut_ml_text = "ERROR" if self.futures_predictor.last_error else "DATA COLLECTION"
+        elif fut_pred == 1:
+            fut_ml_text = "DOWN 🔽 (Short)"
+        else:
+            fut_ml_text = "UP/HOLD 🔼"
+
+        self.current_state["market_data"]["FUTURES"][symbol] = self.current_state["market_data"]["SPOT"][symbol].copy()
+        self.current_state["market_data"]["FUTURES"][symbol].update({
+            "ml_prediction_text": fut_ml_text,
+            "ml_accuracy": round(self.futures_predictor.accuracy, 2),
+            "ml_accuracy_long": round(self.futures_predictor.long_accuracy, 2),
+            "ml_accuracy_short": round(self.futures_predictor.short_accuracy, 2)
+        })
 
         # --- SCALPING ANALYSIS (1m timeframe) ---
         logger.info(f"[{symbol}][SCALPING] Starting 1m analysis...")
@@ -424,9 +449,11 @@ class MultiAssetTrader:
                 "wave_stage": "N/A", # Waves are not used in scalping
                 "ml_prediction_text": scalp_ml_text,
                 "ml_accuracy": round(self.scalping_predictor.accuracy, 2),
+                "ml_accuracy_long": round(self.scalping_predictor.long_accuracy, 2),
+                "ml_accuracy_short": round(self.scalping_predictor.short_accuracy, 2),
                 "rsi": self.calculate_rsi(data_1m, period=7), # Fast RSI
                 "volatility": self.risk_managers[symbol].calculate_historical_volatility(data_1m) * 100,
-                "recommended_trade_size": max(55.0, self.risk_managers[symbol].get_position_size(data_1m) * 0.25), # Account for Binance limits
+                "recommended_trade_size": max(MIN_TRADE_USDT, self.risk_managers[symbol].get_position_size(data_1m) * SCALPING_TRADE_FRACTION),
                 "recent_pivots": []
             }
             
@@ -439,22 +466,26 @@ class MultiAssetTrader:
                 # 1. Scalping on Futures (LONG and SHORT)
                 has_open_scalp_futures = any(t["status"] == "OPEN" and t["symbol"] == symbol and t.get("market") == "SCALPING" for t in self.tracker.trades)
                 if not has_open_scalp_futures:
-                    if self.engine.execute_futures_order(symbol, exec_side, amount_coin):
-                        self.tracker.open_trade(symbol, scalp_trade_amount, current_price, strategy=scalp_strategy, market="SCALPING", side=side)
-                        logger.info(f"-> [SCALPING FUTURES] Trade {side} {scalp_trade_amount:.2f} USDT opened (Price: {current_price}).")
+                    order = self.engine.execute_futures_order(symbol, exec_side, amount_coin)
+                    if order:
+                        real_price = order.get('average') or order.get('price') or current_price
+                        self.tracker.open_trade(symbol, scalp_trade_amount, real_price, strategy=scalp_strategy, market="SCALPING", side=side)
+                        logger.info(f"-> [SCALPING FUTURES] Trade {side} {scalp_trade_amount:.2f} USDT opened on Binance (Real Price: {real_price}).")
                         
                 # 2. Scalping on Spot (LONG only)
                 if scalp_signal == "BUY":
                     has_open_scalp_spot = any(t["status"] == "OPEN" and t["symbol"] == symbol and t.get("market") == "SPOT_SCALPING" for t in self.tracker.trades)
                     if not has_open_scalp_spot:
-                        if self.engine.execute_spot_order(symbol, 'BUY', amount_coin):
-                            self.tracker.open_trade(symbol, scalp_trade_amount, current_price, strategy=scalp_strategy, market="SPOT_SCALPING", side="LONG")
-                            logger.info(f"-> [SCALPING SPOT] Trade LONG {scalp_trade_amount:.2f} USDT opened (Price: {current_price}).")
+                        order = self.engine.execute_spot_order(symbol, 'BUY', amount_coin)
+                        if order:
+                            real_price = order.get('average') or order.get('price') or current_price
+                            self.tracker.open_trade(symbol, scalp_trade_amount, real_price, strategy=scalp_strategy, market="SPOT_SCALPING", side="LONG")
+                            logger.info(f"-> [SCALPING SPOT] Trade LONG {scalp_trade_amount:.2f} USDT opened on Binance (Real Price: {real_price}).")
                             
                 # 3. Scalping on Spot (Instant close LONG on SELL signal)
                 elif scalp_signal == "SELL":
-                    closed_scalp_spot = self.tracker.close_trades(current_price, symbol=symbol, side="LONG", market="SPOT_SCALPING")
-                    for t in closed_scalp_spot: self._execute_close(t)
+                    open_spot_scalps = self.tracker.get_open_trades(symbol=symbol, side="LONG", market="SPOT_SCALPING")
+                    for t in open_spot_scalps: self._execute_close(t, current_price)
         
         self._update_state(
             status=f"Analysis for {symbol} complete",
@@ -467,8 +498,8 @@ class MultiAssetTrader:
 
         if signal == "BUY":
             # 1. Close possible shorts on Futures (position reversal)
-            closed_shorts = self.tracker.close_trades(current_price, symbol=symbol, side="SHORT", market="FUTURES")
-            for t in closed_shorts: self._execute_close(t)
+            open_shorts = self.tracker.get_open_trades(symbol=symbol, side="SHORT", market="FUTURES")
+            for t in open_shorts: self._execute_close(t, current_price)
             
             # Protection against order spam: check if there is an open position for this coin
             has_open = any(t["status"] == "OPEN" and t["symbol"] == symbol and t.get("side") == "LONG" and t.get("market") == "SPOT" for t in self.tracker.trades)
@@ -482,9 +513,11 @@ class MultiAssetTrader:
                 if decision == "APPROVED":
                     logger.info(f"[{symbol}] ✅ AGENT APPROVED ({agent_reason}). Buying for {trade_amount} USDT...")
                     amount_coin = trade_amount / current_price
-                    if self.engine.execute_spot_order(symbol, 'BUY', amount_coin):
-                        self.tracker.open_trade(symbol, trade_amount, current_price, strategy=strategy_used, market="SPOT", side="LONG")
-                        logger.info(f"-> [SPOT] Trade LONG {trade_amount:.2f} USDT opened (Price: {current_price:.2f}).")
+                    order = self.engine.execute_spot_order(symbol, 'BUY', amount_coin)
+                    if order:
+                        real_price = order.get('average') or order.get('price') or current_price
+                        self.tracker.open_trade(symbol, trade_amount, real_price, strategy=strategy_used, market="SPOT", side="LONG")
+                        logger.info(f"-> [SPOT] Trade LONG {trade_amount:.2f} USDT opened on Binance (Real Price: {real_price:.2f}).")
                 else:
                     logger.warning(f"[{symbol}] 🚫 GEMINI VETO (Trade cancelled): {agent_reason}")
                     self.current_state["market_data"]["SPOT"][symbol]["last_signal"] = "HOLD"
@@ -493,19 +526,20 @@ class MultiAssetTrader:
                 
         elif signal == "SELL":
             # 1. Close macro-trend longs on Spot
-            closed_longs = self.tracker.close_trades(current_price, symbol=symbol, side="LONG", market="SPOT")
-            for t in closed_longs:
-                logger.info(f"[{symbol}] Closed SPOT position ID {t['id']}. PnL: {t['pnl_usdt']:.2f} USDT")
-                self._execute_close(t)
+            open_longs = self.tracker.get_open_trades(symbol=symbol, side="LONG", market="SPOT")
+            for t in open_longs:
+                self._execute_close(t, current_price)
                 
             # 2. If it's a correction signal, open a SHORT on futures!
             if strategy_used in ["Elliott_Wave_Correction", "Funding_Contrarian"]:
                 has_open_short = any(t["status"] == "OPEN" and t["symbol"] == symbol and t.get("side") == "SHORT" and t.get("market") == "FUTURES" for t in self.tracker.trades)
                 if not has_open_short:
                     amount_coin = trade_amount / current_price
-                    if self.engine.execute_futures_order(symbol, 'SELL', amount_coin):
-                        self.tracker.open_trade(symbol, trade_amount, current_price, strategy=strategy_used, market="FUTURES", side="SHORT")
-                        logger.info(f"-> [FUTURES] Trade SHORT {trade_amount:.2f} USDT opened (Price: {current_price:.2f}).")
+                    order = self.engine.execute_futures_order(symbol, 'SELL', amount_coin)
+                    if order:
+                        real_price = order.get('average') or order.get('price') or current_price
+                        self.tracker.open_trade(symbol, trade_amount, real_price, strategy=strategy_used, market="FUTURES", side="SHORT")
+                        logger.info(f"-> [FUTURES] Trade SHORT {trade_amount:.2f} USDT opened on Binance (Real Price: {real_price:.2f}).")
 
     async def binance_websocket(self):
         # Perform initial analysis before starting WebSocket so the dashboard updates instantly
@@ -537,10 +571,8 @@ class MultiAssetTrader:
                 async with websockets.connect(url) as ws:
                     while True:
                         is_running = True
-                        if os.path.exists('data/control.json'):
-                            with open('data/control.json', 'r', encoding='utf-8') as f:
-                                ctrl = json.load(f)
-                                is_running = ctrl.get('running', True)
+                        ctrl = read_json('data/control.json', default={})
+                        is_running = ctrl.get('running', True)
                                 
                         if not is_running:
                             self._update_state(status="Stopped (Paused)")
@@ -558,18 +590,24 @@ class MultiAssetTrader:
                         kline_data = raw_data.get('data', raw_data)
                         
                         if 'k' in kline_data:
-                            kline = kline_data['k']
-                            is_closed = kline['x']
-                            symbol_raw = kline_data['s']
+                            kline = kline_data.get('k', {})
+                            is_closed = kline.get('x', False)
+                            symbol_raw = kline_data.get('s', '')
                             symbol = next((s for s in self.symbols if s.replace('/', '') == symbol_raw), None)
-                            
+
                             if symbol and is_closed:
-                                current_price = float(kline['c'])
+                                try:
+                                    current_price = float(kline['c'])
+                                    if current_price <= 0:
+                                        raise ValueError(f"Non-positive price: {current_price}")
+                                except (KeyError, ValueError, TypeError) as e:
+                                    logger.warning(f"Invalid kline price data: {e} — skipping tick.")
+                                    continue
                                 await self.process_kline(symbol, current_price)
                                 
             except Exception as e:
-                logger.error(f"WebSocket disconnected or error: {e}. Reconnecting in 5 seconds...")
-                await asyncio.sleep(5)
+                logger.error(f"WebSocket disconnected or error: {e}. Reconnecting in {WEBSOCKET_RECONNECT_DELAY}s...")
+                await asyncio.sleep(WEBSOCKET_RECONNECT_DELAY)
 
     def run(self):
         logger.info("Checking Binance REST API connection...")

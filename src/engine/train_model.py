@@ -1,79 +1,59 @@
 import os
+import sys
+import json
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
 import joblib
 
+base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if base_dir not in sys.path:
+    sys.path.insert(0, base_dir)
+
+from src.analysis.feature_engineering import (
+    add_taker_and_trade_features, add_rsi, add_macd,
+    add_bollinger_bands, add_roc, add_time_features
+)
+
+
 def prepare_data(filepath):
     print(f"Loading data from {filepath}...")
-    # Load CSV into a pandas DataFrame
     df = pd.read_csv(filepath)
-    
-    # Convert timestamp to datetime and sort chronologically
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     df = df.sort_values('timestamp')
-    
-    print("Engineering features (indicators)...")
-    # 1. Price return (percentage change)
+
+    print("Engineering features...")
     df['return'] = df['close'].pct_change()
-    # 2. Simple Moving Averages
     df['sma_7'] = df['close'].rolling(window=7).mean()
     df['sma_30'] = df['close'].rolling(window=30).mean()
-    # 3. Volatility (rolling standard deviation)
     df['volatility'] = df['return'].rolling(window=7).std()
-    
-    # 4. Distance from price to moving averages (percentage)
     df['dist_sma_7'] = df['close'] / df['sma_7'] - 1
     df['dist_sma_30'] = df['close'] / df['sma_30'] - 1
-    
-    # 5. Classic RSI (14)
-    delta = df['close'].diff()
-    df['rsi_14'] = 100 - (100 / (1 + (delta.clip(lower=0).ewm(com=13, adjust=False).mean() / (-1 * delta.clip(upper=0)).ewm(com=13, adjust=False).mean())))
-    
-    # 6. MACD (Trend Momentum)
-    exp1 = df['close'].ewm(span=12, adjust=False).mean()
-    exp2 = df['close'].ewm(span=26, adjust=False).mean()
-    df['macd'] = exp1 - exp2
-    df['macd_signal'] = df['macd'].ewm(span=9, adjust=False).mean()
-    df['macd_hist'] = df['macd'] - df['macd_signal']
-    
-    # 7. Volume Momentum (Volume strength relative to 14-day average)
+
+    df = add_rsi(df, 14)
+    df = add_macd(df)
+    df = add_bollinger_bands(df, window=20)
+    df = add_roc(df, [3, 7, 14])
+    df = add_time_features(df)
+    df = add_taker_and_trade_features(df)
+
     df['vol_sma_14'] = df['volume'].rolling(window=14).mean()
     df['volume_momentum'] = df['volume'] / df['vol_sma_14']
-    
-    # 8. Stochastic Oscillator (Where we are in the 14-day range)
+
     df['high_14'] = df['high'].rolling(window=14).max()
     df['low_14'] = df['low'].rolling(window=14).min()
-    high_low_diff = (df['high_14'] - df['low_14']).replace(0, 0.0001) # Protection against division by zero
-    df['stoch_k'] = (df['close'] - df['low_14']) / high_low_diff * 100
-    
-    # 9. Inertia (Return for yesterday and the day before)
+    hl_diff = (df['high_14'] - df['low_14']).replace(0, 0.0001)
+    df['stoch_k'] = (df['close'] - df['low_14']) / hl_diff * 100
+
     df['return_lag1'] = df['return'].shift(1)
     df['return_lag2'] = df['return'].shift(2)
-    
-    # 10. Additional inertial and volatility features
     df['return_lag3'] = df['return'].shift(3)
     df['return_lag5'] = df['return'].shift(5)
     df['atr_pct'] = (df['high'] - df['low']) / df['close']
-    
-    if 'taker_buy_base' in df.columns:
-        df['taker_buy_ratio'] = df['taker_buy_base'] / df['volume'].replace(0, 0.0001)
-    else:
-        df['taker_buy_ratio'] = 0.5
-        
-    if 'trades_count' in df.columns:
-        df['avg_trade_size'] = df['volume'] / df['trades_count'].replace(0, 1)
-    else:
-        df['avg_trade_size'] = 0.0
 
-    # Target Variable: 1 if the NEXT candle's close is higher than CURRENT close, else 0
-    # We shift by -1 to peek at the next row's closing price
-    df['target'] = (df['close'].shift(-1) > df['close']).astype(int)
-    
-    # Drop rows with NaN values created by rolling windows and shifting
+    df['target'] = (df['close'].shift(-2) > df['close']).astype(int)
     df = df.dropna()
-    
     return df
 
 def train_model():
@@ -114,7 +94,7 @@ def train_model():
     combined_df = pd.concat(all_data, ignore_index=True)
     
     # Define the features (X) the model will use to make predictions
-    feature_columns = ['return', 'volatility', 'dist_sma_7', 'dist_sma_30', 'rsi_14', 'macd', 'macd_hist', 'volume_momentum', 'stoch_k', 'return_lag1', 'return_lag2', 'return_lag3', 'return_lag5', 'atr_pct', 'taker_buy_ratio', 'avg_trade_size']
+    feature_columns = ['return', 'volatility', 'dist_sma_7', 'dist_sma_30', 'rsi_14', 'macd', 'macd_hist', 'volume_momentum', 'stoch_k', 'return_lag1', 'return_lag2', 'return_lag3', 'return_lag5', 'atr_pct', 'taker_buy_ratio', 'avg_trade_size', 'hour', 'day_of_week', 'roc_14', 'roc_3', 'roc_7', 'bb_pb']
     X = combined_df[feature_columns]
     
     # Define the target (y) the model is trying to predict
@@ -122,18 +102,23 @@ def train_model():
     
     print("Splitting data into training and testing sets...")
     # IMPORTANT: shuffle=False prevents "look-ahead bias" in time-series data
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, shuffle=False)
     
     print("Training HistGradientBoosting Classifier...")
-    # Gradient boosting works much better with complex financial data than random forest
-    model = HistGradientBoostingClassifier(random_state=42, max_iter=300, max_depth=5, learning_rate=0.05, l2_regularization=0.1)
+    # Upgraded hyperparams: more iterations, early stopping, and balanced weights
+    model = HistGradientBoostingClassifier(random_state=42, max_iter=500, max_depth=6, learning_rate=0.03, l2_regularization=0.5, early_stopping=True, class_weight='balanced')
     model.fit(X_train, y_train)
     
     print("Evaluating model...")
     predictions = model.predict(X_test)
     accuracy = accuracy_score(y_test, predictions)
     
+    report = classification_report(y_test, predictions, output_dict=True, zero_division=0)
+    long_acc = report.get('1', {}).get('precision', 0.0) * 100
+    short_acc = report.get('0', {}).get('precision', 0.0) * 100
+    
     print(f"\nModel Accuracy: {accuracy * 100:.2f}%")
+    print(f"Long (UP) Precision: {long_acc:.2f}% | Short (DOWN) Precision: {short_acc:.2f}%")
     print("\nClassification Report:")
     print(classification_report(y_test, predictions))
     
@@ -145,11 +130,9 @@ def train_model():
     joblib.dump(model, model_path)
     print(f"\nModel successfully saved to {model_path}")
     
-    # Save accuracy metadata for the dashboard
-    meta_path = os.path.join(models_dir, 'model_meta.json')
-    import json
-    with open(meta_path, 'w') as f:
-        json.dump({"accuracy": accuracy * 100}, f)
+    from src.utils.safe_json import write_json
+    meta_path = os.path.join(models_dir, 'btc_rf_model_meta.json')
+    write_json(meta_path, {"accuracy": accuracy * 100, "long_accuracy": long_acc, "short_accuracy": short_acc})
 
 if __name__ == "__main__":
     train_model()

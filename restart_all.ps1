@@ -6,9 +6,8 @@ Write-Host "   AI TRADER: POWERSHELL AUTO-SETUP"
 Write-Host "==========================================" -ForegroundColor Cyan
 
 Write-Host "`n[1/5] Terminating old background processes..." -ForegroundColor Yellow
-taskkill /F /IM python.exe /T 2>&1 | Out-Null
-Stop-Process -Name "python" -Force -ErrorAction SilentlyContinue
-Get-Process | Where-Object { $_.MainWindowTitle -match "AI Trading Bot|AI Trading Dashboard" } | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'python.exe' -and ($_.CommandLine -match 'src\\main.py' -or $_.CommandLine -match 'src\\dashboard\\app.py' -or $_.CommandLine -match 'server.py') } | Invoke-CimMethod -MethodName Terminate | Out-Null
+Get-Process | Where-Object { $_.MainWindowTitle -match "AI Trading Bot|AI Trading Dashboard|AI Trading MCP Server" } | Stop-Process -Force -ErrorAction SilentlyContinue
 
 Start-Sleep -Seconds 2
 
@@ -22,6 +21,7 @@ Write-Host "`n[3/5] Installing all missing libraries..." -ForegroundColor Yellow
 $pythonPath = ".\venv\Scripts\python.exe"
 $pipPath = ".\venv\Scripts\pip.exe"
 & $pythonPath -m pip install --quiet --upgrade pip
+& $pipPath install --quiet -r requirements.txt
 & $pipPath install --quiet websockets vaderSentiment ccxt python-dotenv flask pandas scikit-learn joblib mcp google-generativeai youtube-transcript-api beautifulsoup4 requests debugpy
 Write-Host "Libraries installed successfully." -ForegroundColor Green
 

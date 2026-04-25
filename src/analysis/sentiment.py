@@ -1,5 +1,5 @@
 import urllib.request
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import logging
 import time

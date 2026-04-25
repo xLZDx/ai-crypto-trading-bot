@@ -156,8 +156,12 @@
                         <div class="text-xl md:text-2xl font-bold text-blue-400 mt-1" id="wave-stage">Analyzing...</div>
                     </div>
                     <div class="bg-slate-800 p-5 rounded-lg border border-purple-500/30 shadow-[0_0_15px_rgba(168,85,247,0.1)] flex flex-col justify-center items-end relative">
-                        <div class="absolute top-2 left-2 text-[10px] bg-purple-900/50 text-purple-300 px-2 py-1 rounded border border-purple-500/30 font-bold">
-                            Accuracy: <span id="ml-accuracy">--</span>%
+                        <div id="accuracy-badge-container" class="absolute top-2 left-2 text-sm md:text-base bg-purple-900/50 text-purple-300 px-3 py-1.5 rounded border border-purple-500/30 font-bold">
+                            <div class="flex gap-2">
+                                <span class="text-green-400" title="Long Accuracy">L: <span id="ml-accuracy-long">--</span>%</span>
+                                <span class="text-slate-500">|</span>
+                                <span class="text-red-400" title="Short Accuracy">S: <span id="ml-accuracy-short">--</span>%</span>
+                            </div>
                         </div>
                         <span class="text-xs text-slate-400 uppercase tracking-wider mt-2 flex items-center">🤖 Movement Vector (ML) <span class="active-symbol-label ml-2 px-1.5 py-0.5 rounded bg-slate-700 text-white text-[10px]">BTC/USDT</span></span>
                         <div class="text-2xl md:text-3xl font-bold mt-1 text-right" id="ml-prediction">Analyzing...</div>
@@ -245,6 +249,21 @@
                                 <tr><td colspan="5" class="py-4 text-center text-slate-500">Loading...</td></tr>
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ML Analytics Card -->
+            <div class="card">
+                <div class="flex justify-between items-center p-4 cursor-pointer hover:bg-slate-800 transition-colors rounded-t-lg" onclick="toggleCard('ml-analytics-content', 'ml-analytics-chevron')">
+                    <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center">
+                        <svg id="ml-analytics-chevron" class="w-4 h-4 mr-2 transform transition-transform duration-200 -rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                        🧠 Machine Learning Live Analytics
+                    </h2>
+                </div>
+                <div id="ml-analytics-content" class="p-6 pt-0 hidden">
+                    <div id="ml-analytics-container" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                        <div class="text-center text-slate-500 py-2 col-span-full">Loading ML metrics...</div>
                     </div>
                 </div>
             </div>
@@ -472,24 +491,29 @@
                 let totalUnrealizedPnl = 0;
                 let openOrders = 0;
                 
-                // Then filter trades only for the selected market for the tables below
-                const marketTrades = allTrades.filter(t => {
-                    const m = t.market || 'SPOT';
-                    if (activeMarket === 'SCALPING') return m === 'SCALPING' || m === 'SPOT_SCALPING';
-                    return m === activeMarket;
-                }).reverse();
-                let activeHtml = '';
-                let historyHtml = '';
-                
-                for (const t of marketTrades) {
+                // Calculate global PNL and open orders across ALL markets
+                for (const t of allTrades) {
                     if (t.status === 'CLOSED') {
-                        totalPnl += t.pnl_usdt;
+                        totalPnl += (t.pnl_usdt || 0);
                     } else {
                         openOrders++;
                         if (t.unrealized_pnl !== undefined) {
                             totalUnrealizedPnl += t.unrealized_pnl;
                         }
                     }
+                }
+
+                // Filter trades only for the selected market for the tables below
+                const marketTrades = allTrades.filter(t => {
+                    const m = t.market || 'SPOT';
+                    if (activeMarket === 'SCALPING') return m === 'SCALPING' || m === 'SPOT_SCALPING';
+                    return m === activeMarket;
+                }).reverse();
+                
+                let activeHtml = '';
+                let historyHtml = '';
+                
+                for (const t of marketTrades) {
 
                     const sideColor = (t.side || 'LONG') === 'LONG' ? 'text-green-400' : 'text-red-400';
                     const sideIcon = (t.side || 'LONG') === 'LONG' ? '📈 LONG' : '📉 SHORT';
@@ -551,6 +575,52 @@
                         openStrats.add(el.id);
                     }
                 });
+
+                // --- ML Live Analytics Calculations ---
+                const mlStats = {
+                    'ML_Trend_Following': { trades: 0, wins: 0, losses: 0, grossProfit: 0, grossLoss: 0, totalPnl: 0 },
+                    'Scalping_Long': { trades: 0, wins: 0, losses: 0, grossProfit: 0, grossLoss: 0, totalPnl: 0 },
+                    'Scalping_Short': { trades: 0, wins: 0, losses: 0, grossProfit: 0, grossLoss: 0, totalPnl: 0 }
+                };
+                for (const t of allTrades) {
+                    if (t.status !== 'CLOSED') continue; // Only measure completed iterations
+                    const strat = t.strategy || 'Base_Model';
+                    if (!mlStats[strat]) {
+                        mlStats[strat] = { trades: 0, wins: 0, losses: 0, grossProfit: 0, grossLoss: 0, totalPnl: 0 };
+                    }
+                    mlStats[strat].trades++;
+                    mlStats[strat].totalPnl += (t.pnl_usdt || 0);
+                    if (t.pnl_usdt > 0) {
+                        mlStats[strat].wins++;
+                        mlStats[strat].grossProfit += t.pnl_usdt;
+                    } else if (t.pnl_usdt < 0) {
+                        mlStats[strat].losses++;
+                        mlStats[strat].grossLoss += Math.abs(t.pnl_usdt);
+                    }
+                }
+
+                let mlHtml = '';
+                for (const [strat, data] of Object.entries(mlStats)) {
+                    const winRate = data.trades > 0 ? ((data.wins / data.trades) * 100).toFixed(1) : '0.0';
+                    const profitFactor = data.grossLoss > 0 ? (data.grossProfit / data.grossLoss).toFixed(2) : (data.grossProfit > 0 ? '∞' : '0.00');
+                    const expectedValue = data.trades > 0 ? (data.totalPnl / data.trades).toFixed(2) : '0.00';
+                    
+                    mlHtml += `
+                        <div class="bg-slate-800/40 p-4 rounded-lg border border-slate-700 shadow-inner">
+                            <h3 class="text-blue-400 font-bold mb-3 border-b border-slate-700/50 pb-2">${strat}</h3>
+                            <div class="flex justify-between text-xs mb-2"><span class="text-slate-400" title="Completed model inferences">Live Executions</span> <span class="font-mono text-white font-bold">${data.trades}</span></div>
+                            <div class="flex justify-between text-xs mb-2"><span class="text-slate-400">Live Win Rate</span> <span class="font-mono font-bold ${winRate >= 50 ? 'text-green-400' : 'text-red-400'}">${winRate}%</span></div>
+                            <div class="flex justify-between text-xs mb-2"><span class="text-slate-400">Wins / Losses</span> <span class="font-mono text-slate-300"><span class="text-green-400">${data.wins}</span> / <span class="text-red-400">${data.losses}</span></span></div>
+                            <div class="flex justify-between text-xs mb-2"><span class="text-slate-400" title="Gross Profit / Gross Loss">Profit Factor</span> <span class="font-mono text-yellow-400 font-bold">${profitFactor}</span></div>
+                            <div class="flex justify-between text-xs"><span class="text-slate-400" title="Average profit per execution">Expected Value</span> <span class="font-mono ${expectedValue >= 0 ? 'text-green-400' : 'text-red-400'}">${expectedValue > 0 ? '+' : ''}${expectedValue} USDT</span></div>
+                        </div>
+                    `;
+                }
+                document.getElementById('ml-analytics-container').innerHTML = mlHtml || `
+                    <div class="text-center text-slate-500 py-6 col-span-full bg-slate-800/30 rounded border border-slate-700 border-dashed">
+                        Waiting for closed trades to calculate live ML performance...
+                    </div>
+                `;
 
                 // Render Strategy Stats
                 let stratHtml = '';
@@ -659,7 +729,16 @@
                     document.getElementById('wave-stage').innerText = symData.wave_stage || 'Waiting...';
                     const mlEl = document.getElementById('ml-prediction');
                     mlEl.innerText = symData.ml_prediction_text || 'Waiting...';
-                    document.getElementById('ml-accuracy').innerText = (symData.ml_accuracy === 0 || !symData.ml_accuracy) ? '--' : symData.ml_accuracy.toFixed(2);
+                    
+                    const accContainer = document.getElementById('accuracy-badge-container');
+                    if (activeMarket === 'FUTURES') {
+                        const lAcc = (symData.ml_accuracy_long === 0 || !symData.ml_accuracy_long) ? '--' : symData.ml_accuracy_long.toFixed(2);
+                        const sAcc = (symData.ml_accuracy_short === 0 || !symData.ml_accuracy_short) ? '--' : symData.ml_accuracy_short.toFixed(2);
+                        accContainer.innerHTML = `<div class="flex gap-2"><span class="text-green-400" title="Long Accuracy">L: <span>${lAcc}</span>%</span><span class="text-slate-500">|</span><span class="text-red-400" title="Short Accuracy">S: <span>${sAcc}</span>%</span></div>`;
+                    } else {
+                        const overallAcc = (symData.ml_accuracy === 0 || !symData.ml_accuracy) ? '--' : symData.ml_accuracy.toFixed(2);
+                        accContainer.innerHTML = `Accuracy: <span class="text-purple-300">${overallAcc}</span>%`;
+                    }
                     
                     if (symData.ml_prediction_text && symData.ml_prediction_text.includes('UP')) {
                         mlEl.className = 'text-2xl md:text-3xl font-bold text-green-500 animate-pulse';
@@ -752,11 +831,16 @@
                 const res = await fetch('/api/logs');
                 const data = await res.json();
                 
-                // Filter logs by prefixes (will be added in bot later)
+                // Filter logs intelligently to share general logs between Spot and Futures
                 const filteredLogs = data.logs.filter(line => {
-                    if (activeMarket === 'SPOT') return !line.includes('[FUTURES]') && !line.includes('[SCALPING]');
-                    if (activeMarket === 'FUTURES') return (line.includes('[FUTURES]') || line.includes('Futures')) && !line.includes('[SCALPING]');
-                    if (activeMarket === 'SCALPING') return line.includes('[SCALPING]') || line.includes('Scalping');
+                    const isScalping = line.includes('SCALPING') || line.includes('Scalping');
+                    const isFutures = line.includes('FUTURES') || line.includes('Futures');
+                    const isSpot = line.includes('[SPOT]') || line.includes(' SPOT ') || line.includes('-> [SPOT]');
+                    const isGeneral = !isScalping && !isFutures && !isSpot;
+
+                    if (activeMarket === 'SCALPING') return isScalping;
+                    if (activeMarket === 'FUTURES') return isFutures || isGeneral;
+                    if (activeMarket === 'SPOT') return isSpot || isGeneral;
                     return true;
                 });
                 

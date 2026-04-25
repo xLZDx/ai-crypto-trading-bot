@@ -1,4 +1,8 @@
 import ccxt
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 def test_keys(name, api_key, api_secret):
     print(f"\n=========================================")
@@ -54,15 +58,18 @@ if __name__ == "__main__":
     keys = [
         {
             "name": "Binance Spot Testnet Keys",
-            "api_key": "A95hQkSlCmSm0bmAWPHtp2uQvqCYhwu6cq6pEDmW4Us3i8g8QNE7gQwa0fn40T6m",
-            "api_secret": "s2LDjVukmQ1F1Ixf7g3pS2kyFVLCG6dKG5J8Jj02X7AVa180VfaaRDSekBv6HdNZ"
+            "api_key": os.getenv("BINANCE_SPOT_TESTNET_API_KEY", ""),
+            "api_secret": os.getenv("BINANCE_SPOT_TESTNET_API_SECRET", "")
         },
         {
             "name": "Binance Futures Testnet Keys",
-            "api_key": "t34zodrmjPZzTaooLSb8RU2Tgobmulhojen6kOT1keBVkaYfRPxtgx6tzosM80rU",
-            "api_secret": "Qh19J7PiIv6GmD2LLzldhFWS9jS00YwzpPzKDAJoxBZKLyzh4ghn14z6VvUmuYyQ"
+            "api_key": os.getenv("BINANCE_FUTURES_TESTNET_API_KEY", ""),
+            "api_secret": os.getenv("BINANCE_FUTURES_TESTNET_API_SECRET", "")
         }
     ]
-    
+
     for k in keys:
+        if not k["api_key"] or not k["api_secret"]:
+            print(f"\n[SKIP] {k['name']}: env vars not set.")
+            continue
         test_keys(k["name"], k["api_key"], k["api_secret"])

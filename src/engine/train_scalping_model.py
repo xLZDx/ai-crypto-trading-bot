@@ -1,49 +1,44 @@
 import os
+import sys
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, classification_report
 import joblib
+
+base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if base_dir not in sys.path:
+    sys.path.insert(0, base_dir)
+
+from src.analysis.feature_engineering import (
+    add_taker_and_trade_features, add_rsi, add_macd,
+    add_bollinger_bands, add_roc, add_time_features
+)
+
 
 def prepare_scalping_data(filepath):
     print(f"Loading data for Scalping Pipeline from {filepath}...")
     df = pd.read_csv(filepath)
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     df = df.sort_values('timestamp')
-    
-    # === SHORT TERM SCALPING FEATURES (1m timeframe) ===
+
     df['return'] = df['close'].pct_change()
-    
-    # Fast RSI (7 minutes)
-    delta = df['close'].diff()
-    df['rsi_7'] = 100 - (100 / (1 + (delta.clip(lower=0).ewm(com=6, adjust=False).mean() / (-1 * delta.clip(upper=0)).ewm(com=6, adjust=False).mean())))
-    
-    # Fast MACD (5, 13) for finding micro-bounces
-    exp1 = df['close'].ewm(span=5, adjust=False).mean()
-    exp2 = df['close'].ewm(span=13, adjust=False).mean()
-    df['macd_fast'] = exp1 - exp2
-    
-    # Volume surges (Scalping on micro-pumps)
+    df = add_rsi(df, period=7, col_name='rsi_7')
+    df = add_macd(df, fast=5, slow=13, signal=3, prefix='')
+    df.rename(columns={'macd': 'macd_fast', 'macd_signal': 'macd_fast_signal', 'macd_hist': 'macd_fast_hist'}, errors='ignore', inplace=True)
+    df = add_bollinger_bands(df, window=10)
+    df.rename(columns={'bb_pb': 'bb_pb', 'bb_upper': 'bb_upper', 'bb_lower': 'bb_lower'}, inplace=True)
+    df = add_roc(df, [3, 5, 10])
+    df = add_time_features(df)
+    df = add_taker_and_trade_features(df)
+
     df['vol_sma_5'] = df['volume'].rolling(window=5).mean()
     df['volume_surge'] = (df['volume'] > df['vol_sma_5'] * 2.0).astype(int)
-    
-    # Micro-support (Over 15 minutes)
+
     df['low_15'] = df['low'].rolling(15).min()
     df['dist_to_micro_supp'] = (df['close'] - df['low_15']) / df['close']
-    
-    if 'taker_buy_base' in df.columns:
-        df['taker_buy_ratio'] = df['taker_buy_base'] / df['volume'].replace(0, 0.0001)
-    else:
-        df['taker_buy_ratio'] = 0.5
-        
-    if 'trades_count' in df.columns:
-        df['avg_trade_size'] = df['volume'] / df['trades_count'].replace(0, 1)
-    else:
-        df['avg_trade_size'] = 0.0
 
-    # TARGET: Will the price rise in the next 3 minutes?
-    df['target_scalp'] = (df['close'].shift(-3) > df['close']).astype(int)
-    
+    df['target_scalp'] = (df['close'].shift(-5) > df['close']).astype(int)
     df = df.dropna()
     return df
 
@@ -70,9 +65,9 @@ def train_scalping_model():
 
         if os.path.exists(full_data_path):
             df = prepare_scalping_data(full_data_path)
-            # MEMORY LIMIT: Take only the last 100,000 candles (~70 days)
-            # 6 years of 1m data will take tens of gigabytes of RAM and cause MemoryError!
-            df = df.tail(100000)
+            # INCREASED MEMORY LIMIT: Take the last 500,000 candles (~1 year)
+            # Utilizes the bulk data archive without causing out-of-memory crashes
+            df = df.tail(500000)
             all_data.append(df)
             
     if not all_data:
@@ -81,24 +76,36 @@ def train_scalping_model():
         
     combined_df = pd.concat(all_data, ignore_index=True)
     
-    feature_columns = ['return', 'rsi_7', 'macd_fast', 'volume_surge', 'dist_to_micro_supp', 'taker_buy_ratio', 'avg_trade_size']
+    feature_columns = ['return', 'rsi_7', 'macd_fast', 'volume_surge', 'dist_to_micro_supp', 'taker_buy_ratio', 'avg_trade_size', 'hour', 'roc_3', 'roc_5', 'roc_10', 'bb_pb']
     X = combined_df[feature_columns]
     y = combined_df['target_scalp']
     
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, shuffle=False)
     
     print("Training Scalping AI Model...")
-    model = HistGradientBoostingClassifier(random_state=42, max_iter=200, max_depth=5, learning_rate=0.05)
+    model = HistGradientBoostingClassifier(random_state=42, max_iter=400, max_depth=5, learning_rate=0.05, early_stopping=True, class_weight='balanced')
     model.fit(X_train, y_train)
     
     predictions = model.predict(X_test)
-    print(f"\nScalping Model Accuracy: {accuracy_score(y_test, predictions) * 100:.2f}%")
+    accuracy = accuracy_score(y_test, predictions)
+    
+    report = classification_report(y_test, predictions, output_dict=True, zero_division=0)
+    long_acc = report.get('1', {}).get('precision', 0.0) * 100
+    short_acc = report.get('0', {}).get('precision', 0.0) * 100
+
+    print(f"\nScalping Model Accuracy: {accuracy * 100:.2f}%")
+    print(f"Long (UP) Precision: {long_acc:.2f}% | Short (DOWN) Precision: {short_acc:.2f}%")
     
     models_dir = os.path.join(base_dir, 'models')
     os.makedirs(models_dir, exist_ok=True)
     model_path = os.path.join(models_dir, 'scalping_model.joblib')
     joblib.dump(model, model_path)
     print(f"Scalping Model saved to {model_path}")
+    
+    meta_path = os.path.join(models_dir, 'scalping_model_meta.json')
+    import json
+    with open(meta_path, 'w') as f:
+        json.dump({"accuracy": accuracy * 100, "long_accuracy": long_acc, "short_accuracy": short_acc}, f)
 
 if __name__ == "__main__":
     train_scalping_model()
