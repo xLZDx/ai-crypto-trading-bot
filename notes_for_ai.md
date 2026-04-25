@@ -3,6 +3,7 @@
 ## Core Constraints
 - **Execution Style**: Work on tasks strictly one by one. No parallelism or concurrent execution to avoid freezing.
 - **Version Control / Rollback Rule**: Always document and track changes being made during the session. Ensure that we always have a clear path to roll back to the last known working version if a new feature breaks the system.
+- **Checkpoint Commit Rule**: After each completed change or milestone, create a local git commit so the project can be restored to the previous checkpoint later.
 
 ## Session History & Context
 - **Current Project State**: AI Trading Assistance. Contains modules for data ingestion (Binance), analysis (Elliott Waves, Risk Management), engine (Order Manager, Trade Tracker), and a dashboard.
@@ -10,8 +11,16 @@
 
 ## Debugging & Troubleshooting Protocol
 - **Stop Guessing**: When a crash or complex bug occurs, do not guess the solution.
+- **Plan First**: Before implementing any change, prepare a clear written plan/todo and show it to the user for review, even if bypass approval is available.
+- **Todo List First**: Always show the todo list before implementation and allow the user to edit it before approval.
 - **Use Debug Server**: Ask the user to attach their IDE (VS Code/PyCharm) to the live debug server on port `5678` to trace the exact failure point.
 - **Collect Clear Logs**: Request the exact, full stack trace from the terminal or `logs/trading.log` (which is now caught globally in `main.py`) before writing any fix.
+
+## User-Requested Workflow Rules
+- **Completion Report Required**: When a task is completed, always show exactly what was completed, what changed, what was added, and what was missed relative to the todo list.
+- **Rollback-Friendly Changes**: Keep changes grouped into checkpoint commits so each implementation stage can be rolled back independently.
+- **Approval Before Work**: Present the todo list first, then ask for approval, then proceed with implementation.
+- **Editable Plan**: Let the user modify the todo list before starting implementation.
 
 ## Completed (2026-04-25 Session)
 - Full codebase security & quality review and fixes (see summary below)
@@ -33,5 +42,22 @@
 - Set `DASHBOARD_API_KEY=<your_secret>` in `.env`
 - All `/api/*` routes require header `X-API-Key: <your_secret>`
 - If key not set, access is unprotected (with a startup warning)
+
+## Completed This Session (2026-04-25)
+- Identified the live dashboard processes and confirmed there were two active `src/dashboard/app.py` instances.
+- Created a safe PowerShell restart script for the dashboard to avoid command-line quoting issues.
+- Restarted the dashboard service cleanly.
+- Mapped the bot architecture and entry points:
+  - `src/main.py` is the live trading engine.
+  - `src/dashboard/app.py` is the Flask dashboard.
+  - `src/analysis/` provides analytics, ML, sentiment, and risk logic.
+  - `src/engine/` provides execution, trade tracking, and Gemini veto logic.
+- Confirmed the current dashboard route set and data sources.
+- Documented the last implemented refactor/hardening pass and its files.
+- Recorded the pending next feature: Telegram bot notifications.
+
+## Session Rule
+- After every completed implementation, append the finished checklist items and any relevant notes here before closing the task.
+- Maintain this file as the source of truth for workflow preferences, rollback checkpoints, and completion reporting.
 
 *Note: Please update this file at the end of future sessions or major milestones to easily pick up where we left off.*
