@@ -7,3 +7,12 @@ defusedxml>=0.7.1
 websockets
 vaderSentiment
 feedparser
+google-genai
+
+# Quantitative Data Science & ML Libraries (Phase 1)
+darts
+neuralforecast
+arch
+statsmodels
+vectorbt
+yfinance
