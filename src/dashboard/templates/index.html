@@ -566,10 +566,53 @@ select.field option{background:#0d1628;color:#e2e8f0}
         </div>
       </div>
 
-      <!-- Per-symbol live cards -->
-      <div class="section-label" style="margin-bottom:8px">Live Markets</div>
-      <div class="sym-grid" id="symbol-cards">
-        <div class="card-sm" style="color:#475569;text-align:center;grid-column:1/-1;padding:18px">Loading market data…</div>
+      <!-- Live Orders Board — all markets, no filter -->
+      <div class="section-label" style="margin-bottom:8px">Live Orders — All Markets</div>
+
+      <div class="card" style="margin-bottom:10px">
+        <div class="card-header">
+          <div>
+            <div class="section-label">Open Positions</div>
+            <div class="card-title" style="font-size:.82rem">Active Trades <span id="ov-open-count" class="chip" style="margin-left:5px">0</span></div>
+          </div>
+          <span style="font-size:.6rem;color:#475569">All markets combined</span>
+        </div>
+        <div class="card-body" style="padding-top:9px">
+          <div class="tbl-wrap scroll-table" style="max-height:180px">
+            <table>
+              <thead><tr>
+                <th>Pair</th><th>Market</th><th>Strategy</th><th>Side</th>
+                <th>Entry</th><th>Current</th><th>Live PnL</th><th>Opened</th>
+              </tr></thead>
+              <tbody id="ov-open-tbody">
+                <tr><td colspan="8" style="text-align:center;color:#475569;padding:14px">No open positions</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="section-label">Recent Closed Trades</div>
+            <div class="card-title" style="font-size:.82rem">Last 10 — All Markets</div>
+          </div>
+          <span id="ov-closed-count" class="chip">0 total</span>
+        </div>
+        <div class="card-body" style="padding-top:9px">
+          <div class="tbl-wrap scroll-table" style="max-height:180px">
+            <table>
+              <thead><tr>
+                <th>Pair</th><th>Market</th><th>Strategy</th><th>Side</th>
+                <th>Entry</th><th>Exit</th><th>PnL</th><th>Closed</th>
+              </tr></thead>
+              <tbody id="ov-closed-tbody">
+                <tr><td colspan="8" style="text-align:center;color:#475569;padding:14px">No closed trades yet</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
 
     </div><!-- /overview -->
@@ -577,24 +620,42 @@ select.field option{background:#0d1628;color:#e2e8f0}
 
     <!-- ══════════ TAB: STRATEGY & ML ══════════ -->
     <div id="tab-strategy" class="tab-pane">
-      <div class="card" style="margin-bottom:12px">
+
+      <!-- Top aggregated card: split into Strategy + ML sections -->
+      <div class="card" style="margin-bottom:14px">
         <div class="card-header">
           <div>
-            <div class="section-label">Analytics</div>
-            <div class="card-title">Strategy Performance</div>
+            <div class="section-label">Aggregate Overview</div>
+            <div class="card-title">Combined Performance Summary</div>
           </div>
-          <span class="chip">Closed trades only</span>
+          <span class="chip">All markets • all symbols</span>
         </div>
-        <div class="card-body">
-          <div id="strategy-stats" style="display:flex;flex-direction:column;gap:7px">
-            <div style="text-align:center;color:#475569;padding:14px">Loading strategy data…</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;min-height:130px">
+          <!-- Left: strategy aggregate -->
+          <div style="padding:14px 16px;border-right:1px solid rgba(148,163,184,.08)">
+            <div class="section-label" style="margin-bottom:10px">Overall Strategy Performance</div>
+            <div id="strat-agg"></div>
+          </div>
+          <!-- Right: ML aggregate -->
+          <div style="padding:14px 16px">
+            <div class="section-label" style="margin-bottom:10px">ML Model Accuracy</div>
+            <div id="ml-agg" style="display:grid;grid-template-columns:1fr 1fr;gap:7px"></div>
           </div>
         </div>
       </div>
-      <div class="section-label" style="margin-bottom:9px">ML Model Performance</div>
+
+      <!-- Strategy breakdown: one card per strategy -->
+      <div class="section-label" style="margin-bottom:9px">Strategy Breakdown</div>
+      <div id="strategy-cards" style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px">
+        <div class="card-sm" style="text-align:center;color:#475569;grid-column:1/-1;padding:16px">No closed trades to analyze yet</div>
+      </div>
+
+      <!-- ML model cards: one card per model -->
+      <div class="section-label" style="margin-bottom:9px">ML Model Details</div>
       <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px" id="ml-cards">
-        <div class="card-sm" style="text-align:center;color:#475569">Loading ML metrics…</div>
+        <div class="card-sm" style="text-align:center;color:#475569">Loading…</div>
       </div>
+
     </div><!-- /strategy -->
 
 
@@ -757,6 +818,7 @@ let botState = {};
 let tradesData = [];
 let watchlistSymbols = [];
 let binanceTickers = {};
+let modelMeta = {};
 let chartInitialized = false;
 let currentChartSym = 'BTC/USDT';
 
@@ -812,6 +874,7 @@ function switchTab(name) {
   if (name === 'overview' && !chartInitialized) { initTVChart(currentChartSym); chartInitialized = true; }
   if (name === 'logs') pollLogs();
   if (name === 'watchlist') renderWatchlist();
+  if (name === 'strategy') renderStrategyTab(botState);
 }
 
 // ─── MARKET FILTER ───────────────────────────────────────────────────────────
@@ -1136,72 +1199,232 @@ function renderTrades() {
   }
 }
 
-// ─── STRATEGY ────────────────────────────────────────────────────────────────
-function renderStrategyStats() {
-  const cont = $('strategy-stats'); if (!cont) return;
-  const closed = tradesData.filter(t => t.status==='CLOSED' && t.strategy);
-  if (!closed.length) { cont.innerHTML = '<div style="text-align:center;color:#475569;padding:14px">No closed trades to analyze</div>'; return; }
-  const byS = {};
-  closed.forEach(t => {
-    const k = t.strategy||'Unknown';
-    byS[k] = byS[k]||{n:0,pnl:0,wins:0};
-    byS[k].n++; byS[k].pnl += t.pnl_usdt||0;
-    if ((t.pnl_usdt||0) > 0) byS[k].wins++;
-  });
-  cont.innerHTML = Object.entries(byS).sort((a,b)=>b[1].pnl-a[1].pnl).map(([name,s]) => {
-    const wr = (s.wins/s.n*100).toFixed(0);
-    const pc = s.pnl >= 0 ? 'positive' : 'negative';
-    const dot = s.pnl >= 0 ? '#34d399' : '#fb7185';
-    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 11px;border-radius:9px;background:rgba(5,8,22,.5);border:1px solid rgba(148,163,184,.1)">
-      <div style="display:flex;align-items:center;gap:7px">
-        <div style="width:7px;height:7px;border-radius:50%;background:${dot};flex-shrink:0"></div>
-        <span style="font-weight:700;color:#fff">${esc(name)}</span>
-      </div>
-      <div style="display:flex;gap:16px;font-size:.7rem">
-        <div style="text-align:center"><div style="color:#475569;font-size:.54rem">TRADES</div><div style="font-weight:800;color:#e2e8f0">${s.n}</div></div>
-        <div style="text-align:center"><div style="color:#475569;font-size:.54rem">WIN RATE</div><div style="font-weight:800;color:#e2e8f0">${wr}%</div></div>
-        <div style="text-align:center"><div style="color:#475569;font-size:.54rem">PNL</div><div class="${pc}" style="font-weight:800;font-family:'JetBrains Mono'">${s.pnl>=0?'+':''}${fmt(s.pnl,2)} USDT</div></div>
-      </div>
-    </div>`;
-  }).join('');
+// ─── OVERVIEW ORDERS BOARD ───────────────────────────────────────────────────
+function renderOverviewOrders() {
+  const prices = botState.prices || {};
+  const open   = tradesData.filter(t => t.status === 'OPEN');
+  const closed = tradesData.filter(t => t.status === 'CLOSED').slice().reverse();
+
+  // count badge in header
+  if ($('ov-open-count'))  $('ov-open-count').textContent  = open.length;
+  if ($('ov-closed-count')) $('ov-closed-count').textContent = closed.length + ' total';
+
+  const mktBadge = m => {
+    const colors = {SPOT:'rgba(59,130,246,.2);color:#60a5fa', FUTURES:'rgba(139,92,246,.2);color:#a78bfa', SCALPING:'rgba(16,185,129,.2);color:#34d399', SPOT_SCALPING:'rgba(16,185,129,.15);color:#34d399'};
+    const c = colors[m] || 'rgba(100,116,139,.2);color:#94a3b8';
+    return `<span style="font-size:.55rem;font-weight:800;padding:2px 6px;border-radius:999px;background:${c.split(';')[0]};${c.split(';')[1]}">${m||'--'}</span>`;
+  };
+
+  const openTbody = $('ov-open-tbody');
+  if (openTbody) {
+    openTbody.innerHTML = open.length === 0
+      ? '<tr><td colspan="8" style="text-align:center;color:#475569;padding:14px">No open positions</td></tr>'
+      : open.map(t => {
+        const cp=prices[t.symbol]||0, ep=t.entry_price||0, am=t.amount_coin||0;
+        const side = (t.side||'LONG')==='LONG' ? 1 : -1;
+        const lp = cp&&ep&&am ? side*(cp-ep)*am : null;
+        const lpStr = lp!=null ? (lp>=0?'+':'')+fmt(lp,2)+' USDT' : '--';
+        const lpCls = lp>0?'positive':lp<0?'negative':'muted';
+        const sc = (t.side||'LONG')==='LONG' ? 'positive' : 'negative';
+        return `<tr>
+          <td style="font-weight:700;color:#fff">${t.symbol}</td>
+          <td>${mktBadge(t.market)}</td>
+          <td><span class="chip">${t.strategy||'--'}</span></td>
+          <td><span class="${sc}" style="font-weight:800;font-size:.65rem">${t.side||'LONG'}</span></td>
+          <td style="font-family:'JetBrains Mono';font-size:.7rem">${fmtK(ep)}</td>
+          <td style="font-family:'JetBrains Mono';font-size:.7rem">${fmtK(cp)}</td>
+          <td class="${lpCls}" style="font-family:'JetBrains Mono';font-weight:700">${lpStr}</td>
+          <td style="color:#475569;font-size:.6rem">${(t.opened_at||'').split(' ')[0]||'--'}</td>
+        </tr>`;
+      }).join('');
+  }
+
+  const closedTbody = $('ov-closed-tbody');
+  if (closedTbody) {
+    closedTbody.innerHTML = closed.length === 0
+      ? '<tr><td colspan="8" style="text-align:center;color:#475569;padding:14px">No closed trades yet</td></tr>'
+      : closed.slice(0, 10).map(t => {
+        const pnl = t.pnl_usdt || 0;
+        const pnlCls = pnl>0?'positive':pnl<0?'negative':'muted';
+        const sc = (t.side||'LONG')==='LONG' ? 'positive' : 'negative';
+        return `<tr>
+          <td style="font-weight:700;color:#fff">${t.symbol}</td>
+          <td>${mktBadge(t.market)}</td>
+          <td><span class="chip">${t.strategy||'--'}</span></td>
+          <td><span class="${sc}" style="font-weight:800;font-size:.65rem">${t.side||'LONG'}</span></td>
+          <td style="font-family:'JetBrains Mono';font-size:.7rem">${fmtK(t.entry_price)}</td>
+          <td style="font-family:'JetBrains Mono';font-size:.7rem">${fmtK(t.exit_price)}</td>
+          <td class="${pnlCls}" style="font-family:'JetBrains Mono';font-weight:700">${(pnl>=0?'+':'')+fmt(pnl,2)} USDT</td>
+          <td style="color:#475569;font-size:.6rem">${(t.closed_at||'').split(' ')[0]||'--'}</td>
+        </tr>`;
+      }).join('');
+  }
 }
 
-function renderMLCards(state) {
-  const cont = $('ml-cards'); if (!cont) return;
-  const md = state.market_data || {};
-  const models = [
-    {name:'Base 1h',     icon:'🧠', sym:'BTC/USDT', mkt:'SPOT'},
-    {name:'Scalping 1m', icon:'⚡', sym:'BTC/USDT', mkt:'SCALPING'},
-    {name:'Futures',     icon:'📉', sym:'BTC/USDT', mkt:'FUTURES'},
-    {name:'Trend',       icon:'🌊', sym:'BTC/USDT', mkt:'SPOT'},
+// ─── STRATEGY & ML TAB ───────────────────────────────────────────────────────
+async function loadModelMeta() {
+  try {
+    modelMeta = await apiFetch('/api/models');
+  } catch { modelMeta = {}; }
+}
+
+function renderStrategyTab(state) {
+  const closed = tradesData.filter(t => t.status === 'CLOSED' && t.strategy);
+  const byS = {};
+  closed.forEach(t => {
+    const k = t.strategy || 'Unknown';
+    byS[k] = byS[k] || {n:0, pnl:0, wins:0};
+    byS[k].n++; byS[k].pnl += t.pnl_usdt || 0;
+    if ((t.pnl_usdt||0) > 0) byS[k].wins++;
+  });
+  const strategies = Object.entries(byS).sort((a,b) => b[1].pnl - a[1].pnl);
+
+  // ── Aggregate panel left (strategy) ────────────────────────────────────────
+  const stratAgg = $('strat-agg');
+  if (stratAgg) {
+    if (!strategies.length) {
+      stratAgg.innerHTML = '<div style="color:#475569;font-size:.68rem;padding:6px 0">No closed trades yet — strategy analytics will appear here once the bot executes and closes trades on Binance testnet.</div>';
+    } else {
+      const totTrades = closed.length;
+      const totWins = closed.filter(t => (t.pnl_usdt||0) > 0).length;
+      const totPnl = closed.reduce((a,t) => a + (t.pnl_usdt||0), 0);
+      const wr = (totWins / totTrades * 100).toFixed(1);
+      const pc = totPnl >= 0 ? 'positive' : 'negative';
+      stratAgg.innerHTML = `
+        <div style="display:flex;gap:10px;margin-bottom:8px">
+          <div style="flex:1;background:rgba(5,8,22,.5);border:1px solid rgba(148,163,184,.08);border-radius:8px;padding:8px 10px;text-align:center">
+            <div style="font-size:.54rem;color:#475569">TRADES</div>
+            <div style="font-size:1.1rem;font-weight:900;color:#fff">${totTrades}</div>
+          </div>
+          <div style="flex:1;background:rgba(5,8,22,.5);border:1px solid rgba(148,163,184,.08);border-radius:8px;padding:8px 10px;text-align:center">
+            <div style="font-size:.54rem;color:#475569">WIN RATE</div>
+            <div style="font-size:1.1rem;font-weight:900;color:#fbbf24">${wr}%</div>
+          </div>
+          <div style="flex:1;background:rgba(5,8,22,.5);border:1px solid rgba(148,163,184,.08);border-radius:8px;padding:8px 10px;text-align:center">
+            <div style="font-size:.54rem;color:#475569">TOTAL PNL</div>
+            <div class="${pc}" style="font-size:1rem;font-weight:900">${totPnl>=0?'+':''}${fmt(totPnl,2)}</div>
+          </div>
+        </div>
+        <div style="font-size:.6rem;color:#475569">${strategies.length} active strategies • ${(closed.length - totWins)} losses</div>`;
+    }
+  }
+
+  // ── Aggregate panel right (ML) ─────────────────────────────────────────────
+  const ML_MODELS = [
+    {key:'spot',     label:'Spot RF',   icon:'🧠'},
+    {key:'scalping', label:'Scalping',  icon:'⚡'},
+    {key:'futures',  label:'Futures',   icon:'📉'},
+    {key:'trend',    label:'Trend',     icon:'🌊'},
   ];
-  cont.innerHTML = models.map(m => {
-    const sd = ((md[m.mkt]||{})[m.sym]) || {};
-    return `<div class="card-sm">
-      <div style="display:flex;align-items:center;gap:7px;margin-bottom:9px">
-        <span style="font-size:17px">${m.icon}</span>
-        <div>
-          <div style="font-size:.54rem;color:#475569;text-transform:uppercase;letter-spacing:.12em">${m.mkt}</div>
-          <div style="font-weight:800;color:#fff">${m.name}</div>
+  const mlAgg = $('ml-agg');
+  if (mlAgg) {
+    mlAgg.innerHTML = ML_MODELS.map(m => {
+      const d = modelMeta[m.key] || {};
+      const acc = d.accuracy != null ? (+d.accuracy).toFixed(1) : '--';
+      const accCol = d.accuracy >= 55 ? '#34d399' : d.accuracy >= 50 ? '#fbbf24' : '#fb7185';
+      return `<div style="background:rgba(5,8,22,.5);border:1px solid rgba(148,163,184,.08);border-radius:9px;padding:8px 10px">
+        <div style="display:flex;align-items:center;gap:5px;margin-bottom:4px">
+          <span>${m.icon}</span>
+          <span style="font-size:.6rem;font-weight:700;color:#94a3b8">${m.label}</span>
         </div>
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:7px">
-        <div style="text-align:center;background:rgba(5,8,22,.5);border-radius:7px;padding:5px">
-          <div style="font-size:.54rem;color:#475569">Overall</div>
-          <div style="font-weight:800;color:#fff">${fmt(sd.ml_accuracy,1)}%</div>
+        <div style="font-size:1rem;font-weight:900;color:${accCol}">${acc}%</div>
+        <div style="font-size:.54rem;color:#475569;margin-top:2px">L: ${d.long_accuracy!=null?(+d.long_accuracy).toFixed(1):'--'}% / S: ${d.short_accuracy!=null?(+d.short_accuracy).toFixed(1):'--'}%</div>
+      </div>`;
+    }).join('');
+  }
+
+  // ── Individual strategy cards ─────────────────────────────────────────────
+  const stratCont = $('strategy-cards');
+  if (stratCont) {
+    if (!strategies.length) {
+      stratCont.innerHTML = '<div class="card-sm" style="text-align:center;color:#475569;grid-column:1/-1;padding:16px">No closed trades yet — strategy cards will populate once trades close on Binance testnet.</div>';
+    } else {
+      stratCont.innerHTML = strategies.map(([name, s]) => {
+        const wr = (s.wins / s.n * 100).toFixed(1);
+        const pc = s.pnl >= 0 ? 'positive' : 'negative';
+        const dot = s.pnl >= 0 ? '#34d399' : '#fb7185';
+        const bar = Math.min(100, s.wins / s.n * 100);
+        return `<div class="card-sm">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+            <div style="display:flex;align-items:center;gap:7px">
+              <div style="width:8px;height:8px;border-radius:50%;background:${dot};flex-shrink:0"></div>
+              <span style="font-weight:800;color:#fff;font-size:.8rem">${esc(name)}</span>
+            </div>
+            <span class="${pc}" style="font-family:'JetBrains Mono';font-weight:800;font-size:.78rem">${s.pnl>=0?'+':''}${fmt(s.pnl,2)} USDT</span>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px">
+            <div style="text-align:center;background:rgba(5,8,22,.5);border-radius:7px;padding:6px">
+              <div style="font-size:.54rem;color:#475569">TRADES</div>
+              <div style="font-weight:800;color:#fff">${s.n}</div>
+            </div>
+            <div style="text-align:center;background:rgba(5,8,22,.5);border-radius:7px;padding:6px">
+              <div style="font-size:.54rem;color:#475569">WINS</div>
+              <div style="font-weight:800;color:#34d399">${s.wins}</div>
+            </div>
+            <div style="text-align:center;background:rgba(5,8,22,.5);border-radius:7px;padding:6px">
+              <div style="font-size:.54rem;color:#475569">WIN RATE</div>
+              <div style="font-weight:800;color:#fbbf24">${wr}%</div>
+            </div>
+          </div>
+          <div style="background:rgba(5,8,22,.5);border-radius:999px;height:5px;overflow:hidden">
+            <div style="width:${bar}%;height:100%;background:linear-gradient(90deg,#1d4ed8,#34d399);border-radius:999px"></div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+  }
+
+  // ── Individual ML model cards ─────────────────────────────────────────────
+  const mlCont = $('ml-cards');
+  if (mlCont) {
+    const md = state.market_data || {};
+    const modelDefs = [
+      {key:'spot',     name:'Spot RF (1h)',     icon:'🧠', mkt:'SPOT',     sym:'BTC/USDT', desc:'Random Forest · Hourly candles · All symbols'},
+      {key:'scalping', name:'Scalping (1m)',     icon:'⚡', mkt:'SCALPING', sym:'BTC/USDT', desc:'Fast RSI model · 1-minute candles'},
+      {key:'futures',  name:'Futures Short',    icon:'📉', mkt:'FUTURES',  sym:'BTC/USDT', desc:'Short-bias model · Futures market'},
+      {key:'trend',    name:'Trend Filter',     icon:'🌊', mkt:'SPOT',     sym:'BTC/USDT', desc:'Long-horizon trend overlay model'},
+    ];
+    mlCont.innerHTML = modelDefs.map(m => {
+      const file = modelMeta[m.key] || {};
+      const state_sd = ((md[m.mkt]||{})[m.sym]) || {};
+      const acc  = file.accuracy      != null ? (+file.accuracy).toFixed(1)       : fmt(state_sd.ml_accuracy, 1);
+      const long = file.long_accuracy != null ? (+file.long_accuracy).toFixed(1)  : fmt(state_sd.ml_accuracy_long, 1);
+      const shrt = file.short_accuracy!= null ? (+file.short_accuracy).toFixed(1) : fmt(state_sd.ml_accuracy_short, 1);
+      const pred = m.key !== 'trend' ? (state_sd.ml_prediction_text || '--') : '--';
+      const accNum = parseFloat(acc);
+      const accCol = accNum >= 55 ? '#34d399' : accNum >= 50 ? '#fbbf24' : '#fb7185';
+      return `<div class="card-sm">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:11px">
+          <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,rgba(37,99,235,.3),rgba(139,92,246,.25));display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0">${m.icon}</div>
+          <div>
+            <div style="font-weight:800;color:#fff;font-size:.82rem">${m.name}</div>
+            <div style="font-size:.58rem;color:#475569">${m.desc}</div>
+          </div>
         </div>
-        <div style="text-align:center;background:rgba(5,8,22,.5);border-radius:7px;padding:5px">
-          <div style="font-size:.54rem;color:#475569">Long</div>
-          <div style="font-weight:800;color:#34d399">${fmt(sd.ml_accuracy_long,1)}%</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px">
+          <div style="text-align:center;background:rgba(5,8,22,.5);border-radius:8px;padding:7px">
+            <div style="font-size:.54rem;color:#475569">Overall</div>
+            <div style="font-weight:900;color:${accCol};font-size:.9rem">${acc}%</div>
+          </div>
+          <div style="text-align:center;background:rgba(5,8,22,.5);border-radius:8px;padding:7px">
+            <div style="font-size:.54rem;color:#475569">Long</div>
+            <div style="font-weight:800;color:#34d399">${long}%</div>
+          </div>
+          <div style="text-align:center;background:rgba(5,8,22,.5);border-radius:8px;padding:7px">
+            <div style="font-size:.54rem;color:#475569">Short</div>
+            <div style="font-weight:800;color:#fb7185">${shrt}%</div>
+          </div>
         </div>
-        <div style="text-align:center;background:rgba(5,8,22,.5);border-radius:7px;padding:5px">
-          <div style="font-size:.54rem;color:#475569">Short</div>
-          <div style="font-weight:800;color:#fb7185">${fmt(sd.ml_accuracy_short,1)}%</div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:.6rem;color:#64748b">Current Signal</span>
+          <span style="font-size:.68rem;font-weight:700;color:#fff">${esc(pred)}</span>
         </div>
-      </div>
-      <div style="font-size:.68rem;color:#94a3b8">Signal: <span style="font-weight:700;color:#fff">${esc(sd.ml_prediction_text||'--')}</span></div>
-    </div>`;
-  }).join('');
+        <div style="background:rgba(5,8,22,.5);border-radius:999px;height:4px;overflow:hidden;margin-top:9px">
+          <div style="width:${Math.min(100,accNum||0)}%;height:100%;background:linear-gradient(90deg,#1d4ed8,${accCol});border-radius:999px"></div>
+        </div>
+      </div>`;
+    }).join('');
+  }
 }
 
 // ─── WATCHLIST ────────────────────────────────────────────────────────────────
@@ -1397,8 +1620,8 @@ async function pollState() {
     updateUI(botState);
     updatePnl();
     renderTrades();
-    renderStrategyStats();
-    renderMLCards(botState);
+    renderOverviewOrders();
+    renderStrategyTab(botState);
   } catch {}
 }
 
@@ -1408,9 +1631,10 @@ async function pollTrades() {
     tradesData = d.trades || [];
     updatePnl();
     renderTrades();
-    renderStrategyStats();
+    renderOverviewOrders();
     renderSidebarSymbols();
-    if (activeTab==='watchlist') renderWatchlist();
+    if (activeTab === 'strategy') renderStrategyTab(botState);
+    if (activeTab === 'watchlist') renderWatchlist();
   } catch {}
 }
 
@@ -1436,6 +1660,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   loadWatchlist();
+  loadModelMeta().then(() => renderStrategyTab(botState));
   pollState();
   pollTrades();
   pollLogs();

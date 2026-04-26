@@ -212,6 +212,22 @@ def get_top20():
     return jsonify({'symbols': _TOP20_SYMBOLS})
 
 
+@app.route('/api/models', methods=['GET'])
+@require_api_key
+def get_models():
+    """Return accuracy metadata for all 4 ML models."""
+    _MODEL_FILES = {
+        'spot':     'models/btc_rf_model_meta.json',
+        'scalping': 'models/scalping_model_meta.json',
+        'futures':  'models/futures_short_model_meta.json',
+        'trend':    'models/trend_model_meta.json',
+    }
+    result = {}
+    for key, path in _MODEL_FILES.items():
+        result[key] = read_json(path, default={})
+    return jsonify(result)
+
+
 @app.route('/api/watchlist/remove', methods=['POST'])
 @require_api_key
 def remove_watchlist():
