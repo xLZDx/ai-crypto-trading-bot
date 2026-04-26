@@ -24,10 +24,13 @@ def get_last_timestamp(filename):
         pass
     return None
 
-def download_monthly_archive(symbol, interval, year, month):
+def download_monthly_archive(symbol, interval, year, month, market="spot"):
     """Fetches the official monthly ZIP archive from Binance's data server."""
     month_str = f"{month:02d}"
-    url = f"https://data.binance.vision/data/spot/monthly/klines/{symbol}/{interval}/{symbol}-{interval}-{year}-{month_str}.zip"
+    if market == "futures":
+        url = f"https://data.binance.vision/data/futures/um/monthly/klines/{symbol}/{interval}/{symbol}-{interval}-{year}-{month_str}.zip"
+    else:
+        url = f"https://data.binance.vision/data/spot/monthly/klines/{symbol}/{interval}/{symbol}-{interval}-{year}-{month_str}.zip"
     
     try:
         response = requests.get(url, timeout=15)
@@ -66,21 +69,21 @@ def process_and_append_data(zip_content, output_filepath, is_first_write):
                         # Silently skip any invalid rows (like CSV headers)
                         continue
 
-def bulk_download_for_symbol(symbol_raw, interval, start_year=2017, end_year=None):
+def bulk_download_for_symbol(symbol_raw, interval, start_year=2014, end_year=None, market="spot"):
     """Iterates through every month of every year and compiles a massive historical dataset."""
     if end_year is None:
         end_year = datetime.now(timezone.utc).year
         
     symbol = symbol_raw.replace('/', '')
     print(f"\n======================================================")
-    print(f"Starting MASSIVE bulk download for {symbol_raw} [{interval}]")
+    print(f"Starting MASSIVE bulk download for {symbol_raw} [{interval}] ({market.upper()})")
     print(f"Years: {start_year} to {end_year}")
     print(f"Source: data.binance.vision")
     print(f"======================================================")
 
     raw_dir = os.path.join(project_root, 'data', 'raw')
     os.makedirs(raw_dir, exist_ok=True)
-    output_filepath = os.path.join(raw_dir, f"{symbol_raw.replace('/', '_')}_{interval}.csv.gz")
+    output_filepath = os.path.join(raw_dir, f"{symbol_raw.replace('/', '_')}_{market}_{interval}.csv.gz")
     
     last_dt = get_last_timestamp(output_filepath) if os.path.exists(output_filepath) else None
 
@@ -99,7 +102,7 @@ def bulk_download_for_symbol(symbol_raw, interval, start_year=2017, end_year=Non
                 continue
                 
             print(f"[*] Fetching {year}-{month:02d}...", end=" ", flush=True)
-            zip_content = download_monthly_archive(symbol, interval, year, month)
+            zip_content = download_monthly_archive(symbol, interval, year, month, market)
             
             if zip_content:
                 process_and_append_data(zip_content, output_filepath, is_first_write)
@@ -113,16 +116,14 @@ def bulk_download_for_symbol(symbol_raw, interval, start_year=2017, end_year=Non
     print(f"Saved to: {output_filepath}")
 
 if __name__ == "__main__":
-    # Dynamically load symbols from the watchlist
-    wl_path = os.path.join(project_root, 'data', 'watchlist.json')
-    if os.path.exists(wl_path):
-        with open(wl_path, 'r', encoding='utf-8') as f:
-            symbols = json.load(f)
-    else:
-        symbols = ['BTC/USDT', 'SOL/USDT', 'ADA/USDT']
+    # Target explicitly requested symbols for 1s data
+    symbols = ['BTC/USDT', 'SOL/USDT', 'ADA/USDT', 'ETH/USDT']
+    current_year = datetime.now(timezone.utc).year
+    start_year = current_year - 10
         
-    print(f"Loaded {len(symbols)} coins from watchlist.")
+    print(f"Targeting {len(symbols)} coins: {symbols}")
     
     for sym in symbols:
-        bulk_download_for_symbol(sym, '1h', start_year=2017)
-        bulk_download_for_symbol(sym, '1m', start_year=2017) # This will download massive amounts of 1m data!
+        # Download 1s data for past 10 years for both Spot and Futures
+        bulk_download_for_symbol(sym, '1s', start_year=start_year, market='spot')
+        bulk_download_for_symbol(sym, '1s', start_year=start_year, market='futures')

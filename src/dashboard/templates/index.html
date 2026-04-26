@@ -86,7 +86,6 @@ nav{padding:10px 8px}
 }
 
 /* Sidebar symbol list */
-.sb-search-wrap{margin:8px 10px 0}
 .sb-sym-item{
   display:flex;align-items:center;justify-content:space-between;
   padding:5px 8px;border-radius:7px;cursor:pointer;
@@ -97,7 +96,6 @@ nav{padding:10px 8px}
   font-size:.52rem;font-weight:800;padding:1px 5px;border-radius:999px;
   background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.25);
 }
-#sb-sym-list{max-height:160px;overflow-y:auto;margin-top:4px}
 #sb-sym-list::-webkit-scrollbar{width:3px}
 #sb-sym-list::-webkit-scrollbar-thumb{background:rgba(100,116,139,.3);border-radius:999px}
 
@@ -131,7 +129,7 @@ nav{padding:10px 8px}
   padding:12px 16px 10px;border-bottom:1px solid rgba(148,163,184,.08);
   display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;
 }
-.card-body{padding:14px 16px}
+.card-body{padding:14px 16px;overflow:hidden;min-height:40px;display:flex;flex-direction:column;gap:0;position:relative}
 .section-label{font-size:.56rem;color:#475569;text-transform:uppercase;letter-spacing:.14em;font-weight:700}
 .card-title{font-size:.88rem;font-weight:800;color:#fff;margin-top:3px}
 
@@ -151,13 +149,16 @@ nav{padding:10px 8px}
 .ov-panel-body{padding:11px 13px}
 
 /* Balance table */
-.bal-table{width:100%;border-collapse:collapse}
+.bal-table{width:100%;border-collapse:separate;border-spacing:0}
 .bal-table td{padding:5px 0;font-size:.7rem;vertical-align:middle}
-.bal-table td:nth-child(2),.bal-table td:nth-child(3){text-align:right;font-family:'JetBrains Mono';font-weight:700}
+.bal-table td:nth-child(2),.bal-table td:nth-child(3),.bal-table td:nth-child(4){text-align:right;font-family:'JetBrains Mono';font-weight:700}
 .bal-asset{display:flex;align-items:center;gap:7px}
 .bal-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .bal-thead{font-size:.52rem;color:#475569;text-transform:uppercase;letter-spacing:.1em;text-align:right;padding-bottom:5px;font-weight:700}
 .bal-thead:first-child{text-align:left}
+/* Hide scrollbar on balance panel but keep scroll */
+#bal-scroll{scrollbar-width:none;-ms-overflow-style:none}
+#bal-scroll::-webkit-scrollbar{display:none}
 
 /* Market view */
 .mv-hdr{
@@ -227,12 +228,14 @@ nav{padding:10px 8px}
 /* Tables */
 .tbl-wrap{overflow:hidden;border-radius:10px;border:1px solid rgba(148,163,184,.12)}
 .tbl-wrap table{width:100%;border-collapse:collapse}
-.tbl-wrap thead tr{background:rgba(15,23,42,.5)}
+.tbl-wrap thead tr{background:rgba(15,23,42,.96)}
+.tbl-wrap thead th{position:sticky;top:0;z-index:3;background:rgba(15,23,42,.96);backdrop-filter:blur(6px)}
 .tbl-wrap th{padding:8px 11px;color:#64748b;font-size:.56rem;text-transform:uppercase;letter-spacing:.12em;text-align:left;border-bottom:1px solid rgba(148,163,184,.1)}
 .tbl-wrap td{padding:8px 11px;border-bottom:1px solid rgba(148,163,184,.06);font-size:.72rem}
 .tbl-wrap tr:last-child td{border-bottom:none}
 .tbl-wrap tr:hover td{background:rgba(30,41,59,.25)}
-.scroll-table{max-height:220px;overflow-y:auto}
+/* scroll-table: fills card-body flex space — card-body is the only resize source */
+.scroll-table{flex:1;overflow-y:auto;min-height:0}
 .scroll-table::-webkit-scrollbar{width:4px}
 .scroll-table::-webkit-scrollbar-thumb{background:rgba(100,116,139,.3);border-radius:999px}
 
@@ -296,6 +299,40 @@ nav{padding:10px 8px}
 /* Misc */
 .divider{border:none;border-top:1px solid rgba(148,163,184,.08);margin:11px 0}
 select.field option{background:#0d1628;color:#e2e8f0}
+
+/* Collapse button */
+.collapse-btn{
+  background:none;border:none;cursor:pointer;color:#64748b;
+  font-size:.72rem;padding:2px 6px;border-radius:5px;
+  line-height:1;transition:color .15s,background .15s;flex-shrink:0;margin-left:4px;
+}
+.collapse-btn:hover{color:#e2e8f0;background:rgba(30,41,59,.5)}
+
+/* Sortable table headers */
+.tbl-wrap th{cursor:pointer;user-select:none;white-space:nowrap}
+.tbl-wrap th:hover{color:#cbd5e1}
+.tbl-wrap th.sort-asc::after{content:" ↑";color:#60a5fa}
+.tbl-wrap th.sort-desc::after{content:" ↓";color:#60a5fa}
+
+/* Custom resize handle (replaces CSS resize:vertical to avoid scroll conflict) */
+.resize-handle{
+  position:absolute;bottom:0;left:0;right:0;height:6px;cursor:row-resize;
+  background:transparent;z-index:10;
+}
+.resize-handle:hover{background:rgba(59,130,246,.2)}
+
+/* Fullscreen card */
+.card-fs{
+  position:fixed!important;inset:0!important;z-index:8000!important;
+  border-radius:0!important;margin:0!important;
+  display:flex!important;flex-direction:column!important;
+}
+.card-fs .card-body{flex:1!important;height:auto!important}
+.card-fs .scroll-table{max-height:none!important;height:100%!important}
+
+/* Sidebar extends to bottom */
+.sb-search-wrap{margin:8px 10px 0;flex:1;display:flex;flex-direction:column;min-height:0}
+#sb-sym-list{flex:1;overflow-y:auto;margin-top:4px;min-height:80px}
 </style>
 </head>
 <body>
@@ -399,43 +436,61 @@ select.field option{background:#0d1628;color:#e2e8f0}
     <!-- ══════════ TAB: OVERVIEW ══════════ -->
     <div id="tab-overview" class="tab-pane active">
 
-      <!-- 4 info panels -->
-      <div class="ov-panel-grid">
+      <!-- Performance Overview — single collapsible card -->
+      <div class="card" style="margin-bottom:14px">
+        <div class="card-header">
+          <div>
+            <div class="section-label">Performance Overview</div>
+            <div class="card-title">Overall Bot Status — All Markets</div>
+          </div>
+          <span class="chip">Balances · Signal · Risk · Portfolio</span>
+          <button onclick="closeAllOrders()" style="margin-left:auto;background:rgba(251,113,133,.12);border:1px solid rgba(251,113,133,.35);color:#fb7185;font-size:.62rem;font-weight:700;padding:5px 14px;border-radius:7px;cursor:pointer;white-space:nowrap;transition:background .2s" onmouseover="this.style.background='rgba(251,113,133,.25)'" onmouseout="this.style.background='rgba(251,113,133,.12)'">
+            ✕ Close All Open
+          </button>
+        </div>
+        <div class="card-body" style="padding:10px">
+      <div class="ov-panel-grid" style="margin-bottom:0">
 
         <!-- BALANCES -->
         <div class="ov-panel">
           <div class="ov-panel-hdr">Balances</div>
-          <div class="ov-panel-body">
-            <table class="bal-table">
-              <thead>
+          <div id="bal-scroll" style="overflow-y:auto;max-height:220px">
+            <table class="bal-table" style="width:100%">
+              <thead style="position:sticky;top:0;z-index:2;background:rgba(13,20,40,.97)">
                 <tr>
                   <th class="bal-thead" style="text-align:left">Asset</th>
-                  <th class="bal-thead">Balance</th>
+                  <th class="bal-thead">QTY</th>
+                  <th class="bal-thead">Value</th>
                   <th class="bal-thead">Price</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody id="bal-wallet-tbody">
                 <tr>
                   <td><div class="bal-asset"><div class="bal-dot" style="background:#22c55e"></div><span style="color:#e2e8f0;font-weight:700">USDT</span></div></td>
                   <td id="ov-bal-usdt" style="color:#34d399">--</td>
+                  <td id="ov-val-usdt" style="color:#34d399">--</td>
                   <td style="color:#64748b">$1.00</td>
                 </tr>
                 <tr>
                   <td><div class="bal-asset"><div class="bal-dot" style="background:#f7931a"></div><span style="color:#e2e8f0;font-weight:700">BTC</span></div></td>
                   <td id="ov-bal-btc" style="color:#e2e8f0">--</td>
+                  <td id="ov-val-btc" style="color:#64748b">--</td>
                   <td id="ov-price-btc" style="color:#64748b">--</td>
                 </tr>
                 <tr>
                   <td><div class="bal-asset"><div class="bal-dot" style="background:#9945ff"></div><span style="color:#e2e8f0;font-weight:700">SOL</span></div></td>
                   <td id="ov-bal-sol" style="color:#e2e8f0">--</td>
+                  <td id="ov-val-sol" style="color:#64748b">--</td>
                   <td id="ov-price-sol" style="color:#64748b">--</td>
                 </tr>
                 <tr>
                   <td><div class="bal-asset"><div class="bal-dot" style="background:#0033ad"></div><span style="color:#e2e8f0;font-weight:700">ADA</span></div></td>
                   <td id="ov-bal-ada" style="color:#e2e8f0">--</td>
+                  <td id="ov-val-ada" style="color:#64748b">--</td>
                   <td id="ov-price-ada" style="color:#64748b">--</td>
                 </tr>
               </tbody>
+              <tbody id="bal-holdings-tbody"></tbody>
             </table>
           </div>
         </div>
@@ -489,74 +544,117 @@ select.field option{background:#0d1628;color:#e2e8f0}
         <div class="ov-panel">
           <div class="ov-panel-hdr">Portfolio</div>
           <div class="ov-panel-body">
-            <div style="margin-bottom:9px">
-              <div class="section-label">Total PnL</div>
-              <div style="font-size:1.25rem;font-weight:900;color:#fff;margin-top:4px" id="port-total-pnl">-- USDT</div>
+            <!-- Total capital = free USDT + open positions current value -->
+            <div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:7px;gap:8px">
+              <div>
+                <div class="section-label">Total Capital</div>
+                <div style="font-size:1.15rem;font-weight:900;color:#fff;margin-top:3px" id="port-total-capital">-- USDT</div>
+                <div style="font-size:.55rem;color:#475569;margin-top:2px">Free USDT + open positions</div>
+              </div>
+              <div style="text-align:right;flex-shrink:0">
+                <div class="section-label">Today (since 00:00)</div>
+                <div style="font-size:.88rem;font-weight:900;margin-top:3px" id="port-today-pnl">-- USDT</div>
+              </div>
             </div>
-            <div style="display:flex;gap:7px;margin-bottom:9px">
-              <div style="flex:1;background:rgba(5,8,22,.5);border:1px solid rgba(148,163,184,.08);border-radius:8px;padding:7px 9px">
+            <!-- Capital breakdown -->
+            <div style="display:flex;gap:7px;margin-bottom:7px">
+              <div style="flex:1;background:rgba(5,8,22,.5);border:1px solid rgba(148,163,184,.08);border-radius:8px;padding:6px 9px">
+                <div class="section-label">Free USDT</div>
+                <div style="font-size:.78rem;font-weight:800;margin-top:2px;color:#34d399" id="port-free-usdt">--</div>
+              </div>
+              <div style="flex:1;background:rgba(5,8,22,.5);border:1px solid rgba(148,163,184,.08);border-radius:8px;padding:6px 9px">
+                <div class="section-label">In Positions</div>
+                <div style="font-size:.78rem;font-weight:800;margin-top:2px;color:#60a5fa" id="port-deployed">--</div>
+              </div>
+            </div>
+            <!-- Bot trading PnL -->
+            <div style="margin-bottom:7px">
+              <div class="section-label" style="margin-bottom:4px">Bot Trading PnL</div>
+              <div style="font-size:1.05rem;font-weight:900;color:#fff" id="port-total-pnl">-- USDT</div>
+            </div>
+            <div style="display:flex;gap:7px;margin-bottom:7px">
+              <div style="flex:1;background:rgba(5,8,22,.5);border:1px solid rgba(148,163,184,.08);border-radius:8px;padding:6px 9px">
                 <div class="section-label">Live PnL</div>
-                <div style="font-size:.82rem;font-weight:800;margin-top:3px" id="port-live-pnl">--</div>
+                <div style="font-size:.78rem;font-weight:800;margin-top:2px" id="port-live-pnl">--</div>
               </div>
-              <div style="flex:1;background:rgba(5,8,22,.5);border:1px solid rgba(148,163,184,.08);border-radius:8px;padding:7px 9px">
+              <div style="flex:1;background:rgba(5,8,22,.5);border:1px solid rgba(148,163,184,.08);border-radius:8px;padding:6px 9px">
                 <div class="section-label">Closed PnL</div>
-                <div style="font-size:.82rem;font-weight:800;margin-top:3px" id="port-closed-pnl">--</div>
+                <div style="font-size:.78rem;font-weight:800;margin-top:2px" id="port-closed-pnl">--</div>
               </div>
             </div>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
               <span style="color:#64748b;font-size:.68rem">Market mode</span>
               <span class="chip" id="risk-market" style="color:#a78bfa;border-color:rgba(139,92,246,.3)">SPOT</span>
             </div>
-            <div style="font-size:.56rem;color:#475569;line-height:1.5">Strategy stats and ML analytics are below this section.</div>
           </div>
         </div>
 
       </div><!-- /ov-panel-grid -->
+        </div><!-- /card-body -->
+      </div><!-- /performance card -->
 
-      <!-- Market View -->
-      <div class="card" style="margin-bottom:14px">
+      <!-- Market View — TradingView chart + Pivot/ML cards -->
+      <div class="card" style="margin-bottom:14px;margin-top:14px">
         <div class="mv-hdr">
-          <div style="flex-shrink:0">
-            <div class="section-label">Market View</div>
-            <div class="card-title" style="font-size:.82rem">Interactive Chart</div>
-          </div>
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-left:auto">
-            <div class="section-label" style="white-space:nowrap">Watchlist Symbol</div>
-            <select id="ov-sym-select" class="field" style="font-size:.68rem;padding:5px 9px;min-width:120px">
-              <option>BTC/USDT</option>
-              <option>SOL/USDT</option>
-              <option>ADA/USDT</option>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:1">
+            <div>
+              <div class="section-label">Market View</div>
+              <div class="card-title" style="margin-top:2px">TradingView Chart</div>
+            </div>
+            <select id="ov-sym-select" class="field" style="font-size:.68rem;padding:5px 9px;min-width:130px">
+              <option value="BTC/USDT">BTC/USDT</option>
             </select>
-            <div class="mf-group">
+            <div id="trades-mf-group" class="mf-group">
               <button class="mf-btn active" data-market="SPOT">Spot</button>
               <button class="mf-btn" data-market="FUTURES">Futures</button>
               <button class="mf-btn" data-market="SCALPING">Scalping</button>
             </div>
           </div>
+          <span class="chip">1H · Live</span>
         </div>
 
         <div class="mv-cards-row">
+          <!-- Pivot Points + Wave Stage -->
           <div class="card-sm" style="border-color:rgba(59,130,246,.18)">
-            <div class="section-label">Elliott Wave Stage</div>
-            <div style="font-size:.92rem;font-weight:800;color:#60a5fa;margin-top:5px" id="chart-wave">Analyzing…</div>
-          </div>
-          <div class="card-sm" style="border-color:rgba(139,92,246,.18);position:relative">
-            <div style="position:absolute;top:8px;right:10px;font-size:.58rem;background:rgba(109,40,217,.2);border:1px solid rgba(139,92,246,.2);border-radius:6px;padding:3px 7px;color:#a78bfa">
-              L: <span id="chart-ml-long">--</span>% | S: <span id="chart-ml-short">--</span>%
+            <div class="section-label" style="margin-bottom:7px">Pivot Points — <span id="chart-pivot-sym">BTC/USDT</span></div>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <div style="flex-shrink:0;min-width:96px">
+                <div class="section-label">Wave Stage</div>
+                <div style="font-size:.9rem;font-weight:800;color:#60a5fa;margin-top:3px;white-space:nowrap" id="chart-wave">Analyzing…</div>
+              </div>
+              <div style="width:1px;background:rgba(148,163,184,.1);align-self:stretch;flex-shrink:0"></div>
+              <div class="pivot-row" id="pivot-row" style="flex:1;flex-wrap:wrap">
+                <span style="color:#475569;font-size:.68rem">Collecting pivot data…</span>
+              </div>
             </div>
-            <div class="section-label">Movement Vector (ML)</div>
-            <div style="font-size:1rem;font-weight:900;color:#fff;margin-top:5px;padding-right:90px" id="chart-ml">Analyzing…</div>
           </div>
-        </div>
 
-        <div class="mv-pivots-row">
-          <div class="card-sm">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-              <div style="font-size:.66rem;font-weight:700;color:#94a3b8">Pivot Points — <span id="chart-pivot-sym">BTC/USDT</span></div>
-              <span style="font-size:.56rem;color:#475569">Live wave structure</span>
-            </div>
-            <div class="pivot-row" id="pivot-row">
-              <span style="color:#475569;font-size:.68rem">Collecting pivot data…</span>
+          <!-- Movement Vector (ML) — pivot-style bars -->
+          <div class="card-sm" style="border-color:rgba(139,92,246,.18)">
+            <div class="section-label" style="margin-bottom:7px">Movement Vector (ML)</div>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <div style="flex-shrink:0;min-width:96px">
+                <div class="section-label">ML Signal</div>
+                <div style="font-size:.9rem;font-weight:800;color:#fff;margin-top:3px;white-space:nowrap" id="chart-ml">Analyzing…</div>
+              </div>
+              <div style="width:1px;background:rgba(148,163,184,.1);align-self:stretch;flex-shrink:0"></div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:4px 0">
+                <div class="pivot-node" style="border-color:rgba(167,139,250,.25)">
+                  <span style="color:#a78bfa;font-size:.62rem;font-weight:800">◆ ACCURACY</span>
+                  <span style="font-family:'JetBrains Mono';font-size:.73rem;font-weight:700;color:#a78bfa"><span id="chart-ml-acc">--</span>%</span>
+                  <span style="font-size:.54rem;color:#475569">Overall</span>
+                </div>
+                <div class="pivot-node" style="border-color:rgba(52,211,153,.25)">
+                  <span style="color:#34d399;font-size:.62rem;font-weight:800">▲ <span id="ml-badge-label-l">BUY</span></span>
+                  <span style="font-family:'JetBrains Mono';font-size:.73rem;font-weight:700;color:#34d399"><span id="chart-ml-long">--</span>%</span>
+                  <span style="font-size:.54rem;color:#475569">Long acc.</span>
+                </div>
+                <div class="pivot-node" style="border-color:rgba(251,113,133,.25)">
+                  <span style="color:#fb7185;font-size:.62rem;font-weight:800">▼ <span id="ml-badge-label-s">SELL</span></span>
+                  <span style="font-family:'JetBrains Mono';font-size:.73rem;font-weight:700;color:#fb7185"><span id="chart-ml-short">--</span>%</span>
+                  <span style="font-size:.54rem;color:#475569">Short acc.</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -575,40 +673,46 @@ select.field option{background:#0d1628;color:#e2e8f0}
             <div class="section-label">Open Positions</div>
             <div class="card-title" style="font-size:.82rem">Active Trades <span id="ov-open-count" class="chip" style="margin-left:5px">0</span></div>
           </div>
-          <span style="font-size:.6rem;color:#475569">All markets combined</span>
+          <div style="display:flex;align-items:center;gap:7px">
+            <span style="font-size:.6rem;color:#475569">All markets combined</span>
+            <button class="btn btn-ghost btn-sm" onclick="toggleCardFs(this)" title="Fullscreen">⛶</button>
+          </div>
         </div>
-        <div class="card-body" style="padding-top:9px">
-          <div class="tbl-wrap scroll-table" style="max-height:180px">
-            <table>
+        <div class="card-body" style="padding-top:9px;height:240px">
+          <div class="tbl-wrap scroll-table">
+            <table id="tbl-ov-open">
               <thead><tr>
-                <th>Pair</th><th>Market</th><th>Strategy</th><th>Side</th>
-                <th>Entry</th><th>Current</th><th>Live PnL</th><th>Opened</th>
+                <th onclick="sortTbl(this)">Pair</th><th onclick="sortTbl(this)">Market</th><th onclick="sortTbl(this)">Strategy</th><th onclick="sortTbl(this)">Side</th>
+                <th onclick="sortTbl(this)">Entry</th><th onclick="sortTbl(this)">Current</th><th onclick="sortTbl(this)">Live PnL</th><th onclick="sortTbl(this)">Opened</th>
               </tr></thead>
               <tbody id="ov-open-tbody">
-                <tr><td colspan="8" style="text-align:center;color:#475569;padding:14px">No open positions</td></tr>
+                <tr><td colspan="8" style="text-align:center;color:#475569;padding:14px">⏳ Loading positions…</td></tr>
               </tbody>
             </table>
           </div>
         </div>
       </div>
 
-      <div class="card">
+      <div class="card" style="margin-bottom:14px">
         <div class="card-header">
           <div>
             <div class="section-label">Recent Closed Trades</div>
             <div class="card-title" style="font-size:.82rem">Last 10 — All Markets</div>
           </div>
-          <span id="ov-closed-count" class="chip">0 total</span>
+          <div style="display:flex;align-items:center;gap:7px">
+            <span id="ov-closed-count" class="chip">0 total</span>
+            <button class="btn btn-ghost btn-sm" onclick="toggleCardFs(this)" title="Fullscreen">⛶</button>
+          </div>
         </div>
-        <div class="card-body" style="padding-top:9px">
-          <div class="tbl-wrap scroll-table" style="max-height:180px">
-            <table>
+        <div class="card-body" style="padding-top:9px;height:240px">
+          <div class="tbl-wrap scroll-table">
+            <table id="tbl-ov-closed">
               <thead><tr>
-                <th>Pair</th><th>Market</th><th>Strategy</th><th>Side</th>
-                <th>Entry</th><th>Exit</th><th>PnL</th><th>Closed</th>
+                <th onclick="sortTbl(this)">Pair</th><th onclick="sortTbl(this)">Market</th><th onclick="sortTbl(this)">Strategy</th><th onclick="sortTbl(this)">Side</th>
+                <th onclick="sortTbl(this)">Entry</th><th onclick="sortTbl(this)">Exit</th><th onclick="sortTbl(this)">PnL</th><th onclick="sortTbl(this)">Closed</th>
               </tr></thead>
               <tbody id="ov-closed-tbody">
-                <tr><td colspan="8" style="text-align:center;color:#475569;padding:14px">No closed trades yet</td></tr>
+                <tr><td colspan="8" style="text-align:center;color:#475569;padding:14px">⏳ Loading trades…</td></tr>
               </tbody>
             </table>
           </div>
@@ -689,13 +793,19 @@ select.field option{background:#0d1628;color:#e2e8f0}
             <span class="chip">Archive history</span>
           </div>
         </div>
-        <div class="card-body" style="padding-top:9px">
-          <div class="tbl-wrap">
-            <table>
+        <div class="card-body" style="padding-top:9px;height:480px">
+          <div class="tbl-wrap scroll-table">
+            <table id="tbl-watchlist">
               <thead><tr>
-                <th>Symbol</th><th>Last Price</th><th>24h Change</th>
-                <th>High / Low</th><th>Volume (24h)</th><th>Trades</th>
-                <th>My Holdings</th><th>Total PnL</th><th>Status</th><th>Action</th>
+                <th onclick="sortTbl(this)">Symbol</th>
+                <th onclick="sortTbl(this)">Last Price</th>
+                <th onclick="sortTbl(this)">24h Change</th>
+                <th onclick="sortTbl(this)">High / Low</th>
+                <th onclick="sortTbl(this)">Volume (24h)</th>
+                <th onclick="sortTbl(this)">Trades</th>
+                <th onclick="sortTbl(this)">My Holdings</th>
+                <th onclick="sortTbl(this)">Total PnL</th>
+                <th>Status</th><th>Action</th>
               </tr></thead>
               <tbody id="wl-tbody">
                 <tr><td colspan="10" style="text-align:center;color:#475569;padding:18px">Loading watchlist…</td></tr>
@@ -711,23 +821,42 @@ select.field option{background:#0d1628;color:#e2e8f0}
     <div id="tab-trades" class="tab-pane">
       <div style="display:flex;flex-direction:column;gap:12px">
 
+        <!-- Market filter bar + Close All -->
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:rgba(13,20,40,.7);border:1px solid rgba(148,163,184,.1);border-radius:12px">
+          <span style="font-size:.6rem;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.1em">Market Filter</span>
+          <div class="mf-group" id="trades-mf-group">
+            <button class="mf-btn active" data-tmarket="ALL">All</button>
+            <button class="mf-btn" data-tmarket="SPOT">Spot</button>
+            <button class="mf-btn" data-tmarket="FUTURES">Futures</button>
+            <button class="mf-btn" data-tmarket="SCALPING">Scalping</button>
+          </div>
+          <span style="font-size:.58rem;color:#475569">Showing: <span id="trades-filter-label">All markets</span></span>
+          <button id="btn-close-all" onclick="closeAllOrders()" class="btn btn-sm" style="margin-left:auto;background:rgba(251,113,133,.12);border:1px solid rgba(251,113,133,.35);color:#fb7185;font-size:.62rem;font-weight:700;padding:4px 12px;border-radius:7px;cursor:pointer;transition:all .2s" onmouseover="this.style.background='rgba(251,113,133,.25)'" onmouseout="this.style.background='rgba(251,113,133,.12)'">
+            ✕ Close All Open
+          </button>
+        </div>
+
         <div class="card">
           <div class="card-header">
             <div>
               <div class="section-label">Open Positions</div>
-              <div class="card-title">Active Trades <span id="ord-open-count" class="chip" style="margin-left:5px">0</span></div>
+              <div class="card-title">Active Trades <span id="ord-open-count" class="chip" style="margin-left:5px">0</span> <span id="ord-open-filtered" class="chip" style="margin-left:3px;opacity:.6"></span></div>
             </div>
-            <span style="font-size:.6rem;color:#475569">Live exposure</span>
+            <div style="display:flex;align-items:center;gap:7px">
+              <span style="font-size:.6rem;color:#475569">Live exposure</span>
+              <button class="btn btn-ghost btn-sm" onclick="toggleCardFs(this)" title="Fullscreen">⛶</button>
+            </div>
           </div>
-          <div class="card-body" style="padding-top:9px">
+          <div class="card-body" style="padding-top:9px;height:280px">
             <div class="tbl-wrap scroll-table">
-              <table>
+              <table id="tbl-open-trades">
                 <thead><tr>
-                  <th>ID / Pair</th><th>Strategy</th><th>Side</th>
-                  <th>Entry</th><th>Current</th><th>Live PnL</th><th>Opened</th>
+                  <th onclick="sortTbl(this)">ID / Pair</th><th onclick="sortTbl(this)">Market</th><th onclick="sortTbl(this)">Strategy</th><th onclick="sortTbl(this)">Side</th>
+                  <th onclick="sortTbl(this)">Entry</th><th onclick="sortTbl(this)">Current</th>
+                  <th onclick="sortTbl(this)">Live PnL</th><th onclick="sortTbl(this)">PnL %</th><th onclick="sortTbl(this)">Opened</th>
                 </tr></thead>
                 <tbody id="open-trades-tbody">
-                  <tr><td colspan="7" style="text-align:center;color:#475569;padding:14px">No open positions</td></tr>
+                  <tr><td colspan="9" style="text-align:center;color:#475569;padding:14px">No open positions</td></tr>
                 </tbody>
               </table>
             </div>
@@ -738,19 +867,23 @@ select.field option{background:#0d1628;color:#e2e8f0}
           <div class="card-header">
             <div>
               <div class="section-label">Closed Ledger</div>
-              <div class="card-title">Trade History <span id="ord-closed-count" class="chip" style="margin-left:5px">0</span></div>
+              <div class="card-title">Trade History <span id="ord-closed-count" class="chip" style="margin-left:5px">0</span> <span id="ord-closed-filtered" class="chip" style="margin-left:3px;opacity:.6"></span></div>
             </div>
-            <span style="font-size:.6rem;color:#475569">Realized results</span>
+            <div style="display:flex;align-items:center;gap:7px">
+              <span style="font-size:.6rem;color:#475569">Realized results</span>
+              <button class="btn btn-ghost btn-sm" onclick="toggleCardFs(this)" title="Fullscreen">⛶</button>
+            </div>
           </div>
-          <div class="card-body" style="padding-top:9px">
+          <div class="card-body" style="padding-top:9px;height:380px">
             <div class="tbl-wrap scroll-table">
-              <table>
+              <table id="tbl-closed-trades">
                 <thead><tr>
-                  <th>ID / Pair</th><th>Strategy</th><th>Side</th>
-                  <th>Entry</th><th>Exit</th><th>Closed PnL</th><th>Closed</th>
+                  <th onclick="sortTbl(this)">ID / Pair</th><th onclick="sortTbl(this)">Market</th><th onclick="sortTbl(this)">Strategy</th><th onclick="sortTbl(this)">Side</th>
+                  <th onclick="sortTbl(this)">Entry</th><th onclick="sortTbl(this)">Exit</th>
+                  <th onclick="sortTbl(this)">Closed PnL</th><th onclick="sortTbl(this)">PnL %</th><th onclick="sortTbl(this)">Closed</th>
                 </tr></thead>
                 <tbody id="closed-trades-tbody">
-                  <tr><td colspan="7" style="text-align:center;color:#475569;padding:14px">No closed trades</td></tr>
+                  <tr><td colspan="9" style="text-align:center;color:#475569;padding:14px">No closed trades</td></tr>
                 </tbody>
               </table>
             </div>
@@ -784,18 +917,23 @@ select.field option{background:#0d1628;color:#e2e8f0}
       <div class="card" style="height:calc(100vh - 100px);display:flex;flex-direction:column">
         <div class="card-header" style="flex-shrink:0">
           <div>
-            <div class="section-label">Assistant</div>
-            <div class="card-title">Gemini AI Chat</div>
+            <div class="section-label">AI Trading Assistant</div>
+            <div class="card-title">Gemini Pro Chat <span id="chat-model-chip" class="chip" style="margin-left:6px;font-size:.5rem;opacity:.7">checking…</span></div>
           </div>
-          <span class="chip">Analysis only — cannot place trades</span>
+          <div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center">
+            <span class="chip" style="background:rgba(52,211,153,.08);border-color:rgba(52,211,153,.2);color:#34d399">Portfolio Analytics</span>
+            <span class="chip" style="background:rgba(251,191,36,.08);border-color:rgba(251,191,36,.2);color:#fbbf24">Bot Commands</span>
+          </div>
         </div>
         <div class="chat-msgs" id="chat-messages" style="flex:1">
           <div class="chat-bubble-bot">
-            Hello! I can see bot status, balances, trade history, and market snapshots. Ask me for analysis or say "retrain model" to start a background training run.
+            Hello! I have full access to your portfolio — win rates, PnL per strategy, open positions, and ML model accuracy.<br><br>
+            I can also <strong>execute bot commands</strong>: try <em>"close all positions"</em>, <em>"close losing trades"</em>, <em>"stop bot"</em>, <em>"start bot"</em>, or <em>"retrain models"</em>.<br><br>
+            Ask me anything about performance, strategy improvements, or market analysis.
           </div>
         </div>
         <div style="padding:10px 12px;border-top:1px solid rgba(148,163,184,.08);flex-shrink:0;display:flex;gap:7px">
-          <input id="chat-input" class="field" style="flex:1" placeholder="Ask about PnL, market conditions, or say 'retrain model'…">
+          <input id="chat-input" class="field" style="flex:1" placeholder="Ask about PnL, strategy, or say 'close all positions' / 'stop bot'…">
           <button id="chat-send" class="btn btn-blue">Send</button>
         </div>
       </div>
@@ -814,6 +952,7 @@ const hdrs = () => ({ 'Content-Type': 'application/json', ...(API_KEY ? {'X-API-
 // ─── STATE ───────────────────────────────────────────────────────────────────
 let activeTab = 'overview';
 let activeMarket = 'SPOT';
+let tradesMarketFilter = 'ALL';
 let botState = {};
 let tradesData = [];
 let watchlistSymbols = [];
@@ -821,6 +960,9 @@ let binanceTickers = {};
 let modelMeta = {};
 let chartInitialized = false;
 let currentChartSym = 'BTC/USDT';
+const _sortState = {};
+let sbSortKey = null; // null = default (open trades first), 'sym', 'price', 'chg'
+let sbSortAsc = true;
 
 // ─── UTILITIES ───────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -884,6 +1026,9 @@ function setMarket(m) {
   setText('sb-market', m);
   const rm = $('risk-market');
   if (rm) rm.textContent = m;
+  const ll = $('ml-badge-label-l'), ls = $('ml-badge-label-s');
+  if (ll) ll.textContent = m === 'FUTURES' ? 'Long' : 'Buy';
+  if (ls) ls.textContent = m === 'FUTURES' ? 'Short' : 'Sell';
   if (Object.keys(botState).length) updateUI(botState);
 }
 
@@ -899,36 +1044,65 @@ function updateSidebar(s) {
   }
 }
 
+function setSbSort(key) {
+  if (sbSortKey === key) { sbSortAsc = !sbSortAsc; } else { sbSortKey = key; sbSortAsc = true; }
+  renderSidebarSymbols();
+}
+
 function renderSidebarSymbols() {
   const list = $('sb-sym-list'); if (!list) return;
   const search = ($('sb-search')?.value || '').toUpperCase().trim();
   const openCounts = {};
-  tradesData.filter(t => t.status === 'OPEN').forEach(t => {
+  tradesData.filter(t => (t.status||'').toUpperCase() === 'OPEN').forEach(t => {
     openCounts[t.symbol] = (openCounts[t.symbol] || 0) + 1;
   });
-  const sorted = [...watchlistSymbols].sort((a, b) => {
+  const base = [...watchlistSymbols];
+  const sortedList = base.sort((a, b) => {
+    if (sbSortKey === 'sym') {
+      return sbSortAsc ? a.localeCompare(b) : b.localeCompare(a);
+    } else if (sbSortKey === 'price') {
+      const pa = +(binanceTickers[a.replace('/','')]?.lastPrice || 0);
+      const pb = +(binanceTickers[b.replace('/','')]?.lastPrice || 0);
+      return sbSortAsc ? pa - pb : pb - pa;
+    } else if (sbSortKey === 'chg') {
+      const ca = +(binanceTickers[a.replace('/','')]?.priceChangePercent || 0);
+      const cb = +(binanceTickers[b.replace('/','')]?.priceChangePercent || 0);
+      return sbSortAsc ? ca - cb : cb - ca;
+    }
     const diff = (openCounts[b] || 0) - (openCounts[a] || 0);
     return diff !== 0 ? diff : a.localeCompare(b);
   });
-  const filtered = search ? sorted.filter(s => s.includes(search)) : sorted;
-  list.innerHTML = filtered.length === 0
-    ? '<div style="padding:5px 4px;font-size:.6rem;color:#475569">No symbols found</div>'
-    : filtered.map(sym => {
-      const oc = openCounts[sym] || 0;
-      const isActive = sym === currentChartSym;
-      const bk = sym.replace('/','');
-      const tk = binanceTickers[bk] || {};
-      const ch = tk.priceChangePercent ? +tk.priceChangePercent : null;
-      const chStr = ch != null ? (ch >= 0 ? '+' : '') + ch.toFixed(1) + '%' : '';
-      const chCol = ch > 0 ? '#34d399' : ch < 0 ? '#fb7185' : '#64748b';
-      return `<div class="sb-sym-item${isActive?' active-sym':''}" onclick="setActiveSym('${sym}')">
-        <span style="font-weight:700;color:#e2e8f0;font-size:.65rem">${sym}</span>
-        <div style="display:flex;align-items:center;gap:4px">
-          ${chStr ? `<span style="font-size:.58rem;font-weight:700;color:${chCol}">${chStr}</span>` : ''}
-          ${oc > 0 ? `<span class="sb-open-badge">${oc}</span>` : ''}
-        </div>
-      </div>`;
-    }).join('');
+  const filtered = search ? sortedList.filter(s => s.includes(search)) : sortedList;
+
+  const arrow = k => sbSortKey === k ? (sbSortAsc ? ' ↑' : ' ↓') : '';
+  const hCol  = k => sbSortKey === k ? '#60a5fa' : '#475569';
+  const hStyle = k => `font-size:.5rem;color:${hCol(k)};font-weight:700;text-transform:uppercase;letter-spacing:.08em;cursor:pointer;user-select:none`;
+  const header = `<div style="display:grid;grid-template-columns:1fr auto auto;gap:0 6px;padding:3px 8px 4px;border-bottom:1px solid rgba(148,163,184,.08);position:sticky;top:0;z-index:2;background:rgba(5,8,22,.96)">
+    <span onclick="setSbSort('sym')" style="${hStyle('sym')}">Symbol${arrow('sym')}</span>
+    <span onclick="setSbSort('price')" style="${hStyle('price')};text-align:right">Price${arrow('price')}</span>
+    <span onclick="setSbSort('chg')" style="${hStyle('chg')};text-align:right;min-width:40px">24h%${arrow('chg')}</span>
+  </div>`;
+
+  if (filtered.length === 0) {
+    list.innerHTML = header + '<div style="padding:5px 4px;font-size:.6rem;color:#475569">No symbols found</div>';
+    return;
+  }
+  list.innerHTML = header + filtered.map(sym => {
+    const oc = openCounts[sym] || 0;
+    const isActive = sym === currentChartSym;
+    const bk = sym.replace('/','');
+    const tk = binanceTickers[bk] || {};
+    const ch = tk.priceChangePercent ? +tk.priceChangePercent : null;
+    const chStr = ch != null ? (ch >= 0 ? '+' : '') + ch.toFixed(1) + '%' : '--';
+    const chCol = ch > 0 ? '#34d399' : ch < 0 ? '#fb7185' : '#64748b';
+    const price = tk.lastPrice ? fmtK(+tk.lastPrice) : '--';
+    const ocBadge = oc > 0 ? ` <span class="sb-open-badge">${oc}</span>` : '';
+    return `<div class="sb-sym-item${isActive?' active-sym':''}" onclick="setActiveSym('${sym}')" style="display:grid;grid-template-columns:1fr auto auto;gap:0 6px;align-items:center">
+      <span style="font-weight:700;color:#e2e8f0;font-size:.63rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${sym.split('/')[0]}${ocBadge}</span>
+      <span style="font-size:.58rem;font-weight:600;color:#94a3b8;font-family:'JetBrains Mono';text-align:right;white-space:nowrap">${price}</span>
+      <span style="font-size:.58rem;font-weight:700;color:${chCol};text-align:right;white-space:nowrap;min-width:40px">${chStr}</span>
+    </div>`;
+  }).join('');
 }
 
 function setActiveSym(sym) {
@@ -950,6 +1124,9 @@ function setActiveSym(sym) {
     setText('chart-ml', sd.ml_prediction_text || 'Analyzing…');
     setText('chart-ml-long', fmt(sd.ml_accuracy_long, 1));
     setText('chart-ml-short', fmt(sd.ml_accuracy_short, 1));
+    const mlKey2 = activeMarket === 'FUTURES' ? 'futures' : activeMarket === 'SCALPING' ? 'scalping' : 'spot';
+    const mlAcc2 = (modelMeta[mlKey2] || {}).accuracy;
+    setText('chart-ml-acc', mlAcc2 != null ? (+mlAcc2).toFixed(1) : fmt(sd.ml_accuracy, 1));
     renderPivots(sd.recent_pivots || []);
   }
   if (activeTab === 'overview') { chartInitialized = false; initTVChart(sym); chartInitialized = true; }
@@ -964,10 +1141,61 @@ function updateBalancesPanel(state) {
   setb('ov-bal-btc',  state.balance_btc,  6);
   setb('ov-bal-sol',  state.balance_sol,  4);
   setb('ov-bal-ada',  state.balance_ada,  2);
+
+  // Value = QTY × current price
+  const val = (qty, sym) => {
+    const q = +(qty||0), p = +(prices[sym]||0);
+    return (q && p) ? '$' + (q*p).toFixed(2) : (q ? '$' + q.toFixed(2) : '--');
+  };
+  setText('ov-val-usdt', state.balance_usdt ? '$' + (+state.balance_usdt).toFixed(2) : '--');
+  setText('ov-val-btc',  val(state.balance_btc, 'BTC/USDT'));
+  setText('ov-val-sol',  val(state.balance_sol, 'SOL/USDT'));
+  setText('ov-val-ada',  val(state.balance_ada, 'ADA/USDT'));
+
   const sp = (id, sym) => setText(id, prices[sym] ? fmtK(+prices[sym]) : '--');
   sp('ov-price-btc', 'BTC/USDT');
   sp('ov-price-sol', 'SOL/USDT');
   sp('ov-price-ada', 'ADA/USDT');
+  renderHoldingsRows(prices);
+}
+
+function renderHoldingsRows(prices) {
+  const tbody = $('bal-holdings-tbody'); if (!tbody) return;
+  // aggregate open LONG trades by symbol
+  const holdings = {};
+  tradesData.filter(t => (t.status||'').toUpperCase() === 'OPEN' && (t.side||'LONG') === 'LONG').forEach(t => {
+    const sym = t.symbol;
+    if (!holdings[sym]) holdings[sym] = { coins: 0, invested: 0 };
+    holdings[sym].coins    += t.amount_coin   || 0;
+    holdings[sym].invested += t.invested_usdt || 0;
+  });
+  const syms = Object.keys(holdings).sort();
+  if (!syms.length) { tbody.innerHTML = ''; return; }
+
+  // dot colours keyed by first letter
+  const dotCol = s => ({B:'#f7931a',S:'#9945ff',A:'#0033ad',E:'#627eea',X:'#0ecbf5',D:'#b47cff',L:'#2563eb',U:'#22c55e'}[s[0].toUpperCase()] || '#64748b');
+
+  tbody.innerHTML =
+    `<tr><td colspan="4" style="padding:6px 0 3px;font-size:.5rem;color:#475569;font-weight:700;text-transform:uppercase;letter-spacing:.1em;border-top:1px solid rgba(148,163,184,.1)">Open Long Holdings</td></tr>` +
+    syms.map(sym => {
+      const h   = holdings[sym];
+      const tok = sym.split('/')[0];
+      const cp  = prices[sym] || 0;
+      const marketVal = cp ? h.coins * cp : h.invested;
+      const pnl = cp && h.invested ? marketVal - h.invested : null;
+      const pnlCls = pnl > 0 ? '#34d399' : pnl < 0 ? '#fb7185' : '#64748b';
+      const dec = h.coins < 0.01 ? 6 : h.coins < 1 ? 4 : 2;
+      const valStr = cp ? '$' + marketVal.toFixed(2) : (h.invested ? '$' + h.invested.toFixed(2) : '--');
+      return `<tr>
+        <td><div class="bal-asset"><div class="bal-dot" style="background:${dotCol(tok)}"></div>
+          <div><div style="color:#e2e8f0;font-weight:700;font-size:.68rem">${tok}</div>
+          ${pnl!=null?`<div style="font-size:.52rem;color:${pnlCls}">${pnl>=0?'+':''}${fmt(pnl,2)}</div>`:''}
+          </div></div></td>
+        <td style="color:#e2e8f0">${h.coins.toFixed(dec)}</td>
+        <td style="color:${pnlCls}">${valStr}</td>
+        <td style="color:#64748b">${cp ? fmtK(cp) : '--'}</td>
+      </tr>`;
+    }).join('');
 }
 
 function updateSignalPanel(sd) {
@@ -1001,9 +1229,12 @@ function updateUI(state) {
   setText('chart-ml', sd.ml_prediction_text || 'Analyzing…');
   setText('chart-ml-long', fmt(sd.ml_accuracy_long, 1));
   setText('chart-ml-short', fmt(sd.ml_accuracy_short, 1));
+  const mlKey = activeMarket === 'FUTURES' ? 'futures' : activeMarket === 'SCALPING' ? 'scalping' : 'spot';
+  const mlAcc = (modelMeta[mlKey] || {}).accuracy;
+  setText('chart-ml-acc', mlAcc != null ? (+mlAcc).toFixed(1) : fmt(sd.ml_accuracy, 1));
   renderPivots(sd.recent_pivots || []);
   renderSymbolCards(md, prices);
-  syncSymSelect(Object.keys(md));
+  syncSymSelect([...new Set([...Object.keys(md), ...watchlistSymbols])]);
   renderSidebarSymbols();
 }
 
@@ -1116,26 +1347,45 @@ function focusSym(sym) {
 // ─── PNL ─────────────────────────────────────────────────────────────────────
 function updatePnl() {
   const prices = botState.prices || {};
-  let livePnl = 0, closedPnl = 0, openCnt = 0, closedCnt = 0;
+  let livePnl = 0, closedPnl = 0, todayPnl = 0, openCnt = 0, closedCnt = 0;
+  let deployedValue = 0; // current market value of all open positions
+  const todayMidnight = new Date(); todayMidnight.setHours(0,0,0,0);
   tradesData.forEach(t => {
-    if (t.status === 'OPEN') {
+    const st = (t.status||'').toUpperCase();
+    if (st === 'OPEN') {
       openCnt++;
-      const cp=prices[t.symbol]||0, ep=t.entry_price||0, am=t.amount_coin||0;
+      const cp=prices[t.symbol]||t.current_price||0, ep=t.buy_price||t.entry_price||0, am=t.amount_coin||0;
       const side = (t.side||'LONG')==='LONG' ? 1 : -1;
       if (cp && ep && am) livePnl += side*(cp-ep)*am;
-    } else if (t.status === 'CLOSED') {
+      // market value of this position (fallback to invested_usdt if no price)
+      deployedValue += (cp && am) ? cp * am : (t.invested_usdt || 0);
+    } else if (st === 'CLOSED') {
       closedCnt++;
-      closedPnl += t.pnl_usdt || 0;
+      const p = t.pnl_usdt || 0;
+      closedPnl += p;
+      const closeTs = new Date(t.sell_time || t.closed_at || 0);
+      if (closeTs >= todayMidnight) todayPnl += p;
     }
   });
   const totalPnl = livePnl + closedPnl;
+  const freeUsdt = +(botState.balance_usdt || 0);
+  const totalCapital = freeUsdt + deployedValue;
 
   const ptEl = $('port-total-pnl');
   if (ptEl) { ptEl.textContent = (totalPnl>=0?'+':'')+fmt(totalPnl,2)+' USDT'; colorPnl(ptEl, totalPnl); }
+  const pdEl = $('port-today-pnl');
+  if (pdEl) { pdEl.textContent = (todayPnl>=0?'+':'')+fmt(todayPnl,2)+' USDT'; colorPnl(pdEl, todayPnl); }
   const plEl = $('port-live-pnl');
   if (plEl) { plEl.textContent = (livePnl>=0?'+':'')+fmt(livePnl,2); colorPnl(plEl, livePnl); }
   const pcEl = $('port-closed-pnl');
   if (pcEl) { pcEl.textContent = (closedPnl>=0?'+':'')+fmt(closedPnl,2); colorPnl(pcEl, closedPnl); }
+
+  const tcEl = $('port-total-capital');
+  if (tcEl) tcEl.textContent = totalCapital > 0 ? '$'+fmt(totalCapital,2) : '-- USDT';
+  const fuEl = $('port-free-usdt');
+  if (fuEl) fuEl.textContent = freeUsdt > 0 ? '$'+fmt(freeUsdt,2) : '--';
+  const depEl = $('port-deployed');
+  if (depEl) depEl.textContent = deployedValue > 0 ? '$'+fmt(deployedValue,2) : '--';
 
   if ($('risk-open'))        $('risk-open').textContent        = openCnt;
   if ($('nb-open'))          $('nb-open').textContent          = openCnt > 0 ? openCnt : '';
@@ -1143,37 +1393,88 @@ function updatePnl() {
   if ($('ord-closed-count')) $('ord-closed-count').textContent = closedCnt;
 }
 
+// ─── MARKET BADGE HELPER ─────────────────────────────────────────────────────
+function mktBadge(m) {
+  const colors = {SPOT:'rgba(59,130,246,.2);color:#60a5fa', FUTURES:'rgba(139,92,246,.2);color:#a78bfa', SCALPING:'rgba(16,185,129,.2);color:#34d399', SPOT_SCALPING:'rgba(16,185,129,.15);color:#34d399'};
+  const c = colors[m] || 'rgba(100,116,139,.2);color:#94a3b8';
+  return `<span style="font-size:.55rem;font-weight:800;padding:2px 6px;border-radius:999px;background:${c.split(';')[0]};${c.split(';')[1]}">${m||'--'}</span>`;
+}
+
 // ─── TRADES ──────────────────────────────────────────────────────────────────
+function setTradesMarket(m) {
+  tradesMarketFilter = m;
+  document.querySelectorAll('[data-tmarket]').forEach(b => b.classList.toggle('active', b.dataset.tmarket === m));
+  const labels = {ALL:'All markets', SPOT:'Spot only', FUTURES:'Futures only', SCALPING:'Scalping only'};
+  setText('trades-filter-label', labels[m] || m);
+  renderTrades();
+}
+
+async function closeAllOrders() {
+  const openCnt = tradesData.filter(t => (t.status||'').toUpperCase() === 'OPEN').length;
+  if (openCnt === 0) { alert('No open positions to close.'); return; }
+  if (!confirm(`Close all ${openCnt} open position(s) at current market price?\n\nThe bot will retrain its ML models from the new data.`)) return;
+  const btn = $('btn-close-all');
+  if (btn) { btn.disabled = true; btn.textContent = 'Closing…'; }
+  try {
+    const d = await apiFetch('/api/close_all', { method: 'POST' });
+    if (d.success) {
+      const pnlStr = d.total_pnl >= 0 ? '+' + fmt(d.total_pnl, 2) : fmt(d.total_pnl, 2);
+      alert(`Closed ${d.closed} position(s). Realized PnL: ${pnlStr} USDT\n\nML retraining started in background.`);
+      pollTrades();
+    } else {
+      alert('Error: ' + (d.error || 'Unknown error'));
+    }
+  } catch (e) {
+    alert('Request failed: ' + e.message);
+  }
+  if (btn) { btn.disabled = false; btn.textContent = '✕ Close All Open'; }
+}
+
 function renderTrades() {
   const prices = botState.prices || {};
   const filterMkt = t => {
-    if (activeMarket === 'SPOT')     return t.market === 'SPOT' || t.market === 'SPOT_SCALPING';
-    if (activeMarket === 'FUTURES')  return t.market === 'FUTURES';
-    if (activeMarket === 'SCALPING') return t.market === 'SCALPING' || t.market === 'SPOT_SCALPING';
+    if (tradesMarketFilter === 'ALL') return true;
+    if (tradesMarketFilter === 'SPOT') return t.market === 'SPOT';
+    if (tradesMarketFilter === 'FUTURES') return t.market === 'FUTURES';
+    if (tradesMarketFilter === 'SCALPING') return t.market === 'SCALPING' || t.market === 'SPOT_SCALPING';
     return true;
   };
-  const open   = tradesData.filter(t => t.status==='OPEN'   && filterMkt(t));
-  const closed = tradesData.filter(t => t.status==='CLOSED' && filterMkt(t)).slice().reverse();
+  const open   = tradesData.filter(t => (t.status||'').toUpperCase() === 'OPEN' && filterMkt(t));
+  const closed = tradesData.filter(t => (t.status||'').toUpperCase() === 'CLOSED' && filterMkt(t)).slice().reverse();
+  // Update filtered count chips
+  const allOpen = tradesData.filter(t => (t.status||'').toUpperCase() === 'OPEN').length;
+  const allClosed = tradesData.filter(t => (t.status||'').toUpperCase() === 'CLOSED').length;
+  if ($('ord-open-filtered'))  $('ord-open-filtered').textContent  = tradesMarketFilter !== 'ALL' ? `${open.length}/${allOpen} shown` : '';
+  if ($('ord-closed-filtered')) $('ord-closed-filtered').textContent = tradesMarketFilter !== 'ALL' ? `${closed.length}/${allClosed} shown` : '';
 
   const openTbody = $('open-trades-tbody');
   if (openTbody) {
     openTbody.innerHTML = open.length === 0
-      ? '<tr><td colspan="7" style="text-align:center;color:#475569;padding:14px">No open positions</td></tr>'
+      ? '<tr><td colspan="9" style="text-align:center;color:#475569;padding:14px">No open positions</td></tr>'
       : open.map(t => {
-        const cp=prices[t.symbol]||0, ep=t.entry_price||0, am=t.amount_coin||0;
+        const ep = t.buy_price||t.entry_price||0;
+        const cp = prices[t.symbol]||t.current_price||0;
+        const am = t.amount_coin||0;
+        const inv = t.invested_usdt||0;
         const side = (t.side||'LONG')==='LONG' ? 1 : -1;
-        const lp = cp&&ep&&am ? side*(cp-ep)*am : null;
+        const lp = cp&&ep&&am ? side*(cp-ep)*am : (t.unrealized_pnl||null);
         const lpStr = lp!=null ? (lp>=0?'+':'')+fmt(lp,2)+' USDT' : '--';
         const lpCls = lp > 0 ? 'positive' : lp < 0 ? 'negative' : 'muted';
+        const pct = t.unrealized_pnl_percent != null ? +t.unrealized_pnl_percent
+                  : (lp!=null && inv) ? (lp/inv*100) : null;
+        const pctStr = pct!=null ? (pct>=0?'+':'')+fmt(pct,2)+'%' : '--';
         const sc = (t.side||'LONG')==='LONG' ? 'positive' : 'negative';
+        const openedAt = (t.buy_time||t.opened_at||'').split(' ')[0]||'--';
         return `<tr>
-          <td><div style="font-family:'JetBrains Mono';font-size:.58rem;color:#475569">${(t.id||'').slice(0,8)}…</div><div style="font-weight:700;color:#fff">${t.symbol}</div></td>
+          <td><div style="font-family:'JetBrains Mono';font-size:.58rem;color:#475569">${String(t.id||'').slice(0,10)}</div><div style="font-weight:700;color:#fff">${t.symbol}</div></td>
+          <td>${mktBadge(t.market)}</td>
           <td><span class="chip">${t.strategy||'--'}</span></td>
           <td><span class="${sc}" style="font-weight:800;font-size:.65rem">${t.side||'LONG'}</span></td>
-          <td style="font-family:'JetBrains Mono';font-size:.7rem">${fmtK(ep)}</td>
-          <td style="font-family:'JetBrains Mono';font-size:.7rem">${fmtK(cp)}</td>
+          <td style="font-family:'JetBrains Mono';font-size:.7rem">${ep ? fmtK(ep) : '--'}</td>
+          <td style="font-family:'JetBrains Mono';font-size:.7rem">${cp ? fmtK(cp) : '--'}</td>
           <td class="${lpCls}" style="font-family:'JetBrains Mono';font-weight:700">${lpStr}</td>
-          <td style="color:#475569;font-size:.6rem">${(t.opened_at||'').replace('T',' ').split(' ')[0]||'--'}</td>
+          <td class="${lpCls}" style="font-family:'JetBrains Mono';font-weight:700;font-size:.68rem">${pctStr}</td>
+          <td style="color:#475569;font-size:.6rem">${openedAt}</td>
         </tr>`;
       }).join('');
   }
@@ -1181,19 +1482,27 @@ function renderTrades() {
   const closedTbody = $('closed-trades-tbody');
   if (closedTbody) {
     closedTbody.innerHTML = closed.length === 0
-      ? '<tr><td colspan="7" style="text-align:center;color:#475569;padding:14px">No closed trades</td></tr>'
-      : closed.slice(0,60).map(t => {
+      ? '<tr><td colspan="9" style="text-align:center;color:#475569;padding:14px">No closed trades</td></tr>'
+      : closed.slice(0,100).map(t => {
         const pnl = t.pnl_usdt || 0;
         const pnlCls = pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : 'muted';
         const sc = (t.side||'LONG')==='LONG' ? 'positive' : 'negative';
+        const entryP = t.buy_price||t.entry_price;
+        const exitP  = t.sell_price||t.exit_price;
+        const closedAt = (t.sell_time||t.closed_at||'').split(' ')[0]||'--';
+        const pct = t.pnl_percent != null ? +t.pnl_percent
+                  : (entryP&&exitP&&t.amount_coin) ? ((exitP-entryP)/entryP*100*((t.side||'LONG')==='LONG'?1:-1)) : null;
+        const pctStr = pct!=null ? (pct>=0?'+':'')+fmt(pct,2)+'%' : '--';
         return `<tr>
-          <td><div style="font-family:'JetBrains Mono';font-size:.58rem;color:#475569">${(t.id||'').slice(0,8)}…</div><div style="font-weight:700;color:#fff">${t.symbol}</div></td>
+          <td><div style="font-family:'JetBrains Mono';font-size:.58rem;color:#475569">${String(t.id||'').slice(0,10)}</div><div style="font-weight:700;color:#fff">${t.symbol}</div></td>
+          <td>${mktBadge(t.market)}</td>
           <td><span class="chip">${t.strategy||'--'}</span></td>
           <td><span class="${sc}" style="font-weight:800;font-size:.65rem">${t.side||'LONG'}</span></td>
-          <td style="font-family:'JetBrains Mono';font-size:.7rem">${fmtK(t.entry_price)}</td>
-          <td style="font-family:'JetBrains Mono';font-size:.7rem">${fmtK(t.exit_price)}</td>
+          <td style="font-family:'JetBrains Mono';font-size:.7rem">${entryP ? fmtK(entryP) : '--'}</td>
+          <td style="font-family:'JetBrains Mono';font-size:.7rem">${exitP ? fmtK(exitP) : '--'}</td>
           <td class="${pnlCls}" style="font-family:'JetBrains Mono';font-weight:700">${(pnl>=0?'+':'')+fmt(pnl,2)} USDT</td>
-          <td style="color:#475569;font-size:.6rem">${(t.closed_at||'').replace('T',' ').split(' ')[0]||'--'}</td>
+          <td class="${pnlCls}" style="font-family:'JetBrains Mono';font-weight:700;font-size:.68rem">${pctStr}</td>
+          <td style="color:#475569;font-size:.6rem">${closedAt}</td>
         </tr>`;
       }).join('');
   }
@@ -1202,39 +1511,36 @@ function renderTrades() {
 // ─── OVERVIEW ORDERS BOARD ───────────────────────────────────────────────────
 function renderOverviewOrders() {
   const prices = botState.prices || {};
-  const open   = tradesData.filter(t => t.status === 'OPEN');
-  const closed = tradesData.filter(t => t.status === 'CLOSED').slice().reverse();
+  const open   = tradesData.filter(t => (t.status||'').toUpperCase() === 'OPEN');
+  const closed = tradesData.filter(t => (t.status||'').toUpperCase() === 'CLOSED').slice().reverse();
 
   // count badge in header
   if ($('ov-open-count'))  $('ov-open-count').textContent  = open.length;
   if ($('ov-closed-count')) $('ov-closed-count').textContent = closed.length + ' total';
-
-  const mktBadge = m => {
-    const colors = {SPOT:'rgba(59,130,246,.2);color:#60a5fa', FUTURES:'rgba(139,92,246,.2);color:#a78bfa', SCALPING:'rgba(16,185,129,.2);color:#34d399', SPOT_SCALPING:'rgba(16,185,129,.15);color:#34d399'};
-    const c = colors[m] || 'rgba(100,116,139,.2);color:#94a3b8';
-    return `<span style="font-size:.55rem;font-weight:800;padding:2px 6px;border-radius:999px;background:${c.split(';')[0]};${c.split(';')[1]}">${m||'--'}</span>`;
-  };
 
   const openTbody = $('ov-open-tbody');
   if (openTbody) {
     openTbody.innerHTML = open.length === 0
       ? '<tr><td colspan="8" style="text-align:center;color:#475569;padding:14px">No open positions</td></tr>'
       : open.map(t => {
-        const cp=prices[t.symbol]||0, ep=t.entry_price||0, am=t.amount_coin||0;
+        const ep = t.buy_price||t.entry_price||0;
+        const cp = prices[t.symbol]||t.current_price||0;
+        const am = t.amount_coin||0;
         const side = (t.side||'LONG')==='LONG' ? 1 : -1;
-        const lp = cp&&ep&&am ? side*(cp-ep)*am : null;
+        const lp = cp&&ep&&am ? side*(cp-ep)*am : (t.unrealized_pnl||null);
         const lpStr = lp!=null ? (lp>=0?'+':'')+fmt(lp,2)+' USDT' : '--';
         const lpCls = lp>0?'positive':lp<0?'negative':'muted';
         const sc = (t.side||'LONG')==='LONG' ? 'positive' : 'negative';
+        const openedAt = (t.buy_time||t.opened_at||'').split(' ')[0]||'--';
         return `<tr>
           <td style="font-weight:700;color:#fff">${t.symbol}</td>
           <td>${mktBadge(t.market)}</td>
           <td><span class="chip">${t.strategy||'--'}</span></td>
           <td><span class="${sc}" style="font-weight:800;font-size:.65rem">${t.side||'LONG'}</span></td>
-          <td style="font-family:'JetBrains Mono';font-size:.7rem">${fmtK(ep)}</td>
-          <td style="font-family:'JetBrains Mono';font-size:.7rem">${fmtK(cp)}</td>
+          <td style="font-family:'JetBrains Mono';font-size:.7rem">${ep ? fmtK(ep) : '--'}</td>
+          <td style="font-family:'JetBrains Mono';font-size:.7rem">${cp ? fmtK(cp) : '--'}</td>
           <td class="${lpCls}" style="font-family:'JetBrains Mono';font-weight:700">${lpStr}</td>
-          <td style="color:#475569;font-size:.6rem">${(t.opened_at||'').split(' ')[0]||'--'}</td>
+          <td style="color:#475569;font-size:.6rem">${openedAt}</td>
         </tr>`;
       }).join('');
   }
@@ -1243,19 +1549,22 @@ function renderOverviewOrders() {
   if (closedTbody) {
     closedTbody.innerHTML = closed.length === 0
       ? '<tr><td colspan="8" style="text-align:center;color:#475569;padding:14px">No closed trades yet</td></tr>'
-      : closed.slice(0, 10).map(t => {
+      : closed.slice(0, 15).map(t => {
         const pnl = t.pnl_usdt || 0;
         const pnlCls = pnl>0?'positive':pnl<0?'negative':'muted';
         const sc = (t.side||'LONG')==='LONG' ? 'positive' : 'negative';
+        const entryP = t.buy_price||t.entry_price;
+        const exitP  = t.sell_price||t.exit_price;
+        const closedAt = (t.sell_time||t.closed_at||'').split(' ')[0]||'--';
         return `<tr>
           <td style="font-weight:700;color:#fff">${t.symbol}</td>
           <td>${mktBadge(t.market)}</td>
           <td><span class="chip">${t.strategy||'--'}</span></td>
           <td><span class="${sc}" style="font-weight:800;font-size:.65rem">${t.side||'LONG'}</span></td>
-          <td style="font-family:'JetBrains Mono';font-size:.7rem">${fmtK(t.entry_price)}</td>
-          <td style="font-family:'JetBrains Mono';font-size:.7rem">${fmtK(t.exit_price)}</td>
+          <td style="font-family:'JetBrains Mono';font-size:.7rem">${entryP ? fmtK(entryP) : '--'}</td>
+          <td style="font-family:'JetBrains Mono';font-size:.7rem">${exitP ? fmtK(exitP) : '--'}</td>
           <td class="${pnlCls}" style="font-family:'JetBrains Mono';font-weight:700">${(pnl>=0?'+':'')+fmt(pnl,2)} USDT</td>
-          <td style="color:#475569;font-size:.6rem">${(t.closed_at||'').split(' ')[0]||'--'}</td>
+          <td style="color:#475569;font-size:.6rem">${closedAt}</td>
         </tr>`;
       }).join('');
   }
@@ -1269,7 +1578,7 @@ async function loadModelMeta() {
 }
 
 function renderStrategyTab(state) {
-  const closed = tradesData.filter(t => t.status === 'CLOSED' && t.strategy);
+  const closed = tradesData.filter(t => (t.status||'').toUpperCase() === 'CLOSED');
   const byS = {};
   closed.forEach(t => {
     const k = t.strategy || 'Unknown';
@@ -1322,13 +1631,13 @@ function renderStrategyTab(state) {
       const d = modelMeta[m.key] || {};
       const acc = d.accuracy != null ? (+d.accuracy).toFixed(1) : '--';
       const accCol = d.accuracy >= 55 ? '#34d399' : d.accuracy >= 50 ? '#fbbf24' : '#fb7185';
-      return `<div style="background:rgba(5,8,22,.5);border:1px solid rgba(148,163,184,.08);border-radius:9px;padding:8px 10px">
-        <div style="display:flex;align-items:center;gap:5px;margin-bottom:4px">
+      return `<div style="background:rgba(5,8,22,.5);border:1px solid rgba(148,163,184,.08);border-radius:9px;padding:8px 10px;text-align:center">
+        <div style="display:flex;align-items:center;justify-content:center;gap:5px;margin-bottom:6px">
           <span>${m.icon}</span>
           <span style="font-size:.6rem;font-weight:700;color:#94a3b8">${m.label}</span>
         </div>
-        <div style="font-size:1rem;font-weight:900;color:${accCol}">${acc}%</div>
-        <div style="font-size:.54rem;color:#475569;margin-top:2px">L: ${d.long_accuracy!=null?(+d.long_accuracy).toFixed(1):'--'}% / S: ${d.short_accuracy!=null?(+d.short_accuracy).toFixed(1):'--'}%</div>
+        <div style="font-size:1.5rem;font-weight:900;color:${accCol};line-height:1">${acc}%</div>
+        <div style="font-size:.54rem;color:#475569;margin-top:5px">L: ${d.long_accuracy!=null?(+d.long_accuracy).toFixed(1):'--'}% / S: ${d.short_accuracy!=null?(+d.short_accuracy).toFixed(1):'--'}%</div>
       </div>`;
     }).join('');
   }
@@ -1404,15 +1713,15 @@ function renderStrategyTab(state) {
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px">
           <div style="text-align:center;background:rgba(5,8,22,.5);border-radius:8px;padding:7px">
             <div style="font-size:.54rem;color:#475569">Overall</div>
-            <div style="font-weight:900;color:${accCol};font-size:.9rem">${acc}%</div>
+            <div style="font-size:1.6rem;font-weight:900;color:${accCol};line-height:1.1">${acc}%</div>
           </div>
           <div style="text-align:center;background:rgba(5,8,22,.5);border-radius:8px;padding:7px">
-            <div style="font-size:.54rem;color:#475569">Long</div>
-            <div style="font-weight:800;color:#34d399">${long}%</div>
+            <div style="font-size:.54rem;color:#475569">${m.key==='futures'?'Long':'↑ Bull'}</div>
+            <div style="font-size:1.1rem;font-weight:800;color:#34d399">${long}%</div>
           </div>
           <div style="text-align:center;background:rgba(5,8,22,.5);border-radius:8px;padding:7px">
-            <div style="font-size:.54rem;color:#475569">Short</div>
-            <div style="font-weight:800;color:#fb7185">${shrt}%</div>
+            <div style="font-size:.54rem;color:#475569">${m.key==='futures'?'Short':'↓ Bear'}</div>
+            <div style="font-size:1.1rem;font-weight:800;color:#fb7185">${shrt}%</div>
           </div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center">
@@ -1435,6 +1744,7 @@ async function loadWatchlist() {
   } catch {
     watchlistSymbols = ['BTC/USDT','SOL/USDT','ADA/USDT'];
   }
+  syncSymSelect(watchlistSymbols);
   fetchBinanceTickers();
   renderWatchlist();
   renderSidebarSymbols();
@@ -1498,7 +1808,7 @@ function renderWatchlist() {
   const GRADS = {B:'#f7931a,#ff6b35',S:'#9945ff,#14f195',A:'#0033ad,#14f195',E:'#627eea,#7fb6e8',X:'#0ecbf5,#1d4ed8',D:'#b47cff,#f5a623'};
 
   const openCounts = {};
-  tradesData.filter(t=>t.status==='OPEN').forEach(t => { openCounts[t.symbol]=(openCounts[t.symbol]||0)+1; });
+  tradesData.filter(t=>(t.status||'').toUpperCase()==='OPEN').forEach(t => { openCounts[t.symbol]=(openCounts[t.symbol]||0)+1; });
   const sorted = [...watchlistSymbols].sort((a,b)=>(openCounts[b]||0)-(openCounts[a]||0)||a.localeCompare(b));
 
   tbody.innerHTML = sorted.map(sym => {
@@ -1516,9 +1826,9 @@ function renderWatchlist() {
     const bal    = botState['balance_' + asset];
     const holdings = bal!=null ? fmt(+bal, asset==='btc'?6:4)+' '+sym.split('/')[0] : '--';
     const sTrades = tradesData.filter(t=>t.symbol===sym);
-    const cPnl = sTrades.filter(t=>t.status==='CLOSED').reduce((a,t)=>a+(t.pnl_usdt||0),0);
-    const oPnl = sTrades.filter(t=>t.status==='OPEN').reduce((a,t)=>{
-      const cp=prices[t.symbol]||0,ep=t.entry_price||0,am=t.amount_coin||0;
+    const cPnl = sTrades.filter(t=>(t.status||'').toUpperCase()==='CLOSED').reduce((a,t)=>a+(t.pnl_usdt||0),0);
+    const oPnl = sTrades.filter(t=>(t.status||'').toUpperCase()==='OPEN').reduce((a,t)=>{
+      const cp=prices[t.symbol]||0,ep=t.buy_price||t.entry_price||0,am=t.amount_coin||0;
       return a+(cp&&ep&&am?((t.side||'LONG')==='LONG'?1:-1)*(cp-ep)*am:0);
     },0);
     const tPnl  = cPnl + oPnl;
@@ -1574,6 +1884,15 @@ async function fetchBinanceTickers() {
 }
 
 // ─── CHAT ────────────────────────────────────────────────────────────────────
+function _mdToHtml(s) {
+  return (s||'--')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g,'<em>$1</em>')
+    .replace(/`([^`]+)`/g,'<code style="background:rgba(99,102,241,.15);padding:1px 4px;border-radius:4px;font-size:.9em">$1</code>')
+    .replace(/\n/g,'<br>');
+}
+
 async function sendChat() {
   const inp = $('chat-input'), box = $('chat-messages');
   if (!inp || !box) return;
@@ -1584,15 +1903,83 @@ async function sendChat() {
   box.appendChild(userEl);
   const loadEl = document.createElement('div');
   loadEl.className = 'chat-bubble-bot';
-  loadEl.innerHTML = '<em style="color:#475569">Gemini is thinking…</em>';
+  loadEl.innerHTML = '<em style="color:#475569">Gemini Pro is thinking…</em>';
   box.appendChild(loadEl); box.scrollTop = box.scrollHeight;
   try {
     const d = await apiFetch('/api/chat', {method:'POST', body:JSON.stringify({message:txt})});
-    loadEl.innerHTML = (d.response||'--').replace(/\n/g,'<br>').replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>');
+
+    // Show executed command banner
+    let prefix = '';
+    if (d.command) {
+      const cmdColors = {
+        close_all:'#fb7185', close_losing:'#fbbf24',
+        stop_bot:'#fb7185', start_bot:'#34d399', retrain:'#60a5fa'
+      };
+      const c = cmdColors[d.command] || '#94a3b8';
+      prefix = `<div style="background:rgba(${c==='#fb7185'?'251,113,133':c==='#fbbf24'?'251,191,36':c==='#34d399'?'52,211,153':'96,165,250'},.1);border:1px solid;border-color:${c};border-radius:8px;padding:6px 10px;margin-bottom:8px;font-size:.65rem;color:${c}">
+        <strong>⚙ Command: ${esc(d.command.replace(/_/g,' ').toUpperCase())}</strong><br>${esc(d.command_result||'')}
+      </div>`;
+    }
+
+    loadEl.innerHTML = prefix + _mdToHtml(d.response);
+
+    // Update model chip
+    if (d.model) {
+      const chip = $('chat-model-chip');
+      if (chip) { chip.textContent = d.model.replace('gemini-','').replace('-preview',''); chip.style.opacity='1'; }
+    }
   } catch(e) {
     loadEl.innerHTML = `<span style="color:#fb7185">Error: ${esc(e.message)}</span>`;
   }
   box.scrollTop = box.scrollHeight;
+  if (activeTab === 'trades') { pollTrades(); } // refresh trades if bot command was executed
+}
+
+// ─── FULLSCREEN CARD ─────────────────────────────────────────────────────────
+let _fsParent = null, _fsNext = null;
+function toggleCardFs(btn) {
+  const card = btn.closest('.card');
+  if (!card) return;
+  const isFs = card.classList.toggle('card-fs');
+  btn.textContent = isFs ? '✕' : '⛶';
+  btn.title = isFs ? 'Exit fullscreen' : 'Fullscreen';
+  if (isFs) {
+    _fsParent = card.parentNode;
+    _fsNext   = card.nextSibling;
+    document.body.appendChild(card);
+  } else {
+    if (_fsParent) _fsParent.insertBefore(card, _fsNext);
+    _fsParent = null; _fsNext = null;
+  }
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    const fs = document.querySelector('.card-fs');
+    if (fs) { const btn = fs.querySelector('[onclick*="toggleCardFs"]'); if (btn) btn.click(); }
+  }
+});
+
+// ─── CUSTOM RESIZE HANDLES ───────────────────────────────────────────────────
+function initResizeHandles() {
+  document.querySelectorAll('.card-body').forEach(cb => {
+    if (cb.querySelector('.resize-handle')) return;
+    const h = document.createElement('div');
+    h.className = 'resize-handle';
+    h.title = 'Drag to resize';
+    let startY = 0, startH = 0;
+    h.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      startY = e.clientY;
+      startH = cb.offsetHeight;
+      h.setPointerCapture(e.pointerId);
+    });
+    h.addEventListener('pointermove', e => {
+      if (!h.hasPointerCapture(e.pointerId)) return;
+      const newH = Math.max(80, startH + (e.clientY - startY));
+      cb.style.height = newH + 'px';
+    });
+    cb.appendChild(h);
+  });
 }
 
 // ─── LOGS ────────────────────────────────────────────────────────────────────
@@ -1611,6 +1998,81 @@ async function setControl(running) {
     await apiFetch('/api/control', {method:'POST', body:JSON.stringify({running})});
     setText('ctrl-state', running ? 'Running' : 'Stopped');
   } catch(e) { console.error('control:', e); }
+}
+
+// ─── SORTABLE TABLES ─────────────────────────────────────────────────────────
+function sortTbl(th) {
+  const table = th.closest('table');
+  if (!table) return;
+  const tbody = table.querySelector('tbody');
+  const idx = th.cellIndex;
+  const tid = table.id || (table.id = 'tbl_' + Math.random().toString(36).slice(2));
+  const cur = _sortState[tid];
+  const asc = (cur && cur.idx === idx) ? !cur.asc : true;
+  _sortState[tid] = {idx, asc};
+
+  table.querySelectorAll('thead th').forEach(t => { t.classList.remove('sort-asc','sort-desc'); t.style.color = ''; });
+  th.classList.add(asc ? 'sort-asc' : 'sort-desc');
+  th.style.color = '#60a5fa';
+
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  if (rows.length <= 1) return;
+  rows.sort((a, b) => {
+    const aT = (a.cells[idx]?.textContent || '').replace(/[⏳↑↓]/g,'').trim();
+    const bT = (b.cells[idx]?.textContent || '').replace(/[⏳↑↓]/g,'').trim();
+    const aN = parseFloat(aT.replace(/[^-\d.]/g, ''));
+    const bN = parseFloat(bT.replace(/[^-\d.]/g, ''));
+    if (!isNaN(aN) && !isNaN(bN)) return asc ? aN - bN : bN - aN;
+    return asc ? aT.localeCompare(bT) : bT.localeCompare(aT);
+  });
+  rows.forEach(r => tbody.appendChild(r));
+}
+
+// ─── COLLAPSIBLE CARDS ───────────────────────────────────────────────────────
+function initCollapsible() {
+  document.querySelectorAll('.card-header, .mv-hdr').forEach(hdr => {
+    if (hdr.querySelector('.collapse-btn')) return; // already initialized
+    const btn = document.createElement('button');
+    btn.className = 'collapse-btn';
+    btn.title = 'Collapse / Expand';
+    const card = hdr.parentElement;
+    const children = Array.from(card.children).filter(c => c !== hdr);
+    const anyVisible = children.some(c => c.style.display !== 'none');
+    btn.textContent = anyVisible ? '▼' : '▶';
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const currentlyVisible = children.some(c => c.style.display !== 'none');
+      children.forEach(c => { c.style.display = currentlyVisible ? 'none' : ''; });
+      btn.textContent = currentlyVisible ? '▶' : '▼';
+      if (!currentlyVisible && hdr.classList.contains('mv-hdr')) {
+        initTVChart(currentChartSym);
+      }
+    });
+    hdr.appendChild(btn);
+  });
+}
+
+// ─── AI STATUS ───────────────────────────────────────────────────────────────
+async function pollAiStatus() {
+  try {
+    const d = await apiFetch('/api/ai_status');
+    const chip = $('chat-model-chip');
+    if (!chip) return;
+    if (d.available && d.model) {
+      const label = d.model.replace('gemini-','').replace('-preview','');
+      chip.textContent = label;
+      chip.style.opacity = '1';
+      chip.style.background = d.model.includes('flash') ? 'rgba(251,191,36,.15)' : 'rgba(52,211,153,.12)';
+      chip.style.borderColor = d.model.includes('flash') ? 'rgba(251,191,36,.3)' : 'rgba(52,211,153,.25)';
+      chip.style.color = d.model.includes('flash') ? '#fbbf24' : '#34d399';
+    } else {
+      chip.textContent = 'unavailable';
+      chip.style.opacity = '1';
+      chip.style.background = 'rgba(251,113,133,.12)';
+      chip.style.borderColor = 'rgba(251,113,133,.3)';
+      chip.style.color = '#fb7185';
+    }
+  } catch {}
 }
 
 // ─── POLLING ─────────────────────────────────────────────────────────────────
@@ -1632,6 +2094,7 @@ async function pollTrades() {
     updatePnl();
     renderTrades();
     renderOverviewOrders();
+    renderHoldingsRows(botState.prices || {});
     renderSidebarSymbols();
     if (activeTab === 'strategy') renderStrategyTab(botState);
     if (activeTab === 'watchlist') renderWatchlist();
@@ -1641,7 +2104,8 @@ async function pollTrades() {
 // ─── INIT ────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
-  document.querySelectorAll('.mf-btn').forEach(b => b.addEventListener('click', () => setMarket(b.dataset.market)));
+  document.querySelectorAll('.mf-btn[data-market]').forEach(b => b.addEventListener('click', () => setMarket(b.dataset.market)));
+  document.querySelectorAll('[data-tmarket]').forEach(b => b.addEventListener('click', () => setTradesMarket(b.dataset.tmarket)));
   $('btn-start')?.addEventListener('click', () => setControl(true));
   $('btn-stop')?.addEventListener('click',  () => setControl(false));
   $('btn-top20')?.addEventListener('click', loadTop20);
@@ -1659,17 +2123,21 @@ document.addEventListener('DOMContentLoaded', () => {
     const el = $('terminal-logs'); if (el) navigator.clipboard?.writeText(el.textContent);
   });
 
+  initCollapsible();
+  initResizeHandles();
   loadWatchlist();
   loadModelMeta().then(() => renderStrategyTab(botState));
   pollState();
   pollTrades();
   pollLogs();
   fetchBinanceTickers();
+  pollAiStatus();
 
   setInterval(pollState,           5_000);
   setInterval(pollTrades,         12_000);
   setInterval(fetchBinanceTickers,15_000);
   setInterval(() => { if (activeTab==='logs') pollLogs(); }, 10_000);
+  setInterval(pollAiStatus,       60_000);
 
   switchTab('overview');
 });

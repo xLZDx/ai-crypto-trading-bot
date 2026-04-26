@@ -1,1 +1,22 @@
-["BTC/USDT","SOL/USDT","ADA/USDT"]
+[
+    "BTC/USDT",
+    "SOL/USDT",
+    "ADA/USDT",
+    "ETH/USDT",
+    "BNB/USDT",
+    "XRP/USDT",
+    "DOGE/USDT",
+    "TRX/USDT",
+    "AVAX/USDT",
+    "SHIB/USDT",
+    "DOT/USDT",
+    "LINK/USDT",
+    "NEAR/USDT",
+    "UNI/USDT",
+    "LTC/USDT",
+    "APT/USDT",
+    "ATOM/USDT",
+    "HBAR/USDT",
+    "ICP/USDT",
+    "SUI/USDT"
+]
