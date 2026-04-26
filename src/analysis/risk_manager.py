@@ -1,5 +1,10 @@
 import math
+import logging
+import pandas as pd
 from typing import List, Dict
+from src.analysis.volatility import VolatilityForecaster
+
+logger = logging.getLogger(__name__)
 
 class HullRiskManager:
     """
@@ -9,6 +14,7 @@ class HullRiskManager:
     
     def __init__(self, default_risk_usd: float = 20.0):
         self.default_risk_usd = default_risk_usd
+        self.vol_forecaster = VolatilityForecaster()
 
     def calculate_historical_volatility(self, data: List[Dict], periods: int = 30) -> float:
         """
@@ -50,6 +56,15 @@ class HullRiskManager:
         """
         volatility = self.calculate_historical_volatility(data)
         
+        # Check for GARCH volatility spike
+        garch_reduction = 1.0
+        if len(data) >= 100:
+            returns = pd.Series([d['close'] for d in data]).pct_change().dropna()
+            garch_res = self.vol_forecaster.forecast_garch(returns)
+            if garch_res.get('volatility_spike', False):
+                logger.warning("GARCH predicts sharp volatility spike! Reducing position size by 50%.")
+                garch_reduction = 0.5
+        
         # Base logic: if volatility is 50% (0.5), risk the base amount.
         # If volatility is 100% (1.0), risk 2x less ($10).
         # If volatility is 25% (0.25), risk 2x more ($40).
@@ -64,5 +79,5 @@ class HullRiskManager:
         # Limit scaling from 0.25x to 3.0x
         scaling_factor = max(0.25, min(scaling_factor, 3.0))
         
-        adjusted_position = self.default_risk_usd * scaling_factor
+        adjusted_position = self.default_risk_usd * scaling_factor * garch_reduction
         return round(adjusted_position, 2)

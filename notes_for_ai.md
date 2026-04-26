@@ -82,16 +82,16 @@
   - **Kaggle Datasets (Fallback/Baseline):** Utilize pre-compiled CSVs (e.g., "Bitcoin News Dataset") to quickly bootstrap historical data up to 2023/2024, patching in recent data.
 
 ### Phase 2: Mathematical Models (Analytic Core)
-- [ ] **Task 2.1:** Create `src/analysis/mean_reversion.py`. Implement the **Ornstein-Uhlenbeck (OU)** process.
+- [x] **Task 2.1:** Create `src/analysis/mean_reversion.py`. Implement the **Ornstein-Uhlenbeck (OU)** process.
   - **Instruction:** Use Maximum Likelihood Estimation (MLE) to calibrate parameters: reversion speed ($\theta$) and long-term mean ($\mu$).
   - **Application:** Enter a position when price deviates from $\mu$ by more than $2\sigma$, and close it upon reaching $\mu$.
-- [ ] **Task 2.2:** Add **Cointegration (Pairs Trading)** logic to `mean_reversion.py`.
+- [x] **Task 2.2:** Add **Cointegration (Pairs Trading)** logic to `mean_reversion.py`.
   - **Instruction:** Use Engle-Granger or Johansen test (`statsmodels` library).
   - **Application:** Calculate the spread between two assets (e.g., BTC/ETH). Trade the spread price, which is mathematically bound to return to zero.
-- [ ] **Task 2.3:** Create `src/analysis/volatility.py`. Implement the **GARCH(1,1)** model.
+- [x] **Task 2.3:** Create `src/analysis/volatility.py`. Implement the **GARCH(1,1)** model.
   - **Instruction:** Implement via the `arch` library. Train on daily or hourly returns.
   - **Application:** If GARCH predicts a sharp volatility spike, reduce leverage or widen the spreads in the Avellaneda-Stoikov model.
-- [ ] **Task 2.4:** Integrate GARCH outputs into `src/analysis/risk_manager.py`.
+- [x] **Task 2.4:** Integrate GARCH outputs into `src/analysis/risk_manager.py`.
 
 ### Phase 3: Deep Learning (Temporal Fusion Transformers & LSTM)
 - [ ] **Task 3.1:** Update `src/analysis/ml_predictor.py` to implement a hybrid **CNN-LSTM** architecture using `darts`. The CNN will extract patterns from the chart (technical analysis figures), and the LSTM will analyze their sequence over time (boosts accuracy by 15-20% on volatile pairs).
