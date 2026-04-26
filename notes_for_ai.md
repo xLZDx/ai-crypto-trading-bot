@@ -73,10 +73,10 @@
   - **OHLCV (Klines):** Required for GARCH, LSTM, and Transformers.
   - **Funding Rates:** Mandatory parameter for calculating real yield and unit economics on futures.
 - [x] **Task 1.1:** Update `requirements.txt` with required quantitative and ML libraries. Specifically: `darts` (for general time-series and CNN-LSTM), `neuralforecast` (from Nixtla, for fast TFT with AutoTFT hyperparameter tuning), `arch`, `statsmodels`, and `vectorbt` / `backtrader`.
-- [ ] **Task 1.2:** Create `src/data_ingestion/cloud_streamer.py`. Implement `CloudDataStreamer` to intelligently cache large datasets from Google Drive to the local Razer Blade SSD.
-- [ ] **Task 1.3:** Update `src/data_ingestion/binance_downloader.py` to fetch all required data types. Utilize `yfinance` for historical OHLCV and `ccxt` for direct API connections to Binance, OKX, etc., to pull L2 Orderbook, Trades Data, and **Funding Rates**.
-- [ ] **Task 1.4:** Enhance `src/analysis/feature_engineering.py` to calculate **Order Flow Imbalance (OFI)** from Trades data, and normalize OHLCV tensors.
-- [ ] **Task 1.5:** Create `src/data_ingestion/news_scraper.py` to build a historical news feed pipeline for Deep Learning (TFT/LSTM) training. Integrate the following sources:
+- [x] **Task 1.2:** Create `src/data_ingestion/cloud_streamer.py`. Implement `CloudDataStreamer` to intelligently cache large datasets from Google Drive to the local Razer Blade SSD.
+- [x] **Task 1.3:** Update `src/data_ingestion/binance_downloader.py` to fetch all required data types. Utilize `yfinance` for historical OHLCV and `ccxt` for direct API connections to Binance, OKX, etc., to pull L2 Orderbook, Trades Data, and **Funding Rates**.
+- [x] **Task 1.4:** Enhance `src/analysis/feature_engineering.py` to calculate **Order Flow Imbalance (OFI)** from Trades data, and normalize OHLCV tensors.
+- [x] **Task 1.5:** Create `src/data_ingestion/news_scraper.py` to build a historical news feed pipeline for Deep Learning (TFT/LSTM) training. Integrate the following sources:
   - **CryptoCompare API (Primary):** Use the `News` endpoint (reliable historical data since 2017+ including headlines, text, and coin tags).
   - **snscrape (Twitter/X):** Extract tweets by hashtags (e.g., #BTC, #Ethereum) to capture real-time retail sentiment (a "goldmine" for TFT), with robust spam filtering.
   - **Kaggle Datasets (Fallback/Baseline):** Utilize pre-compiled CSVs (e.g., "Bitcoin News Dataset") to quickly bootstrap historical data up to 2023/2024, patching in recent data.

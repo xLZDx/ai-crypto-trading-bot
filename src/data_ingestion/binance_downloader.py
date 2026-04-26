@@ -6,12 +6,30 @@ import gzip
 import requests
 import logging
 import collections
+import ccxt
 
 logger = logging.getLogger(__name__)
 
 _RETRY_CODES = {429, 418}
 _MAX_RETRIES = 5
 
+
+def fetch_funding_rates(symbol='BTC/USDT', limit=1000):
+    """
+    Fetches historical funding rates using ccxt. 
+    Crucial for pairs trading and futures backtesting unit economics.
+    """
+    logger.info(f"Fetching funding rates for {symbol}...")
+    try:
+        # For Binance USDT-M futures, symbols typically look like BTC/USDT:USDT or BTC/USDT
+        exchange = ccxt.binance({'enableRateLimit': True})
+        # Try fetching funding rate history
+        funding_history = exchange.fetch_funding_rate_history(symbol=symbol, limit=limit)
+        logger.info(f"Successfully fetched {len(funding_history)} funding rate records for {symbol}.")
+        return funding_history
+    except Exception as e:
+        logger.error(f"Error fetching funding rates for {symbol}: {e}")
+        return []
 
 def _get_with_retry(url: str, timeout: int = 10) -> requests.Response:
     """GET with exponential backoff on Binance rate-limit (429) or IP-ban (418) responses."""

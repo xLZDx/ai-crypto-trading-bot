@@ -83,3 +83,35 @@ def add_adx(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
     df['dx'] = 100 * (df['plus_di'] - df['minus_di']).abs() / di_sum
     df[f'adx_{period}'] = df['dx'].rolling(window=period).mean()
     return df
+
+def add_ofi(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calculates Order Flow Imbalance (OFI).
+    Uses taker_buy_base vs total volume as an OFI proxy on kline data.
+    """
+    if 'taker_buy_base' in df.columns and 'volume' in df.columns:
+        taker_sell_base = df['volume'] - df['taker_buy_base']
+        df['ofi'] = df['taker_buy_base'] - taker_sell_base
+        df['ofi_cumulative'] = df['ofi'].cumsum()
+    else:
+        df['ofi'] = 0.0
+        df['ofi_cumulative'] = 0.0
+    return df
+
+def normalize_tensors(df: pd.DataFrame, columns: list = None) -> pd.DataFrame:
+    """
+    Normalizes features using Z-score for TFT/LSTM Deep Learning ingestion.
+    """
+    if not columns:
+        # Normalize all numeric columns except target variables or raw timestamps if they exist
+        columns = [col for col in df.columns if pd.api.types.is_numeric_dtype(df[col]) and col not in ('timestamp', 'close_target')]
+        
+    for col in columns:
+        if col in df.columns:
+            mean = df[col].mean()
+            std = df[col].std()
+            if std != 0:
+                df[f'{col}_norm'] = (df[col] - mean) / std
+            else:
+                df[f'{col}_norm'] = 0.0
+    return df
