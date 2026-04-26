@@ -160,6 +160,13 @@ def chat():
 _WATCHLIST_FILE = 'data/watchlist.json'
 _DEFAULT_WATCHLIST = ['BTC/USDT', 'SOL/USDT', 'ADA/USDT']
 
+_TOP20_SYMBOLS = [
+    'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'SOL/USDT', 'XRP/USDT',
+    'DOGE/USDT', 'ADA/USDT', 'TRX/USDT', 'AVAX/USDT', 'SHIB/USDT',
+    'DOT/USDT', 'LINK/USDT', 'NEAR/USDT', 'UNI/USDT', 'LTC/USDT',
+    'APT/USDT', 'ATOM/USDT', 'HBAR/USDT', 'ICP/USDT', 'SUI/USDT',
+]
+
 
 @app.route('/api/watchlist', methods=['GET'])
 @require_api_key
@@ -182,14 +189,27 @@ def add_watchlist():
 
         def _bg_download():
             try:
+                from src.tools.binance_archive_downloader import bulk_download_for_symbol as archive_dl
                 from src.data_ingestion.binance_downloader import download_history
+                # Full 1h and 1d history from archive (resumes from last downloaded month)
+                archive_dl(symbol, '1h', start_year=2017)
+                archive_dl(symbol, '1d', start_year=2017)
+                # 1m limited to recent 2 years to avoid massive downloads
+                archive_dl(symbol, '1m', start_year=2023)
+                # Patch latest candles via REST API
                 download_history(symbol=symbol, timeframe='1h', limit=1000)
                 download_history(symbol=symbol, timeframe='1m', limit=1000)
             except Exception as exc:
-                _log.getLogger(__name__).error(f'Watchlist download {symbol}: {exc}')
+                _log.getLogger(__name__).error(f'Watchlist archive download {symbol}: {exc}')
 
         threading.Thread(target=_bg_download, daemon=True).start()
     return jsonify({'symbols': symbols, 'added': symbol})
+
+
+@app.route('/api/watchlist/top20', methods=['GET'])
+@require_api_key
+def get_top20():
+    return jsonify({'symbols': _TOP20_SYMBOLS})
 
 
 @app.route('/api/watchlist/remove', methods=['POST'])
