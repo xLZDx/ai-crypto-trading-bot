@@ -22,7 +22,14 @@ try:
     from src.analysis.sentiment import NewsSentimentAnalyzer
     from src.analysis.ml_predictor import MLPredictor
     from src.engine.agentic_llm import AgenticLLM
+    from src.analysis.feature_store import FeatureStore
+    from src.analysis.telegram_monitor import TelegramMonitor
+    from src.engine.inference_engine import InferenceEngine
+    from src.engine.market_maker import AvellanedaStoikov
+    from src.analysis.mean_reversion import MeanReversionCore
+    from src.analysis.telegram_monitor import TelegramMonitor
     from src.utils.safe_json import read_json, write_json
+    import numpy as np
     from src.utils.config import (
         MIN_TRADE_USDT, SCALPING_TRADE_FRACTION, MTF_SMA200_REFRESH,
         FUNDING_RATE_REFRESH, SENTIMENT_BOOST_THRESHOLD, SENTIMENT_DRAG_THRESHOLD,
@@ -82,7 +89,17 @@ class MultiAssetTrader:
         self.futures_predictor = MLPredictor(model_filename='futures_short_model.joblib', model_type='futures')
         self.trend_predictor = MLPredictor(model_filename='trend_model.joblib', model_type='trend')
         self.agent = AgenticLLM()
+        self.telegram_monitor = TelegramMonitor()
         self.state_file = 'data/state.json'
+        
+        # --- Advanced Quant Modules ---
+        self.feature_store = FeatureStore()
+        self.inference_engine = InferenceEngine(update_interval=60)
+        self.market_makers = {sym: AvellanedaStoikov(gamma=0.1, k=1.5) for sym in symbols}
+        self.mean_reversion = MeanReversionCore()
+        self.ou_results = {sym: {'signal': 0, 'mu': 0.0, 'sigma': 0.0} for sym in symbols}
+        # VilarsoPro and mr_mozart are secondary sources — used as extra context for Gemini veto
+        self.telegram_monitor = TelegramMonitor(channels=['VilarsoPro', 'mr_mozart'])
         
         # Components for advanced strategies (MTF and Derivatives)
         self.futures_exchange = ccxt.binance({'options': {'defaultType': 'future'}, 'enableRateLimit': True})
@@ -240,22 +257,31 @@ class MultiAssetTrader:
 
         return "HOLD", "Market is flat.", wave_stage, "Neutral"
 
-    def evaluate_all_strategies(self, symbol, data, pivots, sentiment_score, ml_prediction, rsi_value):
-        """Orchestrator: Evaluates all 3 advanced strategies and decides which one to apply."""
+    def evaluate_all_strategies(self, symbol, data, pivots, sentiment_score, ml_prediction, rsi_value, ou_signal=0):
+        """Orchestrator: Evaluates all strategies and decides which one to apply."""
         # 1. Base strategy (ML + Elliott)
         signal, reason, wave_stage, strategy_used = self.analyze_market_state(pivots, sentiment_score, ml_prediction, rsi_value)
-        
+
         df = pd.DataFrame(data)
         for col in ['open', 'high', 'low', 'close', 'volume']: df[col] = pd.to_numeric(df[col])
         current_price = df['close'].iloc[-1]
-        
+
         # --- FILTER: Multi-Timeframe Confluence (Prohibit trading against the macro trend) ---
         sma200 = self.daily_sma200.get(symbol)
         if signal == "BUY" and sma200 and current_price < sma200:
             return "HOLD", f"{reason} [MTF Veto: Price below 1D SMA200 ({sma200:.0f})]", wave_stage, "Neutral"
         elif signal == "SELL" and sma200 and current_price > sma200:
             return "HOLD", f"{reason} [MTF Veto: Price above 1D SMA200 ({sma200:.0f})]", wave_stage, "Neutral"
-            
+
+        # --- FILTER: OU Mean Reversion (block trend signals when price is statistically stretched) ---
+        # ou_signal: 1=oversold (expect bounce up), -1=overbought (expect pull back), 0=neutral
+        if ou_signal == -1 and signal == "BUY":
+            return "HOLD", f"{reason} [OU Veto: price above long-term mean by 2σ — stretched]", wave_stage, "Neutral"
+        elif ou_signal == 1 and signal == "SELL":
+            return "HOLD", f"{reason} [OU Veto: price below long-term mean by 2σ — oversold]", wave_stage, "Neutral"
+        elif (ou_signal == 1 and signal == "BUY") or (ou_signal == -1 and signal == "SELL"):
+            reason += " [OU Confirmed]"
+
         # --- STRATEGY 2: Volatility Breakout (Squeeze) ---
         vol_signal = self.check_volatility_breakout(df)
         if vol_signal == "BUY" and (not sma200 or current_price > sma200):
@@ -369,12 +395,64 @@ class MultiAssetTrader:
         volatility = self.risk_managers[symbol].calculate_historical_volatility(data)
         trade_amount = self.risk_managers[symbol].get_position_size(data)
         trade_amount = max(MIN_TRADE_USDT, trade_amount)
-        
+
+        # --- GARCH Volatility Spike Detection: halve position when regime is unstable ---
+        try:
+            returns_series = pd.Series([
+                float(np.log(float(data[i]['close']) / float(data[i-1]['close'])))
+                for i in range(1, len(data))
+                if float(data[i-1]['close']) > 0 and float(data[i]['close']) > 0
+            ])
+            garch_result = self.risk_managers[symbol].vol_forecaster.forecast_garch(returns_series)
+            if garch_result.get('volatility_spike'):
+                trade_amount = max(MIN_TRADE_USDT, trade_amount * 0.5)
+                logger.warning(f"[{symbol}] ⚠️ GARCH spike! Position halved → {trade_amount:.2f} USDT")
+        except Exception as e:
+            logger.debug(f"[{symbol}] GARCH skipped: {e}")
+
         ml_pred = self.ml_predictor.predict(data)
         trend_pred = self.trend_predictor.predict(data)
         rsi_value = self.calculate_rsi(data)
         
-        signal, reason, wave_stage, strategy_used = self.evaluate_all_strategies(symbol, data, pivots, sentiment, trend_pred, rsi_value)
+        # --- 📈 OU Process (Ornstein-Uhlenbeck) + Feature Store ---
+        try:
+            closes = np.array([float(d['close']) for d in data[-200:]])
+            ou_params = self.mean_reversion.calibrate_ou_process(closes)
+            if ou_params:
+                ou_signal = float(ou_params['signal'])
+                self.ou_results[symbol] = ou_params
+                logger.debug(f"[{symbol}] OU: signal={ou_signal} mu={ou_params['mu']:.2f} sigma={ou_params['sigma']:.4f}")
+            else:
+                ou_signal = 0.0
+        except Exception as e:
+            ou_signal = 0.0
+            logger.debug(f"[{symbol}] OU skipped: {e}")
+        self.feature_store.update_features(symbol, pd.DataFrame(data), sentiment, volatility, ou_signal)
+        
+        # --- 🧠 TFT Inference Engine & Avellaneda-Stoikov Market Maker ---
+        tft_pred = self.inference_engine.get_latest_prediction(symbol)
+        expected_return = tft_pred["expected_return"] if tft_pred else 0.0
+        
+        base_asset = symbol.split('/')[0]
+        inventory_q = self.get_real_or_sim_balance(base_asset)
+        mm_quotes = self.market_makers[symbol].calculate_quotes(current_price, inventory_q, volatility)
+        
+        if expected_return <= -0.01:
+            logger.warning(f"[{symbol}] 📉 TFT predicts DROP ({expected_return*100:.1f}%). Disabling AvellanedaStoikov Buys, shifting to SHORT.")
+            try:
+                self.engine.cancel_all_orders(symbol)
+                self.engine.execute_limit_futures_order(symbol, "SELL", trade_amount / current_price, mm_quotes["optimal_ask"])
+            except Exception as e:
+                logger.error(f"MM Execution Error: {e}")
+        elif expected_return >= 0.01:
+            logger.info(f"[{symbol}] 🚀 TFT predicts PUMP ({expected_return*100:.1f}%). Disabling AvellanedaStoikov Sells, shifting to LONG.")
+            try:
+                self.engine.cancel_all_orders(symbol)
+                self.engine.execute_limit_futures_order(symbol, "BUY", trade_amount / current_price, mm_quotes["optimal_bid"])
+            except Exception as e:
+                logger.error(f"MM Execution Error: {e}")
+        
+        signal, reason, wave_stage, strategy_used = self.evaluate_all_strategies(symbol, data, pivots, sentiment, trend_pred, rsi_value, ou_signal=ou_signal)
         
         if not self.ml_predictor.is_loaded:
             ml_text = "MODEL NOT FOUND"
@@ -508,7 +586,7 @@ class MultiAssetTrader:
             else:
                 logger.info(f"[{symbol}] 🤖 Requesting Gemini Agent for macro check...")
                 headlines = getattr(self.sentiment_analyzer, 'cached_headlines', [])[:10]
-                decision, agent_reason = self.agent.evaluate_trade(symbol, "BUY", reason, headlines)
+                decision, agent_reason = self.agent.evaluate_trade(symbol, "BUY", reason, headlines, self.telegram_monitor)
                 
                 if decision == "APPROVED":
                     logger.info(f"[{symbol}] ✅ AGENT APPROVED ({agent_reason}). Buying for {trade_amount} USDT...")
@@ -632,6 +710,14 @@ class MultiAssetTrader:
             # Keep the process active so the dashboard can read logs and show the red error
             while True:
                 time.sleep(10)
+                
+        # Start Deep Learning Inference Engine in background
+        logger.info("Starting TFT Inference Engine thread...")
+        self.inference_engine.start(self.symbols)
+
+        # Start Telegram Monitor in background
+        logger.info("Starting Telegram Monitor thread...")
+        self.telegram_monitor.start()
             
         asyncio.run(self.binance_websocket())
 

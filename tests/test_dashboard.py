@@ -237,6 +237,82 @@ def test_app_py():
     check('portfolio context builds ml_acc', 'ml_acc' in src)
 
 
+# ─── Static: main.py quant integration ──────────────────────────────────────
+
+MAIN_PATH = os.path.join(BASE_DIR, 'src', 'main.py')
+
+def test_main_py():
+    print('\n[main.py Quant Integration]')
+    if not os.path.exists(MAIN_PATH):
+        check('main.py exists', False, MAIN_PATH)
+        return
+    check('main.py exists', True)
+    src = open(MAIN_PATH, encoding='utf-8').read()
+
+    # Imports
+    check('MeanReversionCore imported', 'MeanReversionCore' in src)
+    check('TelegramMonitor imported', 'TelegramMonitor' in src)
+    check('numpy imported (np)', 'import numpy as np' in src)
+
+    # Init
+    check('self.mean_reversion = MeanReversionCore() in __init__', 'self.mean_reversion = MeanReversionCore()' in src)
+    check('self.ou_results initialized in __init__', 'self.ou_results' in src)
+    check('self.telegram_monitor = TelegramMonitor(channels=', 'TelegramMonitor(channels=' in src)
+    check('VilarsoPro channel configured', 'VilarsoPro' in src)
+    check('mr_mozart channel configured', 'mr_mozart' in src)
+
+    # OU integration in process_kline
+    check('calibrate_ou_process() called', 'calibrate_ou_process' in src)
+    check('ou_signal passed to evaluate_all_strategies', 'ou_signal=ou_signal' in src)
+
+    # GARCH integration
+    check('forecast_garch() called in process_kline', 'forecast_garch' in src)
+    check('volatility_spike halves trade_amount', 'volatility_spike' in src and 'trade_amount * 0.5' in src)
+
+    # Real inventory
+    check('real inventory via split(\'/\')[0] (not inventory_q=0.0)',
+          "split('/')[0]" in src and 'inventory_q = 0.0' not in src)
+
+    # OU filter in evaluate_all_strategies
+    check('ou_signal parameter in evaluate_all_strategies', 'ou_signal=0' in src)
+    check('OU Veto BUY when overbought', 'OU Veto' in src)
+
+
+# ─── Static: quant module files ───────────────────────────────────────────────
+
+AGENTIC_PATH  = os.path.join(BASE_DIR, 'src', 'engine', 'agentic_llm.py')
+TG_MON_PATH   = os.path.join(BASE_DIR, 'src', 'analysis', 'telegram_monitor.py')
+
+def test_quant_modules():
+    print('\n[Quant Modules]')
+
+    # agentic_llm.py — must use new SDK and latest model
+    if not os.path.exists(AGENTIC_PATH):
+        check('agentic_llm.py exists', False, AGENTIC_PATH)
+    else:
+        check('agentic_llm.py exists', True)
+        src = open(AGENTIC_PATH, encoding='utf-8').read()
+        check('agentic_llm uses google.genai (not generativeai)',
+              'from google import genai' in src and 'google.generativeai' not in src)
+        check('agentic_llm uses gemini-3.1-pro-preview',
+              'gemini-3.1-pro-preview' in src)
+        check('agentic_llm has model fallback (_MODELS)',
+              '_MODELS' in src)
+        check('agentic_llm has transient error fallback (_TRANSIENT)',
+              '_TRANSIENT' in src)
+
+    # telegram_monitor.py — must support multiple channels
+    if not os.path.exists(TG_MON_PATH):
+        check('telegram_monitor.py exists', False, TG_MON_PATH)
+    else:
+        check('telegram_monitor.py exists', True)
+        src = open(TG_MON_PATH, encoding='utf-8').read()
+        check('TelegramMonitor accepts channels list param', 'channels: list' in src or 'channels=None' in src)
+        check('multi-channel: chats=self.channels', 'chats=self.channels' in src)
+        check('message tagged with source channel', 'source' in src and 'tagged' in src)
+        check('cache_size 30 (larger for multi-channel)', 'cache_size: int = 30' in src or 'cache_size=30' in src)
+
+
 # ─── Static: model meta files ─────────────────────────────────────────────────
 
 def test_model_meta():
@@ -341,6 +417,8 @@ def main():
     test_trades_file()
     test_app_py()
     test_model_meta()
+    test_main_py()
+    test_quant_modules()
 
     if not args.offline:
         test_api(args.url)
