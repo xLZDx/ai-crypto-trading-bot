@@ -96,6 +96,32 @@ class OrderManager:
             logging.error(f"❌ Error in Futures order {side} on {symbol}: {e}")
             return None
 
+    def execute_limit_futures_order(self, symbol, side, amount_coin, price, reduce_only=False):
+        """Sends a LIMIT order to the Futures account (Used for Market Making)"""
+        try:
+            futures_symbol = self.to_futures_symbol(symbol)
+            amount_coin = self.futures_exchange.amount_to_precision(futures_symbol, amount_coin)
+            price_str = self.futures_exchange.price_to_precision(futures_symbol, price)
+            params = {'reduceOnly': True} if reduce_only else {}
+            
+            order = self.futures_exchange.create_order(
+                symbol=futures_symbol, type='limit', side=side.lower(), 
+                amount=float(amount_coin), price=float(price_str), params=params
+            )
+            logging.info(f"📋 FUTURES LIMIT {side.upper()} {amount_coin} @ {price_str} executed. ID: {order.get('id')}")
+            return order
+        except Exception as e:
+            logging.error(f"❌ Error in Limit order {side} on {symbol}: {e}")
+            return None
+            
+    def cancel_all_orders(self, symbol):
+        """Cancels all open limit orders for a specific symbol"""
+        try:
+            futures_symbol = self.to_futures_symbol(symbol)
+            self.futures_exchange.cancel_all_orders(futures_symbol)
+        except Exception as e:
+            logging.error(f"Error canceling orders for {symbol}: {e}")
+
 if __name__ == "__main__":
     manager = OrderManager()
     usdt_bal = manager.get_balance('USDT')

@@ -1,5 +1,7 @@
 """Shared feature engineering functions used by all ML models and the predictor."""
+import os
 import pandas as pd
+import logging
 
 
 def add_taker_and_trade_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -115,3 +117,219 @@ def normalize_tensors(df: pd.DataFrame, columns: list = None) -> pd.DataFrame:
             else:
                 df[f'{col}_norm'] = 0.0
     return df
+
+def add_telegram_signal(df: pd.DataFrame, telegram_data_path: str) -> pd.DataFrame:
+    """
+    Merges signals from a Telegram analytics channel into the feature DataFrame.
+    """
+    df = df.copy()
+    if not os.path.exists(telegram_data_path):
+        df['telegram_signal'] = 0.0
+        return df
+
+    try:
+        tg_df = pd.read_csv(telegram_data_path)
+        tg_df['timestamp'] = pd.to_datetime(tg_df['timestamp'])
+        tg_df.set_index('timestamp', inplace=True)
+
+        # Simple keyword-based signal extraction (EN & RU)
+        bullish_keywords = ['buy', 'long', 'pump', 'bull', 'moon', 'up', 'strong buy', 'лонг', 'покупка', 'бычий', 'рост']
+        bearish_keywords = ['sell', 'short', 'dump', 'bear', 'crash', 'down', 'strong sell', 'шорт', 'продажа', 'медвежий', 'падение']
+
+        def get_signal(text):
+            text_lower = str(text).lower()
+            if any(kw in text_lower for kw in bullish_keywords):
+                return 1.0
+            if any(kw in text_lower for kw in bearish_keywords):
+                return -1.0
+            return 0.0
+
+        tg_df['telegram_signal'] = tg_df['text'].apply(get_signal)
+
+        # Merge and forward-fill the signal
+        df = pd.merge_asof(df.sort_values('timestamp'), tg_df[['telegram_signal']], on='timestamp', direction='backward')
+        df['telegram_signal'] = df['telegram_signal'].fillna(0.0)
+
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Failed to process Telegram signals: {e}")
+        df['telegram_signal'] = 0.0
+
+    return df
+
+
+def add_news_sentiment(df: pd.DataFrame, news_path: str) -> pd.DataFrame:
+    """
+    Merges hourly news sentiment from cryptocompare_news.csv into the feature DataFrame.
+    Score = (bullish_hits - bearish_hits) / total_hits, resampled to 1h and forward-filled.
+    """
+    df = df.copy()
+    if not os.path.exists(news_path):
+        df['news_sentiment'] = 0.0
+        return df
+
+    _BULL = ['buy', 'bull', 'pump', 'moon', 'breakout', 'rally', 'surge', 'long',
+             'gain', 'rise', 'recover', 'support', 'bullish', 'ath', 'upside']
+    _BEAR = ['sell', 'bear', 'crash', 'dump', 'short', 'drop', 'fall', 'decline',
+             'fear', 'loss', 'breakdown', 'risk', 'bearish', 'correction', 'downside']
+
+    def _score(text: str) -> float:
+        t = str(text).lower()
+        b = sum(1 for kw in _BULL if kw in t)
+        s = sum(1 for kw in _BEAR if kw in t)
+        total = b + s
+        return float(b - s) / total if total > 0 else 0.0
+
+    try:
+        news = pd.read_csv(news_path, usecols=['published_at', 'title', 'summary'])
+        news['published_at'] = pd.to_datetime(news['published_at'], utc=True, errors='coerce')
+        news = news.dropna(subset=['published_at'])
+        news['published_at'] = news['published_at'].dt.tz_convert(None)
+        news['text'] = news['title'].fillna('') + ' ' + news['summary'].fillna('')
+        news['sentiment'] = news['text'].apply(_score)
+
+        hourly = (news.set_index('published_at')['sentiment']
+                  .resample('1h').mean()
+                  .reset_index()
+                  .rename(columns={'published_at': 'timestamp', 'sentiment': 'news_sentiment'}))
+
+        df_ts = pd.to_datetime(df['timestamp'])
+        if df_ts.dt.tz is not None:
+            df_ts = df_ts.dt.tz_convert(None)
+        df = df.copy()
+        df['timestamp'] = df_ts
+        df = pd.merge_asof(df.sort_values('timestamp'),
+                           hourly.sort_values('timestamp'),
+                           on='timestamp', direction='backward')
+        df['news_sentiment'] = df['news_sentiment'].fillna(0.0)
+
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Failed to process news sentiment: {e}")
+        df['news_sentiment'] = 0.0
+
+    return df
+
+
+def add_finbert_sentiment(df: pd.DataFrame, news_path: str, batch_size: int = 64) -> pd.DataFrame:
+    """
+    Replaces keyword-based sentiment with FinBERT scores (ProsusAI/finbert).
+    Falls back to add_news_sentiment() if transformers/torch are unavailable.
+    Requires: pip install transformers torch sentencepiece
+    Model is ~500MB and downloaded once to ~/.cache/huggingface/
+    Score mapped to [-1, 1]: positive→+1, neutral→0, negative→-1
+    """
+    try:
+        from transformers import pipeline as _pipe
+        import torch as _torch
+        device = 0 if _torch.cuda.is_available() else -1
+        _finbert = _pipe(
+            "text-classification",
+            model="ProsusAI/finbert",
+            device=device,
+            truncation=True,
+            max_length=512,
+            top_k=None,
+        )
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            "FinBERT unavailable (%s) — falling back to keyword sentiment.", e
+        )
+        return add_news_sentiment(df, news_path)
+
+    df = df.copy()
+    if not os.path.exists(news_path):
+        df['news_sentiment'] = 0.0
+        return df
+
+    _LABEL_MAP = {"positive": 1.0, "neutral": 0.0, "negative": -1.0}
+
+    def _finbert_score(texts):
+        results = []
+        for i in range(0, len(texts), batch_size):
+            batch = list(texts[i:i + batch_size])
+            try:
+                preds = _finbert(batch)
+                for pred_list in preds:
+                    best = max(pred_list, key=lambda x: x['score'])
+                    results.append(_LABEL_MAP.get(best['label'], 0.0))
+            except Exception:
+                results.extend([0.0] * len(batch))
+        return results
+
+    try:
+        news = pd.read_csv(news_path, usecols=['published_at', 'title', 'summary'])
+        news['published_at'] = pd.to_datetime(news['published_at'], utc=True, errors='coerce')
+        news = news.dropna(subset=['published_at'])
+        news['published_at'] = news['published_at'].dt.tz_convert(None)
+        news['text'] = (news['title'].fillna('') + ' ' + news['summary'].fillna('')).str[:512]
+
+        logging.getLogger(__name__).info("Running FinBERT on %d articles ...", len(news))
+        news['sentiment'] = _finbert_score(news['text'].tolist())
+
+        hourly = (news.set_index('published_at')['sentiment']
+                  .resample('1h').mean()
+                  .reset_index()
+                  .rename(columns={'published_at': 'timestamp', 'sentiment': 'news_sentiment'}))
+
+        df_ts = pd.to_datetime(df['timestamp'])
+        if df_ts.dt.tz is not None:
+            df_ts = df_ts.dt.tz_convert(None)
+        df['timestamp'] = df_ts
+        df = pd.merge_asof(df.sort_values('timestamp'),
+                           hourly.sort_values('timestamp'),
+                           on='timestamp', direction='backward')
+        df['news_sentiment'] = df['news_sentiment'].fillna(0.0)
+        logging.getLogger(__name__).info("FinBERT sentiment merged successfully.")
+
+    except Exception as e:
+        logging.getLogger(__name__).error("FinBERT pipeline failed (%s) — falling back.", e)
+        return add_news_sentiment(df, news_path)
+
+    return df
+
+
+def resample_1s_to_1m(filepath_1s: str, max_days: int = 365) -> pd.DataFrame:
+    """
+    Reads 1s OHLCV data in chunks, keeps only the last max_days days,
+    and resamples to 1m candles. Avoids loading multi-GB files into RAM.
+    Default 365 days covers Binance archive lag of up to 3 months.
+    """
+    agg = {
+        'open':          'first',
+        'high':          'max',
+        'low':           'min',
+        'close':         'last',
+        'volume':        'sum',
+        'quote_volume':  'sum',
+        'trades_count':  'sum',
+        'taker_buy_base': 'sum',
+        'taker_buy_quote': 'sum',
+    }
+
+    from datetime import datetime, timedelta, timezone as _tz
+    cutoff = datetime.now(_tz.utc).replace(tzinfo=None) - timedelta(days=max_days)
+    kept_chunks = []
+
+    for chunk in pd.read_csv(filepath_1s, chunksize=500_000):
+        if 'timestamp' not in chunk.columns:
+            # Try common Binance alternative column names
+            for alt in ['open_time', 'Open time', 'date']:
+                if alt in chunk.columns:
+                    chunk = chunk.rename(columns={alt: 'timestamp'})
+                    break
+        if 'timestamp' not in chunk.columns:
+            continue
+        chunk['timestamp'] = pd.to_datetime(chunk['timestamp'], errors='coerce')
+        chunk = chunk.dropna(subset=['timestamp'])
+        if chunk['timestamp'].dt.tz is not None:
+            chunk['timestamp'] = chunk['timestamp'].dt.tz_convert(None)
+        recent = chunk[chunk['timestamp'] >= cutoff]
+        if len(recent) > 0:
+            kept_chunks.append(recent)
+
+    if not kept_chunks:
+        return pd.DataFrame()
+
+    df = pd.concat(kept_chunks, ignore_index=True).sort_values('timestamp').set_index('timestamp')
+    existing_agg = {k: v for k, v in agg.items() if k in df.columns}
+    resampled = df.resample('1min').agg(existing_agg).dropna(subset=['close'])
+    return resampled.reset_index()

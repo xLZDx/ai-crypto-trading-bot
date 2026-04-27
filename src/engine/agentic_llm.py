@@ -3,12 +3,33 @@ import json
 import logging
 import re
 from dotenv import load_dotenv
+from src.utils.safe_json import read_json
 
 logger = logging.getLogger(__name__)
 
 _VALID_DECISIONS = {"APPROVED", "REJECTED"}
-_MODELS = ['gemini-3.1-pro-preview', 'gemini-3.1-flash-lite-preview']
-_TRANSIENT = ['429', 'quota', 'resource_exhausted', '503', 'unavailable', 'high demand', 'overloaded']
+# Includes model-not-found codes so the loop falls through to the next model
+# instead of breaking on stale/unavailable model IDs.
+_TRANSIENT = [
+    '429', 'quota', 'resource_exhausted',
+    '503', 'unavailable', 'high demand', 'overloaded',
+    '404', 'not found', 'invalid argument', 'unknown model',
+]
+
+# Lightest-quota models first; gives free-tier keys the best chance.
+_ALL_MODELS = [
+    "gemini-2.0-flash-lite",
+    "gemini-2.0-flash-lite-001",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-001",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite-preview",
+    "gemini-2.5-pro",
+    "gemini-3-pro-preview",
+    "gemini-3.1-pro-preview",
+]
 
 
 class AgenticLLM:
@@ -57,15 +78,18 @@ class AgenticLLM:
         )
 
         from google.genai import types as _gntypes
+        
+        ctrl = read_json('data/control.json', default={})
+        selected_model = ctrl.get('selected_ai_model')
+        models_to_try = [selected_model] if selected_model else _ALL_MODELS
+        
         last_err = None
-        for model_id in _MODELS:
+        for model_id in models_to_try:
             try:
                 response = self._client.models.generate_content(
                     model=model_id,
                     contents=prompt,
-                    config=_gntypes.GenerateContentConfig(
-                        http_options=_gntypes.HttpOptions(timeout=20000)
-                    )
+                    config=_gntypes.GenerateContentConfig()
                 )
                 raw_text = response.text
                 match = re.search(r'\{[^{}]*\}', raw_text, re.DOTALL)

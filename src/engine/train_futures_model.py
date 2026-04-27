@@ -48,6 +48,10 @@ def train_futures_model():
     all_data = []
     for sym in symbols:
         full_data_path = os.path.join(base_dir, 'data', 'raw', f'{sym}_1h.csv.gz')
+        archive_path = os.path.join(base_dir, 'data', 'raw', f'{sym}_spot_1h.csv.gz')
+        if not os.path.exists(full_data_path) and os.path.exists(archive_path):
+            full_data_path = archive_path
+            print(f"  Using archive data for {sym}: {archive_path}")
         if not os.path.exists(full_data_path):
             print(f"Warning: Data for {sym} not found at {full_data_path}. Auto-downloading...")
             import sys
@@ -96,8 +100,10 @@ def train_futures_model():
     
     meta_path = os.path.join(models_dir, 'futures_short_model_meta.json')
     import json
+    from datetime import datetime, timezone
     with open(meta_path, 'w') as f:
-        json.dump({"accuracy": accuracy * 100, "long_accuracy": long_acc, "short_accuracy": short_acc}, f)
+        json.dump({"accuracy": accuracy * 100, "long_accuracy": long_acc, "short_accuracy": short_acc,
+                   "last_trained": datetime.now(timezone.utc).isoformat()}, f)
 
 if __name__ == "__main__":
     train_futures_model()

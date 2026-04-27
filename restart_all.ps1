@@ -6,11 +6,27 @@ Write-Host "   AI TRADER: POWERSHELL AUTO-SETUP"
 Write-Host "==========================================" -ForegroundColor Cyan
 
 Write-Host "`n[1/5] Terminating old background processes..." -ForegroundColor Yellow
-Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'python.exe' -and ($_.CommandLine -match 'src\\main.py' -or $_.CommandLine -match 'src\\dashboard\\app.py' -or $_.CommandLine -match 'server.py') } | Invoke-CimMethod -MethodName Terminate | Out-Null
-Get-Process | Where-Object { $_.MainWindowTitle -match "AI Trading Bot|AI Trading Dashboard|AI Trading MCP Server" } | Stop-Process -Force -ErrorAction SilentlyContinue
+# Read saved PIDs from last run and kill them (no WMI / no hang)
+$pidFile = Join-Path $PSScriptRoot 'data\process_ids.json'
+if (Test-Path $pidFile) {
+    try {
+        $saved = Get-Content $pidFile -Raw | ConvertFrom-Json
+        foreach ($p in @($saved.bot, $saved.dash, $saved.mcp)) {
+            if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }
+        }
+    } catch {}
+}
+# Fallback: kill by window title (fast — uses Get-Process, no WMI)
+Get-Process python -ErrorAction SilentlyContinue |
+    Where-Object { $_.MainWindowTitle -match "AI Trading Bot|AI Trading Dashboard|AI Trading MCP Server" } |
+    Stop-Process -Force -ErrorAction SilentlyContinue
+# Last resort: taskkill on any python window matching our title pattern
+& taskkill /F /FI "WINDOWTITLE eq AI Trading Bot*"    2>$null | Out-Null
+& taskkill /F /FI "WINDOWTITLE eq AI Trading Dashboard*" 2>$null | Out-Null
+& taskkill /F /FI "WINDOWTITLE eq AI Trading MCP Server*" 2>$null | Out-Null
 
 # Wait for terminated processes to fully release DLLs before spawning new ones
-Start-Sleep -Seconds 4
+Start-Sleep -Seconds 3
 
 Write-Host "`n[2/5] Setting up Virtual Environment..." -ForegroundColor Yellow
 if (-not (Test-Path "venv\Scripts\python.exe")) {
@@ -37,11 +53,16 @@ $dashCmd = "-NoExit -Command `"Set-Location '$PSScriptRoot'; `$host.UI.RawUI.Win
 $mcpCmd = "-NoExit -Command `"Set-Location '$PSScriptRoot'; `$host.UI.RawUI.WindowTitle = 'AI Trading MCP Server'; .\venv\Scripts\Activate.ps1; python src\mcp_server\server.py`""
 
 # Stagger launches — simultaneous spawns cause 0xc0000142 DLL init failure
-Start-Process powershell -ArgumentList $dashCmd
+$procDash = Start-Process powershell -ArgumentList $dashCmd -PassThru
 Start-Sleep -Seconds 2
-Start-Process powershell -ArgumentList $botCmd
+$procBot  = Start-Process powershell -ArgumentList $botCmd  -PassThru
 Start-Sleep -Seconds 2
-Start-Process powershell -ArgumentList $mcpCmd
+$procMcp  = Start-Process powershell -ArgumentList $mcpCmd  -PassThru
+
+# Save PIDs so next restart can kill exactly these processes without WMI
+New-Item -ItemType Directory -Force -Path (Join-Path $PSScriptRoot 'data') | Out-Null
+@{ bot = $procBot.Id; dash = $procDash.Id; mcp = $procMcp.Id } |
+    ConvertTo-Json | Set-Content (Join-Path $PSScriptRoot 'data\process_ids.json')
 
 Write-Host "`n==========================================" -ForegroundColor Green
 Write-Host "   ALL PROCESSES STARTED SUCCESSFULLY!" -ForegroundColor Green

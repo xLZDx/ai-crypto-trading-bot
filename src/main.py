@@ -27,6 +27,7 @@ try:
     from src.engine.inference_engine import InferenceEngine
     from src.engine.market_maker import AvellanedaStoikov
     from src.analysis.mean_reversion import MeanReversionCore
+    from src.analysis.momentum import CrossSectionalMomentum
     from src.analysis.telegram_monitor import TelegramMonitor
     from src.utils.safe_json import read_json, write_json
     import numpy as np
@@ -76,7 +77,7 @@ console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(
 logger.addHandler(console_handler)
 
 class MultiAssetTrader:
-    def __init__(self, symbols=['BTC/USDT', 'SOL/USDT', 'ADA/USDT'], timeframe='1h'):
+    def __init__(self, symbols=['BTC/USDT', 'SOL/USDT', 'ADA/USDT', 'ETH/USDT'], timeframe='1h'):
         self.symbols = symbols
         self.timeframe = timeframe
         self.analyzers = {sym: ElliottWaveAnalyzer(deviation_percent=WAVE_DEVIATION_DEFAULT) for sym in symbols}
@@ -94,10 +95,12 @@ class MultiAssetTrader:
         
         # --- Advanced Quant Modules ---
         self.feature_store = FeatureStore()
-        self.inference_engine = InferenceEngine(update_interval=60)
+        self.inference_engine = InferenceEngine(feature_store=self.feature_store, update_interval=60)
         self.market_makers = {sym: AvellanedaStoikov(gamma=0.1, k=1.5) for sym in symbols}
         self.mean_reversion = MeanReversionCore()
         self.ou_results = {sym: {'signal': 0, 'mu': 0.0, 'sigma': 0.0} for sym in symbols}
+        self.momentum_engine = CrossSectionalMomentum(lookback=20, top_pct=0.30, bottom_pct=0.30, rebalance_period=24)
+        self.momentum_signals = {sym: 0.0 for sym in symbols}
         # VilarsoPro and mr_mozart are secondary sources — used as extra context for Gemini veto
         self.telegram_monitor = TelegramMonitor(channels=['VilarsoPro', 'vilarsofree', 'mr_mozart'])
         
@@ -353,6 +356,14 @@ class MultiAssetTrader:
     async def process_kline(self, symbol, current_price):
         logger.info(f"[{symbol}] WebSocket tick processed - Price: {current_price}")
         self.current_state["prices"][symbol] = current_price
+
+        # Cross-sectional momentum: update whenever any price arrives
+        live_prices = {s: p for s, p in self.current_state["prices"].items() if p > 0}
+        if len(live_prices) >= 2:
+            updated = self.momentum_engine.update(live_prices)
+            if updated:
+                self.momentum_signals = updated
+
         await self.update_market_context()
         
         # 1. Risk priority: Check trailing stops. Execute on Binance before closing internally.
@@ -397,6 +408,7 @@ class MultiAssetTrader:
         trade_amount = max(MIN_TRADE_USDT, trade_amount)
 
         # --- GARCH Volatility Spike Detection: halve position when regime is unstable ---
+        garch_result = {}
         try:
             returns_series = pd.Series([
                 float(np.log(float(data[i]['close']) / float(data[i-1]['close'])))
@@ -452,6 +464,27 @@ class MultiAssetTrader:
             except Exception as e:
                 logger.error(f"MM Execution Error: {e}")
         
+        # --- 📊 Push quant metrics to dashboard state (read by /api/state) ---
+        _ou_r = self.ou_results.get(symbol, {})
+        _ou_mu = float(_ou_r.get('mu', 0.0))
+        _ou_sigma = float(_ou_r.get('sigma', 0.0))
+        _ou_dev = round((current_price - _ou_mu) / _ou_sigma, 2) if _ou_sigma > 0 else 0.0
+        self.current_state.setdefault("quant", {})[symbol] = {
+            "ou_signal":      int(ou_signal),
+            "ou_mu":          round(_ou_mu, 4),
+            "ou_deviation":   _ou_dev,
+            "garch_spike":    bool(garch_result.get("volatility_spike", False)),
+            "garch_forecast": round(float(garch_result.get("forecast_volatility", 0.0)) * 100, 4),
+            "garch_hist":     round(float(garch_result.get("historical_volatility", 0.0)) * 100, 4),
+            "garch_status":   garch_result.get("status", "pending"),
+            "tft_return":     round(expected_return * 100, 2),
+            "as_bid":         round(float(mm_quotes.get("optimal_bid", 0.0)), 2),
+            "as_ask":         round(float(mm_quotes.get("optimal_ask", 0.0)), 2),
+            "as_spread":      round(float(mm_quotes.get("optimal_spread", 0.0)), 2),
+            "as_reservation": round(float(mm_quotes.get("reservation_price", 0.0)), 2),
+            "momentum_signal": round(float(self.momentum_signals.get(symbol, 0.0)), 3),
+        }
+
         signal, reason, wave_stage, strategy_used = self.evaluate_all_strategies(symbol, data, pivots, sentiment, trend_pred, rsi_value, ou_signal=ou_signal)
         
         if not self.ml_predictor.is_loaded:
@@ -484,7 +517,10 @@ class MultiAssetTrader:
             "rsi": round(rsi_value, 2),
             "volatility": round(volatility*100, 2), 
             "recommended_trade_size": trade_amount,
-            "recent_pivots": formatted_pivots
+            "recent_pivots": formatted_pivots,
+            "tft_prediction_pct": round(expected_return * 100, 3),
+            "ou_mean_reversion": ou_signal,
+            "funding_rate": round(self.funding_rates.get(symbol, 0.0) * 100, 4)
         }
         
         # Build FUTURES state with specific Futures ML Model predictions
@@ -735,7 +771,7 @@ if __name__ == "__main__":
         with open(wl_path, 'r', encoding='utf-8') as f:
             loaded_symbols = json.load(f)
     else:
-        loaded_symbols = ['BTC/USDT', 'SOL/USDT', 'ADA/USDT']
+        loaded_symbols = ['BTC/USDT', 'SOL/USDT', 'ADA/USDT', 'ETH/USDT']
         
     trader = MultiAssetTrader(symbols=loaded_symbols)
     trader.run()

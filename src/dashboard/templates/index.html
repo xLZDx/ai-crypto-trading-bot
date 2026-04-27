@@ -760,6 +760,12 @@ select.field option{background:#0d1628;color:#e2e8f0}
         <div class="card-sm" style="text-align:center;color:#475569">Loading…</div>
       </div>
 
+      <!-- Quant Signal Matrix: per-coin OU / GARCH / Avellaneda-Stoikov -->
+      <div class="section-label" style="margin-bottom:9px;margin-top:18px">Quant Signal Matrix</div>
+      <div id="quant-matrix" style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px">
+        <div class="card-sm" style="text-align:center;color:#475569;grid-column:1/-1">Waiting for first tick…</div>
+      </div>
+
     </div><!-- /strategy -->
 
 
@@ -924,6 +930,12 @@ select.field option{background:#0d1628;color:#e2e8f0}
             <span class="chip" style="background:rgba(52,211,153,.08);border-color:rgba(52,211,153,.2);color:#34d399">Portfolio Analytics</span>
             <span class="chip" style="background:rgba(251,191,36,.08);border-color:rgba(251,191,36,.2);color:#fbbf24">Bot Commands</span>
           </div>
+        </div>
+        <div style="padding:10px 16px; border-bottom:1px solid rgba(148,163,184,.08); background:rgba(5,8,22,.4);">
+          <label for="ai-model-select" style="font-size: .65rem; color: #94a3b8; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;">🤖 Override AI Model:</label>
+          <select id="ai-model-select" onchange="updateAIModel()" class="field" style="width: 100%; margin-top: 5px;">
+            <option value="">Auto-Detect (Fastest Available)</option>
+          </select>
         </div>
         <div class="chat-msgs" id="chat-messages" style="flex:1">
           <div class="chat-bubble-bot">
@@ -1731,9 +1743,61 @@ function renderStrategyTab(state) {
         <div style="background:rgba(5,8,22,.5);border-radius:999px;height:4px;overflow:hidden;margin-top:9px">
           <div style="width:${Math.min(100,accNum||0)}%;height:100%;background:linear-gradient(90deg,#1d4ed8,${accCol});border-radius:999px"></div>
         </div>
+        <div style="font-size:.56rem;color:#475569;margin-top:5px;text-align:right">
+          Trained: ${file.last_trained ? new Date(file.last_trained).toLocaleDateString() : 'not yet'}
+        </div>
       </div>`;
     }).join('');
   }
+  renderQuantMatrix(state);
+}
+
+// ─── QUANT SIGNAL MATRIX ─────────────────────────────────────────────────────
+function renderQuantCard(sym, q) {
+  const OU_MAP = {'-1':{label:'OVERBOUGHT',col:'#fb7185'},'0':{label:'NEUTRAL',col:'#64748b'},'1':{label:'OVERSOLD',col:'#34d399'}};
+  const ou = OU_MAP[String(q.ou_signal)] || OU_MAP['0'];
+  const devSign = (q.ou_deviation||0) >= 0 ? '+' : '';
+  const garchCol = q.garch_spike ? '#fb7185' : '#34d399';
+  const garchLabel = q.garch_spike ? '⚠ SPIKE' : '✓ NORMAL';
+  const tftCol = (q.tft_return||0) > 1 ? '#34d399' : (q.tft_return||0) < -1 ? '#fb7185' : '#64748b';
+  const tftLabel = q.tft_return ? `${(q.tft_return>=0?'+':'')+q.tft_return}%` : 'no model';
+  const asSpread = q.as_spread != null ? Number(q.as_spread).toFixed(2) : '--';
+  const garchFcast = q.garch_forecast != null ? Number(q.garch_forecast).toFixed(3)+'%' : '--';
+  return `<div class="card-sm" style="padding:10px 12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <span style="font-weight:800;color:#fff;font-size:.78rem">${esc(sym)}</span>
+      <span style="font-size:.58rem;font-weight:700;padding:2px 8px;border-radius:999px;background:${ou.col}22;color:${ou.col}">${ou.label}</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px">
+      <div style="background:rgba(5,8,22,.5);border-radius:7px;padding:6px;text-align:center">
+        <div style="font-size:.5rem;color:#475569">OU DEV</div>
+        <div style="font-weight:800;color:${ou.col};font-size:.85rem">${devSign}${q.ou_deviation||0}σ</div>
+        <div style="font-size:.48rem;color:#475569">μ=${q.ou_mu?Number(q.ou_mu).toFixed(0):'--'}</div>
+      </div>
+      <div style="background:rgba(5,8,22,.5);border-radius:7px;padding:6px;text-align:center">
+        <div style="font-size:.5rem;color:#475569">GARCH</div>
+        <div style="font-weight:800;color:${garchCol};font-size:.72rem">${garchLabel}</div>
+        <div style="font-size:.48rem;color:#475569">${garchFcast}</div>
+      </div>
+      <div style="background:rgba(5,8,22,.5);border-radius:7px;padding:6px;text-align:center">
+        <div style="font-size:.5rem;color:#475569">TFT / A-S</div>
+        <div style="font-weight:800;color:${tftCol};font-size:.82rem">${tftLabel}</div>
+        <div style="font-size:.48rem;color:#475569">spread ${asSpread}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderQuantMatrix(state) {
+  const cont = $('quant-matrix');
+  if (!cont) return;
+  const quant = (state && state.quant) || {};
+  const coins = Object.keys(quant);
+  if (!coins.length) {
+    cont.innerHTML = '<div class="card-sm" style="text-align:center;color:#475569;grid-column:1/-1">Waiting for first tick…</div>';
+    return;
+  }
+  cont.innerHTML = coins.map(sym => renderQuantCard(sym, quant[sym])).join('');
 }
 
 // ─── WATCHLIST ────────────────────────────────────────────────────────────────
@@ -2052,6 +2116,34 @@ function initCollapsible() {
   });
 }
 
+// ─── AI MODELS SELECTION ─────────────────────────────────────────────────────
+async function loadAIModels() {
+  try {
+    const d = await apiFetch('/api/ai_status');
+    const sel = $('ai-model-select');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">Auto-Detect (Fastest Available)</option>';
+    (d.available_models || []).forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = `${m.name} | ${m.cost} | Thinking: ${m.thinking}`;
+      if (d.selected_model === m.id) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  } catch (e) { console.error('Failed to load AI models', e); }
+}
+
+async function updateAIModel() {
+  const selected = $('ai-model-select')?.value || null;
+  try {
+    const ctrl = await apiFetch('/api/control');
+    ctrl.selected_ai_model = selected;
+    await apiFetch('/api/control', { method: 'POST', body: JSON.stringify(ctrl) });
+    console.log("AI Model preference updated:", selected);
+    pollAiStatus();
+  } catch(e) { console.error(e); }
+}
+
 // ─── AI STATUS ───────────────────────────────────────────────────────────────
 async function pollAiStatus() {
   try {
@@ -2132,6 +2224,7 @@ document.addEventListener('DOMContentLoaded', () => {
   pollLogs();
   fetchBinanceTickers();
   pollAiStatus();
+  loadAIModels();
 
   setInterval(pollState,           5_000);
   setInterval(pollTrades,         12_000);

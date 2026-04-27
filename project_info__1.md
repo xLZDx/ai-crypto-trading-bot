@@ -1,0 +1,1 @@
+I’m in **Explore Mode** — a codebase investigation mode. I can analyze code and produce documentation, but I can't implement changes here. To implement this, switch to **Act Mode** using the mode selector at the bottom of the chat. Your exploration findings will carry over as context.

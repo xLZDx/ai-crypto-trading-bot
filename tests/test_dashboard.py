@@ -149,6 +149,15 @@ def test_template():
         check(f'trades market filter button {mkt}',
               f'data-tmarket="{mkt}"' in html)
 
+    # Quant Signal Matrix
+    check('quant-matrix DOM id present', 'id="quant-matrix"' in html)
+    check('renderQuantCard() function defined', 'function renderQuantCard(' in html)
+    check('renderQuantMatrix() function defined', 'function renderQuantMatrix(' in html)
+    check('renderQuantMatrix(state) called in renderStrategyTab', 'renderQuantMatrix(state)' in html)
+
+    # ML card last_trained timestamp
+    check('last_trained shown in ML model card', 'last_trained' in html)
+
 
 # ─── Static: trades.json field names ─────────────────────────────────────────
 
@@ -278,6 +287,11 @@ def test_main_py():
     check('ou_signal parameter in evaluate_all_strategies', 'ou_signal=0' in src)
     check('OU Veto BUY when overbought', 'OU Veto' in src)
 
+    # Quant state push to dashboard
+    check('garch_result initialized before try block (garch_result = {})', 'garch_result = {}' in src)
+    check('quant state pushed to current_state["quant"]',
+          'current_state' in src and '"quant"' in src and 'ou_signal' in src)
+
 
 # ─── Static: quant module files ───────────────────────────────────────────────
 
@@ -312,6 +326,113 @@ def test_quant_modules():
         check('multi-channel: chats=self.channels', 'chats=self.channels' in src)
         check('message tagged with source channel', 'source' in src and 'tagged' in src)
         check('cache_size 30 (larger for multi-channel)', 'cache_size: int = 30' in src or 'cache_size=30' in src)
+
+
+# ─── Static: training scripts ────────────────────────────────────────────────
+
+def test_training_scripts():
+    print('\n[Training Scripts]')
+    ENGINE_DIR = os.path.join(BASE_DIR, 'src', 'engine')
+    scripts = [
+        'train_model.py',
+        'train_futures_model.py',
+        'train_trend_model.py',
+        'train_scalping_model.py',
+    ]
+    for fname in scripts:
+        path = os.path.join(ENGINE_DIR, fname)
+        if not os.path.exists(path):
+            check(f'{fname} exists', False, path)
+            continue
+        check(f'{fname} exists', True)
+        src = open(path, encoding='utf-8').read()
+        check(f'{fname} has archive fallback (_spot_)', '_spot_' in src)
+        check(f'{fname} writes last_trained to meta', 'last_trained' in src)
+
+
+# ─── Static: new quant strategy modules ─────────────────────────────────────
+
+def test_new_strategy_modules():
+    print('\n[New Strategy Modules]')
+
+    # Momentum
+    mom_path = os.path.join(BASE_DIR, 'src', 'analysis', 'momentum.py')
+    check('momentum.py exists', os.path.exists(mom_path))
+    if os.path.exists(mom_path):
+        src = open(mom_path, encoding='utf-8').read()
+        check('CrossSectionalMomentum class defined', 'class CrossSectionalMomentum' in src)
+        check('compute_from_history() for backtesting', 'compute_from_history' in src)
+        check('load_momentum_prices() helper', 'load_momentum_prices' in src)
+
+    # Funding rate downloader
+    fr_path = os.path.join(BASE_DIR, 'src', 'data_ingestion', 'funding_rate_downloader.py')
+    check('funding_rate_downloader.py exists', os.path.exists(fr_path))
+    if os.path.exists(fr_path):
+        src = open(fr_path, encoding='utf-8').read()
+        check('download_funding_rates() defined', 'def download_funding_rates' in src)
+        check('merge_funding_into_ohlcv() defined', 'def merge_funding_into_ohlcv' in src)
+        check('uses ccxt for Binance perpetual futures', 'ccxt' in src and 'fundingRate' in src)
+
+    # Backtester
+    bt_path = os.path.join(BASE_DIR, 'src', 'engine', 'backtester.py')
+    check('backtester.py exists', os.path.exists(bt_path))
+    if os.path.exists(bt_path):
+        src = open(bt_path, encoding='utf-8').read()
+        check('Backtester class defined', 'class Backtester' in src)
+        check('BacktestResult class defined', 'class BacktestResult' in src)
+        check('TradeRecord class defined', 'class TradeRecord' in src)
+        check('Sharpe ratio implemented', 'def sharpe' in src)
+        check('Sortino ratio implemented', 'def sortino' in src)
+        check('Max drawdown implemented', 'def max_drawdown' in src)
+        check('Profit factor implemented', 'def profit_factor' in src)
+        check('Funding cost in PnL formula', 'funding_paid' in src)
+        check('run_full_backtest() entry point', 'def run_full_backtest' in src)
+        check('compare_strategies() returns DataFrame', 'def compare_strategies' in src)
+
+    # FinBERT in feature_engineering
+    fe_path = os.path.join(BASE_DIR, 'src', 'analysis', 'feature_engineering.py')
+    check('feature_engineering.py exists', os.path.exists(fe_path))
+    if os.path.exists(fe_path):
+        src = open(fe_path, encoding='utf-8').read()
+        check('add_finbert_sentiment() defined', 'def add_finbert_sentiment' in src)
+        check('FinBERT model ProsusAI/finbert used', 'ProsusAI/finbert' in src)
+        check('Falls back to keyword sentiment on import error', 'add_news_sentiment' in src and ('fallback' in src.lower() or 'falling back' in src.lower()))
+
+    # Momentum wired in main.py
+    main_path = os.path.join(BASE_DIR, 'src', 'main.py')
+    if os.path.exists(main_path):
+        src = open(main_path, encoding='utf-8').read()
+        check('CrossSectionalMomentum imported in main.py', 'CrossSectionalMomentum' in src)
+        check('self.momentum_engine initialized in __init__', 'self.momentum_engine' in src)
+        check('momentum_signals updated in process_kline', 'momentum_engine.update' in src)
+        check('momentum_signal pushed to quant state', '"momentum_signal"' in src)
+
+    # TFT includes funding rate feature
+    tft_path = os.path.join(BASE_DIR, 'src', 'engine', 'train_tft_model.py')
+    if os.path.exists(tft_path):
+        src = open(tft_path, encoding='utf-8').read()
+        check('TFT uses GPU when available (pl_trainer_kwargs)', 'pl_trainer_kwargs' in src)
+        check('funding_rate in TFT past covariates', '"funding_rate"' in src)
+        check('merge_funding_into_ohlcv called in engineer_frame', 'merge_funding_into_ohlcv' in src)
+
+    # train_all_models includes backtester and funding download
+    ta_path = os.path.join(BASE_DIR, 'src', 'engine', 'train_all_models.py')
+    if os.path.exists(ta_path):
+        src = open(ta_path, encoding='utf-8').read()
+        check('train_all_models downloads funding rates first', 'download_funding_rates' in src)
+        check('train_all_models runs backtester', 'run_full_backtest' in src)
+
+    # install_cuda_torch.ps1 script
+    cuda_ps1 = os.path.join(BASE_DIR, 'install_cuda_torch.ps1')
+    check('install_cuda_torch.ps1 exists', os.path.exists(cuda_ps1))
+
+    # restart_all.ps1 uses PID file (no WMI hang)
+    restart_path = os.path.join(BASE_DIR, 'restart_all.ps1')
+    if os.path.exists(restart_path):
+        src = open(restart_path, encoding='utf-8').read()
+        check('restart_all.ps1 uses PID file (no WMI)', 'process_ids.json' in src)
+        check('restart_all.ps1 saves PIDs on launch', 'ConvertTo-Json' in src and 'process_ids.json' in src)
+        check('restart_all.ps1 no hanging Get-CimInstance', 'Get-CimInstance Win32_Process' not in src)
 
 
 # ─── Static: model meta files ─────────────────────────────────────────────────
@@ -417,9 +538,11 @@ def main():
     test_template()
     test_trades_file()
     test_app_py()
+    test_training_scripts()
     test_model_meta()
     test_main_py()
     test_quant_modules()
+    test_new_strategy_modules()
 
     if not args.offline:
         test_api(args.url)

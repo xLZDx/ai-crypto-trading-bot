@@ -13,7 +13,8 @@ if base_dir not in sys.path:
 
 from src.analysis.feature_engineering import (
     add_taker_and_trade_features, add_rsi, add_macd,
-    add_bollinger_bands, add_roc, add_time_features
+    add_bollinger_bands, add_roc, add_time_features, add_telegram_signal,
+    add_news_sentiment
 )
 
 
@@ -21,7 +22,7 @@ def prepare_data(filepath):
     print(f"Loading data from {filepath}...")
     df = pd.read_csv(filepath)
     df['timestamp'] = pd.to_datetime(df['timestamp'])
-    df = df.sort_values('timestamp')
+    df = df.sort_values('timestamp').reset_index(drop=True)
 
     print("Engineering features...")
     df['return'] = df['close'].pct_change()
@@ -52,6 +53,11 @@ def prepare_data(filepath):
     df['return_lag5'] = df['return'].shift(5)
     df['atr_pct'] = (df['high'] - df['low']) / df['close']
 
+    # News sentiment from cryptocompare_news.csv (replaces always-zero telegram_analytics)
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    news_path = os.path.join(base_dir, 'data', 'raw', 'cryptocompare_news.csv')
+    df = add_news_sentiment(df, news_path)
+
     df['target'] = (df['close'].shift(-2) > df['close']).astype(int)
     df = df.dropna()
     return df
@@ -66,13 +72,18 @@ def train_model():
         with open(wl_path, 'r') as f:
             symbols = [s.replace('/', '_') for s in json.load(f)]
     else:
-        symbols = ['BTC_USDT', 'SOL_USDT', 'ADA_USDT']
+        symbols = ['BTC_USDT', 'SOL_USDT', 'ADA_USDT', 'ETH_USDT']
         
     timeframe = '1h' # USING 1h, AS THE BOT TRADES ON HOURLY CANDLES!
     
     all_data = []
     for sym in symbols:
         full_data_path = os.path.join(base_dir, 'data', 'raw', f'{sym}_{timeframe}.csv.gz')
+        # Prefer archive downloader format if standard file missing (more historical data)
+        archive_path = os.path.join(base_dir, 'data', 'raw', f'{sym}_spot_{timeframe}.csv.gz')
+        if not os.path.exists(full_data_path) and os.path.exists(archive_path):
+            full_data_path = archive_path
+            print(f"  Using archive data for {sym}: {archive_path}")
         if not os.path.exists(full_data_path):
             print(f"Warning: Data for {sym} not found at {full_data_path}. Auto-downloading...")
             import sys
@@ -94,7 +105,7 @@ def train_model():
     combined_df = pd.concat(all_data, ignore_index=True)
     
     # Define the features (X) the model will use to make predictions
-    feature_columns = ['return', 'volatility', 'dist_sma_7', 'dist_sma_30', 'rsi_14', 'macd', 'macd_hist', 'volume_momentum', 'stoch_k', 'return_lag1', 'return_lag2', 'return_lag3', 'return_lag5', 'atr_pct', 'taker_buy_ratio', 'avg_trade_size', 'hour', 'day_of_week', 'roc_14', 'roc_3', 'roc_7', 'bb_pb']
+    feature_columns = ['return', 'volatility', 'dist_sma_7', 'dist_sma_30', 'rsi_14', 'macd', 'macd_hist', 'volume_momentum', 'stoch_k', 'return_lag1', 'return_lag2', 'return_lag3', 'return_lag5', 'atr_pct', 'taker_buy_ratio', 'avg_trade_size', 'hour', 'day_of_week', 'roc_14', 'roc_3', 'roc_7', 'bb_pb', 'news_sentiment']
     X = combined_df[feature_columns]
     
     # Define the target (y) the model is trying to predict
@@ -131,8 +142,12 @@ def train_model():
     print(f"\nModel successfully saved to {model_path}")
     
     from src.utils.safe_json import write_json
+    from datetime import datetime, timezone
     meta_path = os.path.join(models_dir, 'btc_rf_model_meta.json')
-    write_json(meta_path, {"accuracy": accuracy * 100, "long_accuracy": long_acc, "short_accuracy": short_acc})
+    write_json(meta_path, {
+        "accuracy": accuracy * 100, "long_accuracy": long_acc, "short_accuracy": short_acc,
+        "last_trained": datetime.now(timezone.utc).isoformat()
+    })
 
 if __name__ == "__main__":
     train_model()

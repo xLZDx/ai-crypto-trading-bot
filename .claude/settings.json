@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(taskkill /PID 25840 /F)",
+      "PowerShell(Stop-Process -Id 25840 -Force -ErrorAction SilentlyContinue)",
+      "PowerShell(Start-Sleep -Seconds 1; Set-Location \"d:\\\\test 2\\\\AI trading assistance\"; Start-Process -FilePath \"venv\\\\Scripts\\\\python.exe\" -ArgumentList \"src/dashboard/app.py\" -WorkingDirectory \"d:\\\\test 2\\\\AI trading assistance\" -WindowStyle Hidden; Start-Sleep -Seconds 3; \\(Invoke-WebRequest -Uri \"http://localhost:5000/api/ai_status\" -UseBasicParsing -TimeoutSec 5\\).Content | ConvertFrom-Json | Select-Object active_model, model, available)",
+      "PowerShell(Start-Sleep -Seconds 4; \\(Invoke-WebRequest -Uri \"http://localhost:5000/api/ai_status\" -UseBasicParsing -TimeoutSec 8\\).Content)",
+      "PowerShell($body = '{\"message\":\"Say: WORKING\"}'; $result = \\(Invoke-WebRequest -Uri \"http://localhost:5000/api/chat\" -Method POST -Body $body -ContentType \"application/json\" -UseBasicParsing -TimeoutSec 30\\).Content | ConvertFrom-Json; Write-Host \"Model used: $\\($result.model\\)\"; Write-Host \"Response: $\\($result.response.Substring\\(0, [Math]::Min\\(80, $result.response.Length\\)\\)\\)\")"
+    ]
+  }
+}

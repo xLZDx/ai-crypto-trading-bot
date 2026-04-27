@@ -6,30 +6,12 @@ import gzip
 import requests
 import logging
 import collections
-import ccxt
 
 logger = logging.getLogger(__name__)
 
 _RETRY_CODES = {429, 418}
 _MAX_RETRIES = 5
 
-
-def fetch_funding_rates(symbol='BTC/USDT', limit=1000):
-    """
-    Fetches historical funding rates using ccxt. 
-    Crucial for pairs trading and futures backtesting unit economics.
-    """
-    logger.info(f"Fetching funding rates for {symbol}...")
-    try:
-        # For Binance USDT-M futures, symbols typically look like BTC/USDT:USDT or BTC/USDT
-        exchange = ccxt.binance({'enableRateLimit': True})
-        # Try fetching funding rate history
-        funding_history = exchange.fetch_funding_rate_history(symbol=symbol, limit=limit)
-        logger.info(f"Successfully fetched {len(funding_history)} funding rate records for {symbol}.")
-        return funding_history
-    except Exception as e:
-        logger.error(f"Error fetching funding rates for {symbol}: {e}")
-        return []
 
 def _get_with_retry(url: str, timeout: int = 10) -> requests.Response:
     """GET with exponential backoff on Binance rate-limit (429) or IP-ban (418) responses."""
@@ -124,6 +106,44 @@ def download_history(symbol='BTC/USDT', timeframe='1h', limit=1000):
     except Exception as e:
         logger.error(f"Error while downloading data for {symbol}: {e}")
 
+def download_funding_history(symbol='BTC/USDT', limit=1000):
+    """
+    Downloads historical funding rates for perpetual futures.
+    Crucial for pairs trading and backtesting true unit economics.
+    """
+    logger.info(f"Updating historical funding rates for {symbol}...")
+    try:
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        raw_dir = os.path.join(project_root, 'data', 'raw')
+        os.makedirs(raw_dir, exist_ok=True)
+
+        filename = os.path.join(raw_dir, f"{symbol.replace('/', '_')}_funding.csv")
+        safe_symbol = symbol.replace('/', '')
+        
+        url = f"https://fapi.binance.com/fapi/v1/fundingRate?symbol={safe_symbol}&limit={limit}"
+        
+        response = _get_with_retry(url)
+        funding_data = response.json()
+        
+        if not isinstance(funding_data, list) or not funding_data:
+            logger.info(f"[{symbol}] No funding data found.")
+            return
+            
+        mode = 'a' if os.path.exists(filename) else 'w'
+        with open(filename, mode, newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            if mode == 'w':
+                writer.writerow(['timestamp', 'funding_rate', 'mark_price'])
+                
+            for row in funding_data:
+                dt = datetime.fromtimestamp(row['fundingTime'] / 1000, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+                writer.writerow([dt, float(row['fundingRate']), float(row.get('markPrice', 0))])
+                
+        logger.info(f"Appended funding rates to {filename}.")
+    except Exception as e:
+        logger.error(f"Error while downloading funding data for {symbol}: {e}")
+
 
 if __name__ == "__main__":
     download_history(symbol='BTC/USDT', timeframe='1h', limit=1000)
+    download_funding_history(symbol='BTC/USDT')

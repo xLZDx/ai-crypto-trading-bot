@@ -27,7 +27,15 @@
 - Full codebase security & quality review and fixes (see summary below)
 
 ## Pending Tasks
-- **Goal**: Integrate Telegram Bot for live trade notifications.
+- **Goal**: Execute pipeline training on massive downloaded data.
+- **Goal**: Implement Phase 5 (Backtesting Engine via VectorBT/Backtrader) for strategy comparison.
+
+## Completed Tasks (Recent)
+- [x] Telegram Bot integrated for reading external alpha (`TelegramMonitor`).
+- [x] Feature Store established for GARCH, OU, OFI, and Sentiment.
+- [x] Inference Engine established for non-blocking Temporal Fusion Transformer predictions.
+- [x] Avellaneda-Stoikov Market Maker implemented.
+- [x] CloudDataStreamer implemented for 5TB+ dataset caching.
 
 ## New Files Added (2026-04-25)
 - `src/utils/__init__.py` — utils package
@@ -94,24 +102,24 @@
 - [x] **Task 2.4:** Integrate GARCH outputs into `src/analysis/risk_manager.py`.
 
 ### Phase 3: Deep Learning (Temporal Fusion Transformers & LSTM)
-- [ ] **Task 3.1:** Update `src/analysis/ml_predictor.py` to implement a hybrid **CNN-LSTM** architecture using `darts`. The CNN will extract patterns from the chart (technical analysis figures), and the LSTM will analyze their sequence over time (boosts accuracy by 15-20% on volatile pairs).
+- [x] **Task 3.1:** Update `src/analysis/ml_predictor.py` to implement a hybrid **CNN-LSTM** architecture using `darts`. The CNN will extract patterns from the chart (technical analysis figures), and the LSTM will analyze their sequence over time (boosts accuracy by 15-20% on volatile pairs).
   - **Instruction:** Input: last 60 candles + indicators (RSI, MACD). Output: predict return for the next candle.
-- [ ] **Task 3.2:** Implement **Temporal Fusion Transformers (TFT)** using `neuralforecast` (with AutoTFT). Configure it to ingest heterogeneous data simultaneously: time-series (prices), static data (day of week/hour), and volume/funding rates.
+- [x] **Task 3.2:** Implement **Temporal Fusion Transformers (TFT)** using `neuralforecast` (with AutoTFT). Configure it to ingest heterogeneous data simultaneously: time-series (prices), static data (day of week/hour), and volume/funding rates.
   - **Instruction:** Connect Funding Rate and Volume as external variables (Covariates).
   - **Application:** Use to filter trades from other strategies. For example, if TFT outputs "Strong Bearish", block buy signals from Mean Reversion strategies.
-- [ ] **Task 3.3:** Integrate **FinGPT** (open-source from Hugging Face) sentiment scores into the TFT feature pipeline to provide context on news impact (fear/greed index).
-- [ ] **Task 3.4:** Create `src/engine/train_tft_model.py` for training, ensuring the model leverages its interpretability to show which factors influenced the prediction.
+- [x] **Task 3.3:** Integrate **FinGPT** (open-source from Hugging Face) sentiment scores into the TFT feature pipeline to provide context on news impact (fear/greed index).
+- [x] **Task 3.4:** Create `src/engine/train_tft_model.py` for training, ensuring the model leverages its interpretability to show which factors influenced the prediction.
 
 ### Phase 4: Market Making Execution (HFT)
-- [ ] **Task 4.1:** Create `src/engine/market_maker.py`. Implement the **Avellaneda-Stoikov** model.
+- [x] **Task 4.1:** Create `src/engine/market_maker.py`. Implement the **Avellaneda-Stoikov** model.
   - **Instruction:** Implement the function to calculate reservation price ($r$) and optimal spread ($\delta$). Parameters needed: volatility ($\sigma$), order intensity ($\gamma$), and current inventory risk ($q$).
   - **Application:** The bot places limit orders around $r$. If inventory ($q$) is too large (e.g., bought too much BTC), the model shifts quotes down to quickly sell excess.
-- [ ] **Task 4.2:** Update `src/engine/order_manager.py` to support continuous order adjustment using **Order Flow Imbalance (OFI)**.
+- [x] **Task 4.2:** Update `src/engine/order_manager.py` to support continuous order adjustment using **Order Flow Imbalance (OFI)**.
   - **Instruction:** Calculate the difference between volume change on the best Bid and Ask levels at each orderbook update.
   - **Application:** Use as a "fast signal". If OFI is positive (buyers are pushing harder), shift the sell limit order higher.
 
 ### Phase 5: Quantitative Backtesting Engine (Training & Testing)
-- [ ] **Task 5.1:** Create `src/engine/backtester.py`. Build a unified backtesting harness to compare all strategies side-by-side.
+- [ ] **Task 5.1:** Create `src/engine/backtester.py` (Pending - Phase 5 Next). Build a unified backtesting harness to compare all strategies side-by-side.
   - **Tooling:** Use `VectorBT` or `Backtrader`.
   - **Core Metrics:**
     - **Sharpe Ratio:** Return-to-risk ratio.

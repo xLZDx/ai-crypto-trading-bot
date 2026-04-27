@@ -12,22 +12,16 @@ if base_dir not in sys.path:
 
 from src.analysis.feature_engineering import (
     add_taker_and_trade_features, add_rsi, add_macd,
-    add_bollinger_bands, add_roc, add_time_features
+    add_bollinger_bands, add_roc, add_time_features, resample_1s_to_1m
 )
 
 
-def prepare_scalping_data(filepath):
-    print(f"Loading data for Scalping Pipeline from {filepath}...")
-    df = pd.read_csv(filepath)
-    df['timestamp'] = pd.to_datetime(df['timestamp'])
-    df = df.sort_values('timestamp')
-
+def _engineer_scalping_features(df: pd.DataFrame) -> pd.DataFrame:
     df['return'] = df['close'].pct_change()
     df = add_rsi(df, period=7, col_name='rsi_7')
     df = add_macd(df, fast=5, slow=13, signal=3, prefix='')
     df.rename(columns={'macd': 'macd_fast', 'macd_signal': 'macd_fast_signal', 'macd_hist': 'macd_fast_hist'}, errors='ignore', inplace=True)
     df = add_bollinger_bands(df, window=10)
-    df.rename(columns={'bb_pb': 'bb_pb', 'bb_upper': 'bb_upper', 'bb_lower': 'bb_lower'}, inplace=True)
     df = add_roc(df, [3, 5, 10])
     df = add_time_features(df)
     df = add_taker_and_trade_features(df)
@@ -39,8 +33,22 @@ def prepare_scalping_data(filepath):
     df['dist_to_micro_supp'] = (df['close'] - df['low_15']) / df['close']
 
     df['target_scalp'] = (df['close'].shift(-5) > df['close']).astype(int)
-    df = df.dropna()
-    return df
+    return df.dropna()
+
+
+def prepare_scalping_data_from_df(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    df = df.sort_values('timestamp')
+    return _engineer_scalping_features(df)
+
+
+def prepare_scalping_data(filepath):
+    print(f"Loading data for Scalping Pipeline from {filepath}...")
+    df = pd.read_csv(filepath)
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    df = df.sort_values('timestamp')
+    return _engineer_scalping_features(df)
 
 def train_scalping_model():
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -55,20 +63,76 @@ def train_scalping_model():
     all_data = []
     for sym in symbols:
         full_data_path = os.path.join(base_dir, 'data', 'raw', f'{sym}_1m.csv.gz')
-        if not os.path.exists(full_data_path):
-            print(f"Warning: 1m Data for {sym} not found at {full_data_path}. Auto-downloading...")
-            import sys
-            if base_dir not in sys.path:
-                sys.path.insert(0, base_dir)
-            from src.data_ingestion.historical_backfill import backfill_history
-            backfill_history(symbol=sym.replace('_', '/'), timeframe='1m', days=70)
+        archive_path = os.path.join(base_dir, 'data', 'raw', f'{sym}_spot_1m.csv.gz')
+        # 1s data paths — resampled to 1m for richer features and longer history
+        path_1s = os.path.join(base_dir, 'data', 'raw', f'{sym}_spot_1s.csv.gz')
+        path_1s_v2 = os.path.join(base_dir, 'data', 'raw', f'{sym}_1s.csv.gz')
 
+        if not os.path.exists(full_data_path) and os.path.exists(archive_path):
+            full_data_path = archive_path
+            print(f"  Using archive 1m data for {sym}: {archive_path}")
+
+        # Try resampling 1s → 1m when 1s data exists
+        df_1s_resampled = None
+        for p1s in [path_1s, path_1s_v2]:
+            if os.path.exists(p1s):
+                try:
+                    print(f"  Found 1s data for {sym} at {p1s} — resampling to 1m (last 90 days)...")
+                    df_1s_resampled = resample_1s_to_1m(p1s)
+                    if df_1s_resampled is None or len(df_1s_resampled) == 0:
+                        print(f"  Warning: 1s resample returned no data for {sym}, skipping.")
+                        df_1s_resampled = None
+                    else:
+                        print(f"  Resampled: {len(df_1s_resampled):,} 1m candles from 1s source")
+                        break
+                except Exception as e:
+                    print(f"  Warning: Could not resample 1s data for {sym}: {e}")
+                    df_1s_resampled = None
+
+        if not os.path.exists(full_data_path):
+            if df_1s_resampled is not None:
+                print(f"  Using resampled 1s data as primary source for {sym}")
+            else:
+                print(f"Warning: 1m Data for {sym} not found. Auto-downloading...")
+                import sys
+                if base_dir not in sys.path:
+                    sys.path.insert(0, base_dir)
+                from src.data_ingestion.historical_backfill import backfill_history
+                backfill_history(symbol=sym.replace('_', '/'), timeframe='1m', days=70)
+
+        # Build final DataFrame — prefer 1s-resampled if it has more data
+        df_combined = None
         if os.path.exists(full_data_path):
-            df = prepare_scalping_data(full_data_path)
-            # INCREASED MEMORY LIMIT: Take the last 500,000 candles (~1 year)
-            # Utilizes the bulk data archive without causing out-of-memory crashes
-            df = df.tail(500000)
-            all_data.append(df)
+            try:
+                df_1m = prepare_scalping_data(full_data_path)
+            except Exception as e:
+                print(f"  Warning: failed to prepare 1m data for {sym}: {e}")
+                df_1m = None
+
+            if df_1m is not None and df_1s_resampled is not None:
+                try:
+                    df_1s_feat = prepare_scalping_data_from_df(df_1s_resampled)
+                    if len(df_1s_feat) >= len(df_1m):
+                        print(f"  Using 1s-resampled data ({len(df_1s_feat):,} rows) for {sym}")
+                        df_combined = df_1s_feat
+                    else:
+                        print(f"  Using standard 1m data ({len(df_1m):,} rows) for {sym}")
+                        df_combined = df_1m
+                except Exception as e:
+                    print(f"  Warning: 1s feature engineering failed for {sym}: {e}, using 1m")
+                    df_combined = df_1m
+            elif df_1m is not None:
+                df_combined = df_1m
+
+        if df_combined is None and df_1s_resampled is not None:
+            try:
+                df_combined = prepare_scalping_data_from_df(df_1s_resampled)
+            except Exception as e:
+                print(f"  Warning: 1s-only feature engineering failed for {sym}: {e}")
+
+        if df_combined is not None:
+            df_combined = df_combined.tail(500000)
+            all_data.append(df_combined)
             
     if not all_data:
         print("Error: No 1m data found even after attempted download.")
@@ -104,8 +168,10 @@ def train_scalping_model():
     
     meta_path = os.path.join(models_dir, 'scalping_model_meta.json')
     import json
+    from datetime import datetime, timezone
     with open(meta_path, 'w') as f:
-        json.dump({"accuracy": accuracy * 100, "long_accuracy": long_acc, "short_accuracy": short_acc}, f)
+        json.dump({"accuracy": accuracy * 100, "long_accuracy": long_acc, "short_accuracy": short_acc,
+                   "last_trained": datetime.now(timezone.utc).isoformat()}, f)
 
 if __name__ == "__main__":
     train_scalping_model()

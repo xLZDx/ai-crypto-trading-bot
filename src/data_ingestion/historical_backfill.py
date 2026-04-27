@@ -64,7 +64,7 @@ def backfill_history(symbol='BTC/USDT', timeframe='1m', days=365):
         logger.error(f"Error while backfilling data for {symbol}: {e}")
 
 if __name__ == "__main__":
-    symbols = ['BTC/USDT', 'SOL/USDT', 'ADA/USDT']
+    symbols = ['BTC/USDT', 'SOL/USDT', 'ADA/USDT', 'ETH/USDT']
     for sym in symbols:
         # Backfill 6 years of 1-minute data (WARNING: This will take gigabytes and a lot of time!)
         backfill_history(symbol=sym, timeframe='1m', days=6*365)
