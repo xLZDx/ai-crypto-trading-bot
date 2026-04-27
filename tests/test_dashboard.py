@@ -259,6 +259,7 @@ def test_main_py():
     check('self.ou_results initialized in __init__', 'self.ou_results' in src)
     check('self.telegram_monitor = TelegramMonitor(channels=', 'TelegramMonitor(channels=' in src)
     check('VilarsoPro channel configured', 'VilarsoPro' in src)
+    check('vilarsofree channel configured', 'vilarsofree' in src)
     check('mr_mozart channel configured', 'mr_mozart' in src)
 
     # OU integration in process_kline

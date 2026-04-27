@@ -99,7 +99,7 @@ class MultiAssetTrader:
         self.mean_reversion = MeanReversionCore()
         self.ou_results = {sym: {'signal': 0, 'mu': 0.0, 'sigma': 0.0} for sym in symbols}
         # VilarsoPro and mr_mozart are secondary sources — used as extra context for Gemini veto
-        self.telegram_monitor = TelegramMonitor(channels=['VilarsoPro', 'mr_mozart'])
+        self.telegram_monitor = TelegramMonitor(channels=['VilarsoPro', 'vilarsofree', 'mr_mozart'])
         
         # Components for advanced strategies (MTF and Derivatives)
         self.futures_exchange = ccxt.binance({'options': {'defaultType': 'future'}, 'enableRateLimit': True})
