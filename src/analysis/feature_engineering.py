@@ -86,18 +86,143 @@ def add_adx(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
     df[f'adx_{period}'] = df['dx'].rolling(window=period).mean()
     return df
 
-def add_ofi(df: pd.DataFrame) -> pd.DataFrame:
+def add_ofi(df: pd.DataFrame, window: int = 20) -> pd.DataFrame:
     """
-    Calculates Order Flow Imbalance (OFI).
-    Uses taker_buy_base vs total volume as an OFI proxy on kline data.
+    Order Flow Imbalance — normalized rolling OFI signal in [-1, 1].
+    Uses taker_buy_base vs total volume as a kline-level OFI proxy.
+    The rolling Z-score form makes it stationary and model-friendly.
     """
+    import numpy as np
     if 'taker_buy_base' in df.columns and 'volume' in df.columns:
         taker_sell_base = df['volume'] - df['taker_buy_base']
-        df['ofi'] = df['taker_buy_base'] - taker_sell_base
-        df['ofi_cumulative'] = df['ofi'].cumsum()
+        raw_ofi = df['taker_buy_base'] - taker_sell_base
+        df['ofi'] = raw_ofi
+        df['ofi_cumulative'] = raw_ofi.cumsum()
+        # Rolling Z-score normalisation — the form used as a model feature
+        roll_mean = raw_ofi.rolling(window).mean()
+        roll_std = raw_ofi.rolling(window).std().replace(0, 1e-9)
+        df['ofi_z'] = ((raw_ofi - roll_mean) / roll_std).clip(-3, 3)
     else:
         df['ofi'] = 0.0
         df['ofi_cumulative'] = 0.0
+        df['ofi_z'] = 0.0
+    return df
+
+
+def add_vwap(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Session VWAP anchored to midnight UTC.
+    vwap_dist = (close - vwap) / vwap — directional distance from institutional reference.
+    Positive → price above VWAP (buyers in control), Negative → below (sellers).
+    """
+    import numpy as np
+    if 'timestamp' not in df.columns:
+        df['vwap'] = df['close']
+        df['vwap_dist'] = 0.0
+        return df
+
+    ts = pd.to_datetime(df['timestamp'])
+    session = ts.dt.floor('D')  # anchor to day
+
+    typical = (df['high'] + df['low'] + df['close']) / 3.0
+    tp_vol = typical * df['volume']
+
+    df['vwap'] = (tp_vol.groupby(session).cumsum() /
+                  df['volume'].groupby(session).cumsum().replace(0, 1e-9))
+    df['vwap_dist'] = (df['close'] - df['vwap']) / df['vwap'].replace(0, 1e-9)
+    return df
+
+
+def add_donchian(df: pd.DataFrame, n: int = 20) -> pd.DataFrame:
+    """
+    Donchian channel breakout signals.
+    dn_pos = position of close within the channel [0, 1].
+    Classic turtle-trading breakout: buy new N-day high, sell new N-day low.
+    """
+    df[f'don_upper_{n}'] = df['high'].rolling(n).max()
+    df[f'don_lower_{n}'] = df['low'].rolling(n).min()
+    dn_range = (df[f'don_upper_{n}'] - df[f'don_lower_{n}']).replace(0, 1e-9)
+    df[f'don_pos_{n}'] = (df['close'] - df[f'don_lower_{n}']) / dn_range
+    return df
+
+
+def add_keltner(df: pd.DataFrame, ema_period: int = 20, atr_mult: float = 2.0,
+                atr_period: int = 10) -> pd.DataFrame:
+    """
+    Keltner Channel — ATR-based volatility envelope around EMA.
+    kc_pos = position of close within channel [-1, 1].
+    Breakout above 1.0 → strong momentum; below -1.0 → strong downside.
+    """
+    import numpy as np
+    ema = df['close'].ewm(span=ema_period, adjust=False).mean()
+    prev_close = df['close'].shift(1)
+    tr = pd.concat([
+        df['high'] - df['low'],
+        (df['high'] - prev_close).abs(),
+        (df['low'] - prev_close).abs()
+    ], axis=1).max(axis=1)
+    atr = tr.rolling(atr_period).mean()
+
+    df['kc_upper'] = ema + atr_mult * atr
+    df['kc_lower'] = ema - atr_mult * atr
+    kc_range = (df['kc_upper'] - df['kc_lower']).replace(0, 1e-9)
+    df['kc_pos'] = (df['close'] - df['kc_lower']) / kc_range  # 0=lower, 1=upper
+    df['kc_width'] = (df['kc_upper'] - df['kc_lower']) / ema.replace(0, 1e-9)  # volatility proxy
+    return df
+
+
+def add_funding_zscore(df: pd.DataFrame, window: int = 168,
+                       funding_col: str = 'funding_rate') -> pd.DataFrame:
+    """
+    Funding rate Z-score (rolling 168h = 1 week window).
+    High positive Z → longs are overcrowded → fade the long, short bias.
+    High negative Z → shorts are overcrowded → fade the short, long bias.
+    Used as a regime/crowding signal in all futures models.
+    """
+    if funding_col in df.columns:
+        roll_mean = df[funding_col].rolling(window, min_periods=1).mean()
+        roll_std = df[funding_col].rolling(window, min_periods=1).std().replace(0, 1e-9)
+        df['funding_z'] = ((df[funding_col] - roll_mean) / roll_std).clip(-4, 4)
+        df['funding_positive'] = (df[funding_col] > 0.001).astype(int)  # >0.1% → short bias
+        df['funding_negative'] = (df[funding_col] < -0.0005).astype(int)  # < -0.05% → long bias
+    else:
+        df['funding_z'] = 0.0
+        df['funding_positive'] = 0
+        df['funding_negative'] = 0
+    return df
+
+
+def add_liquidity_proximity(df: pd.DataFrame, atr_period: int = 14,
+                            lookback: int = 48) -> pd.DataFrame:
+    """
+    Liquidity proximity — approximates distance to nearest liquidation cluster.
+
+    In the absence of a live order book, we use a price-action proxy:
+    Large wicks (high-low >> ATR) near round-number levels indicate stop clusters.
+    dist_to_liq_zone = (close - nearest_swing_extreme) / ATR
+
+    Negative value → price is very close to a demand zone (buy stops below).
+    Positive value → price is very close to a supply zone (sell stops above).
+    """
+    # ATR-normalised wick size as proxy for stop cluster density
+    prev_close = df['close'].shift(1)
+    tr = pd.concat([
+        df['high'] - df['low'],
+        (df['high'] - prev_close).abs(),
+        (df['low'] - prev_close).abs()
+    ], axis=1).max(axis=1)
+    atr = tr.rolling(atr_period).mean().replace(0, 1e-9)
+
+    swing_high = df['high'].rolling(lookback).max()
+    swing_low = df['low'].rolling(lookback).min()
+
+    dist_to_swing_high = (swing_high - df['close']) / atr
+    dist_to_swing_low = (df['close'] - swing_low) / atr
+
+    # Proximity score: how close (in ATR) are we to the nearest extreme?
+    df['dist_to_supply'] = dist_to_swing_high.clip(0, 10)   # 0 = at resistance
+    df['dist_to_demand'] = dist_to_swing_low.clip(0, 10)    # 0 = at support
+    df['liq_proximity'] = (1.0 / (1.0 + df[['dist_to_supply', 'dist_to_demand']].min(axis=1)))
     return df
 
 def normalize_tensors(df: pd.DataFrame, columns: list = None) -> pd.DataFrame:

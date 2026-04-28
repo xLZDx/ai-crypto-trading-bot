@@ -3,6 +3,7 @@ import logging
 import pandas as pd
 from typing import List, Dict
 from src.analysis.volatility import VolatilityForecaster
+from src.analysis.kelly_criterion import KellySizer
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,7 @@ class HullRiskManager:
     def __init__(self, default_risk_usd: float = 20.0):
         self.default_risk_usd = default_risk_usd
         self.vol_forecaster = VolatilityForecaster()
+        self._kelly = KellySizer(window=50, half_kelly=True)
 
     def calculate_historical_volatility(self, data: List[Dict], periods: int = 30) -> float:
         """
@@ -81,3 +83,49 @@ class HullRiskManager:
         
         adjusted_position = self.default_risk_usd * scaling_factor * garch_reduction
         return round(adjusted_position, 2)
+
+    def get_kelly_position_size(
+        self,
+        capital: float,
+        p_win: float,
+        data: List[Dict],
+    ) -> float:
+        """
+        Full position sizing: Kelly criterion × volatility scaling × GARCH.
+        This is the production-grade sizing method combining all three layers:
+          - Kelly: maximizes geometric growth given model confidence
+          - Volatility scaling: reduces size when market is turbulent (Hull)
+          - GARCH: emergency 50% cut on volatility spike detection
+
+        Args:
+            capital: Current account equity in USDT.
+            p_win:   Model's P(win) from predict_proba (0–1).
+            data:    Recent OHLCV candle list for volatility calculation.
+
+        Returns:
+            Position size in USDT.
+        """
+        # Volatility scaling factor from Hull (0.25–3.0)
+        volatility = self.calculate_historical_volatility(data)
+        volatility = max(volatility, 0.05)
+        baseline_volatility = 0.50
+        vol_scale = max(0.25, min(baseline_volatility / volatility, 3.0))
+
+        # GARCH spike reduction
+        garch_reduction = 1.0
+        if len(data) >= 100:
+            returns = pd.Series([d['close'] for d in data]).pct_change().dropna()
+            garch_res = self.vol_forecaster.forecast_garch(returns)
+            if garch_res.get('volatility_spike', False):
+                garch_reduction = 0.5
+
+        # Kelly sizing with combined scale
+        combined_scale = vol_scale * garch_reduction
+        size = self._kelly.size(capital=capital, p_win=p_win, volatility_scale=combined_scale)
+        logger.debug("Kelly size: %.2f USDT | p_win=%.2f | vol_scale=%.2f | garch=%.1f",
+                     size, p_win, vol_scale, garch_reduction)
+        return size
+
+    def record_trade_outcome(self, pnl: float) -> None:
+        """Update Kelly sizer with trade outcome for dynamic win/loss ratio."""
+        self._kelly.record_trade(pnl)

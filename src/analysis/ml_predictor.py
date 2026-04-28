@@ -24,6 +24,7 @@ class MLPredictor:
         self.long_accuracy = 0.0
         self.short_accuracy = 0.0
         self.last_error = ""
+        self._last_confidence = 0.5
         
         if os.path.exists(self.model_path):
             try:
@@ -137,15 +138,40 @@ class MLPredictor:
             last_row = df.iloc[-1:]
             X = last_row[features]
 
-            prediction = self.model.predict(X)
-            result = int(prediction[0])
-            if result not in (0, 1):
-                self.last_error = f"Unexpected prediction value: {result}"
-                logger.warning(self.last_error)
-                return None
-            return result
+            # Use calibrated predict_proba when available (models now wrapped with
+            # CalibratedClassifierCV — returns well-calibrated P(win) in [0, 1])
+            if hasattr(self.model, "predict_proba"):
+                proba = self.model.predict_proba(X)[0]
+                p_long = float(proba[1]) if len(proba) > 1 else float(proba[0])
+                self._last_confidence = p_long
+                # Only act when confidence exceeds threshold — avoids noisy 50/50 calls
+                if p_long >= 0.60:
+                    return 1
+                elif (1.0 - p_long) >= 0.60:
+                    return 0
+                else:
+                    self.last_error = f"Low confidence ({p_long:.2f}) — no trade"
+                    return None
+            else:
+                prediction = self.model.predict(X)
+                result = int(prediction[0])
+                self._last_confidence = 0.55
+                if result not in (0, 1):
+                    self.last_error = f"Unexpected prediction value: {result}"
+                    logger.warning(self.last_error)
+                    return None
+                return result
         except Exception as e:
             error_msg = f"ML Prediction Error: {e}"
             logger.error(error_msg)
             self.last_error = error_msg
             return None
+
+    def predict_proba_long(self, data) -> float:
+        """
+        Return P(long win) directly as a float in [0, 1].
+        Used by KellySizer and RiskAgent for position sizing.
+        Returns 0.5 (neutral) when model unavailable or features missing.
+        """
+        result = self.predict(data)
+        return getattr(self, "_last_confidence", 0.5)

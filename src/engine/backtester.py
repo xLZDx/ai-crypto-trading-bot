@@ -1,11 +1,14 @@
 """
-Quantitative Backtesting Engine — Phase 5.
+Quantitative Backtesting Engine — Phase 6.
 Simulates all strategies on historical data and computes:
   - Sharpe Ratio, Sortino Ratio, Calmar Ratio
   - Max Drawdown, Profit Factor
   - Funding cost (critical for futures strategies)
   - Per-trade unit economics
 Profit formula: (Price_out - Price_in) × Size - Fees - Σ(Funding × Size)
+
+Fee model: entry uses taker_fee (market order), exit uses maker_fee (limit order).
+Presets match actual Binance VIP-0 rates as of 2026.
 """
 from __future__ import annotations
 
@@ -20,8 +23,19 @@ import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+_rng = np.random  # silence unused-import linters
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Binance fee presets (VIP-0, no BNB discount)
+FEE_PRESETS = {
+    "spot":         {"maker": 0.001,  "taker": 0.001},   # 0.10% both sides
+    "spot_bnb":     {"maker": 0.00075,"taker": 0.00075}, # 0.075% with BNB
+    "futures":      {"maker": 0.0002, "taker": 0.0004},  # 0.02% maker / 0.04% taker
+    "futures_vip1": {"maker": 0.00016,"taker": 0.0004},  # VIP-1
+    "futures_vip2": {"maker": 0.00014,"taker": 0.00035}, # VIP-2
+    "scalping":     {"maker": 0.0002, "taker": 0.0004},  # same as futures (1m perp)
+}
 
 
 @dataclass
@@ -126,12 +140,21 @@ class Backtester:
     def __init__(
         self,
         initial_capital: float = 10_000.0,
-        fee_rate: float = 0.0004,       # 0.04% taker fee (Binance futures)
+        maker_fee: float = 0.0002,       # 0.02% Binance futures maker
+        taker_fee: float = 0.0004,       # 0.04% Binance futures taker
+        fee_preset: str | None = None,   # override both fees from FEE_PRESETS
         position_size_pct: float = 0.10, # 10% of capital per trade
         max_hold_bars: int = 48,         # max hours to hold a position
     ):
         self.initial_capital = initial_capital
-        self.fee_rate = fee_rate
+        if fee_preset and fee_preset in FEE_PRESETS:
+            self.maker_fee = FEE_PRESETS[fee_preset]["maker"]
+            self.taker_fee = FEE_PRESETS[fee_preset]["taker"]
+        else:
+            self.maker_fee = maker_fee
+            self.taker_fee = taker_fee
+        # backward-compat alias
+        self.fee_rate = self.taker_fee
         self.position_size_pct = position_size_pct
         self.max_hold_bars = max_hold_bars
 
@@ -183,7 +206,7 @@ class Backtester:
                     should_close = True
 
             if should_close and position is not None:
-                fee = position["size_usdt"] * self.fee_rate
+                fee = position["size_usdt"] * self.maker_fee  # exit via limit order
                 trade = TradeRecord(
                     symbol=symbol,
                     entry_time=position["entry_time"],
@@ -203,7 +226,7 @@ class Backtester:
             if position is None and abs(signal) > 0.1 and equity > 0:
                 size = equity * self.position_size_pct
                 direction = 1 if signal > 0 else -1
-                entry_fee = size * self.fee_rate
+                entry_fee = size * self.taker_fee  # entry via market order
                 position = {
                     "direction": direction,
                     "entry_price": price,
@@ -220,7 +243,7 @@ class Backtester:
         # Close any open position at end
         if position is not None and len(df) > 0:
             last = df.iloc[-1]
-            fee = position["size_usdt"] * self.fee_rate
+            fee = position["size_usdt"] * self.taker_fee  # forced market exit at end
             trade = TradeRecord(
                 symbol=symbol,
                 entry_time=position["entry_time"],
@@ -249,14 +272,107 @@ class Backtester:
         return df
 
 
+def _build_signals(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute all strategy signals on an OHLCV+funding DataFrame.
+    Returns df with signal columns added.
+    Group A = original 4 strategies (RSI, MACD, BB, Ensemble).
+    Group B = new strategies + ML-filtered variants.
+    """
+    from src.analysis.feature_engineering import (
+        add_rsi, add_macd, add_bollinger_bands, add_roc, add_atr,
+        add_ofi, add_vwap, add_donchian, add_keltner, add_funding_zscore,
+        add_liquidity_proximity, add_time_features
+    )
+    from src.analysis.fractional_diff import add_fractional_diff
+
+    df = add_rsi(df, 14)
+    df = add_macd(df)
+    df = add_bollinger_bands(df)
+    df = add_roc(df, [7, 14])
+    df = add_atr(df)
+    df = add_ofi(df)
+    df = add_vwap(df)
+    df = add_donchian(df, n=20)
+    df = add_keltner(df)
+    df = add_funding_zscore(df)
+    df = add_liquidity_proximity(df)
+    df = add_fractional_diff(df, d=0.4)
+    if 'timestamp' in df.columns:
+        df = add_time_features(df)
+
+    # ── Group A: original strategies ──────────────────────────────────────
+    df["signal_rsi"] = 0.0
+    df.loc[df["rsi_14"] < 30, "signal_rsi"] = 1.0
+    df.loc[df["rsi_14"] > 70, "signal_rsi"] = -1.0
+
+    df["signal_macd"] = np.where(df["macd_hist"] > 0, 1.0, -1.0)
+
+    df["signal_bb"] = 0.0
+    df.loc[df["bb_pb"] < 0.1, "signal_bb"] = 1.0
+    df.loc[df["bb_pb"] > 0.9, "signal_bb"] = -1.0
+
+    df["signal_ensemble"] = (df["signal_rsi"] + df["signal_macd"] + df["signal_bb"]) / 3.0
+
+    # ── Group B: new strategies ────────────────────────────────────────────
+    # VWAP Reversion — long when price 0.5% below VWAP, short when 0.5% above
+    df["signal_vwap"] = 0.0
+    df.loc[df["vwap_dist"] < -0.005, "signal_vwap"] = 1.0
+    df.loc[df["vwap_dist"] > 0.005, "signal_vwap"] = -1.0
+
+    # Donchian breakout — long on 20-bar high break, short on low break
+    df["signal_donchian"] = 0.0
+    df.loc[df["don_pos_20"] > 0.98, "signal_donchian"] = 1.0
+    df.loc[df["don_pos_20"] < 0.02, "signal_donchian"] = -1.0
+
+    # Keltner breakout — momentum outside the channel
+    df["signal_keltner"] = 0.0
+    df.loc[df["kc_pos"] > 1.0, "signal_keltner"] = 1.0
+    df.loc[df["kc_pos"] < 0.0, "signal_keltner"] = -1.0
+
+    # Funding Arbitrage — short when funding > 0.1%, long when < -0.05%
+    df["signal_funding"] = 0.0
+    if "funding_rate" in df.columns:
+        df.loc[df["funding_rate"] > 0.001, "signal_funding"] = -1.0   # shorts paid
+        df.loc[df["funding_rate"] < -0.0005, "signal_funding"] = 1.0  # longs paid
+
+    # Cross-sectional OFI momentum — strong buy/sell pressure via OFI
+    df["signal_ofi"] = 0.0
+    if "ofi_z" in df.columns:
+        df.loc[df["ofi_z"] > 1.5, "signal_ofi"] = 1.0
+        df.loc[df["ofi_z"] < -1.5, "signal_ofi"] = -1.0
+
+    # Group B Ensemble
+    b_signals = ["signal_vwap", "signal_donchian", "signal_keltner",
+                 "signal_funding", "signal_ofi"]
+    df["signal_ensemble_b"] = df[b_signals].mean(axis=1)
+
+    return df
+
+
+def _apply_meta_filter(df: pd.DataFrame, signal_col: str) -> pd.Series:
+    """Apply meta-labeler filter to a signal column. Returns filtered signal."""
+    try:
+        from src.analysis.meta_labeler import MetaLabeler
+        ml = MetaLabeler()
+        if not ml.is_loaded:
+            return df[signal_col]
+        result = ml.batch_filter(df[signal_col], df)
+        return pd.Series(result["filtered_signal"].values, index=df.index)
+    except Exception as e:
+        logger.debug("Meta-labeler filter skipped: %s", e)
+        return df[signal_col]
+
+
 def run_full_backtest(
     raw_dir: str | None = None,
     output_dir: str | None = None,
     initial_capital: float = 10_000.0,
+    fee_preset: str = "futures",
 ) -> pd.DataFrame:
     """
-    Entry point: loads all watchlist data, runs each strategy, saves comparison report.
-    Returns the comparison DataFrame.
+    Entry point: loads all watchlist data, runs all strategies (Group A + B),
+    saves A/B comparison report. Returns the combined comparison DataFrame.
     """
     import json as _json
 
@@ -273,11 +389,11 @@ def run_full_backtest(
     else:
         symbols = ["BTC_USDT", "ETH_USDT", "SOL_USDT"]
 
-    from src.analysis.feature_engineering import add_rsi, add_macd, add_bollinger_bands, add_roc, add_atr
     from src.data_ingestion.funding_rate_downloader import merge_funding_into_ohlcv
 
-    bt = Backtester(initial_capital=initial_capital)
-    all_results: List[BacktestResult] = []
+    bt = Backtester(initial_capital=initial_capital, fee_preset=fee_preset)
+    group_a_results: List[BacktestResult] = []
+    group_b_results: List[BacktestResult] = []
 
     for sym in symbols:
         df = None
@@ -298,51 +414,82 @@ def run_full_backtest(
 
         df = merge_funding_into_ohlcv(df, sym.replace("_", "/"))
 
-        # --- Feature engineering for signals ---
-        df = add_rsi(df, 14)
-        df = add_macd(df)
-        df = add_bollinger_bands(df)
-        df = add_roc(df, [7, 14])
-        df = add_atr(df)
+        try:
+            df = _build_signals(df)
+        except Exception as e:
+            logger.error("Signal build failed for %s: %s", sym, e)
+            continue
 
-        # Strategy 1: RSI mean-reversion signal
-        df["signal_rsi"] = 0.0
-        df.loc[df["rsi_14"] < 30, "signal_rsi"] = 1.0
-        df.loc[df["rsi_14"] > 70, "signal_rsi"] = -1.0
-
-        # Strategy 2: MACD momentum
-        df["signal_macd"] = 0.0
-        df.loc[df["macd_hist"] > 0, "signal_macd"] = 1.0
-        df.loc[df["macd_hist"] < 0, "signal_macd"] = -1.0
-
-        # Strategy 3: Bollinger Band reversion
-        df["signal_bb"] = 0.0
-        df.loc[df["bb_pb"] < 0.1, "signal_bb"] = 1.0
-        df.loc[df["bb_pb"] > 0.9, "signal_bb"] = -1.0
-
-        # Strategy 4: Ensemble (average of all 3)
-        df["signal_ensemble"] = (df["signal_rsi"] + df["signal_macd"] + df["signal_bb"]) / 3.0
-
+        # ── Group A: original strategies ──────────────────────────────────
         for strat, sig_col in [
-            ("RSI_MeanReversion", "signal_rsi"),
-            ("MACD_Momentum", "signal_macd"),
-            ("BB_Reversion", "signal_bb"),
-            ("Ensemble", "signal_ensemble"),
+            ("A_RSI_MeanReversion", "signal_rsi"),
+            ("A_MACD_Momentum", "signal_macd"),
+            ("A_BB_Reversion", "signal_bb"),
+            ("A_Ensemble", "signal_ensemble"),
         ]:
             try:
-                res = bt.run(df, sig_col, f"{strat}", sym)
-                all_results.append(res)
+                res = bt.run(df, sig_col, strat, sym)
+                group_a_results.append(res)
             except Exception as e:
                 logger.error("Backtest failed for %s/%s: %s", sym, strat, e)
 
+        # ── Group B: new strategies ────────────────────────────────────────
+        for strat, sig_col in [
+            ("B_VWAP_Reversion", "signal_vwap"),
+            ("B_Donchian_Breakout", "signal_donchian"),
+            ("B_Keltner_Breakout", "signal_keltner"),
+            ("B_Funding_Arb", "signal_funding"),
+            ("B_OFI_Momentum", "signal_ofi"),
+            ("B_Ensemble", "signal_ensemble_b"),
+        ]:
+            try:
+                res = bt.run(df, sig_col, strat, sym)
+                group_b_results.append(res)
+            except Exception as e:
+                logger.error("Backtest failed for %s/%s: %s", sym, strat, e)
+
+        # ── Group B + Meta-filter ──────────────────────────────────────────
+        for strat, sig_col in [
+            ("B_RSI_MetaFiltered", "signal_rsi"),
+            ("B_MACD_MetaFiltered", "signal_macd"),
+            ("B_Ensemble_MetaFiltered", "signal_ensemble_b"),
+        ]:
+            try:
+                filtered_signal = _apply_meta_filter(df, sig_col)
+                df[f"_tmp_{strat}"] = filtered_signal
+                res = bt.run(df, f"_tmp_{strat}", strat, sym)
+                group_b_results.append(res)
+            except Exception as e:
+                logger.error("Meta-filtered backtest failed for %s/%s: %s", sym, strat, e)
+
+    all_results = group_a_results + group_b_results
     comparison = bt.compare_strategies(all_results)
 
-    # Save results
+    if not comparison.empty:
+        comparison["group"] = comparison["strategy"].apply(
+            lambda s: "A_Original" if s.startswith("A_") else "B_New"
+        )
+
+    # ── A/B summary ───────────────────────────────────────────────────────
+    if not comparison.empty and "group" in comparison.columns:
+        for grp in ["A_Original", "B_New"]:
+            sub = comparison[comparison["group"] == grp]
+            if not sub.empty:
+                logger.info("Group %s | mean Sharpe=%.3f | mean WinRate=%.1f%% | n_strategies=%d",
+                            grp, sub["sharpe"].mean(), sub["win_rate_pct"].mean(), len(sub))
+
     ts = datetime.now(_tz.utc).strftime("%Y%m%d_%H%M")
     comparison.to_csv(os.path.join(output_dir, f"comparison_{ts}.csv"), index=False)
+    comparison.to_json(os.path.join(output_dir, "latest_comparison.json"),
+                       orient="records", indent=2)
 
-    summary_path = os.path.join(output_dir, "latest_comparison.json")
-    comparison.to_json(summary_path, orient="records", indent=2)
+    # Save A/B summary separately
+    ab_path = os.path.join(output_dir, "ab_comparison.json")
+    if not comparison.empty and "group" in comparison.columns:
+        ab = comparison.groupby("group")[["sharpe", "sortino", "win_rate_pct",
+                                         "max_drawdown_pct", "n_trades"]].mean()
+        ab.to_json(ab_path, indent=2)
+
     logger.info("Backtest complete. Results saved to %s", output_dir)
     return comparison
 
