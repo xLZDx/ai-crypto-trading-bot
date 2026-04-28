@@ -11,6 +11,14 @@ project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+# Redirect caches to project drive to protect C: drive
+cache_dir = os.path.join(project_root, 'data', 'cache')
+os.makedirs(os.path.join(cache_dir, 'temp'), exist_ok=True)
+os.environ['TMP'] = os.path.join(cache_dir, 'temp')
+os.environ['TEMP'] = os.path.join(cache_dir, 'temp')
+os.environ['HF_HOME'] = os.path.join(cache_dir, 'huggingface')
+os.environ['TORCH_HOME'] = os.path.join(cache_dir, 'torch')
+
 from src.utils.safe_json import read_json, write_json
 
 load_dotenv()
@@ -715,15 +723,92 @@ def monitor_stop(service):
     return jsonify({'ok': True})
 
 
+_AGENT_CONFIG = {
+    'DataAgent':      {'label': 'Data Agent',      'desc': 'Data freshness monitor, retraining trigger',    'interval': 3600,  'market': 'core',     'color': '#6366f1'},
+    'SignalAgent':    {'label': 'Signal Agent',    'desc': 'Regime-aware signal generator + meta-filter',   'interval': 3600,  'market': 'core',     'color': '#3b82f6'},
+    'QuantAgent':     {'label': 'Quant Agent',     'desc': 'Rolling backtest + correlation shift detector',  'interval': 14400, 'market': 'core',     'color': '#8b5cf6'},
+    'RiskAgent':      {'label': 'Risk Agent',      'desc': 'Kelly sizing, circuit breaker, liquidity guard', 'interval': 300,   'market': 'core',     'color': '#f59e0b'},
+    'ExecutionAgent': {'label': 'Execution Agent', 'desc': 'Position management & order simulation',        'interval': 60,    'market': 'core',     'color': '#10b981'},
+    'SpotAgent':      {'label': 'Spot Agent',      'desc': '1h spot — RANGING+TRENDING (conf≥0.62)',        'interval': 3600,  'market': 'spot',     'color': '#1d4ed8'},
+    'FuturesAgent':   {'label': 'Futures Agent',   'desc': '1h futures — funding arb, 2× leverage',        'interval': 3600,  'market': 'futures',  'color': '#7c3aed'},
+    'ScalpingAgent':  {'label': 'Scalping Agent',  'desc': '1m micro — OFI+VWAP, BTC/ETH/SOL (conf≥0.65)', 'interval': 60,   'market': 'scalping', 'color': '#059669'},
+}
+
+
+@app.route('/api/agents')
+@require_api_key
+def get_agents():
+    import json as _json
+    status_path = _PROJECT_ROOT / 'data' / 'agent_status.json'
+    live: dict = {}
+    if status_path.exists():
+        try:
+            live = _json.loads(status_path.read_text(encoding='utf-8'))
+        except Exception:
+            pass
+
+    now_ts = _time.time()
+    result = []
+    for name, cfg in _AGENT_CONFIG.items():
+        entry = live.get(name, {})
+        last_hb_iso = entry.get('last_heartbeat', '')
+        last_hb_ts: float | None = None
+        if last_hb_iso:
+            try:
+                from datetime import datetime as _dt
+                last_hb_ts = _dt.fromisoformat(last_hb_iso.replace('Z', '+00:00')).timestamp()
+            except Exception:
+                pass
+
+        interval = float(entry.get('interval_sec', cfg['interval']))
+        status   = entry.get('status', 'offline')
+        if last_hb_ts and (now_ts - last_hb_ts) > interval * 3:
+            status = 'stale'
+        elif not last_hb_ts:
+            status = 'offline'
+
+        # Task timeline: 3 past + current + 3 future, filtered to ±10 min
+        timeline = []
+        if last_hb_ts:
+            for i in range(-3, 4):
+                t = last_hb_ts + i * interval
+                if abs(t - now_ts) > 600 and i != 0:
+                    continue
+                if i < 0:
+                    ttype, task = 'completed', 'Cycle completed'
+                elif i == 0:
+                    ttype, task = 'current', entry.get('current_task', 'Executing cycle')
+                else:
+                    ttype, task = 'planned', 'Next cycle'
+                timeline.append({'offset': i, 'ts': t, 'type': ttype, 'task': task})
+
+        result.append({
+            'name':         name,
+            'label':        cfg['label'],
+            'desc':         cfg['desc'],
+            'market':       cfg['market'],
+            'color':        cfg['color'],
+            'interval_sec': interval,
+            'status':       status,
+            'current_task': entry.get('current_task', '—'),
+            'last_heartbeat': last_hb_iso,
+            'timeline':     timeline,
+        })
+
+    return jsonify({'agents': result, 'ts': now_ts})
+
+
 @app.route('/api/monitor/model_stats')
 def monitor_model_stats():
     models_dir = _PROJECT_ROOT / 'models'
     _MODEL_FILES = [
-        ('base',    'btc_rf_model_meta.json',          'Base Model',         'btc_rf_model.joblib'),
-        ('trend',   'trend_model_meta.json',           'Trend Following',    'trend_model.joblib'),
-        ('futures', 'futures_short_model_meta.json',   'Futures Short',      'futures_short_model.joblib'),
-        ('scalping','scalping_model_meta.json',         'Scalping (1m)',      'scalping_model.joblib'),
-        ('tft',     'model_meta.json',                 'TFT (Neural)',       'tft_model.pt'),
+        ('base',     'btc_rf_model_meta.json',       'Base Model',        'btc_rf_model.joblib'),
+        ('trend',    'trend_model_meta.json',         'Trend Following',   'trend_model.joblib'),
+        ('futures',  'futures_short_model_meta.json', 'Futures Short',     'futures_short_model.joblib'),
+        ('scalping', 'scalping_model_meta.json',      'Scalping (1m)',     'scalping_model.joblib'),
+        ('tft',      'tft_model_meta.json',           'TFT (Neural)',      'tft_model.pt'),
+        ('meta',     'meta_labeler_meta.json',        'Meta-Labeler',      'meta_labeler.joblib'),
+        ('regime',   'regime_classifier_meta.json',   'Regime Classifier', 'regime_classifier.joblib'),
     ]
     result = []
     for key, meta_file, label, model_file in _MODEL_FILES:
@@ -740,17 +825,19 @@ def monitor_model_stats():
         result.append({
             'key': key, 'label': label,
             'model_exists': exists,
-            'accuracy':      round(meta.get('accuracy', 0), 2),
-            'long_accuracy': round(meta.get('long_accuracy', 0), 2),
-            'short_accuracy':round(meta.get('short_accuracy', 0), 2),
-            'n_samples':     meta.get('n_samples'),
-            'n_train':       meta.get('n_train'),
-            'n_test':        meta.get('n_test'),
-            'n_features':    meta.get('n_features'),
-            'n_iterations':  meta.get('n_iterations'),
-            'symbols':       meta.get('symbols', []),
-            'timeframe':     meta.get('timeframe', '--'),
-            'last_trained':  meta.get('last_trained', ''),
+            'accuracy':              round(meta.get('accuracy', 0), 2),
+            'long_accuracy':         round(meta.get('long_accuracy', 0), 2),
+            'short_accuracy':        round(meta.get('short_accuracy', 0), 2),
+            'n_samples':             meta.get('n_samples'),
+            'n_train':               meta.get('n_train'),
+            'n_test':                meta.get('n_test'),
+            'n_features':            meta.get('n_features'),
+            'n_iterations':          meta.get('n_iterations'),
+            'symbols':               meta.get('symbols', []),
+            'timeframe':             meta.get('timeframe', '--'),
+            'last_trained':          meta.get('last_trained', ''),
+            'walk_forward_mean_acc': meta.get('walk_forward_mean_acc'),
+            'target':                meta.get('target', ''),
         })
 
     # CUDA / GPU info

@@ -1,0 +1,22 @@
+{
+  "sharpe":{
+    "A_Original":-0.4470625,
+    "B_New":-0.3636833333
+  },
+  "sortino":{
+    "A_Original":-0.114875,
+    "B_New":-0.1180111111
+  },
+  "win_rate_pct":{
+    "A_Original":47.11125,
+    "B_New":43.5066666667
+  },
+  "max_drawdown_pct":{
+    "A_Original":-37.56,
+    "B_New":-24.0943888889
+  },
+  "n_trades":{
+    "A_Original":3308.5375,
+    "B_New":1883.8055555556
+  }
+}

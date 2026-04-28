@@ -15,15 +15,43 @@ Topics:
 """
 from __future__ import annotations
 
+import json
 import logging
 import queue
 import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Dict, List
 
 logger = logging.getLogger(__name__)
+
+# ── Agent status file ─────────────────────────────────────────────────────────
+_STATUS_FILE = Path(__file__).resolve().parents[3] / 'data' / 'agent_status.json'
+_status_write_lock = threading.Lock()
+
+
+def _write_agent_status(name: str, status: str, task: str, interval_sec: float) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with _status_write_lock:
+        try:
+            data: dict = {}
+            if _STATUS_FILE.exists():
+                try:
+                    data = json.loads(_STATUS_FILE.read_text(encoding='utf-8'))
+                except Exception:
+                    pass
+            data[name] = {
+                'status': status,
+                'current_task': task,
+                'last_heartbeat': now,
+                'interval_sec': interval_sec,
+            }
+            _STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            _STATUS_FILE.write_text(json.dumps(data, indent=2), encoding='utf-8')
+        except Exception:
+            pass
 
 
 @dataclass
@@ -124,9 +152,12 @@ class BaseAgent:
     def _loop(self) -> None:
         while self._running:
             try:
+                _write_agent_status(self.NAME, 'running', 'Executing cycle', self.interval_sec)
                 self._run_cycle()
+                _write_agent_status(self.NAME, 'idle', 'Waiting for next cycle', self.interval_sec)
             except Exception as e:
                 logger.error("[%s] cycle error: %s", self.NAME, e)
+                _write_agent_status(self.NAME, 'error', f'Error: {e}', self.interval_sec)
             time.sleep(self.interval_sec)
 
     def publish(self, topic: str, payload: Any) -> None:

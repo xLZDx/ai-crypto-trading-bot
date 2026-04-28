@@ -17,11 +17,17 @@ import numpy as np
 import pandas as pd
 
 
-def _compute_weights(d: float, threshold: float = 1e-4) -> np.ndarray:
-    """Compute binomial series weights until |w_k| < threshold."""
+def _compute_weights(d: float, threshold: float = 1e-4, max_width: int = 100) -> np.ndarray:
+    """
+    Compute binomial series weights until |w_k| < threshold or max_width reached.
+
+    max_width caps the lookback window so the function works on shorter series
+    (d=0.4 without a cap needs ~800 bars to satisfy threshold=1e-4 due to slow
+    k^{-1.4} weight decay — impractical for typical 200–500 bar test windows).
+    """
     weights = [1.0]
     k = 1
-    while True:
+    while len(weights) < max_width:
         w = -weights[-1] * (d - k + 1) / k
         if abs(w) < threshold:
             break
@@ -30,7 +36,8 @@ def _compute_weights(d: float, threshold: float = 1e-4) -> np.ndarray:
     return np.array(weights[::-1])  # oldest first
 
 
-def fractional_diff(series: pd.Series, d: float = 0.4, threshold: float = 1e-4) -> pd.Series:
+def fractional_diff(series: pd.Series, d: float = 0.4, threshold: float = 1e-4,
+                    max_width: int = 100) -> pd.Series:
     """
     Apply fractional differencing to a price series.
 
@@ -38,11 +45,12 @@ def fractional_diff(series: pd.Series, d: float = 0.4, threshold: float = 1e-4) 
         series:    Raw close price series (or any price-like series).
         d:         Differencing order. 0.4 is the sweet-spot for crypto hourly data.
         threshold: Weight cutoff — weights below this are dropped (controls window length).
+        max_width: Hard cap on lookback window (default 100 bars).
 
     Returns:
         Series of same length with NaN for the warm-up period.
     """
-    weights = _compute_weights(d, threshold)
+    weights = _compute_weights(d, threshold, max_width=max_width)
     width = len(weights)
     vals = series.values.astype(float)
     n = len(vals)
