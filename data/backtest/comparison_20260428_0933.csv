@@ -1,0 +1,7 @@
+strategy,symbol,n_trades,total_pnl_usdt,win_rate_pct,sharpe,sortino,calmar,max_drawdown_pct,profit_factor
+RSI_MeanReversion,LTC_USDT,924,-1753.38,51.7,-0.286,-0.041,-0.072,-31.44,0.92
+RSI_MeanReversion,SUI_USDT,340,-1384.85,51.5,-0.554,-0.084,-0.189,-25.69,0.87
+RSI_MeanReversion,ICP_USDT,503,-2822.55,48.7,-0.737,-0.102,-0.2,-32.33,0.82
+RSI_MeanReversion,DOT_USDT,624,-3302.89,48.9,-0.834,-0.113,-0.199,-34.11,0.79
+RSI_MeanReversion,TRX_USDT,948,-4396.35,47.3,-1.013,-0.127,-0.161,-43.96,0.74
+RSI_MeanReversion,APT_USDT,371,-3169.34,52.0,-1.216,-0.155,-0.288,-35.54,0.73

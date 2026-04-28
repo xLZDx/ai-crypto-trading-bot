@@ -234,7 +234,8 @@ class Backtester:
             )
             equity += trade.pnl
             result.trades.append(trade)
-            equity_series.append(equity)
+            if equity_series:
+                equity_series[-1] = equity
 
         result.equity_curve = pd.Series(equity_series, index=df.index[:len(equity_series)])
         return result
