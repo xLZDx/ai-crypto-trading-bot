@@ -83,6 +83,9 @@ class OrderManager:
         try:
             self.futures_exchange.load_markets()
             futures_symbol = self.to_futures_symbol(symbol)
+            if futures_symbol not in self.futures_exchange.markets:
+                logging.warning(f"No perpetual futures market for {symbol} ({futures_symbol}) — skipping futures order")
+                return None
             amount_coin = self.futures_exchange.amount_to_precision(futures_symbol, amount_coin)
             params = {'reduceOnly': True} if reduce_only else {}
             
@@ -99,7 +102,11 @@ class OrderManager:
     def execute_limit_futures_order(self, symbol, side, amount_coin, price, reduce_only=False):
         """Sends a LIMIT order to the Futures account (Used for Market Making)"""
         try:
+            self.futures_exchange.load_markets()
             futures_symbol = self.to_futures_symbol(symbol)
+            if futures_symbol not in self.futures_exchange.markets:
+                logging.warning(f"No perpetual futures market for {symbol} ({futures_symbol}) — skipping limit futures order")
+                return None
             amount_coin = self.futures_exchange.amount_to_precision(futures_symbol, amount_coin)
             price_str = self.futures_exchange.price_to_precision(futures_symbol, price)
             params = {'reduceOnly': True} if reduce_only else {}
@@ -117,7 +124,10 @@ class OrderManager:
     def cancel_all_orders(self, symbol):
         """Cancels all open limit orders for a specific symbol"""
         try:
+            self.futures_exchange.load_markets()
             futures_symbol = self.to_futures_symbol(symbol)
+            if futures_symbol not in self.futures_exchange.markets:
+                return
             self.futures_exchange.cancel_all_orders(futures_symbol)
         except Exception as e:
             logging.error(f"Error canceling orders for {symbol}: {e}")

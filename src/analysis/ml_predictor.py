@@ -115,11 +115,12 @@ class MLPredictor:
                 df['return_lag3'] = df['return'].shift(3)
                 df['return_lag5'] = df['return'].shift(5)
                 df['atr_pct'] = (df['high'] - df['low']) / df['close']
+                df['news_sentiment'] = 0.0
                 features = ['return', 'volatility', 'dist_sma_7', 'dist_sma_30', 'rsi_14',
                             'macd', 'macd_hist', 'volume_momentum', 'stoch_k',
                             'return_lag1', 'return_lag2', 'return_lag3', 'return_lag5',
                             'atr_pct', 'taker_buy_ratio', 'avg_trade_size', 'hour', 'day_of_week',
-                            'roc_14', 'roc_3', 'roc_7', 'bb_pb']
+                            'roc_14', 'roc_3', 'roc_7', 'bb_pb', 'news_sentiment']
             
             # Validate all expected features are present
             missing = [f for f in features if f not in df.columns]
