@@ -435,6 +435,74 @@ def test_new_strategy_modules():
         check('restart_all.ps1 no hanging Get-CimInstance', 'Get-CimInstance Win32_Process' not in src)
 
 
+# ─── Static: monitor server + launchers ──────────────────────────────────────
+
+def test_monitor_module():
+    print('\n[Monitor Server & Launchers]')
+
+    # Monitor server
+    mon_path = os.path.join(BASE_DIR, 'src', 'monitor', 'server.py')
+    check('src/monitor/server.py exists', os.path.exists(mon_path))
+    if os.path.exists(mon_path):
+        src = open(mon_path, encoding='utf-8').read()
+        check('Flask app defined', 'app = Flask' in src)
+        check('route / returns HTML page', "@app.route('/')" in src or '@app.route("/")' in src)
+        check('_proc_status uses psutil', 'psutil' in src)
+        check('_tail reads log files', 'def _tail' in src)
+        check('runs on port 5001', '5001' in src)
+        check('auto-refresh meta tag', 'refresh' in src)
+
+    # Launcher scripts
+    for script in ['launch_monitor.ps1', 'launch_dashboard.ps1', 'launch_bot.ps1', 'launch_training.ps1']:
+        path = os.path.join(BASE_DIR, script)
+        check(f'{script} exists', os.path.exists(path))
+        if os.path.exists(path):
+            src = open(path, encoding='utf-8').read()
+            check(f'{script} uses Tee-Object for log capture', 'Tee-Object' in src)
+            check(f'{script} uses venv python path', 'venv' in src and 'python.exe' in src)
+
+    # restart_all.ps1 updated checks
+    restart_path = os.path.join(BASE_DIR, 'restart_all.ps1')
+    if os.path.exists(restart_path):
+        src = open(restart_path, encoding='utf-8').read()
+        check('restart_all.ps1 launches monitor (step 0)', 'launch_monitor.ps1' in src)
+        check('restart_all.ps1 uses Start-Component helper', 'Start-Component' in src)
+        check('restart_all.ps1 uses -File launcher pattern', '-File' in src)
+        check('restart_all.ps1 saves monitor PID', 'monitor' in src and 'ConvertTo-Json' in src)
+        check('restart_all.ps1 no hanging Get-CimInstance', 'Get-CimInstance Win32_Process' not in src)
+
+    # psutil in requirements
+    req_path = os.path.join(BASE_DIR, 'requirements.txt')
+    if os.path.exists(req_path):
+        req = open(req_path, encoding='utf-8').read()
+        check('psutil in requirements.txt', 'psutil' in req)
+
+    # Monitor tab in dashboard HTML
+    html_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
+    if os.path.exists(html_path):
+        html = open(html_path, encoding='utf-8').read()
+        check('Monitor nav tab button present', 'data-tab="monitor"' in html)
+        check('Monitor tab pane present', 'id="tab-monitor"' in html)
+        check('mon-health-grid div present', 'mon-health-grid' in html)
+        check('mon-log-box div present', 'mon-log-box' in html)
+        check('monPollHealth() JS function', 'monPollHealth' in html)
+        check('monStart() JS function', 'monStart' in html)
+        check('monStop() JS function', 'monStop' in html)
+        check('monPollLog() JS function', 'monPollLog' in html)
+        check('monitor fetches use hdrs() not undefined API_HEADERS', 'API_HEADERS' not in html)
+
+    # Monitor API routes in app.py
+    app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
+    if os.path.exists(app_path):
+        src = open(app_path, encoding='utf-8').read()
+        check('/api/monitor/health route defined', "'/api/monitor/health'" in src)
+        check('/api/monitor/logs route defined', "'/api/monitor/logs/" in src)
+        check('/api/monitor/start route defined', "'/api/monitor/start/" in src)
+        check('/api/monitor/stop route defined', "'/api/monitor/stop/" in src)
+        check('_managed process registry', '_managed' in src)
+        check('_pid_alive() helper uses psutil', '_pid_alive' in src and 'psutil' in src)
+
+
 # ─── Static: model meta files ─────────────────────────────────────────────────
 
 def test_model_meta():
@@ -457,13 +525,15 @@ def test_model_meta():
 # ─── HTTP: live API endpoints ─────────────────────────────────────────────────
 
 def test_api(base_url):
+    import pytest
+    import urllib.request
+    import urllib.error
     print(f'\n[API Endpoints @ {base_url}]')
+    # Skip gracefully when dashboard is not running
     try:
-        import urllib.request
-        import urllib.error
-    except ImportError:
-        check('urllib available', False)
-        return
+        urllib.request.urlopen(base_url + '/', timeout=2).close()
+    except Exception:
+        pytest.skip('Dashboard not running — skipping live API tests')
 
     def get(path, expect_key=None):
         url = base_url + path
@@ -543,6 +613,7 @@ def main():
     test_main_py()
     test_quant_modules()
     test_new_strategy_modules()
+    test_monitor_module()
 
     if not args.offline:
         test_api(args.url)

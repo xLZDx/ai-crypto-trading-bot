@@ -393,6 +393,10 @@ select.field option{background:#0d1628;color:#e2e8f0}
     <button class="nav-item" data-tab="chat">
       <span class="nav-icon">🤖</span> AI Assistant
     </button>
+    <button class="nav-item" data-tab="monitor">
+      <span class="nav-icon">🖥</span> Monitor
+      <span class="nav-badge" id="nb-alerts" style="display:none">!</span>
+    </button>
   </nav>
 
   <!-- Symbol search -->
@@ -950,6 +954,64 @@ select.field option{background:#0d1628;color:#e2e8f0}
         </div>
       </div>
     </div><!-- /chat -->
+
+
+    <!-- ══════════ TAB: MONITOR & LOGS ══════════ -->
+    <div id="tab-monitor" class="tab-pane">
+      <style>
+        .mon-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;margin-bottom:16px}
+        .mon-card{background:var(--bg-2);border:1px solid rgba(148,163,184,.12);border-radius:10px;padding:12px 14px}
+        .mon-card.running{border-color:rgba(52,211,153,.35)}
+        .mon-card.stopped{border-color:rgba(251,113,133,.25)}
+        .mon-label{font-size:.68rem;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
+        .mon-status{font-size:.78rem;font-weight:700;display:flex;align-items:center;gap:5px;margin-bottom:6px}
+        .mon-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+        .mon-dot.running{background:#34d399;box-shadow:0 0 6px #34d39988}
+        .mon-dot.stopped{background:#fb7185}
+        .mon-meta{font-size:.62rem;color:#64748b;font-family:'JetBrains Mono',monospace;line-height:1.6}
+        .mon-btn{margin-top:8px;width:100%;padding:5px 0;border-radius:6px;font-size:.65rem;font-weight:700;
+                 letter-spacing:.06em;text-transform:uppercase;cursor:pointer;border:none;transition:all .2s}
+        .mon-btn.start{background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.3)}
+        .mon-btn.start:hover{background:rgba(52,211,153,.28)}
+        .mon-btn.stop{background:rgba(251,113,133,.15);color:#fb7185;border:1px solid rgba(251,113,133,.3)}
+        .mon-btn.stop:hover{background:rgba(251,113,133,.28)}
+        .log-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+        .log-tab{padding:4px 12px;border-radius:6px;font-size:.64rem;font-weight:700;letter-spacing:.05em;
+                 text-transform:uppercase;cursor:pointer;border:1px solid rgba(148,163,184,.2);
+                 background:rgba(148,163,184,.06);color:#94a3b8;transition:all .2s}
+        .log-tab.active{background:rgba(59,130,246,.2);border-color:rgba(59,130,246,.4);color:#93c5fd}
+        #mon-log-box{background:#010409;border-radius:8px;padding:14px 18px;font-family:'JetBrains Mono',monospace;
+                     font-size:.8rem;line-height:1.8;color:#cbd5e1;overflow-y:auto;
+                     height:calc(100vh - 440px);min-height:200px;white-space:pre-wrap;word-break:break-word}
+        #mon-log-box .ll-err{color:#f87171}
+        #mon-log-box .ll-warn{color:#fbbf24}
+        #mon-log-box .ll-info{color:#86efac}
+        #mon-log-box .ll-ts{color:#475569}
+        .mon-log-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+      </style>
+
+      <!-- Health cards -->
+      <div class="section-label" style="margin-bottom:8px">Component Health</div>
+      <div class="mon-grid" id="mon-health-grid">
+        <!-- filled by JS -->
+      </div>
+
+      <!-- Log viewer -->
+      <div class="card" style="padding:14px">
+        <div class="mon-log-toolbar">
+          <div class="section-label" style="margin:0;flex:1">Live Logs</div>
+          <label style="font-size:.62rem;color:#64748b;display:flex;align-items:center;gap:4px;cursor:pointer">
+            <input type="checkbox" id="mon-autoscroll" checked> Auto-scroll
+          </label>
+          <button class="btn btn-ghost btn-sm" onclick="monClearLog()">🗑 Clear view</button>
+          <button class="btn btn-ghost btn-sm" onclick="monCopyLog()">📋 Copy</button>
+          <span class="chip" id="mon-log-ts" style="font-size:.58rem">--</span>
+        </div>
+        <div class="log-tabs" id="mon-log-tabs"></div>
+        <div id="mon-log-box">Select a component above…</div>
+      </div>
+    </div><!-- /monitor -->
+
 
   </div><!-- /content -->
 </div><!-- /main -->
@@ -2231,9 +2293,146 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(fetchBinanceTickers,15_000);
   setInterval(() => { if (activeTab==='logs') pollLogs(); }, 10_000);
   setInterval(pollAiStatus,       60_000);
+  setInterval(() => { if (activeTab==='monitor') { monPollHealth(); monPollLog(); } }, 4_000);
 
   switchTab('overview');
 });
+
+// ── Monitor tab ────────────────────────────────────────────────────────────
+const MON_COMPONENTS = {
+  bot:      { label: 'Trading Bot',      managed: false },
+  dash:     { label: 'Dashboard',        managed: false },
+  training: { label: 'ML Training',      managed: true  },
+  download: { label: 'Data Downloader',  managed: true  },
+  news:     { label: 'News Scraper',     managed: true  },
+  telegram: { label: 'Telegram Monitor', managed: true  },
+};
+let monActiveLog = 'bot';
+let monHealth    = {};
+
+function fmtUptime(s) {
+  if (!s) return '';
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return h ? `${h}h ${m}m` : m ? `${m}m ${sec}s` : `${sec}s`;
+}
+
+async function monPollHealth() {
+  try {
+    const r = await fetch('/api/monitor/health', { headers: hdrs() });
+    if (!r.ok) return;
+    monHealth = await r.json();
+    renderMonHealth();
+  } catch {}
+}
+
+function renderMonHealth() {
+  const grid = document.getElementById('mon-health-grid');
+  if (!grid) return;
+  let html = '';
+  let alerts = 0;
+
+  for (const [key, cfg] of Object.entries(MON_COMPONENTS)) {
+    const d = monHealth[key] || {};
+    const running = d.running;
+    if (!running && key === 'bot') alerts++;
+
+    const dot   = running ? 'running' : 'stopped';
+    const label = cfg.label;
+    const meta  = running
+      ? `PID ${d.pid} &nbsp;·&nbsp; ${d.cpu ?? 0}% CPU &nbsp;·&nbsp; ${d.mem_mb ?? 0} MB<br>Up: ${fmtUptime(d.uptime_s)}`
+      : `<span style="color:#fb7185">Not running</span>`;
+
+    let btn = '';
+    if (cfg.managed) {
+      btn = running
+        ? `<button class="mon-btn stop" onclick="monStop('${key}')">⏹ Stop</button>`
+        : `<button class="mon-btn start" onclick="monStart('${key}')">▶ Start</button>`;
+    }
+
+    html += `<div class="mon-card ${dot}" onclick="monSelectLog('${key}')" style="cursor:pointer" title="Click to view logs">
+      <div class="mon-label">${label}</div>
+      <div class="mon-status"><span class="mon-dot ${dot}"></span>${running ? 'Running' : 'Stopped'}</div>
+      <div class="mon-meta">${meta}</div>
+      ${btn}
+    </div>`;
+  }
+
+  grid.innerHTML = html;
+
+  // alert badge
+  const badge = document.getElementById('nb-alerts');
+  if (badge) { badge.style.display = alerts ? '' : 'none'; badge.textContent = alerts; }
+
+  // rebuild log tabs
+  const tabBar = document.getElementById('mon-log-tabs');
+  if (tabBar) {
+    tabBar.innerHTML = Object.entries(MON_COMPONENTS).map(([k, c]) =>
+      `<button class="log-tab${k === monActiveLog ? ' active' : ''}" onclick="monSelectLog('${k}')">${c.label}</button>`
+    ).join('');
+  }
+}
+
+function monSelectLog(key) {
+  monActiveLog = key;
+  renderMonHealth();   // updates tab active state
+  monPollLog();
+}
+
+async function monPollLog() {
+  try {
+    const r = await fetch(`/api/monitor/logs/${monActiveLog}`, { headers: hdrs() });
+    if (!r.ok) return;
+    const d = await r.json();
+    const box = document.getElementById('mon-log-box');
+    if (!box) return;
+    const lines = d.lines || [];
+    if (!lines.length) { box.textContent = '(no log yet)'; }
+    else {
+      const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      box.innerHTML = lines.map(l => {
+        const lu = l.toUpperCase();
+        let cls = '';
+        if (lu.includes(' - ERROR') || lu.includes(' ERROR ') || lu.startsWith('ERROR'))   cls = 'll-err';
+        else if (lu.includes(' - WARNING') || lu.includes(' WARN ') || lu.startsWith('WARN')) cls = 'll-warn';
+        else if (lu.includes(' - INFO') || lu.startsWith('INFO'))                            cls = 'll-info';
+        const safe = esc(l).replace(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[,\d]*)/, '<span class="ll-ts">$1</span>');
+        return cls ? `<span class="${cls}">${safe}</span>` : safe;
+      }).join('\n');
+    }
+    const ts = document.getElementById('mon-log-ts');
+    if (ts) ts.textContent = new Date().toLocaleTimeString();
+    if (document.getElementById('mon-autoscroll')?.checked) {
+      box.scrollTop = box.scrollHeight;
+    }
+  } catch {}
+}
+
+async function monStart(service) {
+  const r = await fetch(`/api/monitor/start/${service}`, { method: 'POST', headers: hdrs() });
+  const d = await r.json();
+  if (d.ok) { await monPollHealth(); monSelectLog(service); }
+  else alert(d.msg || 'Could not start');
+}
+
+async function monStop(service) {
+  if (!confirm(`Stop ${MON_COMPONENTS[service]?.label}?`)) return;
+  await fetch(`/api/monitor/stop/${service}`, { method: 'POST', headers: hdrs() });
+  await monPollHealth();
+}
+
+function monClearLog() { const b = document.getElementById('mon-log-box'); if (b) b.textContent = ''; }
+function monCopyLog()  { navigator.clipboard?.writeText(document.getElementById('mon-log-box')?.textContent || ''); }
+
+// Auto-init when tab becomes active
+const _origSwitch = window.switchTab;
+if (typeof _origSwitch === 'function') {
+  // switchTab is defined earlier — patch it to trigger monitor init
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('[data-tab="monitor"]').forEach(b =>
+      b.addEventListener('click', () => { monPollHealth(); monPollLog(); })
+    );
+  });
+}
 </script>
 </body>
 </html>

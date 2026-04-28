@@ -4,12 +4,27 @@ requests==2.31.0
 filelock>=3.12.0
 defusedxml>=0.7.1
 
+# Web / API
+flask
 websockets
+mcp
+debugpy
+psutil
+
+# Data & ML
+pandas
+scikit-learn
+joblib
+numpy
+
+# NLP / Sentiment
 vaderSentiment
 feedparser
+beautifulsoup4
+youtube-transcript-api
 google-genai
 
-# Quantitative Data Science & ML Libraries (Phase 1)
+# Quantitative / Deep Learning (Phase 1-3)
 darts
 neuralforecast
 arch

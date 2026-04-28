@@ -552,5 +552,145 @@ def close_losing_trades():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+# ─── Monitor: process registry ───────────────────────────────────────────────
+import time as _time
+from pathlib import Path as _Path
+
+_PROJECT_ROOT = _Path(__file__).resolve().parents[2]
+_LOG_DIR      = _PROJECT_ROOT / 'logs'
+_PID_FILE     = _PROJECT_ROOT / 'data' / 'process_ids.json'
+
+_SERVICES = {
+    'training': {'label': 'ML Training',      'script': 'src/engine/train_all_models.py'},
+    'download': {'label': 'Data Downloader',  'script': 'src/data_ingestion/binance_downloader.py'},
+    'news':     {'label': 'News Scraper',     'script': 'src/data_ingestion/news_scraper.py'},
+    'telegram': {'label': 'Telegram Monitor', 'script': 'src/data_ingestion/telegram_scraper.py'},
+}
+_LOG_MAP = {
+    'bot': 'bot.log', 'dash': 'dashboard.log', 'monitor': 'monitor.log',
+    **{k: f'{k}.log' for k in _SERVICES}
+}
+
+_managed: dict = {}
+_managed_lock = threading.Lock()
+
+
+def _pid_alive(pid) -> bool:
+    if not pid:
+        return False
+    try:
+        import psutil
+        p = psutil.Process(int(pid))
+        return p.status() not in ('zombie', 'dead')
+    except Exception:
+        return False
+
+
+def _proc_stats(pid) -> dict:
+    try:
+        import psutil
+        p = psutil.Process(int(pid))
+        return {
+            'cpu': round(p.cpu_percent(interval=0.05), 1),
+            'mem_mb': p.memory_info().rss // (1024 * 1024),
+            'uptime_s': max(0, int(_time.time() - p.create_time())),
+        }
+    except Exception:
+        return {'cpu': 0, 'mem_mb': 0, 'uptime_s': 0}
+
+
+@app.route('/api/monitor/health')
+def monitor_health():
+    pids = read_json('data/process_ids.json', default={})
+    out = {}
+
+    # Externally launched components (PIDs saved by restart_all.ps1)
+    for key, label in [('bot', 'Trading Bot'), ('dash', 'Dashboard')]:
+        pid = pids.get(key)
+        alive = _pid_alive(pid)
+        entry = {'label': label, 'running': alive, 'pid': pid, 'managed': False}
+        if alive:
+            entry.update(_proc_stats(pid))
+        out[key] = entry
+
+    # Services managed by this dashboard (started via /api/monitor/start)
+    with _managed_lock:
+        for svc_key, svc in _SERVICES.items():
+            proc = _managed.get(svc_key)
+            running = proc is not None and proc.poll() is None
+            pid = proc.pid if running else None
+            entry = {'label': svc['label'], 'running': running, 'pid': pid, 'managed': True}
+            if running:
+                entry.update(_proc_stats(pid))
+            out[svc_key] = entry
+
+    return jsonify(out)
+
+
+@app.route('/api/monitor/logs/<component>')
+def monitor_logs(component):
+    log_file = _LOG_MAP.get(component)
+    if not log_file:
+        return jsonify({'error': 'unknown component'}), 404
+    path = _LOG_DIR / log_file
+    if not path.exists():
+        return jsonify({'lines': [], 'size': 0})
+    try:
+        # Read last 40 KB to avoid loading huge files
+        with open(path, 'rb') as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - 40960))
+            chunk = f.read()
+        # Handle UTF-16 LE (PowerShell Tee-Object default) and UTF-8
+        if chunk[:2] == b'\xff\xfe':
+            raw = chunk[2:].decode('utf-16-le', errors='replace').replace('\x00', '')
+        else:
+            raw = chunk.decode('utf-8', errors='replace')
+        lines = raw.splitlines()
+        if size > 40960 and lines:
+            lines = lines[1:]   # first line may be partial
+        return jsonify({'lines': lines[-300:], 'size': size})
+    except Exception as e:
+        return jsonify({'lines': [str(e)], 'size': 0})
+
+
+@app.route('/api/monitor/start/<service>', methods=['POST'])
+def monitor_start(service):
+    svc = _SERVICES.get(service)
+    if not svc:
+        return jsonify({'error': 'unknown service'}), 404
+    with _managed_lock:
+        proc = _managed.get(service)
+        if proc is not None and proc.poll() is None:
+            return jsonify({'ok': False, 'msg': 'already running', 'pid': proc.pid})
+        _LOG_DIR.mkdir(parents=True, exist_ok=True)
+        log_path = _LOG_DIR / f'{service}.log'
+        log_fh = open(log_path, 'a', encoding='utf-8')
+        new_proc = subprocess.Popen(
+            [sys.executable, str(_PROJECT_ROOT / svc['script'])],
+            stdout=log_fh, stderr=log_fh,
+            cwd=str(_PROJECT_ROOT),
+        )
+        _managed[service] = new_proc
+    return jsonify({'ok': True, 'pid': new_proc.pid})
+
+
+@app.route('/api/monitor/stop/<service>', methods=['POST'])
+def monitor_stop(service):
+    if service not in _SERVICES:
+        return jsonify({'error': 'unknown service'}), 404
+    with _managed_lock:
+        proc = _managed.pop(service, None)
+    if proc is None or proc.poll() is not None:
+        return jsonify({'ok': False, 'msg': 'not running'})
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    return jsonify({'ok': True})
+
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False)
