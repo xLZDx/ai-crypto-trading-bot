@@ -1000,9 +1000,6 @@ select.field option{background:#0d1628;color:#e2e8f0}
       <div class="card" style="padding:14px">
         <div class="mon-log-toolbar">
           <div class="section-label" style="margin:0;flex:1">Live Logs</div>
-          <label style="font-size:.62rem;color:#64748b;display:flex;align-items:center;gap:4px;cursor:pointer">
-            <input type="checkbox" id="mon-autoscroll" checked> Auto-scroll
-          </label>
           <button class="btn btn-ghost btn-sm" onclick="monClearLog()">🗑 Clear view</button>
           <button class="btn btn-ghost btn-sm" onclick="monCopyLog()">📋 Copy</button>
           <span class="chip" id="mon-log-ts" style="font-size:.58rem">--</span>
@@ -1022,6 +1019,13 @@ select.field option{background:#0d1628;color:#e2e8f0}
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
 const API_KEY = '{{ api_key }}';
 const hdrs = () => ({ 'Content-Type': 'application/json', ...(API_KEY ? {'X-API-Key': API_KEY} : {}) });
+
+// Only scroll to bottom if the user is already near the bottom (not manually scrolled up)
+function smartScroll(el) {
+  if (!el) return;
+  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  if (nearBottom) el.scrollTop = el.scrollHeight;
+}
 
 // ─── STATE ───────────────────────────────────────────────────────────────────
 let activeTab = 'overview';
@@ -1523,6 +1527,8 @@ function renderTrades() {
 
   const openTbody = $('open-trades-tbody');
   if (openTbody) {
+    const _openWrap = openTbody.closest('.scroll-table');
+    const _openScroll = _openWrap ? _openWrap.scrollTop : 0;
     openTbody.innerHTML = open.length === 0
       ? '<tr><td colspan="9" style="text-align:center;color:#475569;padding:14px">No open positions</td></tr>'
       : open.map(t => {
@@ -1551,10 +1557,13 @@ function renderTrades() {
           <td style="color:#475569;font-size:.6rem">${openedAt}</td>
         </tr>`;
       }).join('');
+    if (_openWrap) _openWrap.scrollTop = _openScroll;
   }
 
   const closedTbody = $('closed-trades-tbody');
   if (closedTbody) {
+    const _closedWrap = closedTbody.closest('.scroll-table');
+    const _closedScroll = _closedWrap ? _closedWrap.scrollTop : 0;
     closedTbody.innerHTML = closed.length === 0
       ? '<tr><td colspan="9" style="text-align:center;color:#475569;padding:14px">No closed trades</td></tr>'
       : closed.slice(0,100).map(t => {
@@ -1579,6 +1588,7 @@ function renderTrades() {
           <td style="color:#475569;font-size:.6rem">${closedAt}</td>
         </tr>`;
       }).join('');
+    if (_closedWrap) _closedWrap.scrollTop = _closedScroll;
   }
 }
 
@@ -2113,7 +2123,7 @@ async function pollLogs() {
   try {
     const d = await apiFetch('/api/logs');
     const el = $('terminal-logs');
-    if (el) { el.textContent = (d.logs||[]).join('\n'); el.scrollTop = el.scrollHeight; }
+    if (el) { el.textContent = (d.logs||[]).join('\n'); smartScroll(el); }
     setText('logs-ts', new Date().toLocaleTimeString());
   } catch {}
 }
@@ -2401,9 +2411,7 @@ async function monPollLog() {
     }
     const ts = document.getElementById('mon-log-ts');
     if (ts) ts.textContent = new Date().toLocaleTimeString();
-    if (document.getElementById('mon-autoscroll')?.checked) {
-      box.scrollTop = box.scrollHeight;
-    }
+    smartScroll(box);
   } catch {}
 }
 
