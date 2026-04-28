@@ -1,10 +1,15 @@
 import os
 import sys
+import json
+import logging
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
 import joblib
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+log = logging.getLogger('train_scalping')
 
 base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if base_dir not in sys.path:
@@ -146,31 +151,36 @@ def train_scalping_model():
     
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, shuffle=False)
     
-    print("Training Scalping AI Model...")
+    log.info("Scalping dataset: %d total | train %d | test %d | features %d | symbols %s | timeframe 1m",
+             len(combined_df), len(X_train), len(X_test), len(feature_columns), symbols)
+    log.info("Training Scalping AI Model...")
     model = HistGradientBoostingClassifier(random_state=42, max_iter=400, max_depth=5, learning_rate=0.05, early_stopping=True, class_weight='balanced')
     model.fit(X_train, y_train)
-    
+    n_iter = getattr(model, 'n_iter_', 400)
+
     predictions = model.predict(X_test)
     accuracy = accuracy_score(y_test, predictions)
-    
     report = classification_report(y_test, predictions, output_dict=True, zero_division=0)
-    long_acc = report.get('1', {}).get('precision', 0.0) * 100
+    long_acc  = report.get('1', {}).get('precision', 0.0) * 100
     short_acc = report.get('0', {}).get('precision', 0.0) * 100
 
-    print(f"\nScalping Model Accuracy: {accuracy * 100:.2f}%")
-    print(f"Long (UP) Precision: {long_acc:.2f}% | Short (DOWN) Precision: {short_acc:.2f}%")
-    
+    log.info("Scalping Model Accuracy: %.2f%%  |  Long: %.2f%%  |  Short: %.2f%%  |  Iterations: %d",
+             accuracy * 100, long_acc, short_acc, n_iter)
+
     models_dir = os.path.join(base_dir, 'models')
     os.makedirs(models_dir, exist_ok=True)
     model_path = os.path.join(models_dir, 'scalping_model.joblib')
     joblib.dump(model, model_path)
-    print(f"Scalping Model saved to {model_path}")
-    
-    meta_path = os.path.join(models_dir, 'scalping_model_meta.json')
-    import json
+    log.info("Scalping Model saved -> %s", model_path)
+
     from datetime import datetime, timezone
+    meta_path = os.path.join(models_dir, 'scalping_model_meta.json')
     with open(meta_path, 'w') as f:
-        json.dump({"accuracy": accuracy * 100, "long_accuracy": long_acc, "short_accuracy": short_acc,
+        json.dump({"model": "Scalping (HistGBT)", "accuracy": accuracy * 100,
+                   "long_accuracy": long_acc, "short_accuracy": short_acc,
+                   "n_samples": len(combined_df), "n_train": len(X_train), "n_test": len(X_test),
+                   "n_features": len(feature_columns), "n_iterations": n_iter,
+                   "symbols": symbols, "timeframe": "1m",
                    "last_trained": datetime.now(timezone.utc).isoformat()}, f)
 
 if __name__ == "__main__":

@@ -1,10 +1,15 @@
 import os
 import sys
+import json
+import logging
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
 import joblib
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+log = logging.getLogger('train_futures')
 
 base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if base_dir not in sys.path:
@@ -65,44 +70,46 @@ def train_futures_model():
             all_data.append(df)
             
     if not all_data:
-        print("Error: No data found even after attempted download.")
+        log.error("No data found even after attempted download.")
         return
-        
+
     combined_df = pd.concat(all_data, ignore_index=True)
-    
     feature_columns = ['return', 'rsi_14', 'dist_to_support', 'volume_drop', 'hour', 'roc_5']
     X = combined_df[feature_columns]
     y = combined_df['target_short']
-    
+
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, shuffle=False)
-    
-    print("Training Futures Shorting AI Model...")
-    # Train model to find rare but strong dumps
+    log.info("Futures dataset: %d total | train %d | test %d | features %d | symbols %s | timeframe 1h",
+             len(combined_df), len(X_train), len(X_test), len(feature_columns), symbols)
+
+    log.info("Training Futures Shorting AI Model...")
     model = HistGradientBoostingClassifier(random_state=42, max_iter=400, max_depth=6, learning_rate=0.03, l2_regularization=0.2, early_stopping=True, class_weight='balanced')
     model.fit(X_train, y_train)
-    
+    n_iter = getattr(model, 'n_iter_', 400)
+
     predictions = model.predict(X_test)
     accuracy = accuracy_score(y_test, predictions)
-    
     report = classification_report(y_test, predictions, output_dict=True, zero_division=0)
-    # Target 1 means DROP (Short), Target 0 means UP/HOLD (Long)
     short_acc = report.get('1', {}).get('precision', 0.0) * 100
-    long_acc = report.get('0', {}).get('precision', 0.0) * 100
+    long_acc  = report.get('0', {}).get('precision', 0.0) * 100
 
-    print(f"\nFutures Short Model Accuracy: {accuracy * 100:.2f}%")
-    print(f"Long (UP) Precision: {long_acc:.2f}% | Short (DOWN) Precision: {short_acc:.2f}%")
-    
+    log.info("Futures Short Model Accuracy: %.2f%%  |  Long: %.2f%%  |  Short: %.2f%%  |  Iterations: %d",
+             accuracy * 100, long_acc, short_acc, n_iter)
+
     models_dir = os.path.join(base_dir, 'models')
     os.makedirs(models_dir, exist_ok=True)
     model_path = os.path.join(models_dir, 'futures_short_model.joblib')
     joblib.dump(model, model_path)
-    print(f"Futures Model saved to {model_path}")
-    
-    meta_path = os.path.join(models_dir, 'futures_short_model_meta.json')
-    import json
+    log.info("Futures Model saved -> %s", model_path)
+
     from datetime import datetime, timezone
+    meta_path = os.path.join(models_dir, 'futures_short_model_meta.json')
     with open(meta_path, 'w') as f:
-        json.dump({"accuracy": accuracy * 100, "long_accuracy": long_acc, "short_accuracy": short_acc,
+        json.dump({"model": "Futures Short (HistGBT)", "accuracy": accuracy * 100,
+                   "long_accuracy": long_acc, "short_accuracy": short_acc,
+                   "n_samples": len(combined_df), "n_train": len(X_train), "n_test": len(X_test),
+                   "n_features": len(feature_columns), "n_iterations": n_iter,
+                   "symbols": symbols, "timeframe": "1h",
                    "last_trained": datetime.now(timezone.utc).isoformat()}, f)
 
 if __name__ == "__main__":

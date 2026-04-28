@@ -1007,6 +1007,46 @@ select.field option{background:#0d1628;color:#e2e8f0}
         <div class="log-tabs" id="mon-log-tabs"></div>
         <div id="mon-log-box">Select a component above…</div>
       </div>
+
+      <!-- Model Statistics -->
+      <style>
+        .ms-overall{background:linear-gradient(135deg,rgba(59,130,246,.12),rgba(139,92,246,.08));
+          border:1px solid rgba(99,102,241,.3);border-radius:12px;padding:14px 18px;margin-bottom:14px}
+        .ms-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+        .ms-card{background:var(--bg-2);border:1px solid rgba(148,163,184,.12);border-radius:10px;overflow:hidden}
+        .ms-card-hdr{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;cursor:pointer;
+          background:rgba(30,41,59,.4);user-select:none}
+        .ms-card-hdr:hover{background:rgba(30,41,59,.7)}
+        .ms-card-body{padding:12px 14px;font-size:.67rem;line-height:1.7;color:#94a3b8;font-family:'JetBrains Mono',monospace}
+        .ms-card-body.collapsed{display:none}
+        .ms-bar-wrap{display:flex;align-items:center;gap:8px;margin:3px 0}
+        .ms-bar-bg{flex:1;height:5px;background:rgba(148,163,184,.1);border-radius:3px;overflow:hidden}
+        .ms-bar-fill{height:100%;border-radius:3px;transition:width .4s}
+        .ms-acc{font-size:.9rem;font-weight:800;color:#e2e8f0}
+        .ms-label{font-size:.6rem;color:#64748b;text-transform:uppercase;letter-spacing:.07em}
+        .ms-tag{display:inline-block;background:rgba(59,130,246,.15);border:1px solid rgba(59,130,246,.25);
+          border-radius:4px;padding:1px 6px;font-size:.58rem;color:#93c5fd;margin:1px}
+        .cuda-ok{color:#34d399;font-weight:700} .cuda-no{color:#f87171;font-weight:700}
+        .ms-chevron{transition:transform .25s;font-size:.7rem;color:#64748b}
+        .ms-card.open .ms-chevron{transform:rotate(180deg)}
+      </style>
+
+      <div class="section-label" style="margin:16px 0 8px">Model Training Statistics</div>
+      <!-- Overall summary -->
+      <div class="ms-overall" id="ms-overall">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div>
+            <div class="ms-label">Overall Training Status</div>
+            <div id="ms-overall-text" style="font-size:.75rem;color:#cbd5e1;margin-top:4px">Loading…</div>
+          </div>
+          <div style="text-align:right">
+            <div class="ms-label">GPU / CUDA</div>
+            <div id="ms-cuda-text" style="margin-top:4px">--</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="ms-grid" id="ms-model-grid"><!-- filled by JS --></div>
     </div><!-- /monitor -->
 
 
@@ -2304,6 +2344,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(() => { if (activeTab==='logs') pollLogs(); }, 10_000);
   setInterval(pollAiStatus,       60_000);
   setInterval(() => { if (activeTab==='monitor') { monPollHealth(); monPollLog(); } }, 4_000);
+  setInterval(() => { if (activeTab==='monitor') monLoadModelStats(); }, 30_000);
 
   switchTab('overview');
 });
@@ -2431,13 +2472,104 @@ async function monStop(service) {
 function monClearLog() { const b = document.getElementById('mon-log-box'); if (b) b.textContent = ''; }
 function monCopyLog()  { navigator.clipboard?.writeText(document.getElementById('mon-log-box')?.textContent || ''); }
 
+// ── Model Stats ──────────────────────────────────────────────────────────────
+async function monLoadModelStats() {
+  try {
+    const r = await fetch('/api/monitor/model_stats', { headers: hdrs() });
+    if (!r.ok) return;
+    const d = await r.json();
+    renderModelStats(d.models || [], d.cuda || {});
+  } catch {}
+}
+
+function renderModelStats(models, cuda) {
+  // Overall summary
+  const trained = models.filter(m => m.model_exists);
+  const avgAcc  = trained.length ? (trained.reduce((s,m) => s + m.accuracy, 0) / trained.length).toFixed(1) : '--';
+  const avgLong = trained.length ? (trained.reduce((s,m) => s + m.long_accuracy, 0) / trained.length).toFixed(1) : '--';
+  const avgShort= trained.length ? (trained.reduce((s,m) => s + m.short_accuracy, 0) / trained.length).toFixed(1) : '--';
+  const ot = document.getElementById('ms-overall-text');
+  if (ot) ot.innerHTML =
+    `${trained.length}/${models.length} models trained &nbsp;|&nbsp; Avg accuracy <b style="color:#e2e8f0">${avgAcc}%</b> &nbsp;|&nbsp; ` +
+    `Long precision <b style="color:#34d399">${avgLong}%</b> &nbsp;|&nbsp; Short precision <b style="color:#fb7185">${avgShort}%</b>`;
+
+  const ct = document.getElementById('ms-cuda-text');
+  if (ct) ct.innerHTML = cuda.available
+    ? `<span class="cuda-ok">RTX ON — ${esc(cuda.device)}</span><br><span style="font-size:.58rem;color:#64748b">CUDA ${esc(cuda.version||'')}</span>`
+    : `<span class="cuda-no">CPU only</span><br><span style="font-size:.58rem;color:#64748b">Run launch_cuda_and_train.ps1</span>`;
+
+  const grid = document.getElementById('ms-model-grid');
+  if (!grid) return;
+
+  grid.innerHTML = models.map(m => {
+    const acc   = m.accuracy  || 0;
+    const lAcc  = m.long_accuracy  || 0;
+    const sAcc  = m.short_accuracy || 0;
+    const bar = (v, col) =>
+      `<div class="ms-bar-bg"><div class="ms-bar-fill" style="width:${Math.min(v,100)}%;background:${col}"></div></div>`;
+    const syms = (m.symbols||[]).map(s => `<span class="ms-tag">${esc(s)}</span>`).join('');
+    const trained = m.last_trained ? new Date(m.last_trained).toLocaleString() : 'Never';
+    const status  = m.model_exists
+      ? `<span style="color:#34d399;font-weight:700">Trained</span>`
+      : `<span style="color:#f87171;font-weight:700">Not trained</span>`;
+
+    return `<div class="ms-card" id="msc-${m.key}">
+      <div class="ms-card-hdr" onclick="msToggle('${m.key}')">
+        <div>
+          <span style="font-size:.72rem;font-weight:700;color:#e2e8f0">${esc(m.label)}</span>
+          &nbsp;<span style="font-size:.6rem;color:#64748b">${esc(m.timeframe||'')}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          ${status}
+          <span class="ms-acc">${acc.toFixed(1)}%</span>
+          <span class="ms-chevron">▼</span>
+        </div>
+      </div>
+      <div class="ms-card-body collapsed" id="msb-${m.key}">
+        <div class="ms-bar-wrap">
+          <span style="width:60px;color:#94a3b8">Overall</span>
+          ${bar(acc,'#6366f1')}
+          <span style="width:38px;text-align:right;color:#e2e8f0">${acc.toFixed(1)}%</span>
+        </div>
+        <div class="ms-bar-wrap">
+          <span style="width:60px;color:#34d399">Long</span>
+          ${bar(lAcc,'#34d399')}
+          <span style="width:38px;text-align:right;color:#34d399">${lAcc.toFixed(1)}%</span>
+        </div>
+        <div class="ms-bar-wrap">
+          <span style="width:60px;color:#fb7185">Short</span>
+          ${bar(sAcc,'#fb7185')}
+          <span style="width:38px;text-align:right;color:#fb7185">${sAcc.toFixed(1)}%</span>
+        </div>
+        <div style="margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:4px 12px">
+          <div><span style="color:#475569">Samples</span> ${m.n_samples ? m.n_samples.toLocaleString() : '--'}</div>
+          <div><span style="color:#475569">Train/Test</span> ${m.n_train ? m.n_train.toLocaleString() : '--'} / ${m.n_test ? m.n_test.toLocaleString() : '--'}</div>
+          <div><span style="color:#475569">Features</span> ${m.n_features ?? '--'}</div>
+          <div><span style="color:#475569">Iterations</span> ${m.n_iterations ?? '--'}</div>
+          <div><span style="color:#475569">Timeframe</span> ${esc(m.timeframe||'--')}</div>
+          <div><span style="color:#475569">Trained</span> ${esc(trained)}</div>
+        </div>
+        ${syms ? `<div style="margin-top:6px">${syms}</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function msToggle(key) {
+  const card = document.getElementById(`msc-${key}`);
+  const body = document.getElementById(`msb-${key}`);
+  if (!card || !body) return;
+  const open = card.classList.toggle('open');
+  body.classList.toggle('collapsed', !open);
+}
+
 // Auto-init when tab becomes active
 const _origSwitch = window.switchTab;
 if (typeof _origSwitch === 'function') {
   // switchTab is defined earlier — patch it to trigger monitor init
   document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('[data-tab="monitor"]').forEach(b =>
-      b.addEventListener('click', () => { monPollHealth(); monPollLog(); })
+      b.addEventListener('click', () => { monPollHealth(); monPollLog(); monLoadModelStats(); })
     );
   });
 }

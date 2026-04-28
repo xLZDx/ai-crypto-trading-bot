@@ -1,11 +1,15 @@
 import os
 import sys
 import json
+import logging
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
 import joblib
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+log = logging.getLogger('train_base')
 
 base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if base_dir not in sys.path:
@@ -19,12 +23,12 @@ from src.analysis.feature_engineering import (
 
 
 def prepare_data(filepath):
-    print(f"Loading data from {filepath}...")
+    log.info("Loading data from %s...", filepath)
     df = pd.read_csv(filepath)
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     df = df.sort_values('timestamp').reset_index(drop=True)
 
-    print("Engineering features...")
+    log.info("Engineering features...")
     df['return'] = df['close'].pct_change()
     df['sma_7'] = df['close'].rolling(window=7).mean()
     df['sma_30'] = df['close'].rolling(window=30).mean()
@@ -83,9 +87,9 @@ def train_model():
         archive_path = os.path.join(base_dir, 'data', 'raw', f'{sym}_spot_{timeframe}.csv.gz')
         if not os.path.exists(full_data_path) and os.path.exists(archive_path):
             full_data_path = archive_path
-            print(f"  Using archive data for {sym}: {archive_path}")
+            log.info("  Using archive data for %s: %s", sym, archive_path)
         if not os.path.exists(full_data_path):
-            print(f"Warning: Data for {sym} not found at {full_data_path}. Auto-downloading...")
+            log.warning("Data for %s not found at %s. Auto-downloading...", sym, full_data_path)
             import sys
             if base_dir not in sys.path:
                 sys.path.insert(0, base_dir)
@@ -93,59 +97,53 @@ def train_model():
             backfill_history(symbol=sym.replace('_', '/'), timeframe=timeframe, days=6*365)
             
         if os.path.exists(full_data_path):
-            print(f"Processing {sym}...")
+            log.info("Processing %s...", sym)
             df = prepare_data(full_data_path)
             all_data.append(df)
-            
+
     if not all_data:
-        print("Error: No data found to train the model even after attempted download.")
+        log.error("No data found to train the model even after attempted download.")
         return
-        
-    # Combine data from all coins into one huge dataset
+
     combined_df = pd.concat(all_data, ignore_index=True)
-    
-    # Define the features (X) the model will use to make predictions
     feature_columns = ['return', 'volatility', 'dist_sma_7', 'dist_sma_30', 'rsi_14', 'macd', 'macd_hist', 'volume_momentum', 'stoch_k', 'return_lag1', 'return_lag2', 'return_lag3', 'return_lag5', 'atr_pct', 'taker_buy_ratio', 'avg_trade_size', 'hour', 'day_of_week', 'roc_14', 'roc_3', 'roc_7', 'bb_pb', 'news_sentiment']
     X = combined_df[feature_columns]
-    
-    # Define the target (y) the model is trying to predict
     y = combined_df['target']
-    
-    print("Splitting data into training and testing sets...")
-    # IMPORTANT: shuffle=False prevents "look-ahead bias" in time-series data
+
+    log.info("Dataset: %d total samples | %d features | symbols: %s | timeframe: %s", len(combined_df), len(feature_columns), symbols, timeframe)
+    log.info("Splitting data (90%% train / 10%% test, no shuffle)...")
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, shuffle=False)
-    
-    print("Training HistGradientBoosting Classifier...")
-    # Upgraded hyperparams: more iterations, early stopping, and balanced weights
+    log.info("Train: %d rows | Test: %d rows", len(X_train), len(X_test))
+
+    log.info("Training HistGradientBoosting Classifier (max_iter=500, early_stopping)...")
     model = HistGradientBoostingClassifier(random_state=42, max_iter=500, max_depth=6, learning_rate=0.03, l2_regularization=0.5, early_stopping=True, class_weight='balanced')
     model.fit(X_train, y_train)
-    
-    print("Evaluating model...")
+    n_iter = getattr(model, 'n_iter_', 500)
+    log.info("Training complete — used %d iterations", n_iter)
+
     predictions = model.predict(X_test)
     accuracy = accuracy_score(y_test, predictions)
-    
     report = classification_report(y_test, predictions, output_dict=True, zero_division=0)
     long_acc = report.get('1', {}).get('precision', 0.0) * 100
     short_acc = report.get('0', {}).get('precision', 0.0) * 100
-    
-    print(f"\nModel Accuracy: {accuracy * 100:.2f}%")
-    print(f"Long (UP) Precision: {long_acc:.2f}% | Short (DOWN) Precision: {short_acc:.2f}%")
-    print("\nClassification Report:")
-    print(classification_report(y_test, predictions))
-    
-    # Save the trained model to disk
+
+    log.info("Base Model Accuracy: %.2f%%  |  Long precision: %.2f%%  |  Short precision: %.2f%%", accuracy * 100, long_acc, short_acc)
+
     models_dir = os.path.join(base_dir, 'models')
     os.makedirs(models_dir, exist_ok=True)
     model_path = os.path.join(models_dir, 'btc_rf_model.joblib')
-    
     joblib.dump(model, model_path)
-    print(f"\nModel successfully saved to {model_path}")
-    
+    log.info("Model saved -> %s", model_path)
+
     from src.utils.safe_json import write_json
     from datetime import datetime, timezone
     meta_path = os.path.join(models_dir, 'btc_rf_model_meta.json')
     write_json(meta_path, {
-        "accuracy": accuracy * 100, "long_accuracy": long_acc, "short_accuracy": short_acc,
+        "model": "Base (HistGBT)", "accuracy": accuracy * 100,
+        "long_accuracy": long_acc, "short_accuracy": short_acc,
+        "n_samples": len(combined_df), "n_train": len(X_train), "n_test": len(X_test),
+        "n_features": len(feature_columns), "n_iterations": n_iter,
+        "symbols": symbols, "timeframe": timeframe,
         "last_trained": datetime.now(timezone.utc).isoformat()
     })
 

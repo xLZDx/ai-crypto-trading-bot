@@ -562,7 +562,7 @@ _PID_FILE     = _PROJECT_ROOT / 'data' / 'process_ids.json'
 
 _SERVICES = {
     'training': {'label': 'ML Training',      'script': 'src/engine/train_all_models.py'},
-    'download': {'label': 'Data Downloader',  'script': 'src/data_ingestion/binance_downloader.py'},
+    'download': {'label': 'Data Downloader',  'script': 'src/data_ingestion/run_full_download.py'},
     'news':     {'label': 'News Scraper',     'script': 'src/data_ingestion/news_scraper.py'},
     'telegram': {'label': 'Telegram Monitor', 'script': 'src/data_ingestion/telegram_scraper.py'},
 }
@@ -614,12 +614,35 @@ def monitor_health():
         out[key] = entry
 
     # Services managed by this dashboard (started via /api/monitor/start)
+    # Also detect externally-launched processes by scanning cmdlines
+    _external_scripts = {
+        'training': 'train_all_models.py',
+        'download': 'run_full_download.py',
+        'news':     'news_scraper.py',
+        'telegram': 'telegram_scraper.py',
+    }
+    def _find_external_pid(script_name):
+        try:
+            import psutil
+            for p in psutil.process_iter(['pid', 'cmdline']):
+                cmd = ' '.join(p.info.get('cmdline') or [])
+                if script_name in cmd:
+                    return p.info['pid']
+        except Exception:
+            pass
+        return None
+
     with _managed_lock:
         for svc_key, svc in _SERVICES.items():
             proc = _managed.get(svc_key)
             running = proc is not None and proc.poll() is None
             pid = proc.pid if running else None
-            entry = {'label': svc['label'], 'running': running, 'pid': pid, 'managed': True}
+            # Also check if script is running externally (e.g. via launch_training.ps1)
+            if not running:
+                ext_pid = _find_external_pid(_external_scripts.get(svc_key, ''))
+                if ext_pid:
+                    running, pid = True, ext_pid
+            entry = {'label': svc['label'], 'running': running, 'pid': pid, 'managed': proc is not None and proc.poll() is None}
             if running:
                 entry.update(_proc_stats(pid))
             out[svc_key] = entry
@@ -690,6 +713,60 @@ def monitor_stop(service):
     except subprocess.TimeoutExpired:
         proc.kill()
     return jsonify({'ok': True})
+
+
+@app.route('/api/monitor/model_stats')
+def monitor_model_stats():
+    models_dir = _PROJECT_ROOT / 'models'
+    _MODEL_FILES = [
+        ('base',    'btc_rf_model_meta.json',          'Base Model',         'btc_rf_model.joblib'),
+        ('trend',   'trend_model_meta.json',           'Trend Following',    'trend_model.joblib'),
+        ('futures', 'futures_short_model_meta.json',   'Futures Short',      'futures_short_model.joblib'),
+        ('scalping','scalping_model_meta.json',         'Scalping (1m)',      'scalping_model.joblib'),
+        ('tft',     'model_meta.json',                 'TFT (Neural)',       'tft_model.pt'),
+    ]
+    result = []
+    for key, meta_file, label, model_file in _MODEL_FILES:
+        meta_path  = models_dir / meta_file
+        model_path = models_dir / model_file
+        exists = model_path.exists()
+        meta = {}
+        if meta_path.exists():
+            try:
+                import json as _json
+                meta = _json.loads(meta_path.read_text())
+            except Exception:
+                pass
+        result.append({
+            'key': key, 'label': label,
+            'model_exists': exists,
+            'accuracy':      round(meta.get('accuracy', 0), 2),
+            'long_accuracy': round(meta.get('long_accuracy', 0), 2),
+            'short_accuracy':round(meta.get('short_accuracy', 0), 2),
+            'n_samples':     meta.get('n_samples'),
+            'n_train':       meta.get('n_train'),
+            'n_test':        meta.get('n_test'),
+            'n_features':    meta.get('n_features'),
+            'n_iterations':  meta.get('n_iterations'),
+            'symbols':       meta.get('symbols', []),
+            'timeframe':     meta.get('timeframe', '--'),
+            'last_trained':  meta.get('last_trained', ''),
+        })
+
+    # CUDA / GPU info
+    cuda = {'available': False, 'device': 'CPU only', 'version': None}
+    try:
+        import torch
+        if torch.cuda.is_available():
+            cuda = {
+                'available': True,
+                'device': torch.cuda.get_device_name(0),
+                'version': torch.version.cuda,
+            }
+    except Exception:
+        pass
+
+    return jsonify({'models': result, 'cuda': cuda})
 
 
 if __name__ == '__main__':
