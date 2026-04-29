@@ -2,16 +2,34 @@ import sys
 import os
 import logging
 
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+# Redirect all caches to D: drive before any imports that write to C:
+_cache = os.path.join(project_root, 'data', 'cache')
+for _sub in ('temp', 'torch', 'huggingface', 'cuda', 'numba', 'pip'):
+    os.makedirs(os.path.join(_cache, _sub), exist_ok=True)
+os.environ.setdefault('TMP',                  os.path.join(_cache, 'temp'))
+os.environ.setdefault('TEMP',                 os.path.join(_cache, 'temp'))
+os.environ.setdefault('HF_HOME',              os.path.join(_cache, 'huggingface'))
+os.environ.setdefault('TORCH_HOME',           os.path.join(_cache, 'torch'))
+os.environ.setdefault('JOBLIB_TEMP_FOLDER',   os.path.join(_cache, 'temp'))
+os.environ.setdefault('CUDA_CACHE_PATH',      os.path.join(_cache, 'cuda'))
+os.environ.setdefault('NUMBA_CACHE_DIR',      os.path.join(_cache, 'numba'))
+os.environ.setdefault('MPLCONFIGDIR',         os.path.join(_cache, 'matplotlib'))
+
+# CPU multithreading — use every logical core
+_n_cpu = str(os.cpu_count() or 20)
+os.environ.setdefault('OMP_NUM_THREADS',      _n_cpu)
+os.environ.setdefault('MKL_NUM_THREADS',      _n_cpu)
+os.environ.setdefault('OPENBLAS_NUM_THREADS', _n_cpu)
+os.environ.setdefault('NUMEXPR_NUM_THREADS',  _n_cpu)
+os.environ.setdefault('LOKY_MAX_CPU_COUNT',   _n_cpu)
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger('train_all')
 
-# Prevent OpenBLAS/MKL memory allocation failures on Windows
-os.environ['OMP_NUM_THREADS'] = '1'
-os.environ['OPENBLAS_NUM_THREADS'] = '1'
-os.environ['MKL_NUM_THREADS'] = '1'
-os.environ['NUMEXPR_NUM_THREADS'] = '1'
-
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
@@ -20,9 +38,11 @@ from src.engine.train_trend_model import train_trend_model
 from src.engine.train_futures_model import train_futures_model
 from src.engine.train_scalping_model import train_scalping_model
 from src.engine.train_tft_model import train_tft_model
+from src.utils.hw_config import configure as _hw_configure
 
 
 def train_all():
+    _hw_configure(verbose=True)
     log.info("==========================================")
     log.info("   STARTING BATCH ML TRAINING PIPELINE   ")
     log.info("==========================================")

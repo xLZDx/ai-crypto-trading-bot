@@ -197,7 +197,7 @@ def train_meta_labeler():
     base_clf.fit(X.iloc[:calib_split], y.iloc[:calib_split])
 
     log.info("Calibrating probabilities with isotonic regression...")
-    calibrated = CalibratedClassifierCV(base_clf, method='isotonic', cv='prefit')
+    calibrated = CalibratedClassifierCV(base_clf, method='isotonic', cv='prefit', n_jobs=-1)
     calibrated.fit(X.iloc[calib_split:test_start], y.iloc[calib_split:test_start])
 
     X_test = X.iloc[test_start:]

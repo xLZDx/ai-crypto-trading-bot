@@ -68,6 +68,12 @@ New-Item -ItemType Directory -Force -Path (Join-Path $root 'logs') | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $root 'data') | Out-Null
 Write-Host "  Directories ready."
 
+# Step 3.5: Redirect caches + set CPU/GPU env vars (shared setup_env.ps1)
+Write-Host ""
+Write-Host "[3.5/6] Applying D-drive cache redirect + CPU/GPU env vars..." -ForegroundColor Yellow
+. (Join-Path $root 'setup_env.ps1')
+Write-Host "[3.5/6] Environment configured." -ForegroundColor Green
+
 # Helper: launch a .ps1 in a new window
 function Start-Window {
     param([string]$Label, [string]$ScriptFile)

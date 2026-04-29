@@ -153,7 +153,7 @@ def train_trend_model():
         learning_rate=0.02, early_stopping=True, l2_regularization=0.5
     )
     base_clf.fit(X.iloc[:calib_split], y.iloc[:calib_split])
-    calibrated = CalibratedClassifierCV(base_clf, method='isotonic', cv='prefit')
+    calibrated = CalibratedClassifierCV(base_clf, method='isotonic', cv='prefit', n_jobs=-1)
     calibrated.fit(X.iloc[calib_split:], y.iloc[calib_split:])
 
     X_test = X.iloc[int(n * 0.90):]

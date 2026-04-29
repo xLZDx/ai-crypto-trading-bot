@@ -186,7 +186,7 @@ class ContinuousTrainerAgent(BaseAgent):
                 learning_rate=0.05, random_state=42,
                 early_stopping=True, validation_fraction=0.1,
             )
-            model = CalibratedClassifierCV(base, cv=3, method="sigmoid")
+            model = CalibratedClassifierCV(base, cv=3, method="sigmoid", n_jobs=-1)
             model.fit(X_tr, y_tr)
 
             acc = float(accuracy_score(y_val, model.predict(X_val)))

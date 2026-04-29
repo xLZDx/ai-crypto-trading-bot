@@ -41,7 +41,10 @@ try:
     )
     import pandas as pd
     import ccxt
-    import debugpy
+    try:
+        import debugpy  # optional remote-debugger; harmless if missing
+    except ImportError:
+        pass
 except Exception as e:
     error_trace = traceback.format_exc()
     os.makedirs('data', exist_ok=True)
@@ -92,7 +95,26 @@ class MultiAssetTrader:
         self.agent = AgenticLLM()
         self.telegram_monitor = TelegramMonitor()
         self.state_file = 'data/state.json'
-        
+
+        # --- Strategy registry (controls which strategies are active) ---
+        from src.engine.strategy_registry import load_config as _load_strat_cfg
+        self._strat_cfg = _load_strat_cfg()
+        self._strat_cfg_mtime = 0.0
+
+        # --- Regime Classifier ---
+        try:
+            from src.analysis.regime_classifier import RegimeClassifier
+            self.regime_clf = RegimeClassifier()
+        except Exception:
+            self.regime_clf = None
+
+        # --- Meta-Labeler ---
+        try:
+            from src.analysis.meta_labeler import MetaLabeler
+            self.meta_labeler = MetaLabeler()
+        except Exception:
+            self.meta_labeler = None
+
         # --- Advanced Quant Modules ---
         self.feature_store = FeatureStore()
         self.inference_engine = InferenceEngine(feature_store=self.feature_store, update_interval=60)
@@ -127,6 +149,18 @@ class MultiAssetTrader:
             }
         }
         self._update_state()
+
+    def _strategy_enabled(self, name: str, scope: str = "live") -> bool:
+        """Hot-reloads strategy_config.json if it changed, then checks the flag."""
+        try:
+            from src.engine import strategy_registry as _reg
+            mtime = _reg.CONFIG_PATH.stat().st_mtime if _reg.CONFIG_PATH.exists() else 0.0
+            if mtime != self._strat_cfg_mtime:
+                self._strat_cfg = _reg.load_config()
+                self._strat_cfg_mtime = mtime
+        except Exception:
+            pass
+        return self._strat_cfg.get(name, {}).get(scope, False)
 
     def get_real_or_sim_balance(self, asset):
         """Returns the real Binance balance"""
@@ -262,40 +296,218 @@ class MultiAssetTrader:
 
     def evaluate_all_strategies(self, symbol, data, pivots, sentiment_score, ml_prediction, rsi_value, ou_signal=0):
         """Orchestrator: Evaluates all strategies and decides which one to apply."""
-        # 1. Base strategy (ML + Elliott)
-        signal, reason, wave_stage, strategy_used = self.analyze_market_state(pivots, sentiment_score, ml_prediction, rsi_value)
-
         df = pd.DataFrame(data)
-        for col in ['open', 'high', 'low', 'close', 'volume']: df[col] = pd.to_numeric(df[col])
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            df[col] = pd.to_numeric(df[col])
         current_price = df['close'].iloc[-1]
 
-        # --- FILTER: Multi-Timeframe Confluence (Prohibit trading against the macro trend) ---
+        # ── Regime classification ─────────────────────────────────────────────
+        regime = 1  # default TRENDING
+        regime_name = "TRENDING"
+        size_mult = 1.0
+        if self._strategy_enabled("RegimeClassifier_Router") and self.regime_clf is not None:
+            try:
+                regime = self.regime_clf.predict(df)
+                regime_name = self.regime_clf.regime_name(regime)
+                size_mult = self.regime_clf.size_multiplier(regime)
+                if regime == 2:  # VOLATILE
+                    return "HOLD", f"Regime: {regime_name} — holding all entries, size_mult={size_mult}", "Regime_Volatile", "RegimeClassifier_Router"
+            except Exception as e:
+                logger.debug("[%s] Regime predict failed: %s", symbol, e)
+
+        # ── Elliott Wave + Base ML (primary signal) ───────────────────────────
+        signal, reason, wave_stage, strategy_used = "HOLD", "No signal", "Neutral", "Neutral"
+        if self._strategy_enabled("ElliottWave_ML"):
+            signal, reason, wave_stage, strategy_used = self.analyze_market_state(
+                pivots, sentiment_score, ml_prediction, rsi_value)
+
+        # ── MTF SMA-200 filter ────────────────────────────────────────────────
         sma200 = self.daily_sma200.get(symbol)
-        if signal == "BUY" and sma200 and current_price < sma200:
-            return "HOLD", f"{reason} [MTF Veto: Price below 1D SMA200 ({sma200:.0f})]", wave_stage, "Neutral"
-        elif signal == "SELL" and sma200 and current_price > sma200:
-            return "HOLD", f"{reason} [MTF Veto: Price above 1D SMA200 ({sma200:.0f})]", wave_stage, "Neutral"
+        if self._strategy_enabled("MTF_SMA200_Filter"):
+            if signal == "BUY" and sma200 and current_price < sma200:
+                signal, reason = "HOLD", f"{reason} [MTF Veto: below SMA200 ({sma200:.0f})]"
+            elif signal == "SELL" and sma200 and current_price > sma200:
+                signal, reason = "HOLD", f"{reason} [MTF Veto: above SMA200 ({sma200:.0f})]"
 
-        # --- FILTER: OU Mean Reversion (block trend signals when price is statistically stretched) ---
-        # ou_signal: 1=oversold (expect bounce up), -1=overbought (expect pull back), 0=neutral
-        if ou_signal == -1 and signal == "BUY":
-            return "HOLD", f"{reason} [OU Veto: price above long-term mean by 2σ — stretched]", wave_stage, "Neutral"
-        elif ou_signal == 1 and signal == "SELL":
-            return "HOLD", f"{reason} [OU Veto: price below long-term mean by 2σ — oversold]", wave_stage, "Neutral"
-        elif (ou_signal == 1 and signal == "BUY") or (ou_signal == -1 and signal == "SELL"):
-            reason += " [OU Confirmed]"
+        # ── OU Entry: primary signal in RANGING regime ───────────────────────
+        if self._strategy_enabled("OU_Entry") and regime == 0 and signal == "HOLD":
+            ou_params = self.ou_results.get(symbol, {})
+            ou_mu    = float(ou_params.get("mu", 0.0))
+            ou_sigma = float(ou_params.get("sigma", 0.0))
+            if ou_sigma > 0 and ou_mu > 0:
+                deviation = (current_price - ou_mu) / ou_sigma
+                if deviation < -1.5:
+                    signal, reason, strategy_used = (
+                        "BUY", f"OU fade: price {abs(deviation):.1f}σ below mean ({ou_mu:.2f})", "OU_Entry")
+                elif deviation > 1.5:
+                    signal, reason, strategy_used = (
+                        "SELL", f"OU fade: price {deviation:.1f}σ above mean ({ou_mu:.2f})", "OU_Entry")
 
-        # --- STRATEGY 2: Volatility Breakout (Squeeze) ---
-        vol_signal = self.check_volatility_breakout(df)
-        if vol_signal == "BUY" and (not sma200 or current_price > sma200):
-            return "BUY", "Volatility compression breakout (TTM Squeeze) + Volume", "Breakout Impulse 🚀", "Volatility_Breakout"
-            
-        # --- STRATEGY 3: Derivatives Sentiment (Counter-trend Squeeze on funding) ---
+        # ── OU filter ─────────────────────────────────────────────────────────
+        if self._strategy_enabled("OU_MeanReversion_Filter"):
+            if ou_signal == -1 and signal == "BUY":
+                return "HOLD", f"{reason} [OU Veto: price >2σ above OU mean]", wave_stage, "Neutral"
+            elif ou_signal == 1 and signal == "SELL":
+                return "HOLD", f"{reason} [OU Veto: price >2σ below OU mean]", wave_stage, "Neutral"
+            elif (ou_signal == 1 and signal == "BUY") or (ou_signal == -1 and signal == "SELL"):
+                reason += " [OU Confirmed]"
+
+        # ── Secondary signals (run when primary = HOLD or as override) ────────
         funding = self.funding_rates.get(symbol, 0.0)
-        if funding < -FUNDING_SQUEEZE_THRESHOLD and rsi_value < 40:
-            return "BUY", f"Short-squeeze: Negative funding ({funding*100:.3f}%) + RSI bottom", "Shorts Reversal 🚀", "Funding_Contrarian"
-        elif funding > FUNDING_SQUEEZE_THRESHOLD and rsi_value > 60:
-            return "SELL", f"Long-squeeze: Extreme positive funding ({funding*100:.3f}%) + Overheated", "Longs Liquidation 📉", "Funding_Contrarian"
+
+        # Volatility Breakout
+        if self._strategy_enabled("Volatility_Breakout"):
+            vol_signal = self.check_volatility_breakout(df)
+            if vol_signal == "BUY" and (not sma200 or current_price > sma200) and regime != 2:
+                signal, reason, wave_stage, strategy_used = (
+                    "BUY", "TTM Squeeze breakout + volume surge", "Breakout", "Volatility_Breakout")
+            elif vol_signal == "SELL" and (not sma200 or current_price < sma200) and regime != 2:
+                signal, reason, wave_stage, strategy_used = (
+                    "SELL", "TTM Squeeze breakdown + volume surge", "Breakdown", "Volatility_Breakout")
+
+        # Funding Arb / Contrarian
+        if self._strategy_enabled("Funding_Arb") and signal == "HOLD":
+            if funding < -FUNDING_SQUEEZE_THRESHOLD and rsi_value < 40:
+                signal, reason, wave_stage, strategy_used = (
+                    "BUY", f"Short-squeeze: negative funding ({funding*100:.3f}%) + RSI low",
+                    "Shorts Reversal", "Funding_Arb")
+            elif funding > FUNDING_SQUEEZE_THRESHOLD and rsi_value > 60:
+                signal, reason, wave_stage, strategy_used = (
+                    "SELL", f"Long-squeeze: high funding ({funding*100:.3f}%) + RSI high",
+                    "Longs Liquidation", "Funding_Arb")
+
+        # Group B signals — only run when primary signal is still HOLD
+        if signal == "HOLD":
+            from src.analysis.feature_engineering import (
+                add_vwap, add_donchian, add_keltner, add_ofi,
+                add_ichimoku, add_supertrend, add_macd_divergence, add_macd,
+                add_bollinger_bands,
+            )
+            try:
+                df_feat = df.copy()
+                df_feat = add_vwap(df_feat)
+                df_feat = add_donchian(df_feat, n=20)
+                df_feat = add_keltner(df_feat)
+                df_feat = add_ofi(df_feat)
+                df_feat = add_bollinger_bands(df_feat)
+                df_feat = add_ichimoku(df_feat)
+                df_feat = add_supertrend(df_feat)
+                df_feat = add_macd_divergence(df_feat)
+                df_feat = add_macd(df_feat)
+                last = df_feat.iloc[-1]
+
+                # ── RANGING regime: mean-reversion signals ──────────────────
+                if regime == 0:
+                    if self._strategy_enabled("VWAP_Reversion"):
+                        vd = float(last.get("vwap_dist", 0) or 0)
+                        if vd < -0.005:
+                            signal, reason, strategy_used = "BUY",  f"VWAP reversion: {vd*100:.2f}% below VWAP", "VWAP_Reversion"
+                        elif vd > 0.005:
+                            signal, reason, strategy_used = "SELL", f"VWAP reversion: {vd*100:.2f}% above VWAP", "VWAP_Reversion"
+
+                    if signal == "HOLD" and self._strategy_enabled("RSI_MeanReversion"):
+                        if rsi_value < 30:
+                            signal, reason, strategy_used = "BUY",  f"RSI oversold ({rsi_value:.1f})", "RSI_MeanReversion"
+                        elif rsi_value > 70:
+                            signal, reason, strategy_used = "SELL", f"RSI overbought ({rsi_value:.1f})", "RSI_MeanReversion"
+
+                    if signal == "HOLD" and self._strategy_enabled("BB_Reversion"):
+                        bb_pb = float(last.get("bb_pb", 0.5) or 0.5)
+                        if bb_pb < 0.1:
+                            signal, reason, strategy_used = "BUY",  f"BB lower band touch (pb={bb_pb:.2f})", "BB_Reversion"
+                        elif bb_pb > 0.9:
+                            signal, reason, strategy_used = "SELL", f"BB upper band touch (pb={bb_pb:.2f})", "BB_Reversion"
+
+                # ── TRENDING regime: breakout/momentum signals ──────────────
+                elif regime == 1:
+                    # Ichimoku — strong trend confirmation
+                    if self._strategy_enabled("Ichimoku_Cloud"):
+                        ich = float(last.get("signal_ichimoku", 0) or 0)
+                        if ich == 1.0:
+                            signal, reason, strategy_used = "BUY",  "Ichimoku: TK bull cross above cloud", "Ichimoku_Cloud"
+                        elif ich == -1.0:
+                            signal, reason, strategy_used = "SELL", "Ichimoku: TK bear cross below cloud", "Ichimoku_Cloud"
+
+                    # Supertrend — direction flip
+                    if signal == "HOLD" and self._strategy_enabled("Supertrend"):
+                        st = float(last.get("signal_supertrend", 0) or 0)
+                        if st == 1.0:
+                            signal, reason, strategy_used = "BUY",  "SuperTrend direction flip: uptrend", "Supertrend"
+                        elif st == -1.0:
+                            signal, reason, strategy_used = "SELL", "SuperTrend direction flip: downtrend", "Supertrend"
+
+                    if signal == "HOLD" and self._strategy_enabled("Donchian_Breakout"):
+                        dp = float(last.get("don_pos_20", 0.5) or 0.5)
+                        if dp > 0.98:
+                            signal, reason, strategy_used = "BUY",  "Donchian 20-bar high break", "Donchian_Breakout"
+                        elif dp < 0.02:
+                            signal, reason, strategy_used = "SELL", "Donchian 20-bar low break",  "Donchian_Breakout"
+
+                    if signal == "HOLD" and self._strategy_enabled("Keltner_Breakout"):
+                        kcp = float(last.get("kc_pos", 0.5) or 0.5)
+                        if kcp > 1.0:
+                            signal, reason, strategy_used = "BUY",  f"Keltner channel breakout up (pos={kcp:.2f})", "Keltner_Breakout"
+                        elif kcp < 0.0:
+                            signal, reason, strategy_used = "SELL", f"Keltner channel breakout down (pos={kcp:.2f})", "Keltner_Breakout"
+
+                    if signal == "HOLD" and self._strategy_enabled("OFI_Momentum"):
+                        ofi_z = float(last.get("ofi_z", 0) or 0)
+                        if ofi_z > 1.5:
+                            signal, reason, strategy_used = "BUY",  f"OFI buy pressure (z={ofi_z:.2f})", "OFI_Momentum"
+                        elif ofi_z < -1.5:
+                            signal, reason, strategy_used = "SELL", f"OFI sell pressure (z={ofi_z:.2f})", "OFI_Momentum"
+
+                    # MACD Divergence — higher-quality MACD signals
+                    if signal == "HOLD" and self._strategy_enabled("MACD_Divergence"):
+                        md = float(last.get("signal_macd_div", 0) or 0)
+                        if md == 1.0:
+                            signal, reason, strategy_used = "BUY",  "MACD centerline cross or bullish divergence", "MACD_Divergence"
+                        elif md == -1.0:
+                            signal, reason, strategy_used = "SELL", "MACD centerline cross or bearish divergence", "MACD_Divergence"
+
+                    if signal == "HOLD" and self._strategy_enabled("MACD_Momentum"):
+                        hist = float(last.get("macd_hist", 0) or 0)
+                        if hist > 0:
+                            signal, reason, strategy_used = "BUY",  f"MACD momentum (hist={hist:.4f})", "MACD_Momentum"
+                        elif hist < 0:
+                            signal, reason, strategy_used = "SELL", f"MACD momentum (hist={hist:.4f})", "MACD_Momentum"
+
+                # ── Ensemble fallback (any regime, last resort) ─────────────
+                if signal == "HOLD":
+                    votes = 0.0
+                    n = 0
+                    for col, en in [("signal_rsi", "RSI_MeanReversion"),
+                                    ("signal_macd", "MACD_Momentum"),
+                                    ("signal_bb", "BB_Reversion")]:
+                        if self._strategy_enabled(en):
+                            rsi_sig  = 1.0 if rsi_value < 30 else (-1.0 if rsi_value > 70 else 0.0)
+                            macd_sig = 1.0 if float(last.get("macd_hist", 0) or 0) > 0 else -1.0
+                            bb_sig   = (1.0 if float(last.get("bb_pb", 0.5) or 0.5) < 0.1
+                                       else (-1.0 if float(last.get("bb_pb", 0.5) or 0.5) > 0.9 else 0.0))
+                            sigs = {"signal_rsi": rsi_sig, "signal_macd": macd_sig, "signal_bb": bb_sig}
+                            votes += sigs.get(col, 0.0)
+                            n += 1
+                    if n >= 2:
+                        avg = votes / n
+                        if self._strategy_enabled("Ensemble_A") and avg >= 0.67:
+                            signal, reason, strategy_used = "BUY",  f"Ensemble A consensus (score={avg:.2f})", "Ensemble_A"
+                        elif self._strategy_enabled("Ensemble_A") and avg <= -0.67:
+                            signal, reason, strategy_used = "SELL", f"Ensemble A consensus (score={avg:.2f})", "Ensemble_A"
+
+            except Exception as e:
+                logger.warning("[%s] Group B signal computation failed: %s", symbol, e)
+
+        # ── Meta-Labeler final gate ───────────────────────────────────────────
+        if signal != "HOLD" and self._strategy_enabled("MetaLabeler_Filter") and self.meta_labeler is not None:
+            try:
+                if self.meta_labeler.is_loaded:
+                    sig_num = 1.0 if signal == "BUY" else -1.0
+                    result = self.meta_labeler.filter_signal(sig_num, df.to_dict('records'))
+                    if result[0] == "BLOCK":
+                        signal, reason = "HOLD", f"[Meta-Labeler blocked] {reason}"
+                        strategy_used = "MetaLabeler_Filter"
+            except Exception as e:
+                logger.debug("[%s] Meta-labeler filter failed: %s", symbol, e)
 
         return signal, reason, wave_stage, strategy_used
 
@@ -758,14 +970,12 @@ class MultiAssetTrader:
         asyncio.run(self.binance_websocket())
 
 if __name__ == "__main__":
-    # ==============================================================================
-    # IMPORTANT NOTE / AI INSTRUCTION:
-    # AI ASSISTANT: Always remind the user to run `restart_all.bat` after any code modifications!
-    # After making any code changes, always do a HARD RESTART!
-    # For this, the AI ASSISTANT runs the restart_all.bat file in the root folder.
-    # This will kill stuck background processes and guarantee new code loading.
-    # ==============================================================================
-    
+    try:
+        from src.utils.hw_config import configure as _hw_cfg
+        _hw_cfg(verbose=True)
+    except Exception:
+        pass
+
     wl_path = 'data/watchlist.json'
     if os.path.exists(wl_path):
         with open(wl_path, 'r', encoding='utf-8') as f:

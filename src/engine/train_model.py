@@ -210,7 +210,7 @@ def train_model():
         learning_rate=0.03, l2_regularization=0.5,
         early_stopping=True, class_weight='balanced'
     )
-    calibrated = CalibratedClassifierCV(base_clf, method='isotonic', cv='prefit')
+    calibrated = CalibratedClassifierCV(base_clf, method='isotonic', cv='prefit', n_jobs=-1)
     base_clf.fit(X.iloc[:calib_split], y.iloc[:calib_split])
     calibrated.fit(X.iloc[calib_split:], y.iloc[calib_split:])
 

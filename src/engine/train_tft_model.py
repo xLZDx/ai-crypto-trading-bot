@@ -111,9 +111,9 @@ def build_series_bundle(df: pd.DataFrame, freq: str):
 
 def train_tft_model(
     timeframe: str = "1h",
-    input_chunk_length: int = 1000,
-    output_chunk_length: int = 60,
-    n_epochs: int = 5,
+    input_chunk_length: int = 168,
+    output_chunk_length: int = 24,
+    n_epochs: int = 30,
     history_days: int = 365 * 2,
     dry_run: bool = False,
 ):
@@ -164,12 +164,20 @@ def train_tft_model(
     scaled_past = past_scaler.fit_transform(past_covariates)
     scaled_future = future_scaler.fit_transform(future_covariates)
 
+    # Apply CPU/GPU optimisations (TF32, cuDNN benchmark, thread count)
+    try:
+        from src.utils.hw_config import configure as _hw_cfg
+        _hw_cfg(verbose=True)
+    except Exception:
+        pass
+
     # Auto-detect GPU (RTX 3080 Ti will be ~20-50x faster than CPU)
     try:
         import torch
         _use_gpu = torch.cuda.is_available()
         if _use_gpu:
-            logger.info("CUDA GPU detected: %s — training on GPU.", torch.cuda.get_device_name(0))
+            gpu_count = torch.cuda.device_count()
+            logger.info("CUDA GPU detected: %d device(s) found. Primary: %s — training on all GPUs.", gpu_count, torch.cuda.get_device_name(0))
         else:
             logger.warning("No CUDA GPU detected — training on CPU (slow). Run install_cuda_torch.ps1 to enable GPU.")
     except Exception:
@@ -178,16 +186,16 @@ def train_tft_model(
     model = TFTModel(
         input_chunk_length=input_chunk_length,
         output_chunk_length=output_chunk_length,
-        hidden_size=64 if _use_gpu else 32,
+        hidden_size=256 if _use_gpu else 32,
         lstm_layers=2 if _use_gpu else 1,
         num_attention_heads=4,
         dropout=0.1,
-        batch_size=64 if _use_gpu else 32,
+        batch_size=256 if _use_gpu else 32,
         n_epochs=n_epochs,
         random_state=42,
         force_reset=True,
         save_checkpoints=True,
-        pl_trainer_kwargs={"accelerator": "gpu", "devices": 1} if _use_gpu else {"accelerator": "cpu"},
+        pl_trainer_kwargs={"accelerator": "gpu", "devices": -1, "strategy": "auto", "enable_progress_bar": True} if _use_gpu else {"accelerator": "cpu", "enable_progress_bar": True},
     )
 
     logger.info(
@@ -209,6 +217,7 @@ def train_tft_model(
     model_path = MODEL_DIR / "tft_model.pt"
     model.save(str(model_path))
 
+    from datetime import datetime, timezone as _tz
     meta_path = MODEL_DIR / "tft_model_meta.json"
     with meta_path.open("w", encoding="utf-8") as handle:
         json.dump(
@@ -219,6 +228,8 @@ def train_tft_model(
                 "output_chunk_length": output_chunk_length,
                 "n_epochs": n_epochs,
                 "model_path": str(model_path),
+                "device": "GPU" if _use_gpu else "CPU",
+                "last_trained": datetime.now(_tz.utc).isoformat(),
             },
             handle,
             indent=2,
@@ -231,9 +242,9 @@ def train_tft_model(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train the TFT neural forecasting model.")
     parser.add_argument("--timeframe", default="1h", choices=["1h", "1m"])
-    parser.add_argument("--input-chunk-length", type=int, default=1000)
-    parser.add_argument("--output-chunk-length", type=int, default=60)
-    parser.add_argument("--epochs", type=int, default=5)
+    parser.add_argument("--input-chunk-length", type=int, default=168)
+    parser.add_argument("--output-chunk-length", type=int, default=24)
+    parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--history-days", type=int, default=365 * 2)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()

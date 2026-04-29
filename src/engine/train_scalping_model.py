@@ -4,6 +4,7 @@ import json
 import logging
 import numpy as np
 import pandas as pd
+import gc
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import accuracy_score, classification_report
@@ -111,6 +112,66 @@ def prepare_scalping_data(filepath):
     return _engineer_scalping_features(df)
 
 
+def _process_single_symbol(sym):
+    full_data_path = os.path.join(base_dir, 'data', 'raw', f'{sym}_1m.csv.gz')
+    archive_path = os.path.join(base_dir, 'data', 'raw', f'{sym}_spot_1m.csv.gz')
+    path_1s = os.path.join(base_dir, 'data', 'raw', f'{sym}_spot_1s.csv.gz')
+    path_1s_v2 = os.path.join(base_dir, 'data', 'raw', f'{sym}_1s.csv.gz')
+
+    if not os.path.exists(full_data_path) and os.path.exists(archive_path):
+        full_data_path = archive_path
+
+    df_1s_resampled = None
+    for p1s in [path_1s, path_1s_v2]:
+        if os.path.exists(p1s):
+            try:
+                log.info("  [%s] Found 1s data — resampling to 1m...", sym)
+                df_1s_resampled = resample_1s_to_1m(p1s)
+                if df_1s_resampled is not None and len(df_1s_resampled) > 0:
+                    break
+                df_1s_resampled = None
+            except Exception as e:
+                log.warning("  [%s] 1s resample failed: %s", sym, e)
+
+    if not os.path.exists(full_data_path):
+        if df_1s_resampled is None:
+            log.warning("[%s] Data not found. Auto-downloading...", sym)
+            from src.data_ingestion.historical_backfill import backfill_history
+            backfill_history(symbol=sym.replace('_', '/'), timeframe='1m', days=70)
+
+    df_combined = None
+    if os.path.exists(full_data_path):
+        try:
+            df_1m = prepare_scalping_data(full_data_path)
+        except Exception as e:
+            log.warning("  [%s] Failed 1m prepare: %s", sym, e)
+            df_1m = None
+
+        if df_1m is not None and df_1s_resampled is not None:
+            try:
+                df_1s_feat = prepare_scalping_data_from_df(df_1s_resampled)
+                df_combined = df_1s_feat if len(df_1s_feat) >= len(df_1m) else df_1m
+            except Exception:
+                df_combined = df_1m
+        elif df_1m is not None:
+            df_combined = df_1m
+
+    if df_combined is None and df_1s_resampled is not None:
+        try:
+            df_combined = prepare_scalping_data_from_df(df_1s_resampled)
+        except Exception as e:
+            log.warning("  [%s] 1s-only feature engineering failed: %s", sym, e)
+
+    if df_combined is not None:
+        df_tail = df_combined.tail(500000).copy()
+        # Downcast float64 to float32 to cut memory usage in half
+        float_cols = df_tail.select_dtypes(include=['float64']).columns
+        df_tail[float_cols] = df_tail[float_cols].astype('float32')
+        return df_tail
+
+    return None
+
+
 def train_scalping_model():
     wl_path = os.path.join(base_dir, 'data', 'watchlist.json')
     if os.path.exists(wl_path):
@@ -119,59 +180,12 @@ def train_scalping_model():
     else:
         symbols = ['BTC_USDT', 'SOL_USDT', 'ADA_USDT']
 
-    all_data = []
-    for sym in symbols:
-        full_data_path = os.path.join(base_dir, 'data', 'raw', f'{sym}_1m.csv.gz')
-        archive_path = os.path.join(base_dir, 'data', 'raw', f'{sym}_spot_1m.csv.gz')
-        path_1s = os.path.join(base_dir, 'data', 'raw', f'{sym}_spot_1s.csv.gz')
-        path_1s_v2 = os.path.join(base_dir, 'data', 'raw', f'{sym}_1s.csv.gz')
-
-        if not os.path.exists(full_data_path) and os.path.exists(archive_path):
-            full_data_path = archive_path
-
-        df_1s_resampled = None
-        for p1s in [path_1s, path_1s_v2]:
-            if os.path.exists(p1s):
-                try:
-                    log.info("  Found 1s data for %s — resampling to 1m...", sym)
-                    df_1s_resampled = resample_1s_to_1m(p1s)
-                    if df_1s_resampled is not None and len(df_1s_resampled) > 0:
-                        break
-                    df_1s_resampled = None
-                except Exception as e:
-                    log.warning("  1s resample failed for %s: %s", sym, e)
-
-        if not os.path.exists(full_data_path):
-            if df_1s_resampled is None:
-                log.warning("Data for %s not found. Auto-downloading...", sym)
-                from src.data_ingestion.historical_backfill import backfill_history
-                backfill_history(symbol=sym.replace('_', '/'), timeframe='1m', days=70)
-
-        df_combined = None
-        if os.path.exists(full_data_path):
-            try:
-                df_1m = prepare_scalping_data(full_data_path)
-            except Exception as e:
-                log.warning("  Failed 1m prepare for %s: %s", sym, e)
-                df_1m = None
-
-            if df_1m is not None and df_1s_resampled is not None:
-                try:
-                    df_1s_feat = prepare_scalping_data_from_df(df_1s_resampled)
-                    df_combined = df_1s_feat if len(df_1s_feat) >= len(df_1m) else df_1m
-                except Exception:
-                    df_combined = df_1m
-            elif df_1m is not None:
-                df_combined = df_1m
-
-        if df_combined is None and df_1s_resampled is not None:
-            try:
-                df_combined = prepare_scalping_data_from_df(df_1s_resampled)
-            except Exception as e:
-                log.warning("  1s-only feature engineering failed for %s: %s", sym, e)
-
-        if df_combined is not None:
-            all_data.append(df_combined.tail(500000))
+    from joblib import Parallel, delayed
+    log.info("Processing 1s granular data concurrently across CPU cores...")
+    # Use 2 CPU workers to double speed without triggering OOM on laptops
+    results = Parallel(n_jobs=-1)(delayed(_process_single_symbol)(sym) for sym in symbols)
+    
+    all_data = [res for res in results if res is not None]
 
     if not all_data:
         log.error("No 1m data found.")
@@ -208,7 +222,7 @@ def train_scalping_model():
         learning_rate=0.05, early_stopping=True, class_weight='balanced'
     )
     base_clf.fit(X.iloc[:calib_split], y.iloc[:calib_split])
-    calibrated = CalibratedClassifierCV(base_clf, method='isotonic', cv='prefit')
+    calibrated = CalibratedClassifierCV(base_clf, method='isotonic', cv='prefit', n_jobs=-1)
     calibrated.fit(X.iloc[calib_split:], y.iloc[calib_split:])
 
     X_test = X.iloc[int(n * 0.90):]

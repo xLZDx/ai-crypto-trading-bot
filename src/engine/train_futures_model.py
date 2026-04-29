@@ -155,7 +155,7 @@ def train_futures_model():
         learning_rate=0.03, l2_regularization=0.2, early_stopping=True, class_weight='balanced'
     )
     base_clf.fit(X.iloc[:calib_split], y.iloc[:calib_split])
-    calibrated = CalibratedClassifierCV(base_clf, method='isotonic', cv='prefit')
+    calibrated = CalibratedClassifierCV(base_clf, method='isotonic', cv='prefit', n_jobs=-1)
     calibrated.fit(X.iloc[calib_split:], y.iloc[calib_split:])
 
     X_test = X.iloc[int(n * 0.90):]
