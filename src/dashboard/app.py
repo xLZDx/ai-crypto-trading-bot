@@ -1189,27 +1189,30 @@ def _calc_ou_dev(prices) -> float:
 
 
 # ─── Simulator agent singletons (lazy-started on first /start call) ───────────
-_simulator_agent = None
-_trainer_agent   = None
-_sim_lock        = threading.Lock()
+_simulator_agent   = None
+_trainer_agent     = None
+_strategy_sim      = None
+_sim_lock          = threading.Lock()
 
 
 def _get_simulator():
-    global _simulator_agent, _trainer_agent
+    global _simulator_agent, _trainer_agent, _strategy_sim
     with _sim_lock:
         if _simulator_agent is None:
-            from src.engine.agents.simulator_agent import SimulatorAgent
-            from src.engine.agents.training_agent  import ContinuousTrainerAgent
+            from src.engine.agents.simulator_agent    import SimulatorAgent
+            from src.engine.agents.training_agent     import ContinuousTrainerAgent
+            from src.engine.agents.strategy_simulator import StrategySimulatorAgent
             _simulator_agent = SimulatorAgent(auto_cycle=True)
             _trainer_agent   = ContinuousTrainerAgent()
-    return _simulator_agent, _trainer_agent
+            _strategy_sim    = StrategySimulatorAgent()
+    return _simulator_agent, _trainer_agent, _strategy_sim
 
 
 @app.route('/api/simulator/status', methods=['GET'])
 def simulator_status():
     """Return current simulator state, config, and per-model training metrics."""
     try:
-        sim, trainer = _get_simulator()
+        sim, trainer, _ = _get_simulator()
         status = sim.get_status()
         status['trainer_stats'] = trainer.get_stats()
 
@@ -1230,7 +1233,7 @@ def simulator_status():
 def simulator_start():
     """Start or resume the simulator replay."""
     try:
-        sim, trainer = _get_simulator()
+        sim, trainer, strat_sim = _get_simulator()
         # Apply any config from the request body
         cfg = request.get_json(force=True) or {}
         if cfg:
@@ -1242,6 +1245,9 @@ def simulator_start():
         # Start trainer (idempotent)
         if not trainer._running:
             trainer.start()
+        # Start strategy simulator (idempotent)
+        if not strat_sim._running:
+            strat_sim.start()
         sim.start()
         return jsonify({'ok': True, 'status': sim.get_status()})
     except Exception as e:
@@ -1251,7 +1257,7 @@ def simulator_start():
 @app.route('/api/simulator/pause', methods=['POST'])
 def simulator_pause():
     try:
-        sim, _ = _get_simulator()
+        sim, _, _ = _get_simulator()
         sim.pause()
         return jsonify({'ok': True, 'status': sim.get_status()})
     except Exception as e:
@@ -1261,7 +1267,7 @@ def simulator_pause():
 @app.route('/api/simulator/resume', methods=['POST'])
 def simulator_resume():
     try:
-        sim, _ = _get_simulator()
+        sim, _, _ = _get_simulator()
         sim.resume()
         return jsonify({'ok': True, 'status': sim.get_status()})
     except Exception as e:
@@ -1271,9 +1277,10 @@ def simulator_resume():
 @app.route('/api/simulator/stop', methods=['POST'])
 def simulator_stop():
     try:
-        sim, trainer = _get_simulator()
+        sim, trainer, strat_sim = _get_simulator()
         sim.stop()
         trainer.stop()
+        strat_sim.stop()
         return jsonify({'ok': True, 'status': sim.get_status()})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -1283,12 +1290,42 @@ def simulator_stop():
 def simulator_config():
     """Update simulator config (symbol, timeframe, speed, scenario, date range)."""
     try:
-        sim, _ = _get_simulator()
+        sim, _, _ = _get_simulator()
         cfg = request.get_json(force=True) or {}
         allowed = {'symbol', 'timeframe', 'speed', 'scenario', 'start_date', 'end_date'}
         clean = {k: v for k, v in cfg.items() if k in allowed}
         sim.configure(clean)
         return jsonify({'ok': True, 'config': sim.get_status()['config']})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/simulator/strategy_stats', methods=['GET'])
+def simulator_strategy_stats():
+    """Return per-strategy virtual account performance (live from StrategySimulatorAgent)."""
+    try:
+        _, _, strat_sim = _get_simulator()
+        live = strat_sim.get_stats()
+        # If agent hasn't seen candles yet, fall back to DB
+        has_data = any(r.get("n_trades", 0) > 0 for r in live)
+        if not has_data:
+            try:
+                from src.simulation.data_store import SimulatorDataStore
+                live = SimulatorDataStore().get_strategy_stats() or live
+            except Exception:
+                pass
+        return jsonify({'stats': live, 'virtual_capital': 10_000.0})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/simulator/strategy_reset', methods=['POST'])
+def simulator_strategy_reset():
+    """Reset all virtual strategy accounts to initial capital."""
+    try:
+        _, _, strat_sim = _get_simulator()
+        strat_sim.reset_stats()
+        return jsonify({'ok': True})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

@@ -1367,6 +1367,35 @@ select.field option{background:#0d1628;color:#e2e8f0}
         </div>
       </div>
 
+      <!-- ── Strategy Paper-Trading Performance ── -->
+      <div class="sim-section" style="margin-top:18px">
+        Strategy Paper-Trading
+        <span style="font-size:.6rem;color:#64748b;font-weight:400;margin-left:8px">
+          (virtual $10,000 per strategy — starts when simulator runs)
+        </span>
+        <button onclick="simResetStrategies()" style="margin-left:12px;font-size:.6rem;padding:2px 8px;border-radius:4px;border:1px solid rgba(251,113,133,.3);background:rgba(251,113,133,.06);color:#f87171;cursor:pointer">Reset Accounts</button>
+      </div>
+      <div style="overflow-x:auto;margin-bottom:16px">
+        <table id="sim-strat-table" style="width:100%;border-collapse:collapse;font-size:.67rem">
+          <thead>
+            <tr style="color:#64748b;text-transform:uppercase;font-size:.58rem;letter-spacing:.06em;border-bottom:1px solid rgba(148,163,184,.1)">
+              <th style="text-align:left;padding:5px 8px">Strategy</th>
+              <th style="text-align:right;padding:5px 8px">Balance</th>
+              <th style="text-align:right;padding:5px 8px">P&amp;L</th>
+              <th style="text-align:right;padding:5px 8px">P&amp;L %</th>
+              <th style="text-align:right;padding:5px 8px">Trades</th>
+              <th style="text-align:right;padding:5px 8px">Wins</th>
+              <th style="text-align:right;padding:5px 8px">Losses</th>
+              <th style="text-align:right;padding:5px 8px">Win%</th>
+              <th style="text-align:center;padding:5px 8px">Position</th>
+            </tr>
+          </thead>
+          <tbody id="sim-strat-body">
+            <tr><td colspan="9" style="color:#64748b;padding:10px 8px">Start simulator to see strategy results…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
       <!-- ── Available data files ── -->
       <div class="sim-section">Available GZ Data Files (<span id="sim-file-count">0</span>)</div>
       <div class="sim-avail-list" id="sim-avail-list">
@@ -3398,14 +3427,74 @@ function simUseFile(symbol, timeframe) {
   simApplyConfig();
 }
 
+// ── Strategy paper-trading stats ─────────────────────────────────────────────
+async function simLoadStrategyStats() {
+  if (activeTab !== 'simulator') return;
+  try {
+    const r = await fetch('/api/simulator/strategy_stats', {headers: hdrs()});
+    if (!r.ok) return;
+    const d = await r.json();
+    simRenderStrategyTable(d.stats || []);
+  } catch(e) {}
+}
+
+function simRenderStrategyTable(stats) {
+  const tbody = document.getElementById('sim-strat-body');
+  if (!tbody) return;
+  if (!stats.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="color:#64748b;padding:10px 8px">Start simulator to see strategy results…</td></tr>';
+    return;
+  }
+  tbody.innerHTML = stats.map(s => {
+    const pnl     = s.total_pnl || 0;
+    const pnlPct  = s.pnl_pct   || 0;
+    const pnlCol  = pnl >= 0 ? '#34d399' : '#f87171';
+    const pctCol  = pnlPct >= 0 ? '#34d399' : '#f87171';
+    const winPct  = s.win_rate   || 0;
+    const winCol  = winPct >= 55 ? '#34d399' : winPct >= 45 ? '#fbbf24' : '#f87171';
+    let posCell = '<span style="color:#64748b">—</span>';
+    if (s.in_position) {
+      const dir = s.position_dir > 0 ? '▲ LONG' : '▼ SHORT';
+      const dc  = s.position_dir > 0 ? '#34d399' : '#f87171';
+      posCell = `<span style="color:${dc};font-weight:700">${dir}</span>`;
+    }
+    return `<tr style="border-bottom:1px solid rgba(148,163,184,.06);transition:background .15s" onmouseover="this.style.background='rgba(148,163,184,.04)'" onmouseout="this.style.background=''">
+      <td style="padding:5px 8px;color:#e2e8f0;font-weight:600">${s.strategy}</td>
+      <td style="padding:5px 8px;text-align:right;color:#cbd5e1">$${(s.balance||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+      <td style="padding:5px 8px;text-align:right;color:${pnlCol};font-weight:700">${pnl>=0?'+':''}$${Math.abs(pnl).toFixed(2)}</td>
+      <td style="padding:5px 8px;text-align:right;color:${pctCol}">${pnlPct>=0?'+':''}${pnlPct.toFixed(2)}%</td>
+      <td style="padding:5px 8px;text-align:right;color:#94a3b8">${s.n_trades||0}</td>
+      <td style="padding:5px 8px;text-align:right;color:#34d399">${s.n_wins||0}</td>
+      <td style="padding:5px 8px;text-align:right;color:#f87171">${s.n_losses||0}</td>
+      <td style="padding:5px 8px;text-align:right;color:${winCol};font-weight:600">${winPct.toFixed(1)}%</td>
+      <td style="padding:5px 8px;text-align:center">${posCell}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function simResetStrategies() {
+  if (!confirm('Reset all virtual strategy accounts to $10,000?')) return;
+  try {
+    await fetch('/api/simulator/strategy_reset', {method:'POST', headers:hdrs()});
+    simLoadStrategyStats();
+  } catch(e) {}
+}
+
 // Tab-level polling
-setInterval(() => { if (activeTab === 'simulator') { simPoll(); simLoadHistory(); } }, 5_000);
+setInterval(() => {
+  if (activeTab === 'simulator') {
+    simPoll();
+    simLoadHistory();
+    simLoadStrategyStats();
+  }
+}, 5_000);
 
 // Load available data once when tab is first opened
 let simDataLoaded = false;
 document.querySelectorAll('[data-tab="simulator"]').forEach(b => b.addEventListener('click', () => {
   if (!simDataLoaded) { simLoadAvailableData(); simDataLoaded = true; }
   simPoll();
+  simLoadStrategyStats();
 }));
 </script>
 </body>

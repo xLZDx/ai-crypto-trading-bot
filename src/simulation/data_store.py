@@ -85,6 +85,21 @@ CREATE TABLE IF NOT EXISTS sim_pattern_db (
     avg_pnl         DOUBLE DEFAULT 0.0,
     last_seen       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS sim_strategy_stats (
+    strategy        VARCHAR PRIMARY KEY,
+    symbol          VARCHAR,
+    balance         DOUBLE DEFAULT 10000,
+    total_pnl       DOUBLE DEFAULT 0,
+    pnl_pct         DOUBLE DEFAULT 0,
+    n_trades        INTEGER DEFAULT 0,
+    n_wins          INTEGER DEFAULT 0,
+    n_losses        INTEGER DEFAULT 0,
+    win_rate        DOUBLE DEFAULT 0,
+    in_position     BOOLEAN DEFAULT FALSE,
+    position_dir    INTEGER DEFAULT 0,
+    last_updated    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -411,4 +426,89 @@ class SimulatorDataStore:
                 return result
             except Exception as exc:
                 logger.error("[SimStore] get_paper_pnl_series error: %s", exc)
+                return []
+
+    # ── strategy simulator stats ──────────────────────────────────────────────
+
+    def save_strategy_stats(self, stats: list[dict]) -> None:
+        """Upsert per-strategy performance summary."""
+        if not stats:
+            return
+        now = datetime.now(timezone.utc)
+        with self._lock:
+            try:
+                con = self._connect()
+                for row in stats:
+                    strategy = row.get("strategy", "")
+                    existing = con.execute(
+                        "SELECT strategy FROM sim_strategy_stats WHERE strategy = ?",
+                        [strategy],
+                    ).fetchone()
+                    params = [
+                        row.get("symbol", ""),
+                        row.get("balance", 10000),
+                        row.get("total_pnl", 0),
+                        row.get("pnl_pct", 0),
+                        row.get("n_trades", 0),
+                        row.get("n_wins", 0),
+                        row.get("n_losses", 0),
+                        row.get("win_rate", 0),
+                        bool(row.get("in_position", False)),
+                        int(row.get("position_dir", 0)),
+                        now,
+                    ]
+                    if existing:
+                        con.execute(
+                            """UPDATE sim_strategy_stats SET
+                               symbol=?, balance=?, total_pnl=?, pnl_pct=?,
+                               n_trades=?, n_wins=?, n_losses=?, win_rate=?,
+                               in_position=?, position_dir=?, last_updated=?
+                               WHERE strategy=?""",
+                            params + [strategy],
+                        )
+                    else:
+                        con.execute(
+                            """INSERT INTO sim_strategy_stats
+                               (symbol, balance, total_pnl, pnl_pct,
+                                n_trades, n_wins, n_losses, win_rate,
+                                in_position, position_dir, last_updated, strategy)
+                               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            params + [strategy],
+                        )
+                con.commit()
+                con.close()
+            except Exception as exc:
+                logger.error("[SimStore] save_strategy_stats error: %s", exc)
+
+    def get_strategy_stats(self) -> list[dict]:
+        """Return persisted per-strategy stats ordered by PNL descending."""
+        with self._lock:
+            try:
+                con = self._connect()
+                rows = con.execute(
+                    """SELECT strategy, symbol, balance, total_pnl, pnl_pct,
+                              n_trades, n_wins, n_losses, win_rate,
+                              in_position, position_dir, last_updated
+                       FROM sim_strategy_stats ORDER BY total_pnl DESC"""
+                ).fetchall()
+                con.close()
+                return [
+                    {
+                        "strategy":     r[0],
+                        "symbol":       r[1],
+                        "balance":      round(float(r[2] or 10000), 2),
+                        "total_pnl":    round(float(r[3] or 0), 2),
+                        "pnl_pct":      round(float(r[4] or 0), 2),
+                        "n_trades":     r[5] or 0,
+                        "n_wins":       r[6] or 0,
+                        "n_losses":     r[7] or 0,
+                        "win_rate":     round(float(r[8] or 0), 1),
+                        "in_position":  bool(r[9]),
+                        "position_dir": int(r[10] or 0),
+                        "last_updated": r[11].isoformat() if r[11] else None,
+                    }
+                    for r in rows
+                ]
+            except Exception as exc:
+                logger.error("[SimStore] get_strategy_stats error: %s", exc)
                 return []
