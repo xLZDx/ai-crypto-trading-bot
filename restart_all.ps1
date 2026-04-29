@@ -111,15 +111,23 @@ $procBot  = Start-Window -Label 'Bot'       -ScriptFile (Join-Path $root 'launch
 Start-Sleep -Seconds 2
 Write-Host "[5/6] Dashboard and Bot launched." -ForegroundColor Green
 
+# Step 5.5: Watchlist Downloader Daemon
+Write-Host ""
+Write-Host "[5.5/6] Launching Watchlist Downloader Daemon (1s/1m/1M for all coins)..." -ForegroundColor Yellow
+$procWatchlist = Start-Window -Label 'WatchlistDownloader' -ScriptFile (Join-Path $root 'launch_watchlist_downloader.ps1')
+Start-Sleep -Seconds 2
+Write-Host "[5.5/6] Watchlist Downloader launched." -ForegroundColor Green
+
 # Step 6: Save PIDs
 Write-Host ""
 Write-Host "[6/6] Saving process IDs..." -ForegroundColor Yellow
-$monId  = if ($procMonitor) { $procMonitor.Id } else { 0 }
-$dashId = if ($procDash)    { $procDash.Id    } else { 0 }
-$botId  = if ($procBot)     { $procBot.Id     } else { 0 }
-$pidData = @{ bot = $botId; dash = $dashId; monitor = $monId; mcp = 0 }
+$monId       = if ($procMonitor)   { $procMonitor.Id   } else { 0 }
+$dashId      = if ($procDash)      { $procDash.Id      } else { 0 }
+$botId       = if ($procBot)       { $procBot.Id       } else { 0 }
+$watchlistId = if ($procWatchlist) { $procWatchlist.Id } else { 0 }
+$pidData = @{ bot = $botId; dash = $dashId; monitor = $monId; watchlist = $watchlistId; mcp = 0 }
 $pidData | ConvertTo-Json | Set-Content (Join-Path $root 'data\process_ids.json')
-Write-Host "[6/6] PIDs saved: monitor=$monId  dash=$dashId  bot=$botId" -ForegroundColor Green
+Write-Host "[6/6] PIDs saved: monitor=$monId  dash=$dashId  bot=$botId  watchlist=$watchlistId" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "==========================================" -ForegroundColor Green

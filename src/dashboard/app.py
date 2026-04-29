@@ -569,11 +569,14 @@ _LOG_DIR      = _PROJECT_ROOT / 'logs'
 _PID_FILE     = _PROJECT_ROOT / 'data' / 'process_ids.json'
 
 _SERVICES = {
-    'training': {'label': 'ML Training',      'script': 'src/engine/train_all_models.py'},
-    'download': {'label': 'Data Downloader',  'script': 'src/data_ingestion/run_full_download.py'},
-    'news':     {'label': 'News Scraper',     'script': 'src/data_ingestion/news_scraper.py'},
-    'telegram': {'label': 'Telegram Monitor', 'script': 'src/data_ingestion/telegram_scraper.py'},
+    'training':  {'label': 'ML Training',           'script': 'src/engine/train_all_models.py'},
+    'download':  {'label': 'Data Downloader',       'script': 'src/data_ingestion/run_full_download.py'},
+    'news':      {'label': 'News Scraper',           'script': 'src/data_ingestion/news_scraper.py'},
+    'telegram':  {'label': 'Telegram Monitor',      'script': 'src/data_ingestion/telegram_scraper.py'},
+    'watchlist': {'label': 'Watchlist Downloader',  'script': 'src/data_ingestion/watchlist_downloader.py'},
 }
+# Script fragment used to detect externally-launched processes by cmdline scan
+_EXTERNAL_SCRIPTS = {k: v['script'].split('/')[-1] for k, v in _SERVICES.items()}
 _LOG_MAP = {
     'bot': 'bot.log', 'dash': 'dashboard.log', 'monitor': 'monitor.log',
     **{k: f'{k}.log' for k in _SERVICES}
@@ -623,12 +626,6 @@ def monitor_health():
 
     # Services managed by this dashboard (started via /api/monitor/start)
     # Also detect externally-launched processes by scanning cmdlines
-    _external_scripts = {
-        'training': 'train_all_models.py',
-        'download': 'run_full_download.py',
-        'news':     'news_scraper.py',
-        'telegram': 'telegram_scraper.py',
-    }
     def _find_external_pid(script_name):
         try:
             import psutil
@@ -647,7 +644,7 @@ def monitor_health():
             pid = proc.pid if running else None
             # Also check if script is running externally (e.g. via launch_training.ps1)
             if not running:
-                ext_pid = _find_external_pid(_external_scripts.get(svc_key, ''))
+                ext_pid = _find_external_pid(_EXTERNAL_SCRIPTS.get(svc_key, ''))
                 if ext_pid:
                     running, pid = True, ext_pid
             entry = {'label': svc['label'], 'running': running, 'pid': pid, 'managed': proc is not None and proc.poll() is None}
@@ -711,16 +708,33 @@ def monitor_start(service):
 def monitor_stop(service):
     if service not in _SERVICES:
         return jsonify({'error': 'unknown service'}), 404
+    killed = False
+    # Kill dashboard-managed instance
     with _managed_lock:
         proc = _managed.pop(service, None)
-    if proc is None or proc.poll() is not None:
-        return jsonify({'ok': False, 'msg': 'not running'})
-    proc.terminate()
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-    return jsonify({'ok': True})
+    if proc is not None and proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        killed = True
+    # Also kill any externally-launched instance (e.g. via launch_training.ps1)
+    script_frag = _EXTERNAL_SCRIPTS.get(service, '')
+    if script_frag:
+        try:
+            import psutil
+            for p in psutil.process_iter(['pid', 'cmdline']):
+                cmd = ' '.join(p.info.get('cmdline') or [])
+                if script_frag in cmd:
+                    try:
+                        p.terminate()
+                        killed = True
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    return jsonify({'ok': killed, 'msg': 'stopped' if killed else 'not running'})
 
 
 _AGENT_CONFIG = {
@@ -819,10 +833,11 @@ def monitor_model_stats():
                 meta = _json.loads(meta_path.read_text())
             except Exception:
                 pass
+        raw_acc_m = meta.get('accuracy')
         result.append({
             'key': key, 'label': label,
             'model_exists': exists,
-            'accuracy':              round(meta.get('accuracy', 0), 2),
+            'accuracy':              round(raw_acc_m, 2) if raw_acc_m is not None else None,
             'long_accuracy':         round(meta.get('long_accuracy', 0), 2),
             'short_accuracy':        round(meta.get('short_accuracy', 0), 2),
             'n_samples':             meta.get('n_samples'),
@@ -881,12 +896,15 @@ def strategy_full():
         if meta_path.exists():
             try: meta = _json.loads(meta_path.read_text())
             except Exception: pass
+        raw_acc = meta.get('accuracy')
         ml_models.append({
             'key': key, 'label': label, 'icon': icon, 'market': market,
-            'model_exists': model_path.exists(),
-            'accuracy':       round(meta.get('accuracy', 0), 2),
+            'model_exists':   model_path.exists(),
+            'accuracy':       round(raw_acc, 2) if raw_acc is not None else None,
             'long_accuracy':  round(meta.get('long_accuracy', 0), 2),
             'short_accuracy': round(meta.get('short_accuracy', 0), 2),
+            'accuracy_note':  meta.get('accuracy_note'),
+            'model_type':     meta.get('model_type'),
             'n_samples':      meta.get('n_samples'),
             'n_features':     meta.get('n_features'),
             'n_iterations':   meta.get('n_iterations'),
@@ -907,6 +925,7 @@ def strategy_full():
         summary    = {}
 
     # ── Trade stats per strategy ───────────────────────────────────────────────
+    # Live trades (tagged with strategy field)
     trades = read_json('data/trades.json', default=[])
     if isinstance(trades, dict):
         trades = trades.get('trades', [])
@@ -916,16 +935,63 @@ def strategy_full():
             continue
         k = t.get('strategy', 'Unknown')
         pnl = t.get('pnl_usdt', 0) or 0
-        s = trade_stats.setdefault(k, {'n': 0, 'wins': 0, 'losses': 0, 'pnl': 0.0})
+        s = trade_stats.setdefault(k, {'n': 0, 'wins': 0, 'losses': 0, 'pnl': 0.0, 'source': 'live'})
         s['n'] += 1
         s['pnl'] += pnl
         if pnl > 0:
             s['wins'] += 1
         else:
             s['losses'] += 1
-    # attach win_rate
     for k, s in trade_stats.items():
         s['win_rate'] = round(s['wins'] / s['n'] * 100, 1) if s['n'] else 0.0
+
+    # Backtest stats — aggregate latest_comparison.json, keyed by registry name
+    import re as _re
+    bt_path = _PROJECT_ROOT / 'data' / 'backtest' / 'latest_comparison.json'
+    if bt_path.exists():
+        try:
+            import json as _j
+            bt_rows = _j.loads(bt_path.read_text())
+            # Build label → registry_name reverse map from the strategy list
+            label_to_key: dict[str, str] = {}
+            for s in strategies:
+                lbl = s.get('label', '')
+                key = s.get('name', '')
+                if lbl and key:
+                    label_to_key[lbl] = key
+            bt_agg: dict[str, dict] = {}
+            for row in bt_rows:
+                raw = row.get('strategy', '')
+                bt_label = _re.sub(r'^[AB]_', '', raw).strip()
+                # Resolve to registry key; fall back to the label itself
+                reg_key = label_to_key.get(bt_label, bt_label)
+                a = bt_agg.setdefault(reg_key, {'n': 0, 'wins': 0, 'pnl': 0.0,
+                                                 'sharpe_sum': 0.0, 'sharpe_cnt': 0,
+                                                 'win_rate_sum': 0.0, 'win_rate_cnt': 0})
+                n = int(row.get('n_trades', 0))
+                wr = float(row.get('win_rate_pct', 0))
+                a['n']            += n
+                a['wins']         += round(n * wr / 100)
+                a['pnl']          += float(row.get('total_pnl_usdt', 0))
+                sh = row.get('sharpe')
+                if sh is not None:
+                    a['sharpe_sum'] += float(sh)
+                    a['sharpe_cnt'] += 1
+                a['win_rate_sum'] += wr
+                a['win_rate_cnt'] += 1
+            for reg_key, a in bt_agg.items():
+                if reg_key not in trade_stats:   # don't overwrite live data
+                    trade_stats[reg_key] = {
+                        'n':        a['n'],
+                        'wins':     a['wins'],
+                        'losses':   a['n'] - a['wins'],
+                        'pnl':      round(a['pnl'], 2),
+                        'win_rate': round(a['win_rate_sum'] / a['win_rate_cnt'], 1) if a['win_rate_cnt'] else 0.0,
+                        'sharpe':   round(a['sharpe_sum'] / a['sharpe_cnt'], 3) if a['sharpe_cnt'] else None,
+                        'source':   'backtest',
+                    }
+        except Exception:
+            pass
 
     # ── Aggregate ──────────────────────────────────────────────────────────────
     trained_count = sum(1 for m in ml_models if m['model_exists'])

@@ -40,8 +40,31 @@ def get_last_timestamp(filename):
             dt = dt.replace(tzinfo=timezone.utc)
             return int(dt.timestamp() * 1000)
     except Exception as e:
-        logger.debug(f"Could not read last timestamp from {filename}: {e}")
+            logger.warning(f"Could not read last timestamp from {filename}: {e}")
+            logger.warning(f"Corrupted archive detected. Deleting {filename} to force redownload...")
+            try:
+                os.remove(filename)
+            except OSError as exc:
+                logger.error(f"Failed to delete corrupted file: {exc}")
     return None
+
+
+def clean_corrupted_archives():
+    """Scans all .csv.gz files in the raw data directory and deletes corrupted ones."""
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    raw_dir = os.path.join(project_root, 'data', 'raw')
+    if not os.path.exists(raw_dir):
+        return
+        
+    logger.info("Scanning for corrupted .csv.gz archives...")
+    count = 0
+    for file in os.listdir(raw_dir):
+        if file.endswith(".csv.gz"):
+            filepath = os.path.join(raw_dir, file)
+            # get_last_timestamp forces gzip to seek to the EOF marker, catching corruption
+            get_last_timestamp(filepath)
+            count += 1
+    logger.info(f"Archive health check complete. Scanned {count} files.")
 
 
 def _validate_ohlcv_row(row) -> bool:

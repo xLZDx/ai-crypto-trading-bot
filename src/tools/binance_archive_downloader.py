@@ -34,8 +34,13 @@ def get_last_timestamp(filename):
         if last_line and not last_line.startswith('timestamp'):
             ts_str = last_line.split(',')[0]
             return datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"    [!] Warning: Could not read {filename} ({e})")
+        print(f"    [!] Deleting corrupted archive to force redownload...")
+        try:
+            os.remove(filename)
+        except OSError as exc:
+            print(f"    [!] Failed to delete file: {exc}")
     return None
 
 

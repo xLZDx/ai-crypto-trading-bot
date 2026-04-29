@@ -80,6 +80,10 @@ console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(
 logger.addHandler(console_handler)
 
 class MultiAssetTrader:
+    # Tracks consecutive close failures per trade ID; force-close after this many failures
+    _CLOSE_FAIL_LIMIT = 3
+    _close_fail_counts: dict = {}
+
     def __init__(self, symbols=['BTC/USDT', 'SOL/USDT', 'ADA/USDT', 'ETH/USDT'], timeframe='1h'):
         self.symbols = symbols
         self.timeframe = timeframe
@@ -541,28 +545,97 @@ class MultiAssetTrader:
 
         return "HOLD", "No scalping signal", "Neutral"
 
+    def _force_close_internally(self, trade, current_price, reason: str) -> bool:
+        """Mark position closed locally without hitting the exchange (balance already 0 or unrecoverable)."""
+        symbol = trade['symbol']
+        market = trade.get('market', 'SPOT')
+        closed_trade = self.tracker.close_trade_by_id(trade['id'], current_price)
+        if closed_trade:
+            logger.warning(
+                f"[{symbol}] Force-closed {market} position ID {trade['id']} internally at {current_price:.8f}. "
+                f"Reason: {reason}. PnL: {closed_trade['pnl_usdt']:.2f} USDT"
+            )
+        MultiAssetTrader._close_fail_counts.pop(trade['id'], None)
+        return True
+
     def _execute_close(self, trade, current_price):
-        """Helper method: physically closes the order on the exchange AND locally"""
+        """Physically closes the order on the exchange, then records it locally.
+
+        Handles "insufficient balance" edge cases:
+        - If the free balance for the base asset is 0, the position was already sold/dust
+          on Binance — force-close it internally.
+        - After _CLOSE_FAIL_LIMIT consecutive failures, force-close internally to prevent
+          endless retry loops.
+        """
         symbol = trade['symbol']
         amount_coin = trade['amount_coin']
         market = trade.get('market', 'SPOT')
         side = trade.get('side', 'LONG')
+        trade_id = trade['id']
         order = None
-        
+
         if market in ['SPOT', 'SPOT_SCALPING']:
+            # Pre-check: does Binance actually hold the base asset?
+            base_asset = symbol.split('/')[0]
+            try:
+                free_balance = self.engine.get_balance(base_asset)
+            except Exception:
+                free_balance = None  # proceed and let the order attempt surface the real error
+
+            if free_balance is not None and free_balance < 1e-8:
+                return self._force_close_internally(
+                    trade, current_price,
+                    f"free {base_asset} balance is 0 on Binance (dust/already sold)"
+                )
+
+            # Also guard against sub-minimum-notional situations (e.g. SHIB dust)
+            try:
+                self.engine.exchange.load_markets()
+                market_info = self.engine.exchange.markets.get(symbol, {})
+                min_notional = (market_info.get('limits', {}).get('cost', {}) or {}).get('min') or 0.0
+                min_amount = (market_info.get('limits', {}).get('amount', {}) or {}).get('min') or 0.0
+                notional_value = (free_balance or 0.0) * current_price
+                if (free_balance is not None and free_balance < min_amount) or (min_notional and notional_value < min_notional):
+                    return self._force_close_internally(
+                        trade, current_price,
+                        f"{base_asset} balance {free_balance:.2f} below exchange minimum "
+                        f"(min_amount={min_amount}, notional={notional_value:.4f} < {min_notional})"
+                    )
+            except Exception:
+                pass  # market info unavailable — let the order attempt proceed
+
             order = self.engine.execute_spot_order(symbol, 'SELL', amount_coin)
+
         elif market in ['FUTURES', 'SCALPING']:
             close_side = 'SELL' if side == 'LONG' else 'BUY'
             order = self.engine.execute_futures_order(symbol, close_side, amount_coin, reduce_only=True)
-            
+
         if order:
             real_price = order.get('average') or order.get('price') or current_price
-            closed_trade = self.tracker.close_trade_by_id(trade['id'], real_price)
+            closed_trade = self.tracker.close_trade_by_id(trade_id, real_price)
             if closed_trade:
-                logger.info(f"[{symbol}] Closed {market} position ID {trade['id']} on Binance. PnL: {closed_trade['pnl_usdt']:.2f} USDT")
+                logger.info(
+                    f"[{symbol}] Closed {market} position ID {trade_id} on Binance. "
+                    f"PnL: {closed_trade['pnl_usdt']:.2f} USDT"
+                )
+            MultiAssetTrader._close_fail_counts.pop(trade_id, None)
             return True
         else:
-            logger.warning(f"[{symbol}] Failed to close {market} position ID {trade['id']} on Binance. Keeping open.")
+            # Count consecutive failures; force-close after limit
+            fails = MultiAssetTrader._close_fail_counts.get(trade_id, 0) + 1
+            MultiAssetTrader._close_fail_counts[trade_id] = fails
+            if fails >= MultiAssetTrader._CLOSE_FAIL_LIMIT:
+                logger.error(
+                    f"[{symbol}] Close failed {fails}x for ID {trade_id} — force-closing internally."
+                )
+                return self._force_close_internally(
+                    trade, current_price,
+                    f"exchange SELL failed {fails} consecutive times"
+                )
+            logger.warning(
+                f"[{symbol}] Failed to close {market} position ID {trade_id} on Binance "
+                f"(attempt {fails}/{MultiAssetTrader._CLOSE_FAIL_LIMIT}). Will retry."
+            )
             return False
 
     async def process_kline(self, symbol, current_price):
@@ -959,6 +1032,10 @@ class MultiAssetTrader:
             while True:
                 time.sleep(10)
                 
+        # Start all 8 core agents as daemon threads
+        logger.info("Starting agent system...")
+        self._start_agents()
+
         # Start Deep Learning Inference Engine in background
         logger.info("Starting TFT Inference Engine thread...")
         self.inference_engine.start(self.symbols)
@@ -966,8 +1043,68 @@ class MultiAssetTrader:
         # Start Telegram Monitor in background
         logger.info("Starting Telegram Monitor thread...")
         self.telegram_monitor.start()
-            
+
         asyncio.run(self.binance_websocket())
+
+    def _start_agents(self) -> None:
+        """Start all 8 core agents as daemon threads. Safe to call once at boot."""
+        try:
+            from src.engine.agents.data_agent      import DataAgent
+            from src.engine.agents.signal_agent    import SignalAgent
+            from src.engine.agents.quant_agent     import QuantAgent
+            from src.engine.agents.risk_agent      import RiskAgent
+            from src.engine.agents.execution_agent import ExecutionAgent
+            from src.engine.agents.spot_agent      import SpotAgent
+            from src.engine.agents.futures_agent   import FuturesAgent
+            from src.engine.agents.scalping_agent  import ScalpingAgent
+        except ImportError as exc:
+            logger.warning("Agent import error — agents not started: %s", exc)
+            return
+
+        # data_getter reads the last 200 rows of the 1h CSV for a symbol
+        def _data_getter_1h(sym: str):
+            safe = sym.replace('/', '_')
+            path = os.path.join('data', 'raw', f'{safe}_1h.csv.gz')
+            if not os.path.exists(path):
+                return None
+            try:
+                df = pd.read_csv(path)
+                df['timestamp'] = pd.to_datetime(df['timestamp'])
+                return df.tail(200).reset_index(drop=True)
+            except Exception:
+                return None
+
+        def _data_getter_1m(sym: str):
+            safe = sym.replace('/', '_')
+            path = os.path.join('data', 'raw', f'{safe}_1m.csv.gz')
+            if not os.path.exists(path):
+                return None
+            try:
+                df = pd.read_csv(path)
+                df['timestamp'] = pd.to_datetime(df['timestamp'])
+                return df.tail(500).reset_index(drop=True)
+            except Exception:
+                return None
+
+        # Agent-friendly symbol list (underscore format expected by some agents)
+        syms_safe = [s.replace('/', '_') for s in self.symbols]
+
+        agents = [
+            DataAgent(symbols=syms_safe, interval_sec=3600.0),
+            SignalAgent(symbols=syms_safe, data_getter=_data_getter_1h, interval_sec=3600.0),
+            QuantAgent(interval_sec=3600.0 * 4),
+            RiskAgent(interval_sec=300.0),
+            ExecutionAgent(exchange_client=self.engine.exchange, interval_sec=60.0),
+            SpotAgent(symbols=syms_safe, data_getter=_data_getter_1h, interval_sec=3600.0),
+            FuturesAgent(symbols=syms_safe, data_getter=_data_getter_1h, interval_sec=3600.0),
+            ScalpingAgent(symbols=syms_safe, data_getter_1m=_data_getter_1m, interval_sec=60.0),
+        ]
+        for agent in agents:
+            try:
+                agent.start()
+                logger.info("Agent started: %s", agent.NAME)
+            except Exception as exc:
+                logger.warning("Failed to start %s: %s", agent.NAME, exc)
 
 if __name__ == "__main__":
     try:

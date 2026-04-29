@@ -225,6 +225,15 @@ class Backtester:
             # Open new position
             if position is None and abs(signal) > 0.1 and equity > 0:
                 size = equity * self.position_size_pct
+                # GARCH position sizing: halve size on vol spike if enabled
+                if "garch_size_mult" in row.index:
+                    size *= float(row.get("garch_size_mult", 1.0))
+                # MTF SMA-200 filter: skip entries against macro trend if filter col present
+                if "signal_mtf_filter" in row.index:
+                    mtf = float(row.get("signal_mtf_filter", 0.0))
+                    if (signal > 0 and mtf < 0) or (signal < 0 and mtf > 0):
+                        equity_series.append(equity)
+                        continue
                 direction = 1 if signal > 0 else -1
                 entry_fee = size * self.taker_fee  # entry via market order
                 position = {
@@ -270,6 +279,71 @@ class Backtester:
         if not df.empty:
             df = df.sort_values("sharpe", ascending=False).reset_index(drop=True)
         return df
+
+
+def _batch_ml_predict(df: pd.DataFrame, model_filename: str) -> pd.Series:
+    """
+    Batch-predict a trained joblib sklearn model on every bar of df.
+    Returns a signal Series: +1 (long), -1 (short), 0 (hold/uncertain).
+    Uses the model's feature_names_in_ to pick the right columns.
+    """
+    import joblib
+    MODEL_DIR = os.path.join(PROJECT_ROOT, "models")
+    model_path = os.path.join(MODEL_DIR, model_filename)
+    if not os.path.exists(model_path):
+        return pd.Series(0.0, index=df.index)
+    try:
+        model = joblib.load(model_path)
+        
+        def find_features(obj, depth=0):
+            if depth > 5 or obj is None: return None
+            if hasattr(obj, "feature_names_in_"): return list(obj.feature_names_in_)
+            for attr in ["estimator", "base_estimator", "best_estimator_", "model", "_final_estimator", "step"]:
+                if hasattr(obj, attr):
+                    res = find_features(getattr(obj, attr), depth + 1)
+                    if res: return res
+            if hasattr(obj, "calibrated_classifiers_"):
+                for clf in getattr(obj, "calibrated_classifiers_"):
+                    res = find_features(clf, depth + 1)
+                    if res: return res
+            if hasattr(obj, "steps"):
+                for name, step in getattr(obj, "steps"):
+                    res = find_features(step, depth + 1)
+                    if res: return res
+            return None
+
+        feature_cols = find_features(model)
+        
+        if not feature_cols:
+            meta_path = model_path.replace(".joblib", "_meta.json")
+            if os.path.exists(meta_path):
+                import json
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                    if "features" in meta: feature_cols = meta["features"]
+                    elif "feature_names" in meta: feature_cols = meta["feature_names"]
+                except Exception:
+                    pass
+
+        if not feature_cols:
+            return pd.Series(0.0, index=df.index)
+        feat_df = df.copy()
+        for col in feature_cols:
+            if col not in feat_df.columns:
+                feat_df[col] = 0.0
+        X = feat_df[feature_cols].fillna(0.0).values
+        proba = model.predict_proba(X)
+        # class index: 1 = bullish for binary classifiers
+        if proba.shape[1] >= 2:
+            bull_p = proba[:, 1]
+        else:
+            bull_p = proba[:, 0]
+        signal = np.where(bull_p > 0.60, 1.0, np.where(bull_p < 0.40, -1.0, 0.0))
+        return pd.Series(signal, index=df.index)
+    except Exception as e:
+        logger.debug("Batch ML predict failed (%s): %s", model_filename, e)
+        return pd.Series(0.0, index=df.index)
 
 
 def _build_signals(df: pd.DataFrame) -> pd.DataFrame:
@@ -347,6 +421,115 @@ def _build_signals(df: pd.DataFrame) -> pd.DataFrame:
                  "signal_funding", "signal_ofi"]
     df["signal_ensemble_b"] = df[b_signals].mean(axis=1)
 
+    # ── Volatility Breakout (TTM Squeeze) ─────────────────────────────────────
+    # BB inside Keltner = squeeze; breakout on volume surge
+    df["signal_vol_breakout"] = 0.0
+    if "kc_pos" in df.columns and "bb_pb" in df.columns:
+        squeeze = (df["bb_pb"] < 0.15) & (df["kc_pos"].between(0.1, 0.9))
+        vol_mean = df["volume"].rolling(20, min_periods=5).mean()
+        vol_surge = df["volume"] > vol_mean * 1.5
+        squeeze_prev = squeeze.shift(1).fillna(False).astype(bool)
+        df.loc[squeeze_prev & (df["close"] > df["close"].shift(1)) & vol_surge,
+               "signal_vol_breakout"] = 1.0
+        df.loc[squeeze_prev & (df["close"] < df["close"].shift(1)) & vol_surge,
+               "signal_vol_breakout"] = -1.0
+
+    # ── Regime classifier series ──────────────────────────────────────────────
+    df["signal_regime"] = 1  # default TRENDING
+    try:
+        from src.analysis.regime_classifier import RegimeClassifier
+        clf = RegimeClassifier()
+        if clf.is_ready and "timestamp" in df.columns:
+            regimes = clf.predict_series(df)
+            df["signal_regime"] = pd.Series(regimes, index=df.index).fillna(1).astype(int)
+    except Exception as e:
+        logger.debug("Regime series prediction skipped: %s", e)
+
+    # ── ML batch signals (Base, Trend, Futures) ───────────────────────────────
+    # Pre-build richer feature set for models
+    from src.analysis.feature_engineering import (
+        add_roc, add_atr, add_adx, add_taker_and_trade_features, add_time_features
+    )
+    df_ml = df.copy()
+    df_ml["return"]            = df_ml["close"].pct_change()
+    df_ml["volatility"]        = df_ml["return"].rolling(20, min_periods=5).std()
+    df_ml["dist_sma_7"]        = df_ml["close"] / df_ml["close"].rolling(7).mean() - 1
+    df_ml["dist_sma_30"]       = df_ml["close"] / df_ml["close"].rolling(30).mean() - 1
+    df_ml["volume_momentum"]   = df_ml["volume"] / df_ml["volume"].rolling(20).mean().clip(lower=1e-9) - 1
+    df_ml["atr_pct"]           = df_ml.get("atr_14", pd.Series(0.0, index=df_ml.index)) / df_ml["close"].clip(lower=1e-9)
+    for lag in range(1, 6):
+        df_ml[f"return_lag{lag}"] = df_ml["return"].shift(lag)
+    df_ml["stoch_k"] = 0.0  # placeholder if not available
+    df_ml["news_sentiment"] = 0.0
+    df_ml["trend_alignment"] = (df_ml["close"] > df_ml["close"].rolling(50).mean()).astype(float)
+    df_ml["volume_surge"]    = (df_ml["volume"] > df_ml["volume"].rolling(20).mean() * 1.5).astype(float)
+    if "timestamp" in df_ml.columns:
+        df_ml = add_time_features(df_ml)
+
+    df["signal_base_ml"]    = _batch_ml_predict(df_ml, "btc_rf_model.joblib")
+    df["signal_trend_ml"]   = _batch_ml_predict(df_ml, "trend_model.joblib")
+    df["signal_futures_ml"] = _batch_ml_predict(df_ml, "futures_short_model.joblib")
+
+    # ── Elliott Wave proxy (vectorized approximation) ─────────────────────────
+    # Impulse (Wave 3/5): strong 5-bar momentum above SMA-50, confirmed by ML
+    sma50 = df["close"].rolling(50, min_periods=10).mean()
+    mom5  = df["close"] / df["close"].shift(5).clip(lower=1e-9) - 1
+    ml_bull = df["signal_base_ml"] > 0
+    ml_bear = df["signal_base_ml"] < 0
+    df["signal_elliott_proxy"] = 0.0
+    df.loc[(mom5 > 0.02) & (df["close"] > sma50) & ml_bull, "signal_elliott_proxy"] =  1.0
+    df.loc[(mom5 < -0.02) & (df["close"] < sma50) & ml_bear, "signal_elliott_proxy"] = -1.0
+
+    # ── GARCH position size multiplier ────────────────────────────────────────
+    # Proxy: recent 5-bar realized vol vs rolling 60-bar mean vol.
+    # When current vol > 1.8x average → spike → use 0.5x size (like live bot).
+    ret = df["close"].pct_change()
+    rv5  = ret.rolling(5,  min_periods=2).std()
+    rv60 = ret.rolling(60, min_periods=10).std().clip(lower=1e-9)
+    df["garch_size_mult"] = np.where(rv5 / rv60 > 1.8, 0.5, 1.0)
+
+    # ── MTF SMA-200 filter signal (1 = above SMA200, -1 = below) ─────────────
+    sma200 = df["close"].rolling(200, min_periods=50).mean()
+    df["signal_mtf_filter"] = np.where(df["close"] > sma200, 1.0, -1.0)
+
+    # ── Ichimoku Cloud ────────────────────────────────────────────────────────
+    try:
+        from src.analysis.feature_engineering import add_ichimoku
+        df = add_ichimoku(df)
+    except Exception as e:
+        logger.debug("Ichimoku signal skipped: %s", e)
+        df["signal_ichimoku"] = 0.0
+
+    # ── SuperTrend ────────────────────────────────────────────────────────────
+    try:
+        from src.analysis.feature_engineering import add_supertrend
+        df = add_supertrend(df, period=10, multiplier=3.0)
+    except Exception as e:
+        logger.debug("Supertrend signal skipped: %s", e)
+        df["signal_supertrend"] = 0.0
+
+    # ── MACD Centerline + Divergence ──────────────────────────────────────────
+    try:
+        from src.analysis.feature_engineering import add_macd_divergence
+        df = add_macd_divergence(df)
+    except Exception as e:
+        logger.debug("MACD divergence signal skipped: %s", e)
+        df["signal_macd_div"] = 0.0
+
+    # ── OU Mean-Reversion Entry (RANGING regime) ──────────────────────────────
+    # Vectorized OU calibration on rolling 200-bar window.
+    # When price deviates >1.5σ from rolling mean → fade the move.
+    df["signal_ou_entry"] = 0.0
+    try:
+        rolling_mu  = df["close"].rolling(200, min_periods=50).mean()
+        rolling_std = df["close"].rolling(200, min_periods=50).std().clip(lower=1e-9)
+        deviation   = (df["close"] - rolling_mu) / rolling_std
+        is_ranging  = df["signal_regime"] == 0  # only activate in RANGING regime
+        df.loc[is_ranging & (deviation < -1.5), "signal_ou_entry"] =  1.0  # fade down-move
+        df.loc[is_ranging & (deviation >  1.5), "signal_ou_entry"] = -1.0  # fade up-move
+    except Exception as e:
+        logger.debug("OU entry signal skipped: %s", e)
+
     return df
 
 
@@ -420,47 +603,38 @@ def run_full_backtest(
             logger.error("Signal build failed for %s: %s", sym, e)
             continue
 
-        # ── Group A: original strategies ──────────────────────────────────
-        for strat, sig_col in [
-            ("A_RSI_MeanReversion", "signal_rsi"),
-            ("A_MACD_Momentum", "signal_macd"),
-            ("A_BB_Reversion", "signal_bb"),
-            ("A_Ensemble", "signal_ensemble"),
-        ]:
-            try:
-                res = bt.run(df, sig_col, strat, sym)
-                group_a_results.append(res)
-            except Exception as e:
-                logger.error("Backtest failed for %s/%s: %s", sym, strat, e)
+        # ── Run all registry-enabled backtest strategies ───────────────────
+        from src.engine.strategy_registry import enabled_backtest_signal_cols, is_enabled_backtest
 
-        # ── Group B: new strategies ────────────────────────────────────────
-        for strat, sig_col in [
-            ("B_VWAP_Reversion", "signal_vwap"),
-            ("B_Donchian_Breakout", "signal_donchian"),
-            ("B_Keltner_Breakout", "signal_keltner"),
-            ("B_Funding_Arb", "signal_funding"),
-            ("B_OFI_Momentum", "signal_ofi"),
-            ("B_Ensemble", "signal_ensemble_b"),
-        ]:
+        _A_ORIG = {"RSI_MeanReversion", "MACD_Momentum", "BB_Reversion", "Ensemble_A"}
+        for reg_name, label, sig_col in enabled_backtest_signal_cols():
+            if sig_col not in df.columns:
+                continue
             try:
-                res = bt.run(df, sig_col, strat, sym)
-                group_b_results.append(res)
+                group_prefix = "A_" if reg_name in _A_ORIG else "B_"
+                res = bt.run(df, sig_col, f"{group_prefix}{label}", sym)
+                (group_a_results if group_prefix == "A_" else group_b_results).append(res)
             except Exception as e:
-                logger.error("Backtest failed for %s/%s: %s", sym, strat, e)
+                logger.error("Backtest failed for %s/%s: %s", sym, reg_name, e)
 
-        # ── Group B + Meta-filter ──────────────────────────────────────────
-        for strat, sig_col in [
-            ("B_RSI_MetaFiltered", "signal_rsi"),
-            ("B_MACD_MetaFiltered", "signal_macd"),
-            ("B_Ensemble_MetaFiltered", "signal_ensemble_b"),
-        ]:
-            try:
-                filtered_signal = _apply_meta_filter(df, sig_col)
-                df[f"_tmp_{strat}"] = filtered_signal
-                res = bt.run(df, f"_tmp_{strat}", strat, sym)
-                group_b_results.append(res)
-            except Exception as e:
-                logger.error("Meta-filtered backtest failed for %s/%s: %s", sym, strat, e)
+        # ── Meta-filtered variants (when MetaLabeler is enabled) ──────────
+        if is_enabled_backtest("MetaLabeler_Filter"):
+            for strat, sig_col in [
+                ("RSI_MetaFiltered",      "signal_rsi"),
+                ("MACD_MetaFiltered",     "signal_macd"),
+                ("Ensemble_MetaFiltered", "signal_ensemble_b"),
+                ("Base_ML_MetaFiltered",  "signal_base_ml"),
+            ]:
+                if sig_col not in df.columns:
+                    continue
+                try:
+                    filtered_signal = _apply_meta_filter(df, sig_col)
+                    tmp_col = f"_tmp_meta_{strat}"
+                    df[tmp_col] = filtered_signal
+                    res = bt.run(df, tmp_col, strat, sym)
+                    group_b_results.append(res)
+                except Exception as e:
+                    logger.error("Meta-filtered backtest failed for %s/%s: %s", sym, strat, e)
 
     all_results = group_a_results + group_b_results
     comparison = bt.compare_strategies(all_results)

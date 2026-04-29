@@ -22,6 +22,7 @@
 - **Automatic Commit Policy**: After implementation work is finished, commit all completed changes automatically so the user can roll back far back if needed.
 - **Approval Before Work**: Present the todo list first, then ask for approval, then proceed with implementation.
 - **Editable Plan**: Let the user modify the todo list before starting implementation.
+- **Disk Usage Rule**: Do not use the disk with Windows (C:) for downloads, caching, and heavy disk tasks. Always redirect temporary and cache directories (like HuggingFace, PyTorch, PIP, and Temp) to the project's data folder on the D: drive.
 
 ## Completed (2026-04-25 Session)
 - Full codebase security & quality review and fixes (see summary below)

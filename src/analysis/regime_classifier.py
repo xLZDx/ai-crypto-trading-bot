@@ -156,6 +156,25 @@ class RegimeClassifier:
         joblib.dump({"model": self._model, "label_map": label_map}, self.MODEL_PATH)
         logger.info("Regime classifier trained and saved. Label map: %s",
                     {REGIME_NAMES[v]: k for k, v in label_map.items()})
+
+        from datetime import datetime, timezone as _tz
+        meta_path = self.MODEL_PATH.replace(".joblib", "_meta.json")
+        with open(meta_path, "w", encoding="utf-8") as _mf:
+            json.dump(
+                {
+                    "n_components": self.n_components,
+                    "regimes": REGIME_NAMES,
+                    "label_map": {str(k): v for k, v in label_map.items()},
+                    "n_samples": int(len(combined)),
+                    "model_path": self.MODEL_PATH,
+                    "last_trained": datetime.now(_tz.utc).isoformat(),
+                    "model_type": "GMM",
+                    "accuracy_note": "Unsupervised GMM — no labelled accuracy",
+                    "accuracy": None,
+                },
+                _mf,
+                indent=2,
+            )
         return self
 
     def predict(self, df: pd.DataFrame, last_n: int = 48) -> int:

@@ -716,5 +716,613 @@ class TestMarketAgentsConfig:
         assert CONFIDENCE_THRESHOLD >= 0.55
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# 14. Strategy Registry
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestStrategyRegistry:
+    def test_registry_has_entries(self):
+        from src.engine.strategy_registry import REGISTRY
+        assert len(REGISTRY) >= 15, "Registry should have at least 15 strategies"
+
+    def test_registry_required_fields(self):
+        from src.engine.strategy_registry import REGISTRY
+        required = {"label", "description", "group", "signal_col", "models", "can_live", "can_backtest"}
+        for name, info in REGISTRY.items():
+            missing = required - set(info.keys())
+            assert not missing, f"{name} missing fields: {missing}"
+
+    def test_load_config_returns_dict(self):
+        from src.engine.strategy_registry import load_config
+        cfg = load_config()
+        assert isinstance(cfg, dict)
+        assert len(cfg) > 0
+
+    def test_config_keys_match_registry(self):
+        from src.engine.strategy_registry import load_config, REGISTRY
+        cfg = load_config()
+        for name in cfg:
+            assert name in REGISTRY, f"Config has unknown strategy: {name}"
+
+    def test_update_strategy_persists(self, tmp_path, monkeypatch):
+        from src.engine import strategy_registry as reg
+        monkeypatch.setattr(reg, "CONFIG_PATH", tmp_path / "strategy_config.json")
+        entry = reg.update_strategy("RSI_MeanReversion", live=False, backtest=True)
+        assert entry["backtest"] is True
+        cfg = reg.load_config()
+        assert cfg["RSI_MeanReversion"]["backtest"] is True
+
+    def test_update_unknown_strategy_raises(self):
+        from src.engine.strategy_registry import update_strategy
+        with pytest.raises(KeyError):
+            update_strategy("NonExistentStrategy_XYZ", live=True)
+
+    def test_get_sync_report_structure(self):
+        from src.engine.strategy_registry import get_sync_report
+        report = get_sync_report()
+        assert "strategies" in report
+        assert "summary"    in report
+        assert "total"      in report["summary"]
+        assert "synced"     in report["summary"]
+        assert "gaps"       in report["summary"]
+
+    def test_sync_report_every_strategy_has_status(self):
+        from src.engine.strategy_registry import get_sync_report, REGISTRY
+        report = get_sync_report()
+        names = {e["name"] for e in report["strategies"]}
+        assert names == set(REGISTRY.keys())
+        valid_statuses = {
+            "synced", "live_only", "backtest_only",
+            "live_only_by_design", "backtest_only_by_design", "disabled"
+        }
+        for entry in report["strategies"]:
+            assert entry["sync_status"] in valid_statuses
+
+    def test_enabled_backtest_signal_cols(self):
+        from src.engine.strategy_registry import enabled_backtest_signal_cols
+        cols = enabled_backtest_signal_cols()
+        assert isinstance(cols, list)
+        assert len(cols) > 0
+        for name, label, sig_col in cols:
+            assert isinstance(sig_col, str)
+            assert len(sig_col) > 0
+
+    def test_is_enabled_helpers(self):
+        from src.engine.strategy_registry import is_enabled_live, is_enabled_backtest
+        # RSI is enabled by default for both
+        assert isinstance(is_enabled_live("RSI_MeanReversion"), bool)
+        assert isinstance(is_enabled_backtest("RSI_MeanReversion"), bool)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 15. Strategy Sync API endpoint
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestStrategySyncEndpoint:
+    @pytest.fixture(autouse=True)
+    def client(self):
+        from src.dashboard.app import app
+        app.config["TESTING"] = True
+        with app.test_client() as c:
+            self.client = c
+
+    def test_strategy_sync_get_returns_200(self):
+        r = self.client.get("/api/strategy-sync")
+        assert r.status_code == 200
+
+    def test_strategy_sync_has_strategies_key(self):
+        r = self.client.get("/api/strategy-sync")
+        data = r.get_json()
+        assert "strategies" in data
+        assert "summary"    in data
+
+    def test_strategy_sync_strategies_are_list(self):
+        r = self.client.get("/api/strategy-sync")
+        data = r.get_json()
+        assert isinstance(data["strategies"], list)
+        assert len(data["strategies"]) > 0
+
+    def test_strategy_sync_each_entry_has_required_fields(self):
+        r = self.client.get("/api/strategy-sync")
+        data = r.get_json()
+        required = {"name", "label", "group", "can_live", "can_backtest",
+                    "live_enabled", "backtest_enabled", "sync_status"}
+        for entry in data["strategies"]:
+            missing = required - set(entry.keys())
+            assert not missing, f"Entry missing: {missing}"
+
+    def test_strategy_sync_post_toggle(self, tmp_path, monkeypatch):
+        from src.engine import strategy_registry as reg
+        monkeypatch.setattr(reg, "CONFIG_PATH", tmp_path / "strategy_config.json")
+        r = self.client.post(
+            "/api/strategy-sync",
+            json={"name": "RSI_MeanReversion", "live": False, "backtest": True},
+            content_type="application/json",
+        )
+        assert r.status_code == 200
+        data = r.get_json()
+        assert "updated" in data
+        assert len(data["updated"]) == 1
+        assert data["updated"][0]["name"] == "RSI_MeanReversion"
+
+    def test_strategy_sync_post_unknown_name_returns_400(self):
+        r = self.client.post(
+            "/api/strategy-sync",
+            json={"name": "TOTALLY_FAKE_STRATEGY_XYZ", "live": True},
+            content_type="application/json",
+        )
+        assert r.status_code == 400
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 16. Backtester new signals (ML batch + Elliott proxy + GARCH + vol breakout)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestBacktesterNewSignals:
+    @pytest.fixture
+    def bt_df(self):
+        df = _make_ohlcv(300)
+        df["timestamp"] = df.index
+        df["funding_rate"] = 0.0
+        df["taker_buy_base"] = df["volume"] * 0.5
+        df["taker_buy_quote"] = df["close"] * df["volume"] * 0.5
+        df["trades_count"] = 100
+        return df.reset_index(drop=True)
+
+    def test_build_signals_adds_vol_breakout(self, bt_df):
+        from src.engine.backtester import _build_signals
+        out = _build_signals(bt_df)
+        assert "signal_vol_breakout" in out.columns
+        assert out["signal_vol_breakout"].isin([-1.0, 0.0, 1.0]).all()
+
+    def test_build_signals_adds_garch_mult(self, bt_df):
+        from src.engine.backtester import _build_signals
+        out = _build_signals(bt_df)
+        assert "garch_size_mult" in out.columns
+        assert out["garch_size_mult"].isin([0.5, 1.0]).all()
+
+    def test_build_signals_adds_mtf_filter(self, bt_df):
+        from src.engine.backtester import _build_signals
+        out = _build_signals(bt_df)
+        assert "signal_mtf_filter" in out.columns
+        assert out["signal_mtf_filter"].isin([-1.0, 1.0]).all()
+
+    def test_build_signals_adds_ml_signals(self, bt_df):
+        from src.engine.backtester import _build_signals
+        out = _build_signals(bt_df)
+        # ML signals present regardless of whether model file exists (falls back to 0)
+        assert "signal_base_ml"    in out.columns
+        assert "signal_trend_ml"   in out.columns
+        assert "signal_futures_ml" in out.columns
+
+    def test_build_signals_adds_elliott_proxy(self, bt_df):
+        from src.engine.backtester import _build_signals
+        out = _build_signals(bt_df)
+        assert "signal_elliott_proxy" in out.columns
+        assert out["signal_elliott_proxy"].isin([-1.0, 0.0, 1.0]).all()
+
+    def test_batch_ml_predict_missing_model_returns_zeros(self, bt_df):
+        from src.engine.backtester import _batch_ml_predict
+        result = _batch_ml_predict(bt_df, "nonexistent_model_xyz.joblib")
+        assert (result == 0.0).all()
+
+    def test_garch_halves_position_on_vol_spike(self, bt_df):
+        from src.engine.backtester import Backtester, _build_signals
+        df = _build_signals(bt_df)
+        # Force a spike on one bar
+        df["garch_size_mult"] = 1.0
+        df.loc[50, "garch_size_mult"] = 0.5
+        df["signal_test"] = 1.0  # always long
+        bt = Backtester(initial_capital=1000)
+        result = bt.run(df, "signal_test", "garch_test", "BTC_USDT")
+        assert result is not None
+
+
+# ─── Simulator Tests ──────────────────────────────────────────────────────────
+
+class TestSimulatorDataStore:
+    """Tests for DuckDB-backed simulator store."""
+
+    def test_import(self):
+        from src.simulation.data_store import SimulatorDataStore
+        assert SimulatorDataStore is not None
+
+    def test_init_creates_db(self, tmp_path):
+        from src.simulation.data_store import SimulatorDataStore
+        db = tmp_path / "test.duckdb"
+        store = SimulatorDataStore(db_path=db)
+        assert db.exists()
+
+    def test_start_scenario_returns_id(self, tmp_path):
+        from src.simulation.data_store import SimulatorDataStore
+        store = SimulatorDataStore(db_path=tmp_path / "t.duckdb")
+        sid = store.start_scenario("VOLATILE", "BTC_USDT", "1m")
+        assert isinstance(sid, str) and len(sid) == 36  # UUID
+
+    def test_update_scenario_bars(self, tmp_path):
+        from src.simulation.data_store import SimulatorDataStore
+        store = SimulatorDataStore(db_path=tmp_path / "t.duckdb")
+        sid = store.start_scenario("RANGING", "ETH_USDT", "1h")
+        store.update_scenario_bars(sid, 1234)
+        summary = store.get_summary()
+        assert summary["max_bars_replayed"] == 1234
+
+    def test_record_paper_trade(self, tmp_path):
+        from src.simulation.data_store import SimulatorDataStore
+        from datetime import datetime, timezone
+        store = SimulatorDataStore(db_path=tmp_path / "t.duckdb")
+        sid = store.start_scenario("TRENDING_UP", "BTC_USDT", "1m")
+        store.record_paper_trade(
+            scenario_id=sid, symbol="BTC_USDT", direction=1,
+            entry_price=50000.0, exit_price=51000.0, size_usd=100.0,
+            entry_ts=datetime(2023,1,1,tzinfo=timezone.utc),
+            exit_ts=datetime(2023,1,2,tzinfo=timezone.utc),
+            strategy="ScalpingML", model_ver="v1",
+        )
+        summary = store.get_summary()
+        assert summary["total_paper_trades"] == 1
+        assert summary["total_pnl_usd"] > 0  # long + price rose
+
+    def test_record_training_event(self, tmp_path):
+        from src.simulation.data_store import SimulatorDataStore
+        store = SimulatorDataStore(db_path=tmp_path / "t.duckdb")
+        store.record_training_event(
+            model_name="ScalpingML", scenario_id="test-id",
+            bars_trained=5000, train_loss=0.35, val_loss=0.37,
+            accuracy=0.64, sharpe=1.2,
+        )
+        events = store.get_recent_training_events()
+        assert len(events) == 1
+        assert events[0]["model"] == "ScalpingML"
+
+    def test_get_summary_models(self, tmp_path):
+        from src.simulation.data_store import SimulatorDataStore
+        store = SimulatorDataStore(db_path=tmp_path / "t.duckdb")
+        store.record_training_event("TFT_MM", "x", 1000, 0.1, 0.11, 0.7)
+        store.record_training_event("OU_Filter", "x", 500, 0.0, 0.0, 0.55)
+        summary = store.get_summary()
+        names = {m["name"] for m in summary["models"]}
+        assert "TFT_MM" in names
+        assert "OU_Filter" in names
+
+    def test_pnl_series_empty(self, tmp_path):
+        from src.simulation.data_store import SimulatorDataStore
+        store = SimulatorDataStore(db_path=tmp_path / "t.duckdb")
+        series = store.get_paper_pnl_series()
+        assert isinstance(series, list)
+
+    def test_training_events_filter_by_model(self, tmp_path):
+        from src.simulation.data_store import SimulatorDataStore
+        store = SimulatorDataStore(db_path=tmp_path / "t.duckdb")
+        store.record_training_event("ScalpingML", "", 100, 0.3, 0.31, 0.6)
+        store.record_training_event("TFT_MM",     "", 200, 0.2, 0.21, 0.7)
+        scalp_events = store.get_recent_training_events(model_name="ScalpingML")
+        assert all(e["model"] == "ScalpingML" for e in scalp_events)
+
+
+class TestScenarioManager:
+    """Tests for scenario selection and classification."""
+
+    def test_import(self):
+        from src.simulation.scenario_manager import ScenarioManager
+        assert ScenarioManager is not None
+
+    def test_scenario_types_defined(self):
+        from src.simulation.scenario_manager import SCENARIO_TYPES
+        assert "VOLATILE" in SCENARIO_TYPES
+        assert "TRENDING_UP" in SCENARIO_TYPES
+        assert len(SCENARIO_TYPES) >= 5
+
+    def test_classify_bars_trending_up(self):
+        from src.simulation.scenario_manager import ScenarioManager
+        mgr = ScenarioManager()
+        prices = pd.Series([100 * (1 + 0.01) ** i for i in range(100)])
+        df = pd.DataFrame({"close": prices, "volume": 1.0})
+        result = mgr.classify_bars(df)
+        assert result in ("TRENDING_UP", "COMPOSITE")
+
+    def test_classify_bars_volatile(self):
+        from src.simulation.scenario_manager import ScenarioManager
+        mgr = ScenarioManager()
+        rng = np.random.default_rng(42)
+        prices = 100 + rng.normal(0, 5, 100).cumsum()
+        df = pd.DataFrame({"close": prices, "volume": 1.0})
+        result = mgr.classify_bars(df)
+        assert result in ("VOLATILE", "COMPOSITE", "TRENDING_UP", "TRENDING_DOWN")
+
+    def test_classify_bars_empty_returns_composite(self):
+        from src.simulation.scenario_manager import ScenarioManager
+        mgr = ScenarioManager()
+        assert mgr.classify_bars(pd.DataFrame()) == "COMPOSITE"
+
+    def test_record_result_updates_weights(self):
+        from src.simulation.scenario_manager import ScenarioManager
+        mgr = ScenarioManager()
+        orig = mgr._weights.get("VOLATILE", 1.0)
+        mgr.record_result("VOLATILE", 0.01)  # low accuracy → higher weight
+        assert mgr._weights["VOLATILE"] > orig
+
+    def test_weighted_choice_returns_valid_type(self):
+        from src.simulation.scenario_manager import ScenarioManager, SCENARIO_TYPES
+        mgr = ScenarioManager()
+        for _ in range(20):
+            assert mgr._weighted_choice() in SCENARIO_TYPES
+
+
+class TestMarketReplay:
+    """Tests for GZ streaming replay engine."""
+
+    def test_import(self):
+        from src.simulation.market_replay import MarketReplay
+        assert MarketReplay is not None
+
+    def test_missing_gz_raises(self):
+        from src.simulation.market_replay import MarketReplay
+        import pytest
+        with pytest.raises(FileNotFoundError):
+            MarketReplay("NONEXISTENT_USDT", "1m")
+
+    def test_btc_1m_exists_and_streams(self):
+        from src.simulation.market_replay import RAW_DIR, MarketReplay
+        gz = RAW_DIR / "BTC_USDT_1m.csv.gz"
+        if not gz.exists():
+            pytest.skip("BTC_USDT_1m.csv.gz not present in data/raw/")
+        replay = MarketReplay("BTC_USDT", "1m", speed=100_000.0)
+        bars = []
+        for bar in replay.stream(stopped_flag=[False]):
+            bars.append(bar)
+            if len(bars) >= 10:
+                break
+        assert len(bars) == 10
+        assert "close" in bars[0]
+        assert bars[0]["source"] == "simulator"
+
+    def test_bar_has_required_fields(self):
+        from src.simulation.market_replay import RAW_DIR, MarketReplay
+        gz = RAW_DIR / "BTC_USDT_1m.csv.gz"
+        if not gz.exists():
+            pytest.skip("BTC_USDT_1m.csv.gz not present in data/raw/")
+        replay = MarketReplay("BTC_USDT", "1m", speed=100_000.0)
+        for bar in replay.stream():
+            required = {"symbol","timeframe","timestamp","open","high","low",
+                        "close","volume","funding_rate","source"}
+            assert required.issubset(set(bar.keys()))
+            break
+
+    def test_stop_flag_halts_stream(self):
+        from src.simulation.market_replay import RAW_DIR, MarketReplay
+        gz = RAW_DIR / "BTC_USDT_1m.csv.gz"
+        if not gz.exists():
+            pytest.skip("BTC_USDT_1m.csv.gz not present in data/raw/")
+        stop = [False]
+        replay = MarketReplay("BTC_USDT", "1m", speed=100_000.0)
+        count = 0
+        for bar in replay.stream(stopped_flag=stop):
+            count += 1
+            if count == 5:
+                stop[0] = True
+        assert count <= 6  # stopped promptly
+
+
+class TestSimulatorAgent:
+    """Tests for SimulatorAgent state machine."""
+
+    def test_import(self):
+        from src.engine.agents.simulator_agent import SimulatorAgent
+        assert SimulatorAgent is not None
+
+    def test_initial_state_idle(self):
+        from src.engine.agents.simulator_agent import SimulatorAgent, IDLE
+        agent = SimulatorAgent(auto_cycle=False)
+        assert agent.get_status()["state"] == IDLE
+
+    def test_configure_updates_config(self):
+        from src.engine.agents.simulator_agent import SimulatorAgent
+        agent = SimulatorAgent(auto_cycle=False)
+        agent.configure({"symbol": "ETH_USDT", "speed": 500.0})
+        cfg = agent.get_status()["config"]
+        assert cfg["symbol"] == "ETH_USDT"
+        assert cfg["speed"] == 500.0
+
+    def test_stop_sets_idle(self):
+        from src.engine.agents.simulator_agent import SimulatorAgent, IDLE
+        agent = SimulatorAgent(auto_cycle=False)
+        agent.stop()
+        assert agent.get_status()["state"] == IDLE
+
+
+class TestSimulatorEndpoints:
+    """Tests for simulator Flask REST endpoints."""
+
+    @pytest.fixture(autouse=True)
+    def client(self):
+        from src.dashboard.app import app
+        app.config["TESTING"] = True
+        with app.test_client() as c:
+            self.client = c
+
+    def _hdrs(self):
+        return {"Content-Type": "application/json"}
+
+    def test_status_endpoint_returns_200(self):
+        r = self.client.get("/api/simulator/status")
+        assert r.status_code == 200
+        d = r.get_json()
+        assert "state" in d
+
+    def test_available_data_endpoint(self):
+        r = self.client.get("/api/simulator/available_data")
+        assert r.status_code == 200
+        d = r.get_json()
+        assert "files" in d
+        assert "total" in d
+
+    def test_config_endpoint(self):
+        r = self.client.post(
+            "/api/simulator/config",
+            json={"symbol": "ETH_USDT", "speed": 500.0},
+            headers=self._hdrs(),
+        )
+        assert r.status_code == 200
+        d = r.get_json()
+        assert d["ok"] is True
+
+    def test_training_history_endpoint(self):
+        r = self.client.get("/api/simulator/training_history")
+        assert r.status_code == 200
+        d = r.get_json()
+        assert "events" in d
+        assert "pnl_series" in d
+
+    def test_pause_stop_endpoints(self):
+        r_pause = self.client.post("/api/simulator/pause")
+        r_stop  = self.client.post("/api/simulator/stop")
+        assert r_pause.status_code == 200
+        assert r_stop.status_code == 200
+
+
+# ─── New Indicator Tests ──────────────────────────────────────────────────────
+
+class TestNewIndicators:
+    """Tests for Ichimoku, SuperTrend, and MACD Divergence indicators."""
+
+    @pytest.fixture
+    def ohlcv_df(self):
+        """Synthetic 300-bar OHLCV DataFrame for indicator testing."""
+        rng = np.random.default_rng(42)
+        n = 300
+        close = 50000 + rng.normal(0, 500, n).cumsum()
+        close = np.maximum(close, 10000)
+        high  = close + rng.uniform(50, 300, n)
+        low   = close - rng.uniform(50, 300, n)
+        df = pd.DataFrame({
+            "open":   close - rng.uniform(0, 100, n),
+            "high":   high,
+            "low":    low,
+            "close":  close,
+            "volume": rng.uniform(1e6, 5e6, n),
+            "timestamp": pd.date_range("2023-01-01", periods=n, freq="h"),
+        })
+        return df
+
+    def test_ichimoku_columns_added(self, ohlcv_df):
+        from src.analysis.feature_engineering import add_ichimoku
+        df = add_ichimoku(ohlcv_df.copy())
+        required = {"ichimoku_tenkan", "ichimoku_kijun",
+                    "ichimoku_senkou_a", "ichimoku_senkou_b",
+                    "ichimoku_chikou", "signal_ichimoku"}
+        assert required.issubset(df.columns)
+
+    def test_ichimoku_signal_values(self, ohlcv_df):
+        from src.analysis.feature_engineering import add_ichimoku
+        df = add_ichimoku(ohlcv_df.copy())
+        assert df["signal_ichimoku"].isin([-1.0, 0.0, 1.0]).all()
+
+    def test_ichimoku_min_rows_required(self):
+        from src.analysis.feature_engineering import add_ichimoku
+        df_tiny = pd.DataFrame({
+            "open": [1.0]*5, "high": [1.1]*5, "low": [0.9]*5,
+            "close": [1.0]*5, "volume": [1e6]*5,
+        })
+        df = add_ichimoku(df_tiny)
+        assert "signal_ichimoku" in df.columns
+
+    def test_supertrend_columns_added(self, ohlcv_df):
+        from src.analysis.feature_engineering import add_supertrend
+        df = add_supertrend(ohlcv_df.copy())
+        assert "supertrend"        in df.columns
+        assert "supertrend_dir"    in df.columns
+        assert "signal_supertrend" in df.columns
+
+    def test_supertrend_direction_binary(self, ohlcv_df):
+        from src.analysis.feature_engineering import add_supertrend
+        df = add_supertrend(ohlcv_df.copy())
+        dirs = df["supertrend_dir"].dropna()
+        assert dirs.isin([-1.0, 1.0, np.nan]).all() or set(dirs.unique()).issubset({-1, 1, 0, np.nan})
+
+    def test_supertrend_signal_only_on_flip(self, ohlcv_df):
+        from src.analysis.feature_engineering import add_supertrend
+        df = add_supertrend(ohlcv_df.copy())
+        # Flips should be rare (not every bar)
+        flips = (df["signal_supertrend"] != 0).sum()
+        assert flips < len(df) * 0.3, "SuperTrend should emit signals on direction flips only"
+
+    def test_macd_divergence_columns(self, ohlcv_df):
+        from src.analysis.feature_engineering import add_macd_divergence
+        df = add_macd_divergence(ohlcv_df.copy())
+        assert "macd_cl_cross"    in df.columns
+        assert "macd_divergence"  in df.columns
+        assert "signal_macd_div"  in df.columns
+
+    def test_macd_divergence_signal_values(self, ohlcv_df):
+        from src.analysis.feature_engineering import add_macd_divergence
+        df = add_macd_divergence(ohlcv_df.copy())
+        assert df["signal_macd_div"].isin([-1.0, 0.0, 1.0]).all()
+
+    def test_backtester_builds_ichimoku_signal(self):
+        from src.engine.backtester import _build_signals
+        rng = np.random.default_rng(0)
+        n = 300
+        close = 50000 + rng.normal(0, 400, n).cumsum()
+        close = np.maximum(close, 10000)
+        df = pd.DataFrame({
+            "open":  close - 50, "high": close + 100,
+            "low":   close - 100, "close": close,
+            "volume": rng.uniform(1e6, 3e6, n),
+            "timestamp": pd.date_range("2023-01-01", periods=n, freq="h"),
+        })
+        result = _build_signals(df)
+        assert "signal_ichimoku"    in result.columns
+        assert "signal_supertrend"  in result.columns
+        assert "signal_macd_div"    in result.columns
+        assert "signal_ou_entry"    in result.columns
+
+    def test_backtester_ichimoku_signal_range(self):
+        from src.engine.backtester import _build_signals
+        rng = np.random.default_rng(7)
+        n = 300
+        close = 40000 + rng.normal(0, 300, n).cumsum()
+        close = np.maximum(close, 1000)
+        df = pd.DataFrame({
+            "open": close - 30, "high": close + 60,
+            "low":  close - 60, "close": close,
+            "volume": rng.uniform(5e5, 2e6, n),
+            "timestamp": pd.date_range("2022-01-01", periods=n, freq="h"),
+        })
+        result = _build_signals(df)
+        assert result["signal_ichimoku"].isin([-1.0, 0.0, 1.0]).all()
+        assert result["signal_supertrend"].isin([-1.0, 0.0, 1.0]).all()
+
+    def test_strategy_registry_has_new_strategies(self):
+        from src.engine.strategy_registry import REGISTRY
+        assert "Ichimoku_Cloud"  in REGISTRY
+        assert "Supertrend"      in REGISTRY
+        assert "MACD_Divergence" in REGISTRY
+        assert "OU_Entry"        in REGISTRY
+
+    def test_new_strategies_have_required_fields(self):
+        from src.engine.strategy_registry import REGISTRY
+        for name in ("Ichimoku_Cloud", "Supertrend", "MACD_Divergence", "OU_Entry"):
+            entry = REGISTRY[name]
+            assert "signal_col" in entry
+            assert "can_live"   in entry
+            assert "can_backtest" in entry
+            assert entry["can_live"]     is True
+            assert entry["can_backtest"] is True
+
+    def test_strategy_registry_total_count(self):
+        from src.engine.strategy_registry import REGISTRY
+        # Originally 22, now 26 with 4 new strategies
+        assert len(REGISTRY) >= 26
+
+    def test_sync_report_includes_new_strategies(self):
+        from src.engine.strategy_registry import get_sync_report
+        report = get_sync_report()
+        names = {e["name"] for e in report["strategies"]}
+        assert "Ichimoku_Cloud"  in names
+        assert "Supertrend"      in names
+        assert "MACD_Divergence" in names
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

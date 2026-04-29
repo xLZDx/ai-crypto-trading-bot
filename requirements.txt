@@ -31,3 +31,4 @@ arch
 statsmodels
 vectorbt
 yfinance
+duckdb>=0.10.0

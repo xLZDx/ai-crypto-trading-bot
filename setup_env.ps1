@@ -12,6 +12,10 @@ if (-not $root) { $root = Split-Path -Parent $MyInvocation.MyCommand.Path }
 
 $cacheDir = Join-Path $root 'data\cache'
 
+# Force Python to use UTF-8 instead of cp1252 for console output/logging
+$env:PYTHONIOENCODING = "utf-8"
+$env:PYTHONUTF8 = "1"
+
 # ── 1. Temp & cache → D drive ─────────────────────────────────────────────────
 New-Item -ItemType Directory -Force -Path (Join-Path $cacheDir 'temp')         | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $cacheDir 'pip')          | Out-Null

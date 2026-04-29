@@ -6,6 +6,15 @@ New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $host.UI.RawUI.WindowTitle = 'CUDA Install + Full Training'
 Set-Location $root
 
+# Redirect system temp and pip cache to D: drive to prevent C: drive out-of-space errors
+$cacheDir = Join-Path $root 'data\cache'
+New-Item -ItemType Directory -Force -Path (Join-Path $cacheDir 'temp') | Out-Null
+$env:TMP = Join-Path $cacheDir 'temp'
+$env:TEMP = Join-Path $cacheDir 'temp'
+$env:PIP_CACHE_DIR = Join-Path $cacheDir 'pip'
+$env:HF_HOME = Join-Path $cacheDir 'huggingface'
+$env:TORCH_HOME = Join-Path $cacheDir 'torch'
+
 function Test-TorchCuda {
     $r = & $python -c "import torch; print(torch.cuda.is_available())" 2>&1
     return ($r -join '') -match 'True'
@@ -13,7 +22,7 @@ function Test-TorchCuda {
 
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "   STEP 1: INSTALL CUDA TORCH (RTX 3080 Ti)"
-Write-Host "   Python 3.14 — trying multiple CUDA builds"
+Write-Host "   Python 3.14 - trying multiple CUDA builds"
 Write-Host "==========================================" -ForegroundColor Cyan
 
 # Uninstall whatever is there
@@ -22,38 +31,38 @@ Write-Host "`nUninstalling existing torch..." -ForegroundColor Yellow
 
 $installed = $false
 
-# Attempt 1: cu128 (newest — most likely to have Python 3.14 wheels)
+# Attempt 1: cu128 (newest - most likely to have Python 3.14 wheels)
 if (-not $installed) {
     Write-Host "`nAttempt 1/4: CUDA 12.8 wheel..." -ForegroundColor Yellow
-    & $pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128 2>&1 | Out-String -Stream
+    & $pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128 --no-cache-dir 2>&1 | Out-String -Stream
     if (Test-TorchCuda) { $installed = $true; Write-Host "SUCCESS: cu128!" -ForegroundColor Green }
 }
 
 # Attempt 2: cu126
 if (-not $installed) {
     Write-Host "`nAttempt 2/4: CUDA 12.6 wheel..." -ForegroundColor Yellow
-    & $pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126 2>&1 | Out-String -Stream
+    & $pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126 --no-cache-dir 2>&1 | Out-String -Stream
     if (Test-TorchCuda) { $installed = $true; Write-Host "SUCCESS: cu126!" -ForegroundColor Green }
 }
 
 # Attempt 3: cu124
 if (-not $installed) {
     Write-Host "`nAttempt 3/4: CUDA 12.4 wheel..." -ForegroundColor Yellow
-    & $pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124 2>&1 | Out-String -Stream
+    & $pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124 --no-cache-dir 2>&1 | Out-String -Stream
     if (Test-TorchCuda) { $installed = $true; Write-Host "SUCCESS: cu124!" -ForegroundColor Green }
 }
 
 # Attempt 4: nightly cu128 (pre-release, broadest Python support)
 if (-not $installed) {
     Write-Host "`nAttempt 4/4: nightly cu128 (pre-release)..." -ForegroundColor Yellow
-    & $pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128 2>&1 | Out-String -Stream
+    & $pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128 --no-cache-dir 2>&1 | Out-String -Stream
     if (Test-TorchCuda) { $installed = $true; Write-Host "SUCCESS: nightly cu128!" -ForegroundColor Green }
 }
 
 if (-not $installed) {
     Write-Host "`nWARNING: No CUDA torch found for Python 3.14." -ForegroundColor Red
     Write-Host "Reinstalling CPU torch so training can continue..." -ForegroundColor Yellow
-    & $pip install torch torchvision 2>&1 | Out-String -Stream
+    & $pip install torch torchvision --no-cache-dir 2>&1 | Out-String -Stream
     Write-Host "CPU torch reinstalled. TFT will train on CPU (slower)." -ForegroundColor Yellow
 } else {
     Write-Host "`nGPU verify:" -ForegroundColor Green

@@ -2146,6 +2146,7 @@ function _renderStratCards(data) {
       const ts  = tradeStats[s.name] || {};
       const wr  = ts.win_rate != null ? ts.win_rate.toFixed(1)+'%' : '--';
       const pnl = ts.pnl != null ? (ts.pnl >= 0 ? '+' : '') + ts.pnl.toFixed(2) : '--';
+      const statSrc = ts.source === 'backtest' ? ' <span style="font-size:.42rem;color:#64748b;vertical-align:middle">BT</span>' : '';
       const pnlCol = ts.pnl > 0 ? '#34d399' : ts.pnl < 0 ? '#fb7185' : '#64748b';
       const liveDot = s.live_enabled ? 'live' : (s.backtest_enabled ? 'bt-only' : 'off');
       const syncBadge = {synced:'LIVE+BT',live_only:'LIVE',live_only_by_design:'LIVE',
@@ -2165,7 +2166,7 @@ function _renderStratCards(data) {
         <div style="font-size:.58rem;color:#475569;margin-bottom:7px">${esc(s.description||'')}</div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:6px">
           <div style="background:rgba(5,8,22,.55);border-radius:6px;padding:4px 6px;text-align:center">
-            <div style="font-size:.48rem;color:#475569">TRADES</div>
+            <div style="font-size:.48rem;color:#475569">TRADES${statSrc}</div>
             <div style="font-size:.82rem;font-weight:800;color:#fff">${ts.n||'--'}</div>
           </div>
           <div style="background:rgba(5,8,22,.55);border-radius:6px;padding:4px 6px;text-align:center">
@@ -2907,9 +2908,11 @@ function renderModelStats(models, cuda) {
   });
 
   grid.innerHTML = models.map(m => {
-    const acc  = m.accuracy       || 0;
-    const lAcc = m.long_accuracy  || 0;
-    const sAcc = m.short_accuracy || 0;
+    const isUnsupervised = m.accuracy === null || m.accuracy_note;
+    const acc  = isUnsupervised ? null : (m.accuracy       || 0);
+    const lAcc = isUnsupervised ? null : (m.long_accuracy  || 0);
+    const sAcc = isUnsupervised ? null : (m.short_accuracy || 0);
+    const accLabel = isUnsupervised ? (m.model_type || 'N/A') : `${(acc||0).toFixed(1)}%`;
     const syms = (m.symbols||[]).map(s => `<span class="ms-tag">${esc(s)}</span>`).join('');
     const trainedAt = m.last_trained ? new Date(m.last_trained).toLocaleString() : 'Never';
     const status = m.model_exists
@@ -2937,23 +2940,26 @@ function renderModelStats(models, cuda) {
           <div style="font-size:.72rem;font-weight:700;color:#e2e8f0">${esc(m.label)}</div>
           <div style="font-size:.59rem;color:#475569;margin-top:1px">Timeframe: ${esc(m.timeframe||'--')}</div>
         </div>
-        <div style="text-align:right">${status}<br><span style="font-size:.88rem;font-weight:800;color:#e2e8f0">${acc.toFixed(1)}%</span></div>
+        <div style="text-align:right">${status}<br><span style="font-size:.88rem;font-weight:800;color:#e2e8f0">${accLabel}</span></div>
       </div>
-      <div class="ms-bar-wrap">
+      ${isUnsupervised
+        ? `<div style="font-size:.58rem;color:#64748b;font-style:italic;margin-bottom:6px">${esc(m.accuracy_note||'Unsupervised — no labelled accuracy')}</div>`
+        : `<div class="ms-bar-wrap">
         <span style="width:52px;font-size:.6rem;color:#94a3b8">Overall</span>
         ${bar(acc,'#6366f1')}
-        <span style="width:36px;text-align:right;font-size:.62rem;color:#e2e8f0">${acc.toFixed(1)}%</span>
+        <span style="width:36px;text-align:right;font-size:.62rem;color:#e2e8f0">${(acc||0).toFixed(1)}%</span>
       </div>
       <div class="ms-bar-wrap">
         <span style="width:52px;font-size:.6rem;color:#34d399">Long</span>
         ${bar(lAcc,'#34d399')}
-        <span style="width:36px;text-align:right;font-size:.62rem;color:#34d399">${lAcc.toFixed(1)}%</span>
+        <span style="width:36px;text-align:right;font-size:.62rem;color:#34d399">${(lAcc||0).toFixed(1)}%</span>
       </div>
       <div class="ms-bar-wrap">
         <span style="width:52px;font-size:.6rem;color:#fb7185">Short</span>
         ${bar(sAcc,'#fb7185')}
-        <span style="width:36px;text-align:right;font-size:.62rem;color:#fb7185">${sAcc.toFixed(1)}%</span>
-      </div>
+        <span style="width:36px;text-align:right;font-size:.62rem;color:#fb7185">${(sAcc||0).toFixed(1)}%</span>
+      </div>`
+      }
       ${liveRow}
       <div style="margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:.62rem;color:#94a3b8;font-family:'JetBrains Mono',monospace">
         <div><span style="color:#475569">Samples</span> ${m.n_samples ? m.n_samples.toLocaleString() : '--'}</div>

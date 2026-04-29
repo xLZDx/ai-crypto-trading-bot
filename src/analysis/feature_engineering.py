@@ -458,3 +458,168 @@ def resample_1s_to_1m(filepath_1s: str, max_days: int = 365) -> pd.DataFrame:
     existing_agg = {k: v for k, v in agg.items() if k in df.columns}
     resampled = df.resample('1min').agg(existing_agg).dropna(subset=['close'])
     return resampled.reset_index()
+
+
+def add_ichimoku(
+    df: pd.DataFrame,
+    tenkan: int = 9,
+    kijun: int = 26,
+    senkou_b: int = 52,
+    displacement: int = 26,
+) -> pd.DataFrame:
+    """
+    Ichimoku Kinko Hyo — complete cloud system.
+
+    Columns added:
+      ichimoku_tenkan   — Conversion Line (9-bar midpoint)
+      ichimoku_kijun    — Base Line (26-bar midpoint)
+      ichimoku_senkou_a — Leading Span A (avg of tenkan+kijun, shifted +26)
+      ichimoku_senkou_b — Leading Span B (52-bar midpoint, shifted +26)
+      ichimoku_chikou   — Lagging Span (close shifted -26)
+      signal_ichimoku   — +1 (bullish), -1 (bearish), 0 (neutral)
+
+    Bull signal:
+      close > cloud AND tenkan > kijun (TK cross) AND close > chikou (cloud twist)
+    Bear signal:
+      close < cloud AND tenkan < kijun AND close < chikou
+    """
+    import numpy as np
+
+    def _midpoint(high: pd.Series, low: pd.Series, n: int) -> pd.Series:
+        return (high.rolling(n).max() + low.rolling(n).min()) / 2.0
+
+    df["ichimoku_tenkan"]   = _midpoint(df["high"], df["low"], tenkan)
+    df["ichimoku_kijun"]    = _midpoint(df["high"], df["low"], kijun)
+    df["ichimoku_senkou_a"] = ((df["ichimoku_tenkan"] + df["ichimoku_kijun"]) / 2.0).shift(displacement)
+    df["ichimoku_senkou_b"] = _midpoint(df["high"], df["low"], senkou_b).shift(displacement)
+    df["ichimoku_chikou"]   = df["close"].shift(-displacement)
+
+    close      = df["close"]
+    span_a     = df["ichimoku_senkou_a"]
+    span_b     = df["ichimoku_senkou_b"]
+    cloud_top  = pd.concat([span_a, span_b], axis=1).max(axis=1)
+    cloud_bot  = pd.concat([span_a, span_b], axis=1).min(axis=1)
+
+    above_cloud = close > cloud_top
+    below_cloud = close < cloud_bot
+    tk_bull = df["ichimoku_tenkan"] > df["ichimoku_kijun"]
+    tk_bear = df["ichimoku_tenkan"] < df["ichimoku_kijun"]
+
+    signal = np.where(above_cloud & tk_bull,  1.0,
+             np.where(below_cloud & tk_bear, -1.0, 0.0))
+    df["signal_ichimoku"] = signal
+    return df
+
+
+def add_supertrend(df: pd.DataFrame, period: int = 10, multiplier: float = 3.0) -> pd.DataFrame:
+    """
+    SuperTrend — ATR-based trend-following indicator.
+
+    Rules:
+      Upper band = (high+low)/2 + multiplier × ATR(period)
+      Lower band = (high+low)/2 - multiplier × ATR(period)
+      Trend flips when close crosses either band.
+
+    Columns added:
+      supertrend        — the trailing stop line
+      supertrend_dir    — +1 (uptrend), -1 (downtrend)
+      signal_supertrend — +1 (buy), -1 (sell), 0 (hold — no flip this bar)
+    """
+    import numpy as np
+
+    hl2 = (df["high"] + df["low"]) / 2.0
+    prev_close = df["close"].shift(1)
+    tr = pd.concat([
+        df["high"] - df["low"],
+        (df["high"] - prev_close).abs(),
+        (df["low"]  - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    atr = tr.rolling(period).mean()
+
+    basic_upper = hl2 + multiplier * atr
+    basic_lower = hl2 - multiplier * atr
+
+    final_upper = basic_upper.copy()
+    final_lower = basic_lower.copy()
+    supertrend  = pd.Series(index=df.index, dtype=float)
+    direction   = pd.Series(index=df.index, dtype=float)
+
+    for i in range(1, len(df)):
+        # Upper band
+        if basic_upper.iloc[i] < final_upper.iloc[i - 1] or df["close"].iloc[i - 1] > final_upper.iloc[i - 1]:
+            final_upper.iloc[i] = basic_upper.iloc[i]
+        else:
+            final_upper.iloc[i] = final_upper.iloc[i - 1]
+
+        # Lower band
+        if basic_lower.iloc[i] > final_lower.iloc[i - 1] or df["close"].iloc[i - 1] < final_lower.iloc[i - 1]:
+            final_lower.iloc[i] = basic_lower.iloc[i]
+        else:
+            final_lower.iloc[i] = final_lower.iloc[i - 1]
+
+        # Direction
+        prev_dir = direction.iloc[i - 1] if i > 1 else 1
+        if df["close"].iloc[i] > final_upper.iloc[i - 1]:
+            direction.iloc[i] = 1
+        elif df["close"].iloc[i] < final_lower.iloc[i - 1]:
+            direction.iloc[i] = -1
+        else:
+            direction.iloc[i] = prev_dir
+
+        supertrend.iloc[i] = final_lower.iloc[i] if direction.iloc[i] == 1 else final_upper.iloc[i]
+
+    df["supertrend"]     = supertrend
+    df["supertrend_dir"] = direction.fillna(1)
+
+    # Signal: only emit on direction flip (avoids holding stale signal)
+    prev_dir = df["supertrend_dir"].shift(1)
+    df["signal_supertrend"] = np.where(
+        (df["supertrend_dir"] == 1)  & (prev_dir == -1),  1.0,
+        np.where(
+        (df["supertrend_dir"] == -1) & (prev_dir ==  1), -1.0, 0.0)
+    )
+    return df
+
+
+def add_macd_divergence(df: pd.DataFrame, fast: int = 12, slow: int = 26,
+                         signal_p: int = 9, lookback: int = 5) -> pd.DataFrame:
+    """
+    MACD centerline cross + price/MACD divergence signals.
+
+    Columns added:
+      macd_cl_cross     — +1 centerline bull cross, -1 bear cross, 0 otherwise
+      macd_divergence   — +1 bullish divergence, -1 bearish divergence, 0 none
+      signal_macd_div   — combined: +1 bull, -1 bear, 0 neutral
+    """
+    import numpy as np
+
+    exp1 = df["close"].ewm(span=fast, adjust=False).mean()
+    exp2 = df["close"].ewm(span=slow, adjust=False).mean()
+    macd_line = exp1 - exp2
+    sig_line  = macd_line.ewm(span=signal_p, adjust=False).mean()
+
+    # Centerline cross: MACD crosses zero
+    prev_macd = macd_line.shift(1)
+    cl_cross = np.where((macd_line > 0) & (prev_macd <= 0),  1.0,
+               np.where((macd_line < 0) & (prev_macd >= 0), -1.0, 0.0))
+    df["macd_cl_cross"] = cl_cross
+
+    # Divergence: price makes new high/low but MACD does not (over lookback bars)
+    price_high = df["close"].rolling(lookback).max()
+    price_low  = df["close"].rolling(lookback).min()
+    macd_high  = macd_line.rolling(lookback).max()
+    macd_low   = macd_line.rolling(lookback).min()
+
+    # Bearish: price at new high, MACD below prior high
+    bear_div = (df["close"] >= price_high) & (macd_line < macd_high.shift(lookback))
+    # Bullish: price at new low, MACD above prior low
+    bull_div  = (df["close"] <= price_low)  & (macd_line > macd_low.shift(lookback))
+
+    df["macd_divergence"] = np.where(bull_div, 1.0, np.where(bear_div, -1.0, 0.0))
+
+    # Combined signal: centerline cross OR divergence
+    df["signal_macd_div"] = np.where(
+        (df["macd_cl_cross"] != 0), df["macd_cl_cross"],
+        df["macd_divergence"]
+    )
+    return df
