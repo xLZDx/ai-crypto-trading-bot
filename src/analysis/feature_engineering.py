@@ -539,37 +539,46 @@ def add_supertrend(df: pd.DataFrame, period: int = 10, multiplier: float = 3.0) 
     basic_upper = hl2 + multiplier * atr
     basic_lower = hl2 - multiplier * atr
 
-    final_upper = basic_upper.copy()
-    final_lower = basic_lower.copy()
-    supertrend  = pd.Series(index=df.index, dtype=float)
-    direction   = pd.Series(index=df.index, dtype=float)
+    # Use numpy arrays to avoid pandas copy-on-write issues with iloc assignment
+    n = len(df)
+    bu = basic_upper.values.copy()
+    bl = basic_lower.values.copy()
+    fu = bu.copy()
+    fl = bl.copy()
+    close_arr = df["close"].values
+    st  = np.full(n, np.nan)
+    dir_arr = np.ones(n, dtype=float)
 
-    for i in range(1, len(df)):
-        # Upper band
-        if basic_upper.iloc[i] < final_upper.iloc[i - 1] or df["close"].iloc[i - 1] > final_upper.iloc[i - 1]:
-            final_upper.iloc[i] = basic_upper.iloc[i]
+    for i in range(1, n):
+        # Upper band: tighten only; reset if prev close broke above
+        if np.isnan(bu[i]) or np.isnan(fu[i - 1]):
+            fu[i] = bu[i] if not np.isnan(bu[i]) else fu[i - 1]
+        elif bu[i] < fu[i - 1] or close_arr[i - 1] > fu[i - 1]:
+            fu[i] = bu[i]
         else:
-            final_upper.iloc[i] = final_upper.iloc[i - 1]
+            fu[i] = fu[i - 1]
 
-        # Lower band
-        if basic_lower.iloc[i] > final_lower.iloc[i - 1] or df["close"].iloc[i - 1] < final_lower.iloc[i - 1]:
-            final_lower.iloc[i] = basic_lower.iloc[i]
+        # Lower band: tighten only; reset if prev close broke below
+        if np.isnan(bl[i]) or np.isnan(fl[i - 1]):
+            fl[i] = bl[i] if not np.isnan(bl[i]) else fl[i - 1]
+        elif bl[i] > fl[i - 1] or close_arr[i - 1] < fl[i - 1]:
+            fl[i] = bl[i]
         else:
-            final_lower.iloc[i] = final_lower.iloc[i - 1]
+            fl[i] = fl[i - 1]
 
         # Direction
-        prev_dir = direction.iloc[i - 1] if i > 1 else 1
-        if df["close"].iloc[i] > final_upper.iloc[i - 1]:
-            direction.iloc[i] = 1
-        elif df["close"].iloc[i] < final_lower.iloc[i - 1]:
-            direction.iloc[i] = -1
+        prev_d = dir_arr[i - 1]
+        if not np.isnan(fu[i - 1]) and close_arr[i] > fu[i - 1]:
+            dir_arr[i] = 1
+        elif not np.isnan(fl[i - 1]) and close_arr[i] < fl[i - 1]:
+            dir_arr[i] = -1
         else:
-            direction.iloc[i] = prev_dir
+            dir_arr[i] = prev_d
 
-        supertrend.iloc[i] = final_lower.iloc[i] if direction.iloc[i] == 1 else final_upper.iloc[i]
+        st[i] = fl[i] if dir_arr[i] == 1 else fu[i]
 
-    df["supertrend"]     = supertrend
-    df["supertrend_dir"] = direction.fillna(1)
+    df["supertrend"]     = st
+    df["supertrend_dir"] = dir_arr
 
     # Signal: only emit on direction flip (avoids holding stale signal)
     prev_dir = df["supertrend_dir"].shift(1)
