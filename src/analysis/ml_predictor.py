@@ -1,22 +1,28 @@
+"""
+MLPredictor — universal inference wrapper for all sklearn/joblib models.
+
+Key design: builds a rich, superset feature DataFrame, then reads the model's
+own `feature_names_in_` to select exactly the columns it was trained on.
+This avoids hardcoding feature lists that drift out of sync with training scripts.
+"""
 import os
 import sys
 import logging
+
 import joblib
+import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from src.utils.safe_json import read_json
-from src.analysis.feature_engineering import (
-    add_taker_and_trade_features, add_rsi, add_macd,
-    add_bollinger_bands, add_roc, add_time_features, add_adx
-)
 
 logger = logging.getLogger(__name__)
 
+
 class MLPredictor:
-    def __init__(self, model_filename='btc_rf_model.joblib', model_type='base'):
+    def __init__(self, model_filename: str = "btc_rf_model.joblib", model_type: str = "base"):
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        self.model_path = os.path.join(base_dir, 'models', model_filename)
+        self.model_path = os.path.join(base_dir, "models", model_filename)
         self.model_type = model_type
         self.model = None
         self.is_loaded = False
@@ -25,126 +31,58 @@ class MLPredictor:
         self.short_accuracy = 0.0
         self.last_error = ""
         self._last_confidence = 0.5
-        
+
         if os.path.exists(self.model_path):
             try:
                 self.model = joblib.load(self.model_path)
                 self.is_loaded = True
-                logger.info(f"ML Model loaded: {self.model_path}")
-
-                meta_filename = model_filename.replace('.joblib', '_meta.json')
-                meta_path = os.path.join(base_dir, 'models', meta_filename)
+                logger.info("ML Model loaded: %s", self.model_path)
+                meta_path = self.model_path.replace(".joblib", "_meta.json")
                 meta = read_json(meta_path, default={})
-                self.accuracy = meta.get("accuracy", 0.0)
-                self.long_accuracy = meta.get("long_accuracy", 0.0)
+                self.accuracy       = meta.get("accuracy", 0.0)
+                self.long_accuracy  = meta.get("long_accuracy", 0.0)
                 self.short_accuracy = meta.get("short_accuracy", 0.0)
-            except Exception as e:
-                logger.error(f"Failed to load ML model from {self.model_path}: {e}")
-                self.last_error = f"Model load failed: {e}"
+            except Exception as exc:
+                logger.error("Failed to load ML model from %s: %s", self.model_path, exc)
+                self.last_error = f"Model load failed: {exc}"
         else:
-            logger.warning(f"ML Model not found: {self.model_path}. Predictions disabled.")
+            logger.warning("ML Model not found: %s", self.model_path)
             self.last_error = f"Model file not found: {self.model_path}"
 
-    def predict(self, data):
+    # ── Public API ────────────────────────────────────────────────────────────
+
+    def predict(self, data) -> int | None:
+        """
+        Return 1 (bullish), 0 (bearish), or None (no signal / low confidence).
+        Accepts a list of OHLCV dicts or a DataFrame.
+        """
         self.last_error = ""
-        if not self.is_loaded or not self.model:
+        if not self.is_loaded or self.model is None:
             self.last_error = "Model not loaded"
             return None
         if len(data) < 30:
             return None
-            
+
         try:
-            df = pd.DataFrame(data)
-            for col in ['open', 'high', 'low', 'close', 'volume']:
-                df[col] = pd.to_numeric(df[col])
-                
-            df['return'] = df['close'].pct_change()
-            df = add_time_features(df)
-            df = add_taker_and_trade_features(df)
+            df = pd.DataFrame(data) if not isinstance(data, pd.DataFrame) else data.copy()
+            for col in ("open", "high", "low", "close", "volume"):
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
 
-            if self.model_type == 'scalping':
-                df = add_rsi(df, period=7, col_name='rsi_7')
-                _tmp = add_macd(df.copy(), fast=5, slow=13, signal=3, prefix='')
-                df['macd_fast'] = _tmp['macd']
-                df['vol_sma_5'] = df['volume'].rolling(window=5).mean()
-                df['volume_surge'] = (df['volume'] > df['vol_sma_5'] * 2.0).astype(int)
-                df['low_15'] = df['low'].rolling(15).min()
-                df['dist_to_micro_supp'] = (df['close'] - df['low_15']) / df['close']
-                df = add_roc(df, [3, 5, 10])
-                df = add_bollinger_bands(df, window=10)
-                features = ['return', 'rsi_7', 'macd_fast', 'volume_surge', 'dist_to_micro_supp',
-                            'taker_buy_ratio', 'avg_trade_size', 'hour', 'roc_3', 'roc_5', 'roc_10', 'bb_pb']
+            df = self._build_all_features(df)
+            features = self._get_model_features()
 
-            elif self.model_type == 'futures':
-                df = add_rsi(df, 14)
-                df = add_roc(df, [5])
-                df['low_30'] = df['low'].rolling(30).min()
-                df['dist_to_support'] = (df['close'] - df['low_30']) / df['close']
-                df['vol_sma_7'] = df['volume'].rolling(window=7).mean()
-                df['volume_drop'] = (df['volume'] < df['vol_sma_7'] * 0.7).astype(int)
-                features = ['return', 'rsi_14', 'dist_to_support', 'volume_drop', 'hour', 'roc_5']
+            # Ensure every expected column exists (fill unknown with 0)
+            for f in features:
+                if f not in df.columns:
+                    df[f] = 0.0
 
-            elif self.model_type == 'trend':
-                df = add_macd(df)
-                df = add_adx(df, 14)
-                df['sma_50'] = df['close'].rolling(window=50).mean()
-                df['sma_200'] = df['close'].rolling(window=200).mean()
-                df['trend_alignment'] = (df['sma_50'] > df['sma_200']).astype(int)
-                df['vol_sma_20'] = df['volume'].rolling(window=20).mean()
-                df['volume_surge'] = (df['volume'] > df['vol_sma_20'] * 1.5).astype(int)
-                features = ['return', 'macd', 'macd_signal', 'macd_hist',
-                            'trend_alignment', 'volume_surge', 'atr_14', 'adx_14']
+            last_row = df.iloc[-1:][features].fillna(0)
 
-            else:  # base model
-                df['sma_7'] = df['close'].rolling(window=7).mean()
-                df['sma_30'] = df['close'].rolling(window=30).mean()
-                df['volatility'] = df['return'].rolling(window=7).std()
-                df['dist_sma_7'] = df['close'] / df['sma_7'] - 1
-                df['dist_sma_30'] = df['close'] / df['sma_30'] - 1
-                df = add_rsi(df, 14)
-                df = add_macd(df)
-                df = add_bollinger_bands(df, window=20)
-                df = add_roc(df, [3, 7, 14])
-                df['vol_sma_14'] = df['volume'].rolling(window=14).mean()
-                df['volume_momentum'] = df['volume'] / df['vol_sma_14']
-                df['high_14'] = df['high'].rolling(window=14).max()
-                df['low_14'] = df['low'].rolling(window=14).min()
-                hl_diff = (df['high_14'] - df['low_14']).replace(0, 0.0001)
-                df['stoch_k'] = (df['close'] - df['low_14']) / hl_diff * 100
-                df['return_lag1'] = df['return'].shift(1)
-                df['return_lag2'] = df['return'].shift(2)
-                df['return_lag3'] = df['return'].shift(3)
-                df['return_lag5'] = df['return'].shift(5)
-                df['atr_pct'] = (df['high'] - df['low']) / df['close']
-                df['news_sentiment'] = 0.0
-                features = ['return', 'volatility', 'dist_sma_7', 'dist_sma_30', 'rsi_14',
-                            'macd', 'macd_hist', 'volume_momentum', 'stoch_k',
-                            'return_lag1', 'return_lag2', 'return_lag3', 'return_lag5',
-                            'atr_pct', 'taker_buy_ratio', 'avg_trade_size', 'hour', 'day_of_week',
-                            'roc_14', 'roc_3', 'roc_7', 'bb_pb', 'news_sentiment']
-            
-            # Validate all expected features are present
-            missing = [f for f in features if f not in df.columns]
-            if missing:
-                self.last_error = f"Missing features: {missing}"
-                logger.error(self.last_error)
-                return None
-
-            nan_counts = df[features].iloc[-1].isna().sum()
-            if nan_counts > 0:
-                logger.debug(f"[{self.model_type}] Filling {nan_counts} NaN(s) with 0 before prediction.")
-            df[features] = df[features].fillna(0)
-
-            last_row = df.iloc[-1:]
-            X = last_row[features]
-
-            # Use calibrated predict_proba when available (models now wrapped with
-            # CalibratedClassifierCV — returns well-calibrated P(win) in [0, 1])
             if hasattr(self.model, "predict_proba"):
-                proba = self.model.predict_proba(X)[0]
+                proba = self.model.predict_proba(last_row)[0]
                 p_long = float(proba[1]) if len(proba) > 1 else float(proba[0])
                 self._last_confidence = p_long
-                # Only act when confidence exceeds threshold — avoids noisy 50/50 calls
                 if p_long >= 0.60:
                     return 1
                 elif (1.0 - p_long) >= 0.60:
@@ -153,25 +91,221 @@ class MLPredictor:
                     self.last_error = f"Low confidence ({p_long:.2f}) — no trade"
                     return None
             else:
-                prediction = self.model.predict(X)
-                result = int(prediction[0])
+                result = int(self.model.predict(last_row)[0])
                 self._last_confidence = 0.55
                 if result not in (0, 1):
                     self.last_error = f"Unexpected prediction value: {result}"
-                    logger.warning(self.last_error)
                     return None
                 return result
-        except Exception as e:
-            error_msg = f"ML Prediction Error: {e}"
-            logger.error(error_msg)
-            self.last_error = error_msg
+
+        except Exception as exc:
+            self.last_error = f"ML Prediction Error: {exc}"
+            logger.error(self.last_error)
             return None
 
     def predict_proba_long(self, data) -> float:
-        """
-        Return P(long win) directly as a float in [0, 1].
-        Used by KellySizer and RiskAgent for position sizing.
-        Returns 0.5 (neutral) when model unavailable or features missing.
-        """
-        result = self.predict(data)
+        """Return P(long win) in [0, 1]. Used by Kelly sizer and RiskAgent."""
+        self.predict(data)
         return getattr(self, "_last_confidence", 0.5)
+
+    # ── Feature building ──────────────────────────────────────────────────────
+
+    def _get_model_features(self) -> list[str]:
+        """
+        Read the model's exact feature list from sklearn's feature_names_in_.
+        Falls back to type-specific hardcoded lists if not available.
+        Tries multiple attribute paths for CalibratedClassifierCV wrappers.
+        """
+        # 1. Try to read from meta JSON
+        meta_path = self.model_path.replace(".joblib", "_meta.json")
+        if os.path.exists(meta_path):
+            try:
+                import json
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+                if "features" in meta and isinstance(meta["features"], list) and len(meta["features"]) > 0:
+                    return meta["features"]
+                if "feature_names" in meta and isinstance(meta["feature_names"], list) and len(meta["feature_names"]) > 0:
+                    return meta["feature_names"]
+            except Exception as e:
+                logger.debug("Could not read features from meta json: %s", e)
+
+        # 2. Try recursive search in the object
+        def find_features(obj, depth=0):
+            if depth > 5 or obj is None:
+                return None
+            if hasattr(obj, "feature_names_in_"):
+                return list(obj.feature_names_in_)
+            for attr in ["estimator", "base_estimator", "best_estimator_", "model", "_final_estimator", "step"]:
+                if hasattr(obj, attr):
+                    res = find_features(getattr(obj, attr), depth + 1)
+                    if res: return res
+            if hasattr(obj, "calibrated_classifiers_"):
+                for clf in getattr(obj, "calibrated_classifiers_"):
+                    res = find_features(clf, depth + 1)
+                    if res: return res
+            if hasattr(obj, "steps"):
+                for name, step in getattr(obj, "steps"):
+                    res = find_features(step, depth + 1)
+                    if res: return res
+            return None
+
+        features = find_features(self.model)
+        if features:
+            return features
+
+        logger.debug("[MLPredictor] feature_names_in_ not found — using hardcoded list for '%s'", self.model_type)
+        return self._hardcoded_features()
+
+    def _hardcoded_features(self) -> list[str]:
+        """Type-specific fallback feature lists matching each training script."""
+        if self.model_type == "scalping":
+            return [
+                "frac_diff_d40", "rsi_7", "macd_fast", "volume_surge",
+                "dist_to_micro_supp", "taker_buy_ratio", "avg_trade_size",
+                "hour", "roc_3", "roc_5", "roc_10", "bb_pb",
+                "ofi_z", "vwap_dist", "kc_pos", "signal_rsi", "signal_bb",
+            ]
+        if self.model_type == "futures":
+            return [
+                "return", "rsi_14", "dist_to_support", "volume_drop",
+                "hour", "roc_5", "funding_z", "funding_positive",
+                "funding_negative", "dist_to_supply", "dist_to_demand",
+                "liq_proximity", "frac_diff_d40",
+            ]
+        if self.model_type == "trend":
+            return [
+                "return", "macd", "macd_signal", "macd_hist",
+                "trend_alignment", "volume_surge", "atr_14", "adx_14",
+                "don_pos_20", "kc_pos", "kc_width", "frac_diff_d40",
+            ]
+        # base
+        return [
+            "return", "volatility", "dist_sma_7", "dist_sma_30",
+            "rsi_14", "macd", "macd_hist", "volume_momentum", "stoch_k",
+            "return_lag1", "return_lag2", "return_lag3", "return_lag5",
+            "atr_pct", "taker_buy_ratio", "avg_trade_size",
+            "hour", "day_of_week", "roc_14", "roc_3", "roc_7",
+            "bb_pb", "news_sentiment", "ofi_z", "signal_bb", "signal_macd",
+            "frac_diff_d40", "liq_proximity",
+        ]
+
+    def _build_all_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Build every feature that any model type might need — a full superset.
+        Each indicator is wrapped individually so one failure doesn't abort prediction.
+        """
+        from src.analysis.feature_engineering import (
+            add_taker_and_trade_features, add_rsi, add_macd,
+            add_bollinger_bands, add_roc, add_time_features,
+            add_adx, add_atr, add_ofi, add_vwap,
+            add_donchian, add_keltner, add_funding_zscore,
+            add_liquidity_proximity,
+        )
+        from src.analysis.fractional_diff import add_fractional_diff
+
+        def _safe(fn, *args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except Exception as exc:
+                logger.debug("[MLPredictor] indicator %s failed: %s", fn.__name__, exc)
+                return args[0] if args else df
+
+        # ── Core returns & time ───────────────────────────────────────────────
+        df["return"] = df["close"].pct_change()
+
+        if "timestamp" in df.columns:
+            df = _safe(add_time_features, df)
+        else:
+            df["hour"] = 12
+            df["day_of_week"] = 0
+
+        df = _safe(add_taker_and_trade_features, df)
+
+        # ── RSI ───────────────────────────────────────────────────────────────
+        df = _safe(add_rsi, df, period=7,  col_name="rsi_7")
+        df = _safe(add_rsi, df, period=14, col_name="rsi_14")
+
+        # ── MACD ─────────────────────────────────────────────────────────────
+        df = _safe(add_macd, df)
+        try:
+            _fast = add_macd(df.copy(), fast=5, slow=13, signal=3, prefix="")
+            df["macd_fast"] = _fast["macd"]
+        except Exception:
+            df["macd_fast"] = 0.0
+
+        # ── Bollinger Bands ───────────────────────────────────────────────────
+        df = _safe(add_bollinger_bands, df, window=20)
+
+        # ── ROC ───────────────────────────────────────────────────────────────
+        df = _safe(add_roc, df, [3, 5, 7, 10, 14])
+
+        # ── ATR / ADX ─────────────────────────────────────────────────────────
+        df = _safe(add_atr, df, period=14)
+        df = _safe(add_adx, df, period=14)
+
+        # ── OFI, VWAP, Donchian, Keltner ─────────────────────────────────────
+        df = _safe(add_ofi, df, window=20)
+        df = _safe(add_vwap, df)
+        df = _safe(add_donchian, df, n=20)
+        df = _safe(add_keltner, df)
+
+        # ── Funding Z-score ───────────────────────────────────────────────────
+        df = _safe(add_funding_zscore, df)
+
+        # ── Liquidity proximity ───────────────────────────────────────────────
+        df = _safe(add_liquidity_proximity, df)
+
+        # ── Fractional differentiation ────────────────────────────────────────
+        try:
+            df = add_fractional_diff(df, d=0.4)
+        except Exception:
+            df["frac_diff_d40"] = 0.0
+
+        # ── Derived stats ─────────────────────────────────────────────────────
+        df["volatility"]  = df["return"].rolling(7, min_periods=2).std()
+        df["sma_7"]       = df["close"].rolling(7).mean()
+        df["sma_30"]      = df["close"].rolling(30).mean()
+        df["sma_50"]      = df["close"].rolling(50).mean()
+        df["sma_200"]     = df["close"].rolling(200).mean()
+        df["dist_sma_7"]  = df["close"] / df["sma_7"].replace(0, np.nan) - 1
+        df["dist_sma_30"] = df["close"] / df["sma_30"].replace(0, np.nan) - 1
+        df["trend_alignment"] = (df["sma_50"] > df["sma_200"]).astype(float)
+
+        vol_sma_5  = df["volume"].rolling(5).mean().replace(0, np.nan)
+        vol_sma_7  = df["volume"].rolling(7).mean().replace(0, np.nan)
+        vol_sma_14 = df["volume"].rolling(14).mean().replace(0, np.nan)
+        vol_sma_20 = df["volume"].rolling(20).mean().replace(0, np.nan)
+        df["volume_momentum"] = df["volume"] / vol_sma_14
+        df["volume_surge"]    = (df["volume"] > vol_sma_20 * 1.5).astype(float)
+        df["volume_drop"]     = (df["volume"] < vol_sma_7 * 0.7).astype(float)
+
+        high_14 = df["high"].rolling(14).max()
+        low_14  = df["low"].rolling(14).min()
+        df["stoch_k"] = (df["close"] - low_14) / (high_14 - low_14).replace(0, np.nan) * 100
+
+        for lag in (1, 2, 3, 5):
+            df[f"return_lag{lag}"] = df["return"].shift(lag)
+
+        df["atr_pct"] = (df["high"] - df["low"]) / df["close"].replace(0, np.nan)
+
+        # Scalping-specific
+        df["vol_sma_5"]        = vol_sma_5
+        df["low_15"]           = df["low"].rolling(15).min()
+        df["dist_to_micro_supp"] = (df["close"] - df["low_15"]) / df["close"].replace(0, np.nan)
+
+        # Futures-specific
+        df["low_30"]           = df["low"].rolling(30).min()
+        df["dist_to_support"]  = (df["close"] - df["low_30"]) / df["close"].replace(0, np.nan)
+
+        # Strategy signals used as ML features in some models
+        rsi_s  = df.get("rsi_14", pd.Series(50.0, index=df.index))
+        macd_h = df.get("macd_hist", pd.Series(0.0, index=df.index))
+        bb_p   = df.get("bb_pb", pd.Series(0.5, index=df.index))
+        df["signal_rsi"]  = np.where(rsi_s < 30, 1.0, np.where(rsi_s > 70, -1.0, 0.0))
+        df["signal_macd"] = np.where(macd_h > 0, 1.0, -1.0)
+        df["signal_bb"]   = np.where(bb_p < 0.1, 1.0, np.where(bb_p > 0.9, -1.0, 0.0))
+
+        df["news_sentiment"] = 0.0
+
+        return df

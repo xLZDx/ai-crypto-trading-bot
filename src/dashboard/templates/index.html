@@ -732,46 +732,77 @@ select.field option{background:#0d1628;color:#e2e8f0}
 
     <!-- ══════════ TAB: STRATEGY & ML ══════════ -->
     <div id="tab-strategy" class="tab-pane">
+      <style>
+        /* ── Collapsible accordion sections ─────────────────────────── */
+        .st-sec{background:var(--bg-2);border:1px solid rgba(148,163,184,.12);border-radius:12px;margin-bottom:10px;overflow:hidden}
+        .st-sec-hdr{display:flex;align-items:center;gap:10px;padding:11px 16px;cursor:pointer;user-select:none;background:rgba(30,41,59,.5)}
+        .st-sec-hdr:hover{background:rgba(30,41,59,.85)}
+        .st-sec-title{font-size:.72rem;font-weight:700;color:#e2e8f0;text-transform:uppercase;letter-spacing:.06em;flex:1}
+        .st-chevron{font-size:.7rem;color:#64748b;transition:transform .22s;margin-left:auto}
+        .st-sec.open .st-chevron{transform:rotate(180deg)}
+        .st-sec-body{padding:12px 14px}
+        .st-sec-body.st-collapsed{display:none}
 
-      <!-- Top aggregated card: split into Strategy + ML sections -->
-      <div class="card" style="margin-bottom:14px">
-        <div class="card-header">
-          <div>
-            <div class="section-label">Aggregate Overview</div>
-            <div class="card-title">Combined Performance Summary</div>
-          </div>
-          <span class="chip">All markets • all symbols</span>
+        /* ── ML model card ──────────────────────────────────────────── */
+        .ml-card{background:rgba(5,8,22,.6);border:1px solid rgba(148,163,184,.1);border-radius:10px;padding:12px 14px;position:relative}
+        .ml-card.trained{border-color:rgba(52,211,153,.3)}
+        .ml-card.not-trained{border-color:rgba(251,113,133,.2)}
+        .ml-badge{display:inline-block;font-size:.52rem;font-weight:800;padding:2px 7px;border-radius:999px;letter-spacing:.07em}
+        .ml-badge.ok{background:rgba(52,211,153,.15);color:#34d399}
+        .ml-badge.no{background:rgba(251,113,133,.15);color:#fb7185}
+        .ml-badge.na{background:rgba(148,163,184,.1);color:#64748b}
+
+        /* ── Strategy card ───────────────────────────────────────────── */
+        .str-card{background:rgba(5,8,22,.6);border:1px solid rgba(148,163,184,.1);border-radius:10px;padding:10px 12px}
+        .str-group-hdr{font-size:.62rem;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.08em;
+          padding:4px 0;border-bottom:1px solid rgba(148,163,184,.08);margin-bottom:8px;margin-top:14px}
+        .str-group-hdr:first-child{margin-top:0}
+        .str-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px}
+        .str-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+        .str-dot.live{background:#34d399}
+        .str-dot.bt-only{background:#60a5fa}
+        .str-dot.off{background:#475569}
+        .str-enable-row{display:flex;gap:6px;margin-top:8px}
+        .str-toggle{font-size:.56rem;font-weight:700;padding:2px 8px;border-radius:5px;cursor:pointer;border:none;letter-spacing:.05em}
+        .str-toggle.live-on{background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.3)}
+        .str-toggle.live-off{background:rgba(148,163,184,.08);color:#475569;border:1px solid rgba(148,163,184,.15)}
+        .str-toggle.bt-on{background:rgba(96,165,250,.15);color:#60a5fa;border:1px solid rgba(96,165,250,.3)}
+        .str-toggle.bt-off{background:rgba(148,163,184,.08);color:#475569;border:1px solid rgba(148,163,184,.15)}
+      </style>
+
+      <!-- ── Section: ML Models ─────────────────────────────────────── -->
+      <div class="st-sec open" id="st-sec-ml">
+        <div class="st-sec-hdr" onclick="stToggle('st-sec-ml')">
+          <span class="st-sec-title">ML Models</span>
+          <span class="chip" id="chip-ml-count" style="font-size:.56rem">Loading…</span>
+          <span class="st-chevron">▼</span>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;min-height:130px">
-          <!-- Left: strategy aggregate -->
-          <div style="padding:14px 16px;border-right:1px solid rgba(148,163,184,.08)">
-            <div class="section-label" style="margin-bottom:10px">Overall Strategy Performance</div>
-            <div id="strat-agg"></div>
-          </div>
-          <!-- Right: ML aggregate -->
-          <div style="padding:14px 16px">
-            <div class="section-label" style="margin-bottom:10px">ML Model Accuracy</div>
-            <div id="ml-agg" style="display:grid;grid-template-columns:1fr 1fr;gap:7px"></div>
+        <div class="st-sec-body" id="body-ml-cards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px"></div>
+      </div>
+
+      <!-- ── Section: Strategies ───────────────────────────────────── -->
+      <div class="st-sec open" id="st-sec-strats">
+        <div class="st-sec-hdr" onclick="stToggle('st-sec-strats')">
+          <span class="st-sec-title">Strategies</span>
+          <span class="chip" id="chip-strat-count" style="font-size:.56rem">Loading…</span>
+          <span class="st-chevron">▼</span>
+        </div>
+        <div class="st-sec-body" id="body-strat-cards"></div>
+      </div>
+
+      <!-- ── Section: Quant Signal Matrix ─────────────────────────── -->
+      <div class="st-sec open" id="st-sec-quant">
+        <div class="st-sec-hdr" onclick="stToggle('st-sec-quant')">
+          <span class="st-sec-title">Quant Signal Matrix</span>
+          <span class="chip" id="chip-quant-count" style="font-size:.56rem">20 pairs</span>
+          <button onclick="event.stopPropagation();pollQuantMatrix()" style="font-size:.58rem;padding:2px 9px;border-radius:5px;cursor:pointer;background:rgba(99,102,241,.2);color:#818cf8;border:1px solid rgba(99,102,241,.3);margin-left:4px">↻ Refresh</button>
+          <span class="st-chevron">▼</span>
+        </div>
+        <div class="st-sec-body">
+          <div id="quant-matrix" style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px">
+            <div class="card-sm" style="text-align:center;color:#475569;grid-column:1/-1">Loading signals…</div>
           </div>
         </div>
-      </div>
-
-      <!-- Strategy breakdown: one card per strategy -->
-      <div class="section-label" style="margin-bottom:9px">Strategy Breakdown</div>
-      <div id="strategy-cards" style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px">
-        <div class="card-sm" style="text-align:center;color:#475569;grid-column:1/-1;padding:16px">No closed trades to analyze yet</div>
-      </div>
-
-      <!-- ML model cards: one card per model -->
-      <div class="section-label" style="margin-bottom:9px">ML Model Details</div>
-      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px" id="ml-cards">
-        <div class="card-sm" style="text-align:center;color:#475569">Loading…</div>
-      </div>
-
-      <!-- Quant Signal Matrix: per-coin OU / GARCH / Avellaneda-Stoikov -->
-      <div class="section-label" style="margin-bottom:9px;margin-top:18px">Quant Signal Matrix</div>
-      <div id="quant-matrix" style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px">
-        <div class="card-sm" style="text-align:center;color:#475569;grid-column:1/-1">Waiting for first tick…</div>
       </div>
 
     </div><!-- /strategy -->
@@ -1996,167 +2027,183 @@ async function loadModelMeta() {
   } catch { modelMeta = {}; }
 }
 
+// ─── SECTION TOGGLE ──────────────────────────────────────────────────────────
+function stToggle(id) {
+  const sec  = document.getElementById(id);
+  const body = sec && sec.querySelector('.st-sec-body');
+  if (!sec || !body) return;
+  sec.classList.toggle('open');
+  body.classList.toggle('st-collapsed');
+}
+
+// ─── STRATEGY TAB DATA LOAD ───────────────────────────────────────────────────
+let _stratFull = null;
+
+async function loadStrategyFull() {
+  try {
+    _stratFull = await apiFetch('/api/strategy/full');
+  } catch(e) {}
+  renderStrategyTab(botState);
+}
+
 function renderStrategyTab(state) {
-  const closed = tradesData.filter(t => (t.status||'').toUpperCase() === 'CLOSED');
-  const byS = {};
-  closed.forEach(t => {
-    const k = t.strategy || 'Unknown';
-    byS[k] = byS[k] || {n:0, pnl:0, wins:0};
-    byS[k].n++; byS[k].pnl += t.pnl_usdt || 0;
-    if ((t.pnl_usdt||0) > 0) byS[k].wins++;
-  });
-  const strategies = Object.entries(byS).sort((a,b) => b[1].pnl - a[1].pnl);
-
-  // ── Aggregate panel left (strategy) ────────────────────────────────────────
-  const stratAgg = $('strat-agg');
-  if (stratAgg) {
-    if (!strategies.length) {
-      stratAgg.innerHTML = '<div style="color:#475569;font-size:.68rem;padding:6px 0">No closed trades yet — strategy analytics will appear here once the bot executes and closes trades on Binance testnet.</div>';
-    } else {
-      const totTrades = closed.length;
-      const totWins = closed.filter(t => (t.pnl_usdt||0) > 0).length;
-      const totPnl = closed.reduce((a,t) => a + (t.pnl_usdt||0), 0);
-      const wr = (totWins / totTrades * 100).toFixed(1);
-      const pc = totPnl >= 0 ? 'positive' : 'negative';
-      stratAgg.innerHTML = `
-        <div style="display:flex;gap:10px;margin-bottom:8px">
-          <div style="flex:1;background:rgba(5,8,22,.5);border:1px solid rgba(148,163,184,.08);border-radius:8px;padding:8px 10px;text-align:center">
-            <div style="font-size:.54rem;color:#475569">TRADES</div>
-            <div style="font-size:1.1rem;font-weight:900;color:#fff">${totTrades}</div>
-          </div>
-          <div style="flex:1;background:rgba(5,8,22,.5);border:1px solid rgba(148,163,184,.08);border-radius:8px;padding:8px 10px;text-align:center">
-            <div style="font-size:.54rem;color:#475569">WIN RATE</div>
-            <div style="font-size:1.1rem;font-weight:900;color:#fbbf24">${wr}%</div>
-          </div>
-          <div style="flex:1;background:rgba(5,8,22,.5);border:1px solid rgba(148,163,184,.08);border-radius:8px;padding:8px 10px;text-align:center">
-            <div style="font-size:.54rem;color:#475569">TOTAL PNL</div>
-            <div class="${pc}" style="font-size:1rem;font-weight:900">${totPnl>=0?'+':''}${fmt(totPnl,2)}</div>
-          </div>
-        </div>
-        <div style="font-size:.6rem;color:#475569">${strategies.length} active strategies • ${(closed.length - totWins)} losses</div>`;
-    }
-  }
-
-  // ── Aggregate panel right (ML) ─────────────────────────────────────────────
-  const ML_MODELS = [
-    {key:'spot',     label:'Spot RF',   icon:'🧠'},
-    {key:'scalping', label:'Scalping',  icon:'⚡'},
-    {key:'futures',  label:'Futures',   icon:'📉'},
-    {key:'trend',    label:'Trend',     icon:'🌊'},
-  ];
-  const mlAgg = $('ml-agg');
-  if (mlAgg) {
-    mlAgg.innerHTML = ML_MODELS.map(m => {
-      const d = modelMeta[m.key] || {};
-      const acc = d.accuracy != null ? (+d.accuracy).toFixed(1) : '--';
-      const accCol = d.accuracy >= 55 ? '#34d399' : d.accuracy >= 50 ? '#fbbf24' : '#fb7185';
-      return `<div style="background:rgba(5,8,22,.5);border:1px solid rgba(148,163,184,.08);border-radius:9px;padding:8px 10px;text-align:center">
-        <div style="display:flex;align-items:center;justify-content:center;gap:5px;margin-bottom:6px">
-          <span>${m.icon}</span>
-          <span style="font-size:.6rem;font-weight:700;color:#94a3b8">${m.label}</span>
-        </div>
-        <div style="font-size:1.5rem;font-weight:900;color:${accCol};line-height:1">${acc}%</div>
-        <div style="font-size:.54rem;color:#475569;margin-top:5px">L: ${d.long_accuracy!=null?(+d.long_accuracy).toFixed(1):'--'}% / S: ${d.short_accuracy!=null?(+d.short_accuracy).toFixed(1):'--'}%</div>
-      </div>`;
-    }).join('');
-  }
-
-  // ── Individual strategy cards ─────────────────────────────────────────────
-  const stratCont = $('strategy-cards');
-  if (stratCont) {
-    if (!strategies.length) {
-      stratCont.innerHTML = '<div class="card-sm" style="text-align:center;color:#475569;grid-column:1/-1;padding:16px">No closed trades yet — strategy cards will populate once trades close on Binance testnet.</div>';
-    } else {
-      stratCont.innerHTML = strategies.map(([name, s]) => {
-        const wr = (s.wins / s.n * 100).toFixed(1);
-        const pc = s.pnl >= 0 ? 'positive' : 'negative';
-        const dot = s.pnl >= 0 ? '#34d399' : '#fb7185';
-        const bar = Math.min(100, s.wins / s.n * 100);
-        return `<div class="card-sm">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-            <div style="display:flex;align-items:center;gap:7px">
-              <div style="width:8px;height:8px;border-radius:50%;background:${dot};flex-shrink:0"></div>
-              <span style="font-weight:800;color:#fff;font-size:.8rem">${esc(name)}</span>
-            </div>
-            <span class="${pc}" style="font-family:'JetBrains Mono';font-weight:800;font-size:.78rem">${s.pnl>=0?'+':''}${fmt(s.pnl,2)} USDT</span>
-          </div>
-          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px">
-            <div style="text-align:center;background:rgba(5,8,22,.5);border-radius:7px;padding:6px">
-              <div style="font-size:.54rem;color:#475569">TRADES</div>
-              <div style="font-weight:800;color:#fff">${s.n}</div>
-            </div>
-            <div style="text-align:center;background:rgba(5,8,22,.5);border-radius:7px;padding:6px">
-              <div style="font-size:.54rem;color:#475569">WINS</div>
-              <div style="font-weight:800;color:#34d399">${s.wins}</div>
-            </div>
-            <div style="text-align:center;background:rgba(5,8,22,.5);border-radius:7px;padding:6px">
-              <div style="font-size:.54rem;color:#475569">WIN RATE</div>
-              <div style="font-weight:800;color:#fbbf24">${wr}%</div>
-            </div>
-          </div>
-          <div style="background:rgba(5,8,22,.5);border-radius:999px;height:5px;overflow:hidden">
-            <div style="width:${bar}%;height:100%;background:linear-gradient(90deg,#1d4ed8,#34d399);border-radius:999px"></div>
-          </div>
-        </div>`;
-      }).join('');
-    }
-  }
-
-  // ── Individual ML model cards ─────────────────────────────────────────────
-  const mlCont = $('ml-cards');
-  if (mlCont) {
-    const md = state.market_data || {};
-    const modelDefs = [
-      {key:'spot',     name:'Spot RF (1h)',     icon:'🧠', mkt:'SPOT',     sym:'BTC/USDT', desc:'Random Forest · Hourly candles · All symbols'},
-      {key:'scalping', name:'Scalping (1m)',     icon:'⚡', mkt:'SCALPING', sym:'BTC/USDT', desc:'Fast RSI model · 1-minute candles'},
-      {key:'futures',  name:'Futures Short',    icon:'📉', mkt:'FUTURES',  sym:'BTC/USDT', desc:'Short-bias model · Futures market'},
-      {key:'trend',    name:'Trend Filter',     icon:'🌊', mkt:'SPOT',     sym:'BTC/USDT', desc:'Long-horizon trend overlay model'},
-    ];
-    mlCont.innerHTML = modelDefs.map(m => {
-      const file = modelMeta[m.key] || {};
-      const state_sd = ((md[m.mkt]||{})[m.sym]) || {};
-      const acc  = file.accuracy      != null ? (+file.accuracy).toFixed(1)       : fmt(state_sd.ml_accuracy, 1);
-      const long = file.long_accuracy != null ? (+file.long_accuracy).toFixed(1)  : fmt(state_sd.ml_accuracy_long, 1);
-      const shrt = file.short_accuracy!= null ? (+file.short_accuracy).toFixed(1) : fmt(state_sd.ml_accuracy_short, 1);
-      const pred = m.key !== 'trend' ? (state_sd.ml_prediction_text || '--') : '--';
-      const accNum = parseFloat(acc);
-      const accCol = accNum >= 55 ? '#34d399' : accNum >= 50 ? '#fbbf24' : '#fb7185';
-      return `<div class="card-sm">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:11px">
-          <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,rgba(37,99,235,.3),rgba(139,92,246,.25));display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0">${m.icon}</div>
-          <div>
-            <div style="font-weight:800;color:#fff;font-size:.82rem">${m.name}</div>
-            <div style="font-size:.58rem;color:#475569">${m.desc}</div>
-          </div>
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px">
-          <div style="text-align:center;background:rgba(5,8,22,.5);border-radius:8px;padding:7px">
-            <div style="font-size:.54rem;color:#475569">Overall</div>
-            <div style="font-size:1.6rem;font-weight:900;color:${accCol};line-height:1.1">${acc}%</div>
-          </div>
-          <div style="text-align:center;background:rgba(5,8,22,.5);border-radius:8px;padding:7px">
-            <div style="font-size:.54rem;color:#475569">${m.key==='futures'?'Long':'↑ Bull'}</div>
-            <div style="font-size:1.1rem;font-weight:800;color:#34d399">${long}%</div>
-          </div>
-          <div style="text-align:center;background:rgba(5,8,22,.5);border-radius:8px;padding:7px">
-            <div style="font-size:.54rem;color:#475569">${m.key==='futures'?'Short':'↓ Bear'}</div>
-            <div style="font-size:1.1rem;font-weight:800;color:#fb7185">${shrt}%</div>
-          </div>
-        </div>
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <span style="font-size:.6rem;color:#64748b">Current Signal</span>
-          <span style="font-size:.68rem;font-weight:700;color:#fff">${esc(pred)}</span>
-        </div>
-        <div style="background:rgba(5,8,22,.5);border-radius:999px;height:4px;overflow:hidden;margin-top:9px">
-          <div style="width:${Math.min(100,accNum||0)}%;height:100%;background:linear-gradient(90deg,#1d4ed8,${accCol});border-radius:999px"></div>
-        </div>
-        <div style="font-size:.56rem;color:#475569;margin-top:5px;text-align:right">
-          Trained: ${file.last_trained ? new Date(file.last_trained).toLocaleDateString() : 'not yet'}
-        </div>
-      </div>`;
-    }).join('');
-  }
+  if (!_stratFull) { loadStrategyFull(); return; }
+  _renderMLCards(_stratFull);
+  _renderStratCards(_stratFull);
   renderQuantMatrix(state);
+}
+
+// ── ML Model Cards ────────────────────────────────────────────────────────────
+function _renderMLCards(data) {
+  const cont = $('body-ml-cards');
+  const chip = $('chip-ml-count');
+  if (!cont) return;
+  const models = data.ml_models || [];
+  const agg    = data.aggregate || {};
+  if (chip) chip.textContent = `${agg.models_trained||0} / ${agg.models_total||0} trained`;
+
+  cont.innerHTML = models.map(m => {
+    const trained = m.model_exists;
+    const acc     = m.accuracy > 0 ? m.accuracy.toFixed(1) : '--';
+    const accNum  = parseFloat(acc) || 0;
+    const accCol  = accNum >= 55 ? '#34d399' : accNum >= 50 ? '#fbbf24' : (accNum > 0 ? '#fb7185' : '#475569');
+    const long    = m.long_accuracy  > 0 ? m.long_accuracy.toFixed(1)  : '--';
+    const shrt    = m.short_accuracy > 0 ? m.short_accuracy.toFixed(1) : '--';
+    const ns      = m.n_samples ? Number(m.n_samples).toLocaleString() : '--';
+    const nf      = m.n_features || '--';
+    const ts      = m.last_trained ? new Date(m.last_trained).toLocaleDateString() : null;
+    const syms    = (m.symbols || []).slice(0,3).join(', ') || '--';
+
+    return `<div class="ml-card ${trained ? 'trained' : 'not-trained'}">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <div style="width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,rgba(37,99,235,.3),rgba(139,92,246,.25));
+          display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">${m.icon}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:800;color:#fff;font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(m.label)}</div>
+          <div style="font-size:.56rem;color:#64748b">${m.market} • ${m.timeframe||'--'}</div>
+        </div>
+        <span class="ml-badge ${trained ? 'ok' : 'no'}">${trained ? 'TRAINED' : 'NO MODEL'}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:8px">
+        <div style="text-align:center;background:rgba(5,8,22,.55);border-radius:7px;padding:6px">
+          <div style="font-size:.5rem;color:#475569">ACCURACY</div>
+          <div style="font-size:1.4rem;font-weight:900;color:${accCol};line-height:1.1">${acc}${accNum>0?'%':''}</div>
+        </div>
+        <div style="text-align:center;background:rgba(5,8,22,.55);border-radius:7px;padding:6px">
+          <div style="font-size:.5rem;color:#475569">↑ BULL</div>
+          <div style="font-size:1rem;font-weight:800;color:#34d399">${long}${long!=='--'?'%':''}</div>
+        </div>
+        <div style="text-align:center;background:rgba(5,8,22,.55);border-radius:7px;padding:6px">
+          <div style="font-size:.5rem;color:#475569">↓ BEAR</div>
+          <div style="font-size:1rem;font-weight:800;color:#fb7185">${shrt}${shrt!=='--'?'%':''}</div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:.58rem;color:#475569;border-top:1px solid rgba(148,163,184,.08);padding-top:7px">
+        <span>Samples: <b style="color:#94a3b8">${ns}</b></span>
+        <span>Features: <b style="color:#94a3b8">${nf}</b></span>
+        <span>Trained: <b style="color:${ts?'#94a3b8':'#475569'}">${ts||'never'}</b></span>
+      </div>
+      ${accNum > 0 ? `<div style="background:rgba(5,8,22,.55);border-radius:999px;height:3px;overflow:hidden;margin-top:7px">
+        <div style="width:${Math.min(100,accNum)}%;height:100%;background:linear-gradient(90deg,#1d4ed8,${accCol});border-radius:999px"></div>
+      </div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+// ── Strategy Cards grouped by category ───────────────────────────────────────
+const _GROUP_META = {
+  A_Original: {label:'Original Rule-Based',  col:'#60a5fa'},
+  B_New:      {label:'New Indicators',        col:'#34d399'},
+  ML:         {label:'ML Signal Strategies',  col:'#a78bfa'},
+  Filter:     {label:'Signal Filters',        col:'#fbbf24'},
+  RiskFilter: {label:'Risk Filters',          col:'#f97316'},
+};
+
+function _renderStratCards(data) {
+  const cont   = $('body-strat-cards');
+  const chip   = $('chip-strat-count');
+  if (!cont) return;
+  const strats     = data.strategies || [];
+  const tradeStats = data.trade_stats || {};
+  const agg        = data.aggregate  || {};
+
+  if (chip) chip.textContent = `${agg.strategies_live||0} live / ${agg.strategies_total||0} total`;
+
+  // Group by category
+  const groups = {};
+  for (const s of strats) {
+    const g = s.group || 'Other';
+    (groups[g] = groups[g] || []).push(s);
+  }
+
+  const groupOrder = ['A_Original','B_New','ML','Filter','RiskFilter'];
+  const allGroups  = [...groupOrder, ...Object.keys(groups).filter(g => !groupOrder.includes(g))];
+
+  cont.innerHTML = allGroups.filter(g => groups[g]).map(g => {
+    const gm  = _GROUP_META[g] || {label: g, col: '#64748b'};
+    const gStrats = groups[g];
+    const cards = gStrats.map(s => {
+      const ts  = tradeStats[s.name] || {};
+      const wr  = ts.win_rate != null ? ts.win_rate.toFixed(1)+'%' : '--';
+      const pnl = ts.pnl != null ? (ts.pnl >= 0 ? '+' : '') + ts.pnl.toFixed(2) : '--';
+      const pnlCol = ts.pnl > 0 ? '#34d399' : ts.pnl < 0 ? '#fb7185' : '#64748b';
+      const liveDot = s.live_enabled ? 'live' : (s.backtest_enabled ? 'bt-only' : 'off');
+      const syncBadge = {synced:'LIVE+BT',live_only:'LIVE',live_only_by_design:'LIVE',
+        backtest_only:'BT',backtest_only_by_design:'BT',disabled:'OFF'}[s.sync_status]||'?';
+      const syncCol = s.sync_status === 'synced' ? '#34d399' : s.sync_status.startsWith('live') ? '#60a5fa' : '#475569';
+
+      const modelsOk = s.models_ok !== false;
+      return `<div class="str-card">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px">
+          <div style="display:flex;align-items:center;gap:6px">
+            <div class="str-dot ${liveDot}"></div>
+            <span style="font-weight:800;color:#e2e8f0;font-size:.72rem">${esc(s.label||s.name)}</span>
+          </div>
+          <span style="font-size:.52rem;font-weight:800;padding:2px 6px;border-radius:999px;
+            background:${syncCol}18;color:${syncCol};border:1px solid ${syncCol}30">${syncBadge}</span>
+        </div>
+        <div style="font-size:.58rem;color:#475569;margin-bottom:7px">${esc(s.description||'')}</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:6px">
+          <div style="background:rgba(5,8,22,.55);border-radius:6px;padding:4px 6px;text-align:center">
+            <div style="font-size:.48rem;color:#475569">TRADES</div>
+            <div style="font-size:.82rem;font-weight:800;color:#fff">${ts.n||'--'}</div>
+          </div>
+          <div style="background:rgba(5,8,22,.55);border-radius:6px;padding:4px 6px;text-align:center">
+            <div style="font-size:.48rem;color:#475569">WIN RATE</div>
+            <div style="font-size:.82rem;font-weight:800;color:#fbbf24">${wr}</div>
+          </div>
+          <div style="background:rgba(5,8,22,.55);border-radius:6px;padding:4px 6px;text-align:center">
+            <div style="font-size:.48rem;color:#475569">PNL</div>
+            <div style="font-size:.78rem;font-weight:800;color:${pnlCol}">${pnl}</div>
+          </div>
+        </div>
+        ${s.models && s.models.length ? `<div style="font-size:.54rem;color:${modelsOk?'#34d399':'#fb7185'}">
+          ${modelsOk?'✓':'✗'} Model: ${esc(s.models.join(', '))}
+        </div>` : ''}
+        <div style="display:flex;gap:5px;margin-top:6px">
+          <button class="str-toggle ${s.live_enabled?'live-on':'live-off'}" onclick="stratToggleFlag('${esc(s.name)}','live',${!s.live_enabled})">
+            LIVE: ${s.live_enabled?'ON':'OFF'}
+          </button>
+          <button class="str-toggle ${s.backtest_enabled?'bt-on':'bt-off'}" onclick="stratToggleFlag('${esc(s.name)}','backtest',${!s.backtest_enabled})">
+            BT: ${s.backtest_enabled?'ON':'OFF'}
+          </button>
+        </div>
+      </div>`;
+    }).join('');
+
+    return `<div class="str-group-hdr" style="color:${gm.col}">${gm.label} (${gStrats.length})</div>
+      <div class="str-grid">${cards}</div>`;
+  }).join('');
+}
+
+async function stratToggleFlag(name, mode, val) {
+  try {
+    await fetch('/api/strategy-sync', {
+      method: 'POST', headers: {...hdrs(), 'Content-Type':'application/json'},
+      body: JSON.stringify({name, [mode]: val}),
+    });
+    await loadStrategyFull();
+  } catch(e) {}
 }
 
 // ─── QUANT SIGNAL MATRIX ─────────────────────────────────────────────────────
@@ -2834,6 +2881,19 @@ function renderModelStats(models, cuda) {
     `<div class="ms-bar-bg"><div class="ms-bar-fill" style="width:${Math.min(v,100)}%;background:${col}"></div></div>`;
 
   // Cards are always expanded — no individual collapse
+  // Build live win/loss by model key from trade history
+  const modelKeyMap = {base:'spot', spot:'spot', scalping:'scalping', futures:'futures', trend:'trend',
+                       tft:'tft', meta:'meta', regime:'regime'};
+  const liveStats = {};
+  (tradesData || []).filter(t => (t.status||'').toUpperCase() === 'CLOSED').forEach(t => {
+    const k = modelKeyMap[t.model_key || t.ml_model] || null;
+    if (!k) return;
+    liveStats[k] = liveStats[k] || {w:0, l:0, pnl:0};
+    const pnl = t.pnl_usdt || 0;
+    liveStats[k].pnl += pnl;
+    pnl > 0 ? liveStats[k].w++ : liveStats[k].l++;
+  });
+
   grid.innerHTML = models.map(m => {
     const acc  = m.accuracy       || 0;
     const lAcc = m.long_accuracy  || 0;
@@ -2843,6 +2903,21 @@ function renderModelStats(models, cuda) {
     const status = m.model_exists
       ? `<span style="color:#34d399;font-weight:700;font-size:.62rem">Trained</span>`
       : `<span style="color:#f87171;font-weight:700;font-size:.62rem">Not trained</span>`;
+    const ls = liveStats[m.key] || null;
+    const liveRow = ls
+      ? (() => {
+          const tot = ls.w + ls.l;
+          const wr  = tot ? (ls.w / tot * 100).toFixed(0) : '--';
+          const pnlCol = ls.pnl >= 0 ? '#34d399' : '#fb7185';
+          return `<div style="margin-top:7px;display:flex;gap:8px;align-items:center;background:rgba(5,8,22,.4);border-radius:6px;padding:5px 8px">
+            <span style="font-size:.57rem;color:#475569;flex-shrink:0">Live</span>
+            <span style="font-size:.6rem;color:#34d399">${ls.w}W</span>
+            <span style="font-size:.6rem;color:#fb7185">${ls.l}L</span>
+            <span style="font-size:.6rem;color:#fbbf24">${wr}%</span>
+            <span style="font-size:.6rem;color:${pnlCol};margin-left:auto">${ls.pnl>=0?'+':''}${fmt(ls.pnl,2)}</span>
+          </div>`;
+        })()
+      : '';
 
     return `<div class="ms-card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
@@ -2867,6 +2942,7 @@ function renderModelStats(models, cuda) {
         ${bar(sAcc,'#fb7185')}
         <span style="width:36px;text-align:right;font-size:.62rem;color:#fb7185">${sAcc.toFixed(1)}%</span>
       </div>
+      ${liveRow}
       <div style="margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:.62rem;color:#94a3b8;font-family:'JetBrains Mono',monospace">
         <div><span style="color:#475569">Samples</span> ${m.n_samples ? m.n_samples.toLocaleString() : '--'}</div>
         <div><span style="color:#475569">Train/Test</span> ${m.n_train?.toLocaleString()??'--'} / ${m.n_test?.toLocaleString()??'--'}</div>
@@ -3181,24 +3257,45 @@ function simRenderModelCards(dbModels, trainerStats) {
   const modelNames = ['ScalpingML','TFT_MM','OU_Filter'];
   const dbMap = {};
   for (const m of dbModels) dbMap[m.name] = m;
+  const buffers = (trainerStats._buffers) || {};
   grid.innerHTML = modelNames.map(name => {
     const db = dbMap[name] || {};
     const tr = trainerStats[name] || {};
+    const buf = buffers[name] || {};
     const acc = db.last_accuracy ?? tr.accuracy;
     const loss = db.last_loss ?? tr.loss;
     const bars = db.bars_trained ?? tr.bars;
     const cycles = db.cycles || 0;
     const lastAt = db.last_trained || tr.ts;
     const hasData = cycles > 0 || bars > 0;
+    const bufPct = buf.buf_pct ?? 0;
+    const trigPct = Math.min(100, buf.trigger_pct ?? 0);
+    const bufBar = `<div style="margin:4px 0 2px">
+      <div style="display:flex;justify-content:space-between;font-size:.56rem;color:#475569;margin-bottom:2px">
+        <span>Buffer</span><span>${buf.buf||0}/${buf.buf_max||'?'}</span>
+      </div>
+      <div style="height:4px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden">
+        <div style="height:100%;width:${bufPct}%;background:#6366f1;border-radius:999px;transition:width .4s"></div>
+      </div>
+    </div>
+    <div style="margin:2px 0 4px">
+      <div style="display:flex;justify-content:space-between;font-size:.56rem;color:#475569;margin-bottom:2px">
+        <span>Until train</span><span>${buf.new||0}/${buf.trigger||'?'}</span>
+      </div>
+      <div style="height:4px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden">
+        <div style="height:100%;width:${trigPct}%;background:#34d399;border-radius:999px;transition:width .4s"></div>
+      </div>
+    </div>`;
     return `<div class="sim-model-card">
       <div class="sim-model-name">${name}</div>
+      ${bufBar}
       ${hasData ? `
       <div class="sim-metric"><span class="mk">Accuracy</span><span class="mv" style="color:#34d399">${acc!=null?acc.toFixed(3):'—'}</span></div>
       <div class="sim-metric"><span class="mk">Train Loss</span><span class="mv sim-pnl-neg">${loss!=null?loss.toFixed(5):'—'}</span></div>
       <div class="sim-metric"><span class="mk">Bars Trained</span><span class="mv">${(bars||0).toLocaleString()}</span></div>
       <div class="sim-metric"><span class="mk">Cycles</span><span class="mv">${cycles}</span></div>
       <div class="sim-metric"><span class="mk">Last Trained</span><span class="mv" style="color:#64748b;font-size:.62rem">${(lastAt||'').replace('T',' ').replace(/\..*/,'')}</span></div>
-      ` : `<div class="sim-metric"><span class="mk">Status</span><span class="mv" style="color:#64748b">Buffering data…</span></div>`}
+      ` : `<div class="sim-metric"><span class="mk">Status</span><span class="mv" style="color:#64748b">Buffering…</span></div>`}
     </div>`;
   }).join('');
 }

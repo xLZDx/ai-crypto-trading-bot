@@ -767,20 +767,17 @@ def get_agents():
         elif not last_hb_ts:
             status = 'offline'
 
-        # Task timeline: 3 past + current + 3 future, filtered to ±10 min
+        # Task timeline: real history + current
         timeline = []
+        history = entry.get('history', [])
+        for h in history[-5:]:  # last 5 past tasks
+            timeline.append({'ts': h['ts'], 'type': 'completed', 'task': h['task']})
         if last_hb_ts:
-            for i in range(-3, 4):
-                t = last_hb_ts + i * interval
-                if abs(t - now_ts) > 600 and i != 0:
-                    continue
-                if i < 0:
-                    ttype, task = 'completed', 'Cycle completed'
-                elif i == 0:
-                    ttype, task = 'current', entry.get('current_task', 'Executing cycle')
-                else:
-                    ttype, task = 'planned', 'Next cycle'
-                timeline.append({'offset': i, 'ts': t, 'type': ttype, 'task': task})
+            timeline.append({
+                'ts': last_hb_ts,
+                'type': 'current',
+                'task': entry.get('current_task', 'Executing cycle'),
+            })
 
         result.append({
             'name':         name,
@@ -854,6 +851,98 @@ def monitor_model_stats():
         pass
 
     return jsonify({'models': result, 'cuda': cuda})
+
+
+@app.route('/api/strategy/full')
+@require_api_key
+def strategy_full():
+    """
+    Single endpoint for the Strategy/ML tab.
+    Returns: ml_models (7 entries), strategies (from registry), trade_stats.
+    """
+    import json as _json
+
+    # ── ML models ─────────────────────────────────────────────────────────────
+    models_dir = _PROJECT_ROOT / 'models'
+    _ML = [
+        ('base',    'btc_rf_model_meta.json',       'Base RF (1h)',         'btc_rf_model.joblib',         '🧠', 'SPOT'),
+        ('trend',   'trend_model_meta.json',         'Trend RF',            'trend_model.joblib',           '🌊', 'SPOT'),
+        ('futures', 'futures_short_model_meta.json', 'Futures Short RF',    'futures_short_model.joblib',   '📉', 'FUTURES'),
+        ('scalping','scalping_model_meta.json',      'Scalping RF (1m)',    'scalping_model.joblib',        '⚡', 'SCALPING'),
+        ('tft',     'tft_model_meta.json',           'TFT Neural (1h)',     'tft_model.pt',                 '🔮', 'SPOT'),
+        ('meta',    'meta_labeler_meta.json',        'Meta-Labeler',        'meta_labeler.joblib',          '🔍', 'ALL'),
+        ('regime',  'regime_classifier_meta.json',   'Regime Classifier',   'regime_classifier.joblib',     '🎯', 'ALL'),
+    ]
+    ml_models = []
+    for key, mf, label, model_file, icon, market in _ML:
+        meta_path  = models_dir / mf
+        model_path = models_dir / model_file
+        meta = {}
+        if meta_path.exists():
+            try: meta = _json.loads(meta_path.read_text())
+            except Exception: pass
+        ml_models.append({
+            'key': key, 'label': label, 'icon': icon, 'market': market,
+            'model_exists': model_path.exists(),
+            'accuracy':       round(meta.get('accuracy', 0), 2),
+            'long_accuracy':  round(meta.get('long_accuracy', 0), 2),
+            'short_accuracy': round(meta.get('short_accuracy', 0), 2),
+            'n_samples':      meta.get('n_samples'),
+            'n_features':     meta.get('n_features'),
+            'n_iterations':   meta.get('n_iterations'),
+            'symbols':        meta.get('symbols', []),
+            'timeframe':      meta.get('timeframe', '--'),
+            'last_trained':   meta.get('last_trained', ''),
+            'target':         meta.get('target', ''),
+        })
+
+    # ── Strategy registry ──────────────────────────────────────────────────────
+    try:
+        from src.engine.strategy_registry import get_sync_report
+        sync = get_sync_report()
+        strategies = sync['strategies']
+        summary    = sync['summary']
+    except Exception as e:
+        strategies = []
+        summary    = {}
+
+    # ── Trade stats per strategy ───────────────────────────────────────────────
+    trades = read_json('data/trades.json', default=[])
+    if isinstance(trades, dict):
+        trades = trades.get('trades', [])
+    trade_stats: dict[str, dict] = {}
+    for t in trades:
+        if str(t.get('status', '')).upper() != 'CLOSED':
+            continue
+        k = t.get('strategy', 'Unknown')
+        pnl = t.get('pnl_usdt', 0) or 0
+        s = trade_stats.setdefault(k, {'n': 0, 'wins': 0, 'losses': 0, 'pnl': 0.0})
+        s['n'] += 1
+        s['pnl'] += pnl
+        if pnl > 0:
+            s['wins'] += 1
+        else:
+            s['losses'] += 1
+    # attach win_rate
+    for k, s in trade_stats.items():
+        s['win_rate'] = round(s['wins'] / s['n'] * 100, 1) if s['n'] else 0.0
+
+    # ── Aggregate ──────────────────────────────────────────────────────────────
+    trained_count = sum(1 for m in ml_models if m['model_exists'])
+    live_count    = sum(1 for s in strategies if s.get('live_enabled'))
+
+    return jsonify({
+        'ml_models':   ml_models,
+        'strategies':  strategies,
+        'trade_stats': trade_stats,
+        'summary':     summary,
+        'aggregate': {
+            'models_trained': trained_count,
+            'models_total':   len(ml_models),
+            'strategies_live': live_count,
+            'strategies_total': len(strategies),
+        },
+    })
 
 
 @app.route('/api/strategy-sync', methods=['GET'])
@@ -1148,6 +1237,20 @@ def simulator_training_history():
         events = store.get_recent_training_events(model_name=model, limit=limit)
         pnl    = store.get_paper_pnl_series(limit=500)
         return jsonify({'events': events, 'pnl_series': pnl})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/simulator/patterns', methods=['GET'])
+def simulator_patterns():
+    """Return top patterns from the training pattern DB."""
+    try:
+        from src.simulation.data_store import SimulatorDataStore
+        store = SimulatorDataStore()
+        model = request.args.get('model')
+        limit = int(request.args.get('limit', 50))
+        patterns = store.get_pattern_db(model_name=model, limit=limit)
+        return jsonify({'patterns': patterns, 'total': len(patterns)})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

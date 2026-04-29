@@ -34,6 +34,7 @@ _status_write_lock = threading.Lock()
 
 def _write_agent_status(name: str, status: str, task: str, interval_sec: float) -> None:
     now = datetime.now(timezone.utc).isoformat()
+    now_ts = datetime.now(timezone.utc).timestamp()
     with _status_write_lock:
         try:
             data: dict = {}
@@ -42,11 +43,23 @@ def _write_agent_status(name: str, status: str, task: str, interval_sec: float) 
                     data = json.loads(_STATUS_FILE.read_text(encoding='utf-8'))
                 except Exception:
                     pass
+            prev = data.get(name, {})
+            history: list = list(prev.get('history', []))
+            # Append previous task to history if task changed
+            if prev.get('current_task') and prev['current_task'] != task:
+                history.append({
+                    'task': prev['current_task'],
+                    'ts':   prev.get('last_heartbeat_ts', now_ts - interval_sec),
+                    'status': prev.get('status', 'idle'),
+                })
+            history = history[-10:]  # keep last 10
             data[name] = {
                 'status': status,
                 'current_task': task,
                 'last_heartbeat': now,
+                'last_heartbeat_ts': now_ts,
                 'interval_sec': interval_sec,
+                'history': history,
             }
             _STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
             _STATUS_FILE.write_text(json.dumps(data, indent=2), encoding='utf-8')

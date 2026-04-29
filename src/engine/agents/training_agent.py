@@ -52,11 +52,11 @@ OU_CALIB_PATH = PROJECT_ROOT / "data" / "ou_calibration.json"
 # ── Buffer configuration ──────────────────────────────────────────────────────
 
 _SCALPING_BUFFER_SIZE = 100_000   # max 1m bars in buffer
-_SCALPING_TRAIN_EVERY = 50_000    # new bars before retraining
+_SCALPING_TRAIN_EVERY = 5_000     # new bars before retraining (lowered for demo)
 _TFT_BUFFER_SIZE      = 10_000    # max 1h bars
-_TFT_TRAIN_EVERY      = 2_000     # new bars before fine-tune
+_TFT_TRAIN_EVERY      = 500       # new bars before fine-tune (lowered for demo)
 _OU_BUFFER_SIZE       = 1_000     # 1h bars for OU calibration
-_OU_TRAIN_EVERY       = 200       # new bars before recalibration
+_OU_TRAIN_EVERY       = 50        # new bars before recalibration (lowered for demo)
 
 
 class ContinuousTrainerAgent(BaseAgent):
@@ -128,11 +128,11 @@ class ContinuousTrainerAgent(BaseAgent):
             tft_buf = len(self._tft_buf)
             ou_buf  = len(self._ou_buf)
 
-        if "ScalpingML" in self._enabled and sc_new >= _SCALPING_TRAIN_EVERY and sc_buf >= 1000:
+        if "ScalpingML" in self._enabled and sc_new >= _SCALPING_TRAIN_EVERY and sc_buf >= 500:
             self._train_scalping()
-        if "TFT_MM" in self._enabled and tft_new >= _TFT_TRAIN_EVERY and tft_buf >= 500:
+        if "TFT_MM" in self._enabled and tft_new >= _TFT_TRAIN_EVERY and tft_buf >= 200:
             self._train_tft()
-        if "OU_Filter" in self._enabled and ou_new >= _OU_TRAIN_EVERY and ou_buf >= 100:
+        if "OU_Filter" in self._enabled and ou_new >= _OU_TRAIN_EVERY and ou_buf >= 50:
             self._calibrate_ou()
 
     # ── Scalping ML ──────────────────────────────────────────────────────────
@@ -456,4 +456,32 @@ class ContinuousTrainerAgent(BaseAgent):
         logger.info("[ContinuousTrainerAgent] enabled models: %s", self._enabled)
 
     def get_stats(self) -> dict:
-        return dict(self._stats)
+        with self._buf_lock:
+            sc_buf  = len(self._scalping_buf)
+            tft_buf = len(self._tft_buf)
+            ou_buf  = len(self._ou_buf)
+            sc_new  = self._scalping_new
+            tft_new = self._tft_new
+            ou_new  = self._ou_new
+        stats = dict(self._stats)
+        stats['_buffers'] = {
+            'ScalpingML': {
+                'buf': sc_buf, 'buf_max': _SCALPING_BUFFER_SIZE,
+                'new': sc_new, 'trigger': _SCALPING_TRAIN_EVERY,
+                'buf_pct': round(sc_buf / _SCALPING_BUFFER_SIZE * 100, 1),
+                'trigger_pct': round(sc_new / _SCALPING_TRAIN_EVERY * 100, 1),
+            },
+            'TFT_MM': {
+                'buf': tft_buf, 'buf_max': _TFT_BUFFER_SIZE,
+                'new': tft_new, 'trigger': _TFT_TRAIN_EVERY,
+                'buf_pct': round(tft_buf / _TFT_BUFFER_SIZE * 100, 1),
+                'trigger_pct': round(tft_new / _TFT_TRAIN_EVERY * 100, 1),
+            },
+            'OU_Filter': {
+                'buf': ou_buf, 'buf_max': _OU_BUFFER_SIZE,
+                'new': ou_new, 'trigger': _OU_TRAIN_EVERY,
+                'buf_pct': round(ou_buf / _OU_BUFFER_SIZE * 100, 1),
+                'trigger_pct': round(ou_new / _OU_TRAIN_EVERY * 100, 1),
+            },
+        }
+        return stats
