@@ -741,7 +741,7 @@ select.field option{background:#0d1628;color:#e2e8f0}
         .st-chevron{font-size:.7rem;color:#64748b;transition:transform .22s;margin-left:auto}
         .st-sec.open .st-chevron{transform:rotate(180deg)}
         .st-sec-body{padding:12px 14px}
-        .st-sec-body.st-collapsed{display:none}
+        .st-sec-body.st-collapsed{display:none !important}
 
         /* ── ML model card ──────────────────────────────────────────── */
         .ml-card{background:rgba(5,8,22,.6);border:1px solid rgba(148,163,184,.1);border-radius:10px;padding:12px 14px;position:relative}
@@ -2050,7 +2050,7 @@ function renderStrategyTab(state) {
   if (!_stratFull) { loadStrategyFull(); return; }
   _renderMLCards(_stratFull);
   _renderStratCards(_stratFull);
-  renderQuantMatrix(state);
+  // Quant matrix is independently managed by pollQuantMatrix() — do not overwrite here
 }
 
 // ── ML Model Cards ────────────────────────────────────────────────────────────
@@ -2215,6 +2215,14 @@ function renderQuantCard(sym, q) {
     ERROR:{label:'ERROR',col:'#f97316'},
     '-1':{label:'OVERBOUGHT',col:'#fb7185'}, '1':{label:'OVERSOLD',col:'#34d399'}, '0':{label:'NEUTRAL',col:'#64748b'},
   };
+  if (q.signal === 'NO_DATA') {
+    return `<div class="card-sm" style="padding:8px 12px;opacity:.45">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="font-weight:700;color:#94a3b8;font-size:.75rem">${esc(sym)}</span>
+        <span style="font-size:.55rem;color:#475569">no data</span>
+      </div>
+    </div>`;
+  }
   const sig = sigMap[q.signal || String(q.ou_signal)] || sigMap['NEUTRAL'];
   const ouDev = q.ou_dev ?? q.ou_deviation ?? 0;
   const devSign = ouDev >= 0 ? '+' : '';
@@ -2277,6 +2285,10 @@ async function pollQuantMatrix() {
     const coins = Object.keys(r.quant);
     if (!coins.length) return;
     cont.innerHTML = coins.map(sym => renderQuantCard(sym, r.quant[sym])).join('');
+    // Update chip with live vs total counts
+    const live = coins.filter(s => r.quant[s].signal !== 'NO_DATA').length;
+    const chip = $('chip-quant-count');
+    if (chip) chip.textContent = `${live} live · ${coins.length} pairs`;
   } catch(e) {}
 }
 
