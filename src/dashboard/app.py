@@ -25,19 +25,19 @@ load_dotenv()
 app = Flask(__name__)
 
 # ─── Gemini model health cache ────────────────────────────────────────────────
-# Ordered lightest-quota first so free-tier API keys succeed more often.
+# Paid / most capable models first; free-tier as fallback when paid unavailable.
 _AI_MODELS_CONFIG = [
-    {"id": "gemini-2.0-flash-lite",          "name": "Gemini 2.0 Flash Lite",         "cost": "Free Tier", "thinking": "MED"},
-    {"id": "gemini-2.0-flash-lite-001",      "name": "Gemini 2.0 Flash Lite 001",     "cost": "Free Tier", "thinking": "MED"},
+    {"id": "gemini-3.1-pro-preview",         "name": "Gemini 3.1 Pro Preview",        "cost": "Paid",      "thinking": "HIGH"},
+    {"id": "gemini-3-pro-preview",           "name": "Gemini 3 Pro Preview",          "cost": "Paid",      "thinking": "HIGH"},
+    {"id": "gemini-2.5-pro",                 "name": "Gemini 2.5 Pro",                "cost": "Paid",      "thinking": "HIGH"},
+    {"id": "gemini-3.1-flash-lite-preview",  "name": "Gemini 3.1 Flash Lite Preview", "cost": "Free Tier", "thinking": "HIGH"},
+    {"id": "gemini-3-flash-preview",         "name": "Gemini 3 Flash Preview",        "cost": "Free Tier", "thinking": "HIGH"},
+    {"id": "gemini-2.5-flash",               "name": "Gemini 2.5 Flash",              "cost": "Free Tier", "thinking": "HIGH"},
+    {"id": "gemini-2.5-flash-lite",          "name": "Gemini 2.5 Flash Lite",         "cost": "Free Tier", "thinking": "HIGH"},
     {"id": "gemini-2.0-flash",               "name": "Gemini 2.0 Flash",              "cost": "Free Tier", "thinking": "MED"},
     {"id": "gemini-2.0-flash-001",           "name": "Gemini 2.0 Flash 001",          "cost": "Free Tier", "thinking": "MED"},
-    {"id": "gemini-2.5-flash-lite",          "name": "Gemini 2.5 Flash Lite",         "cost": "Free Tier", "thinking": "HIGH"},
-    {"id": "gemini-2.5-flash",               "name": "Gemini 2.5 Flash",              "cost": "Free Tier", "thinking": "HIGH"},
-    {"id": "gemini-3-flash-preview",         "name": "Gemini 3 Flash Preview",        "cost": "Free Tier", "thinking": "HIGH"},
-    {"id": "gemini-3.1-flash-lite-preview",  "name": "Gemini 3.1 Flash Lite Preview", "cost": "Free Tier", "thinking": "HIGH"},
-    {"id": "gemini-2.5-pro",                 "name": "Gemini 2.5 Pro",                "cost": "Paid / Rate Limited", "thinking": "HIGH"},
-    {"id": "gemini-3-pro-preview",           "name": "Gemini 3 Pro Preview",          "cost": "Paid / Rate Limited", "thinking": "HIGH"},
-    {"id": "gemini-3.1-pro-preview",         "name": "Gemini 3.1 Pro Preview",        "cost": "Paid / Rate Limited", "thinking": "HIGH"},
+    {"id": "gemini-2.0-flash-lite",          "name": "Gemini 2.0 Flash Lite",         "cost": "Free Tier", "thinking": "MED"},
+    {"id": "gemini-2.0-flash-lite-001",      "name": "Gemini 2.0 Flash Lite 001",     "cost": "Free Tier", "thinking": "MED"},
 ]
 
 _GEMINI_MODELS = [m['id'] for m in _AI_MODELS_CONFIG]
@@ -569,11 +569,12 @@ _LOG_DIR      = _PROJECT_ROOT / 'logs'
 _PID_FILE     = _PROJECT_ROOT / 'data' / 'process_ids.json'
 
 _SERVICES = {
-    'training':  {'label': 'ML Training',           'script': 'src/engine/train_all_models.py'},
-    'download':  {'label': 'Data Downloader',       'script': 'src/data_ingestion/run_full_download.py'},
-    'news':      {'label': 'News Scraper',           'script': 'src/data_ingestion/news_scraper.py'},
-    'telegram':  {'label': 'Telegram Monitor',      'script': 'src/data_ingestion/telegram_scraper.py'},
-    'watchlist': {'label': 'Watchlist Downloader',  'script': 'src/data_ingestion/watchlist_downloader.py'},
+    'training':     {'label': 'ML Training',              'script': 'src/engine/train_all_models.py'},
+    'download':     {'label': 'Data Downloader',          'script': 'src/data_ingestion/run_full_download.py'},
+    'news':         {'label': 'News Scraper',              'script': 'src/data_ingestion/news_scraper.py'},
+    'telegram':     {'label': 'Telegram Monitor',         'script': 'src/data_ingestion/telegram_scraper.py'},
+    'watchlist':    {'label': 'Watchlist Downloader',     'script': 'src/data_ingestion/watchlist_downloader.py'},
+    'historical_dl':{'label': 'Historical Archive (pre-2026)', 'script': 'src/data_ingestion/binance_archive_downloader.py'},
 }
 # Script fragment used to detect externally-launched processes by cmdline scan
 _EXTERNAL_SCRIPTS = {k: v['script'].split('/')[-1] for k, v in _SERVICES.items()}
@@ -1339,6 +1340,149 @@ def simulator_available_data():
         return jsonify({'files': files, 'total': len(files)})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/monitor/downloader/status')
+def monitor_downloader_status():
+    """
+    Returns the state of both data folders:
+      - data/raw/historical/  — pre-2026 archive (1s spot files)
+      - data/raw/             — current data (1m/1h/1d + recent 1s)
+    Checks which watchlist symbols are missing in each folder.
+    """
+    import json as _json
+    import gzip as _gz
+    import collections as _col
+
+    watchlist = read_json('data/watchlist.json', default=['BTC/USDT','ETH/USDT','SOL/USDT','ADA/USDT'])
+    raw_dir  = _PROJECT_ROOT / 'data' / 'raw'
+    hist_dir = raw_dir / 'historical'
+
+    def _scan_dir(d: _Path) -> dict:
+        if not d.exists():
+            return {}
+        result = {}
+        for f in d.iterdir():
+            if not f.name.endswith('.csv.gz'):
+                continue
+            sz = f.stat().st_size
+            try:
+                last = list(_col.deque(_gz.open(f, 'rt', encoding='utf-8'), maxlen=1))
+                last_ts = last[0].split(',')[0].strip() if last else None
+                if last_ts == 'timestamp':
+                    last_ts = None
+            except Exception:
+                last_ts = 'CORRUPTED'
+            result[f.name] = {'size_mb': round(sz / 1e6, 1), 'last_ts': last_ts}
+        return result
+
+    hist_files = _scan_dir(hist_dir)
+    curr_files = _scan_dir(raw_dir)
+
+    # Which watchlist symbols are missing from historical (no _spot_1s file)
+    missing_historical = []
+    for sym in watchlist:
+        safe = sym.replace('/', '_')
+        if f'{safe}_spot_1s.csv.gz' not in hist_files:
+            missing_historical.append(sym)
+
+    # Which watchlist symbols are missing current 1m data
+    missing_current_1m = []
+    for sym in watchlist:
+        safe = sym.replace('/', '_')
+        if f'{safe}_1m.csv.gz' not in curr_files:
+            missing_current_1m.append(sym)
+
+    # Check if each downloader is running
+    def _svc_running(script_frag):
+        try:
+            import psutil
+            for p in psutil.process_iter(['cmdline']):
+                if script_frag in ' '.join(p.info.get('cmdline') or []):
+                    return True
+        except Exception:
+            pass
+        return False
+
+    archive_running  = _svc_running('binance_archive_downloader')
+    watchlist_running = _svc_running('watchlist_downloader')
+
+    # Load saved folder state
+    state_path = _PROJECT_ROOT / 'data' / 'downloader_state.json'
+    saved_state = {}
+    if state_path.exists():
+        try:
+            saved_state = _json.loads(state_path.read_text(encoding='utf-8'))
+        except Exception:
+            pass
+
+    # Save current state
+    new_state = {
+        'historical_files': len(hist_files),
+        'current_files': len(curr_files),
+        'missing_historical': missing_historical,
+        'missing_current_1m': missing_current_1m,
+        'last_checked': _time.strftime('%Y-%m-%d %H:%M:%S'),
+    }
+    try:
+        state_path.write_text(_json.dumps(new_state, indent=2), encoding='utf-8')
+    except Exception:
+        pass
+
+    return jsonify({
+        'historical': {
+            'dir': str(hist_dir),
+            'file_count': len(hist_files),
+            'files': dict(list(hist_files.items())[:10]),   # first 10 for display
+            'missing_symbols': missing_historical,
+            'running': archive_running,
+        },
+        'current': {
+            'dir': str(raw_dir),
+            'file_count': len(curr_files),
+            'missing_1m': missing_current_1m,
+            'running': watchlist_running,
+        },
+        'saved_state': saved_state,
+    })
+
+
+@app.route('/api/monitor/downloader/migrate', methods=['POST'])
+def monitor_migrate_to_historical():
+    """
+    Move healthy *_spot_1s.csv.gz files from data/raw/ to data/raw/historical/.
+    Deletes corrupted ones.  Safe to call when archive downloader is NOT active.
+    Returns a summary of what was moved / deleted.
+    """
+    import gzip as _gz
+    import shutil as _sh
+    import collections as _col
+
+    raw_dir  = _PROJECT_ROOT / 'data' / 'raw'
+    hist_dir = raw_dir / 'historical'
+    hist_dir.mkdir(parents=True, exist_ok=True)
+
+    moved, deleted, skipped = [], [], []
+    for f in raw_dir.glob('*_spot_1s.csv.gz'):
+        try:
+            last = list(_col.deque(_gz.open(f, 'rt', encoding='utf-8'), maxlen=1))
+            if not last:
+                f.unlink()
+                deleted.append(f.name)
+                continue
+        except Exception:
+            f.unlink()
+            deleted.append(f.name)
+            continue
+
+        dest = hist_dir / f.name
+        if dest.exists():
+            skipped.append(f.name)
+            continue
+        _sh.move(str(f), str(dest))
+        moved.append(f.name)
+
+    return jsonify({'moved': moved, 'deleted': deleted, 'skipped': skipped})
 
 
 if __name__ == '__main__':

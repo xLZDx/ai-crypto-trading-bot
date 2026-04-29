@@ -16,19 +16,19 @@ _TRANSIENT = [
     '404', 'not found', 'invalid argument', 'unknown model',
 ]
 
-# Lightest-quota models first; gives free-tier keys the best chance.
+# Paid / most capable models first for trade decisions; free tier as fallback.
 _ALL_MODELS = [
-    "gemini-2.0-flash-lite",
-    "gemini-2.0-flash-lite-001",
+    "gemini-3.1-pro-preview",
+    "gemini-3-pro-preview",
+    "gemini-2.5-pro",
+    "gemini-3.1-flash-lite-preview",
+    "gemini-3-flash-preview",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
     "gemini-2.0-flash",
     "gemini-2.0-flash-001",
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-flash",
-    "gemini-3-flash-preview",
-    "gemini-3.1-flash-lite-preview",
-    "gemini-2.5-pro",
-    "gemini-3-pro-preview",
-    "gemini-3.1-pro-preview",
+    "gemini-2.0-flash-lite",
+    "gemini-2.0-flash-lite-001",
 ]
 
 
@@ -81,7 +81,12 @@ class AgenticLLM:
         
         ctrl = read_json('data/control.json', default={})
         selected_model = ctrl.get('selected_ai_model')
-        models_to_try = [selected_model] if selected_model else _ALL_MODELS
+        if selected_model and selected_model not in _ALL_MODELS:
+            models_to_try = [selected_model] + _ALL_MODELS
+        elif selected_model:
+            models_to_try = [selected_model] + [m for m in _ALL_MODELS if m != selected_model]
+        else:
+            models_to_try = _ALL_MODELS
         
         last_err = None
         for model_id in models_to_try:

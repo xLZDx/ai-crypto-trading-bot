@@ -830,7 +830,7 @@ class MultiAssetTrader:
         # --- SCALPING ANALYSIS (1m timeframe) ---
         logger.info(f"[{symbol}][SCALPING] Starting 1m analysis...")
         scalping_data_filepath = f"data/raw/{symbol.replace('/', '_')}_1m.csv.gz"
-        data_1m = self.analyzers[symbol].load_data(scalping_data_filepath)
+        data_1m = self.analyzers[symbol].load_data(scalping_data_filepath, tail_n=500)
         if data_1m:
             # Add current candle to history
             data_1m.append({'timestamp': time.strftime("%Y-%m-%d %H:%M:%S"), 'open': current_price, 'high': current_price, 'low': current_price, 'close': current_price, 'volume': 0})

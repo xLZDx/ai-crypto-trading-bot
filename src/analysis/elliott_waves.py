@@ -13,16 +13,17 @@ class ElliottWaveAnalyzer:
     def __init__(self, deviation_percent=2.0):
         self.deviation_percent = deviation_percent / 100.0
         
-    def load_data(self, filepath: str) -> List[Dict]:
-        """Loads CSV data into memory."""
-        data = []
+    def load_data(self, filepath: str, tail_n: int = 0) -> List[Dict]:
+        """Load CSV data.  tail_n > 0 returns only the last tail_n rows (memory-safe)."""
+        from collections import deque
+        data_buf: deque = deque(maxlen=tail_n if tail_n > 0 else None)
         try:
             open_func = gzip.open if filepath.endswith('.gz') else open
             mode = 'rt' if filepath.endswith('.gz') else 'r'
             with open_func(filepath, mode, encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    data.append({
+                    data_buf.append({
                         'timestamp': row['timestamp'],
                         'open': float(row['open']),
                         'high': float(row['high']),
@@ -34,6 +35,7 @@ class ElliottWaveAnalyzer:
                         'taker_buy_base': float(row.get('taker_buy_base', 0)),
                         'taker_buy_quote': float(row.get('taker_buy_quote', 0))
                     })
+            data = list(data_buf)
             logging.info(f"Loaded {len(data)} candles from {filepath}")
             return data
         except Exception as e:

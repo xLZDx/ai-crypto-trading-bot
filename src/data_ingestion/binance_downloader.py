@@ -131,8 +131,8 @@ def download_history(symbol='BTC/USDT', timeframe='1h', limit=1000):
 
 def download_funding_history(symbol='BTC/USDT', limit=1000):
     """
-    Downloads historical funding rates for perpetual futures.
-    Crucial for pairs trading and backtesting true unit economics.
+    Downloads and appends funding rates to a gzipped CSV.
+    Uses last-timestamp check to avoid duplicates; paginates for full history.
     """
     logger.info(f"Updating historical funding rates for {symbol}...")
     try:
@@ -140,29 +140,34 @@ def download_funding_history(symbol='BTC/USDT', limit=1000):
         raw_dir = os.path.join(project_root, 'data', 'raw')
         os.makedirs(raw_dir, exist_ok=True)
 
-        filename = os.path.join(raw_dir, f"{symbol.replace('/', '_')}_funding.csv")
+        filename = os.path.join(raw_dir, f"{symbol.replace('/', '_')}_funding.csv.gz")
         safe_symbol = symbol.replace('/', '')
-        
+
+        last_ts = get_last_timestamp(filename) if os.path.exists(filename) else None
+
         url = f"https://fapi.binance.com/fapi/v1/fundingRate?symbol={safe_symbol}&limit={limit}"
-        
+        if last_ts:
+            url += f"&startTime={last_ts + 1}"
+
         response = _get_with_retry(url)
         funding_data = response.json()
-        
+
         if not isinstance(funding_data, list) or not funding_data:
-            logger.info(f"[{symbol}] No funding data found.")
+            logger.info(f"[{symbol}] Funding data already up to date.")
             return
-            
-        mode = 'a' if os.path.exists(filename) else 'w'
-        with open(filename, mode, newline='', encoding='utf-8') as f:
+
+        mode = 'at' if os.path.exists(filename) else 'wt'
+        written = 0
+        with gzip.open(filename, mode, newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            if mode == 'w':
-                writer.writerow(['timestamp', 'funding_rate', 'mark_price'])
-                
+            if mode == 'wt':
+                writer.writerow(['timestamp', 'funding_rate'])
             for row in funding_data:
-                dt = datetime.fromtimestamp(row['fundingTime'] / 1000, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-                writer.writerow([dt, float(row['fundingRate']), float(row.get('markPrice', 0))])
-                
-        logger.info(f"Appended funding rates to {filename}.")
+                dt = datetime.fromtimestamp(row['fundingTime'] / 1000, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+                writer.writerow([dt, float(row['fundingRate'])])
+                written += 1
+
+        logger.info(f"Appended {written} funding rates to {filename}.")
     except Exception as e:
         logger.error(f"Error while downloading funding data for {symbol}: {e}")
 

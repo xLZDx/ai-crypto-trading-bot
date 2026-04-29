@@ -55,7 +55,7 @@ logging.basicConfig(
 logger = logging.getLogger("archive_dl")
 
 PROJECT_ROOT   = Path(__file__).resolve().parents[2]
-RAW_DIR        = PROJECT_ROOT / "data" / "raw"
+RAW_DIR        = PROJECT_ROOT / "data" / "raw" / "historical"   # pre-2026 archive lives here
 WATCHLIST_FILE = PROJECT_ROOT / "data" / "watchlist.json"
 
 MAX_WORKERS = 3

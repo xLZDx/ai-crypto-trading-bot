@@ -8,26 +8,41 @@ Write-Host "   AI TRADER: POWERSHELL AUTO-SETUP"
 Write-Host "   Root: $root"
 Write-Host "==========================================" -ForegroundColor Cyan
 
-# Step 1: Kill old processes
+# Step 1: Kill ONLY known managed processes (bot, dashboard, monitor, training).
+#         Download processes (archive / watchlist) are NOT killed — they finish on their own.
 Write-Host ""
-Write-Host "[1/6] Terminating old background processes..." -ForegroundColor Yellow
+Write-Host "[1/6] Terminating managed processes (bot/dashboard/monitor/training only)..." -ForegroundColor Yellow
 $pidFile = Join-Path $root 'data\process_ids.json'
+$killedPids = @()
 if (Test-Path $pidFile) {
-    Write-Host "  Found PID file, removing it."
+    try {
+        $pids = Get-Content $pidFile -Raw | ConvertFrom-Json
+        foreach ($key in @('bot','dash','monitor','training')) {
+            $pid = $pids.$key
+            if ($pid -and $pid -ne 0) {
+                try {
+                    Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+                    $killedPids += $pid
+                    Write-Host "  Stopped $key PID $pid"
+                } catch {}
+            }
+        }
+    } catch {
+        Write-Host "  Could not parse PID file: $_" -ForegroundColor DarkYellow
+    }
     Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
-} else {
-    Write-Host "  No PID file found."
 }
-Write-Host "  Killing python.exe (10s timeout)..."
-$killJob = Start-Job -ScriptBlock { taskkill /F /IM python.exe 2>&1 | Out-Null }
-$done = Wait-Job $killJob -Timeout 10
-if ($done) {
-    Write-Host "  Kill completed."
-} else {
-    Write-Host "  Kill timed out (zombie processes ignored)."
+# Fallback: kill python processes that have bot/dashboard/training scripts in their command line
+Get-WmiObject Win32_Process -Filter "Name='python.exe'" 2>$null | ForEach-Object {
+    $cmd = $_.CommandLine
+    if ($cmd -match 'src\\main\.py|src/main\.py|launch_bot|src\\dashboard\\app|launch_dashboard|train_all_models|launch_training') {
+        if ($_.ProcessId -notin $killedPids) {
+            try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+            Write-Host "  Stopped stray process PID $($_.ProcessId): $($cmd.Substring(0,[Math]::Min(80,$cmd.Length)))"
+        }
+    }
 }
-Remove-Job $killJob -Force -ErrorAction SilentlyContinue
-Write-Host "[1/6] Processes terminated." -ForegroundColor Green
+Write-Host "[1/6] Managed processes terminated (downloads left running)." -ForegroundColor Green
 
 Start-Sleep -Seconds 2
 
@@ -66,6 +81,7 @@ if ($hasFlask -and $hasCcxt -and $hasSklearn -and $hasDarts) {
 # Ensure dirs exist
 New-Item -ItemType Directory -Force -Path (Join-Path $root 'logs') | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $root 'data') | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $root 'data\raw\historical') | Out-Null
 Write-Host "  Directories ready."
 
 # Step 3.5: Redirect caches + set CPU/GPU env vars (shared setup_env.ps1)
@@ -88,19 +104,27 @@ function Start-Window {
     return $proc
 }
 
-# Step 0: Monitor server
+# Step 0: Monitor server (dashboard)
 Write-Host ""
 Write-Host "[0/6] Starting Monitor server (http://127.0.0.1:5001)..." -ForegroundColor Yellow
 $procMonitor = Start-Window -Label 'Monitor' -ScriptFile (Join-Path $root 'launch_monitor.ps1')
 Start-Sleep -Seconds 3
 Write-Host "[0/6] Monitor launched." -ForegroundColor Green
 
-# Step 4: ML Training
+# Step 4: ML Training — deferred 10 minutes after restart so the bot stabilises first
 Write-Host ""
-Write-Host "[4/6] Launching ML Training..." -ForegroundColor Yellow
-Start-Window -Label 'Training' -ScriptFile (Join-Path $root 'launch_training.ps1') | Out-Null
-Start-Sleep -Seconds 2
-Write-Host "[4/6] Training launched." -ForegroundColor Green
+Write-Host "[4/6] Scheduling ML Training to start in 10 minutes..." -ForegroundColor Yellow
+$trainingScript = Join-Path $root 'launch_training.ps1'
+$trainingDelay  = 600   # seconds
+$procTraining = $null
+if (Test-Path $trainingScript) {
+    $argStr = "-NoExit -ExecutionPolicy Bypass -Command `"Start-Sleep -Seconds $trainingDelay; & '$trainingScript'`""
+    $procTraining = Start-Process powershell -ArgumentList $argStr -PassThru
+    Write-Host "  Training will start at $(( Get-Date ).AddSeconds($trainingDelay).ToString('HH:mm:ss')) (PID $($procTraining.Id))"
+} else {
+    Write-Host "  WARNING: launch_training.ps1 not found" -ForegroundColor Red
+}
+Write-Host "[4/6] Training scheduled." -ForegroundColor Green
 
 # Step 5: Dashboard + Bot
 Write-Host ""
@@ -111,12 +135,19 @@ $procBot  = Start-Window -Label 'Bot'       -ScriptFile (Join-Path $root 'launch
 Start-Sleep -Seconds 2
 Write-Host "[5/6] Dashboard and Bot launched." -ForegroundColor Green
 
-# Step 5.5: Watchlist Downloader Daemon
+# Step 5.5: Watchlist Downloader Daemon (only start if not already running)
 Write-Host ""
-Write-Host "[5.5/6] Launching Watchlist Downloader Daemon (1s/1m/1M for all coins)..." -ForegroundColor Yellow
-$procWatchlist = Start-Window -Label 'WatchlistDownloader' -ScriptFile (Join-Path $root 'launch_watchlist_downloader.ps1')
-Start-Sleep -Seconds 2
-Write-Host "[5.5/6] Watchlist Downloader launched." -ForegroundColor Green
+Write-Host "[5.5/6] Checking Watchlist Downloader Daemon..." -ForegroundColor Yellow
+$wdRunning = Get-WmiObject Win32_Process -Filter "Name='python.exe'" 2>$null |
+    Where-Object { $_.CommandLine -match 'watchlist_downloader' }
+if ($wdRunning) {
+    Write-Host "  Watchlist Downloader already running (PID $($wdRunning.ProcessId)) - skipping." -ForegroundColor DarkCyan
+    $procWatchlist = Get-Process -Id $wdRunning.ProcessId -ErrorAction SilentlyContinue
+} else {
+    $procWatchlist = Start-Window -Label 'WatchlistDownloader' -ScriptFile (Join-Path $root 'launch_watchlist_downloader.ps1')
+    Start-Sleep -Seconds 2
+}
+Write-Host "[5.5/6] Watchlist Downloader ready." -ForegroundColor Green
 
 # Step 6: Save PIDs
 Write-Host ""
@@ -125,15 +156,17 @@ $monId       = if ($procMonitor)   { $procMonitor.Id   } else { 0 }
 $dashId      = if ($procDash)      { $procDash.Id      } else { 0 }
 $botId       = if ($procBot)       { $procBot.Id       } else { 0 }
 $watchlistId = if ($procWatchlist) { $procWatchlist.Id } else { 0 }
-$pidData = @{ bot = $botId; dash = $dashId; monitor = $monId; watchlist = $watchlistId; mcp = 0 }
+$trainingId  = if ($procTraining)  { $procTraining.Id  } else { 0 }
+$pidData = @{ bot = $botId; dash = $dashId; monitor = $monId; watchlist = $watchlistId; training = $trainingId; mcp = 0 }
 $pidData | ConvertTo-Json | Set-Content (Join-Path $root 'data\process_ids.json')
-Write-Host "[6/6] PIDs saved: monitor=$monId  dash=$dashId  bot=$botId  watchlist=$watchlistId" -ForegroundColor Green
+Write-Host "[6/6] PIDs saved: monitor=$monId  dash=$dashId  bot=$botId  watchlist=$watchlistId  training=$trainingId" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "==========================================" -ForegroundColor Green
 Write-Host "   ALL PROCESSES STARTED SUCCESSFULLY!" -ForegroundColor Green
 Write-Host "   Monitor   -> http://127.0.0.1:5001"   -ForegroundColor Cyan
 Write-Host "   Dashboard -> http://127.0.0.1:5000"   -ForegroundColor Cyan
+Write-Host "   Training starts in 10 minutes."        -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "This window stays open for your reference." -ForegroundColor White
