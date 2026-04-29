@@ -397,6 +397,10 @@ select.field option{background:#0d1628;color:#e2e8f0}
       <span class="nav-icon">🖥</span> Monitor
       <span class="nav-badge" id="nb-alerts" style="display:none">!</span>
     </button>
+    <button class="nav-item" data-tab="simulator">
+      <span class="nav-icon">🎮</span> Simulator
+      <span class="nav-badge" id="nb-sim" style="display:none">▶</span>
+    </button>
   </nav>
 
   <!-- Symbol search -->
@@ -1121,7 +1125,224 @@ select.field option{background:#0d1628;color:#e2e8f0}
         </div>
       </div>
 
+      <!-- ── Strategy Control ─────────────────────────────────────────── -->
+      <style>
+        .sc-section{background:var(--bg-2);border:1px solid rgba(148,163,184,.12);border-radius:12px;overflow:hidden;margin-bottom:12px}
+        .sc-hdr{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;
+          cursor:pointer;background:rgba(30,41,59,.5);user-select:none}
+        .sc-hdr:hover{background:rgba(30,41,59,.8)}
+        .sc-body{padding:14px 16px}
+        .sc-body.sc-collapsed{display:none}
+        .sc-chevron{transition:transform .25s;font-size:.75rem;color:#64748b}
+        .sc-section.sc-open .sc-chevron{transform:rotate(180deg)}
+        .sc-summary{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+        .sc-badge{padding:4px 10px;border-radius:6px;font-size:.72rem;font-weight:600}
+        .sc-badge.synced   {background:rgba(34,197,94,.15);color:#22c55e}
+        .sc-badge.gap      {background:rgba(234,179,8,.15); color:#eab308}
+        .sc-badge.missing  {background:rgba(239,68,68,.15); color:#ef4444}
+        .sc-table{width:100%;border-collapse:collapse;font-size:.8rem}
+        .sc-table th{padding:6px 8px;text-align:left;color:#64748b;font-weight:500;border-bottom:1px solid rgba(148,163,184,.12)}
+        .sc-table td{padding:6px 8px;border-bottom:1px solid rgba(148,163,184,.06);vertical-align:middle}
+        .sc-table tr:hover td{background:rgba(30,41,59,.4)}
+        .sc-group-badge{padding:2px 6px;border-radius:4px;font-size:.68rem;font-weight:600}
+        .sc-group-badge.A_Original{background:rgba(59,130,246,.2);color:#60a5fa}
+        .sc-group-badge.B_New     {background:rgba(168,85,247,.2);color:#c084fc}
+        .sc-group-badge.ML        {background:rgba(16,185,129,.2);color:#34d399}
+        .sc-group-badge.Filter    {background:rgba(234,179,8,.2); color:#fbbf24}
+        .sc-group-badge.RiskFilter{background:rgba(239,68,68,.2); color:#f87171}
+        .sc-status{padding:2px 6px;border-radius:4px;font-size:.68rem;font-weight:600}
+        .sc-status.synced              {background:rgba(34,197,94,.15);color:#22c55e}
+        .sc-status.live_only           {background:rgba(234,179,8,.15);color:#eab308}
+        .sc-status.backtest_only       {background:rgba(59,130,246,.15);color:#60a5fa}
+        .sc-status.live_only_by_design {background:rgba(148,163,184,.1);color:#94a3b8}
+        .sc-status.backtest_only_by_design{background:rgba(148,163,184,.1);color:#94a3b8}
+        .sc-status.disabled            {background:rgba(100,116,139,.1);color:#64748b}
+        .sc-toggle{position:relative;display:inline-block;width:34px;height:18px}
+        .sc-toggle input{opacity:0;width:0;height:0}
+        .sc-slider{position:absolute;cursor:pointer;inset:0;background:#334155;border-radius:18px;transition:.2s}
+        .sc-slider:before{content:"";position:absolute;height:12px;width:12px;left:3px;bottom:3px;background:#94a3b8;border-radius:50%;transition:.2s}
+        .sc-toggle input:checked + .sc-slider{background:rgba(34,197,94,.4)}
+        .sc-toggle input:checked + .sc-slider:before{transform:translateX(16px);background:#22c55e}
+        .sc-toggle input:disabled + .sc-slider{opacity:.4;cursor:not-allowed}
+        .sc-desc{color:#64748b;font-size:.72rem;max-width:260px}
+        .sc-model-warn{color:#f87171;font-size:.7rem}
+      </style>
+
+      <div class="sc-section sc-open" id="sc-section">
+        <div class="sc-hdr" onclick="scToggle()">
+          <span style="font-weight:600;font-size:.9rem">⚙ Strategy Control</span>
+          <div style="display:flex;gap:10px;align-items:center">
+            <span id="sc-summary-inline" style="color:#64748b;font-size:.78rem"></span>
+            <span class="sc-chevron">▼</span>
+          </div>
+        </div>
+        <div class="sc-body" id="sc-body">
+          <div class="sc-summary" id="sc-summary"></div>
+          <table class="sc-table">
+            <thead>
+              <tr>
+                <th>Strategy</th>
+                <th>Group</th>
+                <th style="text-align:center">Live</th>
+                <th style="text-align:center">Backtest</th>
+                <th>Status</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody id="sc-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
     </div><!-- /monitor -->
+
+
+    <!-- ══════════ TAB: SIMULATOR ══════════ -->
+    <div id="tab-simulator" class="tab-pane">
+      <style>
+        .sim-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-bottom:16px}
+        .sim-card{background:var(--bg-2);border:1px solid rgba(148,163,184,.12);border-radius:10px;padding:14px 16px}
+        .sim-card.running{border-color:rgba(52,211,153,.4);box-shadow:0 0 8px rgba(52,211,153,.1)}
+        .sim-card.idle{border-color:rgba(148,163,184,.2)}
+        .sim-card.error{border-color:rgba(251,113,133,.4)}
+        .sim-label{font-size:.68rem;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px}
+        .sim-val{font-size:1.05rem;font-weight:700;color:#e2e8f0}
+        .sim-sub{font-size:.65rem;color:#64748b;margin-top:2px}
+        .sim-controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
+        .sim-btn{padding:7px 18px;border-radius:7px;border:none;font-size:.75rem;font-weight:700;cursor:pointer;transition:all .2s}
+        .sim-btn.play{background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.3)}
+        .sim-btn.play:hover{background:rgba(52,211,153,.3)}
+        .sim-btn.pause{background:rgba(251,191,36,.1);color:#fbbf24;border:1px solid rgba(251,191,36,.25)}
+        .sim-btn.pause:hover{background:rgba(251,191,36,.2)}
+        .sim-btn.stop{background:rgba(251,113,133,.1);color:#f87171;border:1px solid rgba(251,113,133,.25)}
+        .sim-btn.stop:hover{background:rgba(251,113,133,.2)}
+        .sim-field{background:var(--bg-2);border:1px solid rgba(148,163,184,.15);color:#e2e8f0;border-radius:6px;padding:5px 9px;font-size:.74rem}
+        .sim-field select,.sim-field input{background:transparent;border:none;color:#e2e8f0;font-size:.74rem;outline:none}
+        .sim-section{font-size:.7rem;font-weight:700;color:#7c3aed;text-transform:uppercase;letter-spacing:.08em;margin:18px 0 8px}
+        .sim-model-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-bottom:16px}
+        .sim-model-card{background:var(--bg-2);border:1px solid rgba(124,58,237,.2);border-radius:9px;padding:12px}
+        .sim-model-name{font-size:.72rem;font-weight:700;color:#a78bfa;margin-bottom:6px}
+        .sim-metric{display:flex;justify-content:space-between;font-size:.68rem;padding:2px 0}
+        .sim-metric .mk{color:#94a3b8}
+        .sim-metric .mv{color:#e2e8f0;font-weight:600}
+        .sim-pnl-pos{color:#34d399;font-weight:700}
+        .sim-pnl-neg{color:#f87171;font-weight:700}
+        .sim-progress{height:4px;background:rgba(148,163,184,.1);border-radius:2px;margin-top:8px;overflow:hidden}
+        .sim-progress-bar{height:100%;background:linear-gradient(90deg,#7c3aed,#3b82f6);border-radius:2px;transition:width .5s}
+        .sim-event-list{max-height:220px;overflow-y:auto;font-size:.67rem}
+        .sim-event{display:flex;gap:8px;padding:5px 0;border-bottom:1px solid rgba(148,163,184,.06)}
+        .sim-event .se-model{color:#a78bfa;font-weight:700;min-width:90px}
+        .sim-event .se-acc{color:#34d399}
+        .sim-event .se-loss{color:#f87171}
+        .sim-event .se-ts{color:#64748b;margin-left:auto}
+        .sim-avail-list{max-height:180px;overflow-y:auto;font-size:.66rem}
+        .sim-avail-row{display:flex;gap:8px;padding:4px 0;border-bottom:1px solid rgba(148,163,184,.06)}
+        .sim-avail-sym{color:#60a5fa;font-weight:600;min-width:90px}
+        .sim-avail-tf{color:#94a3b8;min-width:40px}
+        .sim-avail-sz{color:#64748b;margin-left:auto}
+      </style>
+
+      <!-- ── Controls row ── -->
+      <div class="sim-controls">
+        <button class="sim-btn play"  onclick="simStart()">▶ Start</button>
+        <button class="sim-btn pause" onclick="simPause()">⏸ Pause</button>
+        <button class="sim-btn play"  onclick="simResume()">⏩ Resume</button>
+        <button class="sim-btn stop"  onclick="simStop()">⏹ Stop</button>
+        <span style="color:#64748b;font-size:.7rem">│</span>
+        <span style="font-size:.7rem;color:#94a3b8">Symbol:</span>
+        <select id="sim-sym" class="sim-field" onchange="simApplyConfig()">
+          <option value="BTC_USDT">BTC_USDT</option>
+          <option value="ETH_USDT">ETH_USDT</option>
+          <option value="SOL_USDT">SOL_USDT</option>
+          <option value="BNB_USDT">BNB_USDT</option>
+          <option value="ADA_USDT">ADA_USDT</option>
+        </select>
+        <span style="font-size:.7rem;color:#94a3b8">TF:</span>
+        <select id="sim-tf" class="sim-field" onchange="simApplyConfig()">
+          <option value="1m">1m</option>
+          <option value="1h">1h</option>
+          <option value="1d">1d</option>
+          <option value="1s">1s</option>
+        </select>
+        <span style="font-size:.7rem;color:#94a3b8">Speed:</span>
+        <select id="sim-speed" class="sim-field" onchange="simApplyConfig()">
+          <option value="1">1× (real-time)</option>
+          <option value="60">60×</option>
+          <option value="500">500×</option>
+          <option value="1000" selected>1000×</option>
+          <option value="5000">5000× (max)</option>
+        </select>
+        <span style="font-size:.7rem;color:#94a3b8">Scenario:</span>
+        <select id="sim-scenario" class="sim-field" onchange="simApplyConfig()">
+          <option value="AUTO">AUTO</option>
+          <option value="TRENDING_UP">TRENDING_UP</option>
+          <option value="TRENDING_DOWN">TRENDING_DOWN</option>
+          <option value="RANGING">RANGING</option>
+          <option value="VOLATILE">VOLATILE</option>
+          <option value="FUNDING_SQUEEZE">FUNDING_SQUEEZE</option>
+          <option value="COMPOSITE">COMPOSITE</option>
+        </select>
+      </div>
+
+      <!-- ── Status cards ── -->
+      <div class="sim-grid" id="sim-status-cards">
+        <div class="sim-card"><div class="sim-label">State</div><div class="sim-val" id="sim-state">IDLE</div></div>
+        <div class="sim-card"><div class="sim-label">Current Bar</div><div class="sim-val" id="sim-curr-ts">—</div></div>
+        <div class="sim-card"><div class="sim-label">Bars Emitted</div><div class="sim-val" id="sim-bars">0</div><div class="sim-sub" id="sim-bps">0 bars/sec</div></div>
+        <div class="sim-card"><div class="sim-label">Active Scenario</div><div class="sim-val" id="sim-scen-type">—</div><div class="sim-sub" id="sim-scen-sym">—</div></div>
+        <div class="sim-card"><div class="sim-label">Paper Trades</div><div class="sim-val" id="sim-trade-count">0</div><div class="sim-sub" id="sim-pnl-total">P&L: $0.00</div></div>
+        <div class="sim-card"><div class="sim-label">Training Cycles</div><div class="sim-val" id="sim-train-cycles">0</div></div>
+      </div>
+
+      <!-- ── Model & Strategy selection ── -->
+      <div class="sim-section" style="margin-top:12px">Models to Train
+        <span style="font-size:.6rem;color:#64748b;font-weight:400;margin-left:8px">(applied on next Start)</span>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px;padding:8px 0">
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:.7rem;color:#cbd5e1">
+          <input type="checkbox" id="sim-train-scalping" checked style="accent-color:#8b5cf6"> ScalpingML
+          <span style="color:#64748b;font-size:.6rem">(1m bars)</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:.7rem;color:#cbd5e1">
+          <input type="checkbox" id="sim-train-tft" style="accent-color:#8b5cf6"> TFT_MM
+          <span style="color:#64748b;font-size:.6rem">(1h bars, slow)</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:.7rem;color:#cbd5e1">
+          <input type="checkbox" id="sim-train-ou" checked style="accent-color:#8b5cf6"> OU_Filter
+          <span style="color:#64748b;font-size:.6rem">(1h bars, fast)</span>
+        </label>
+      </div>
+
+      <!-- ── Model training cards ── -->
+      <div class="sim-section">Model Training Status</div>
+      <div id="sim-error-bar" style="display:none;background:#7f1d1d;color:#fca5a5;font-size:.67rem;padding:5px 10px;border-radius:6px;margin-bottom:8px"></div>
+      <div class="sim-model-grid" id="sim-model-cards">
+        <div class="sim-model-card"><div class="sim-model-name">ScalpingML</div><div class="sim-metric"><span class="mk">Status</span><span class="mv">Waiting…</span></div></div>
+        <div class="sim-model-card"><div class="sim-model-name">TFT_MM</div><div class="sim-metric"><span class="mk">Status</span><span class="mv">Waiting…</span></div></div>
+        <div class="sim-model-card"><div class="sim-model-name">OU_Filter</div><div class="sim-metric"><span class="mk">Status</span><span class="mv">Waiting…</span></div></div>
+      </div>
+
+      <!-- ── Paper P&L + recent training events ── -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
+        <div class="sim-card">
+          <div class="sim-label">Cumulative Paper P&L</div>
+          <div id="sim-pnl-chart" style="height:140px;display:flex;align-items:flex-end;gap:1px;overflow:hidden;margin-top:8px"></div>
+        </div>
+        <div class="sim-card">
+          <div class="sim-label" style="margin-bottom:8px">Recent Training Events</div>
+          <div class="sim-event-list" id="sim-event-list">
+            <div style="color:#64748b;font-size:.67rem">Waiting for first training cycle…</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Available data files ── -->
+      <div class="sim-section">Available GZ Data Files (<span id="sim-file-count">0</span>)</div>
+      <div class="sim-avail-list" id="sim-avail-list">
+        <div style="color:#64748b;font-size:.67rem">Loading…</div>
+      </div>
+
+    </div><!-- /simulator -->
 
 
   </div><!-- /content -->
@@ -1940,34 +2161,48 @@ function renderStrategyTab(state) {
 
 // ─── QUANT SIGNAL MATRIX ─────────────────────────────────────────────────────
 function renderQuantCard(sym, q) {
-  const OU_MAP = {'-1':{label:'OVERBOUGHT',col:'#fb7185'},'0':{label:'NEUTRAL',col:'#64748b'},'1':{label:'OVERSOLD',col:'#34d399'}};
-  const ou = OU_MAP[String(q.ou_signal)] || OU_MAP['0'];
-  const devSign = (q.ou_deviation||0) >= 0 ? '+' : '';
-  const garchCol = q.garch_spike ? '#fb7185' : '#34d399';
-  const garchLabel = q.garch_spike ? '⚠ SPIKE' : '✓ NORMAL';
-  const tftCol = (q.tft_return||0) > 1 ? '#34d399' : (q.tft_return||0) < -1 ? '#fb7185' : '#64748b';
-  const tftLabel = q.tft_return ? `${(q.tft_return>=0?'+':'')+q.tft_return}%` : 'no model';
+  // Support both old (state.json) and new (/api/quant_matrix) data formats
+  const sigMap = {
+    OVERBOUGHT:{label:'OVERBOUGHT',col:'#fb7185'}, OVERSOLD:{label:'OVERSOLD',col:'#34d399'},
+    NEUTRAL:{label:'NEUTRAL',col:'#64748b'}, NO_DATA:{label:'NO DATA',col:'#475569'},
+    ERROR:{label:'ERROR',col:'#f97316'},
+    '-1':{label:'OVERBOUGHT',col:'#fb7185'}, '1':{label:'OVERSOLD',col:'#34d399'}, '0':{label:'NEUTRAL',col:'#64748b'},
+  };
+  const sig = sigMap[q.signal || String(q.ou_signal)] || sigMap['NEUTRAL'];
+  const ouDev = q.ou_dev ?? q.ou_deviation ?? 0;
+  const devSign = ouDev >= 0 ? '+' : '';
+
+  const garchSpike = q.garch_flag === 'HIGH' || q.garch_spike;
+  const garchCol   = garchSpike ? '#fb7185' : '#34d399';
+  const garchLabel = garchSpike ? '⚠ HIGH' : '✓ NORMAL';
+  const garchVol   = q.garch_vol ?? q.garch_forecast;
+  const garchStr   = garchVol != null ? Number(garchVol).toFixed(3)+'%' : '--';
+
+  // ML Signal: prefer ml_return (new), fall back to tft_return (old)
+  const mlRet   = q.ml_return ?? q.tft_return;
+  const mlCol   = mlRet > 1 ? '#34d399' : mlRet < -1 ? '#fb7185' : '#64748b';
+  const mlLabel = mlRet != null ? `${(mlRet>=0?'+':'')+mlRet}%` : '—';
   const asSpread = q.as_spread != null ? Number(q.as_spread).toFixed(2) : '--';
-  const garchFcast = q.garch_forecast != null ? Number(q.garch_forecast).toFixed(3)+'%' : '--';
+
   return `<div class="card-sm" style="padding:10px 12px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <span style="font-weight:800;color:#fff;font-size:.78rem">${esc(sym)}</span>
-      <span style="font-size:.58rem;font-weight:700;padding:2px 8px;border-radius:999px;background:${ou.col}22;color:${ou.col}">${ou.label}</span>
+      <span style="font-size:.58rem;font-weight:700;padding:2px 8px;border-radius:999px;background:${sig.col}22;color:${sig.col}">${sig.label}</span>
     </div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px">
       <div style="background:rgba(5,8,22,.5);border-radius:7px;padding:6px;text-align:center">
         <div style="font-size:.5rem;color:#475569">OU DEV</div>
-        <div style="font-weight:800;color:${ou.col};font-size:.85rem">${devSign}${q.ou_deviation||0}σ</div>
+        <div style="font-weight:800;color:${sig.col};font-size:.85rem">${devSign}${ouDev}σ</div>
         <div style="font-size:.48rem;color:#475569">μ=${q.ou_mu?Number(q.ou_mu).toFixed(0):'--'}</div>
       </div>
       <div style="background:rgba(5,8,22,.5);border-radius:7px;padding:6px;text-align:center">
         <div style="font-size:.5rem;color:#475569">GARCH</div>
         <div style="font-weight:800;color:${garchCol};font-size:.72rem">${garchLabel}</div>
-        <div style="font-size:.48rem;color:#475569">${garchFcast}</div>
+        <div style="font-size:.48rem;color:#475569">${garchStr}</div>
       </div>
       <div style="background:rgba(5,8,22,.5);border-radius:7px;padding:6px;text-align:center">
-        <div style="font-size:.5rem;color:#475569">TFT / A-S</div>
-        <div style="font-weight:800;color:${tftCol};font-size:.82rem">${tftLabel}</div>
+        <div style="font-size:.5rem;color:#475569">ML Signal</div>
+        <div style="font-weight:800;color:${mlCol};font-size:.82rem">${mlLabel}</div>
         <div style="font-size:.48rem;color:#475569">spread ${asSpread}</div>
       </div>
     </div>
@@ -1980,10 +2215,22 @@ function renderQuantMatrix(state) {
   const quant = (state && state.quant) || {};
   const coins = Object.keys(quant);
   if (!coins.length) {
-    cont.innerHTML = '<div class="card-sm" style="text-align:center;color:#475569;grid-column:1/-1">Waiting for first tick…</div>';
+    cont.innerHTML = '<div class="card-sm" style="text-align:center;color:#475569;grid-column:1/-1">Loading signals…</div>';
     return;
   }
   cont.innerHTML = coins.map(sym => renderQuantCard(sym, quant[sym])).join('');
+}
+
+async function pollQuantMatrix() {
+  try {
+    const r = await apiFetch('/api/quant_matrix');
+    if (!r || !r.quant) return;
+    const cont = $('quant-matrix');
+    if (!cont) return;
+    const coins = Object.keys(r.quant);
+    if (!coins.length) return;
+    cont.innerHTML = coins.map(sym => renderQuantCard(sym, r.quant[sym])).join('');
+  } catch(e) {}
 }
 
 // ─── WATCHLIST ────────────────────────────────────────────────────────────────
@@ -2420,6 +2667,9 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(() => { if (activeTab==='monitor') { monPollHealth(); monPollLog(); } }, 4_000);
   setInterval(() => { if (activeTab==='monitor') monLoadModelStats(); }, 30_000);
   setInterval(() => { if (activeTab==='monitor') agPoll(); }, 5_000);
+  setInterval(pollQuantMatrix, 60_000);
+  pollQuantMatrix();
+  scPoll();
 
   switchTab('overview');
 });
@@ -2736,10 +2986,312 @@ if (typeof _origSwitch === 'function') {
   // switchTab is defined earlier — patch it to trigger monitor init
   document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('[data-tab="monitor"]').forEach(b =>
-      b.addEventListener('click', () => { monPollHealth(); monPollLog(); monLoadModelStats(); agPoll(); })
+      b.addEventListener('click', () => { monPollHealth(); monPollLog(); monLoadModelStats(); agPoll(); scPoll(); })
     );
   });
 }
+
+// ─── STRATEGY CONTROL ────────────────────────────────────────────────────────
+function scToggle() {
+  const sec = document.getElementById('sc-section');
+  const body = document.getElementById('sc-body');
+  sec.classList.toggle('sc-open');
+  body.classList.toggle('sc-collapsed');
+}
+
+const STATUS_LABELS = {
+  synced:                   'Synced',
+  live_only:                'Live only ⚠',
+  backtest_only:            'BT only ⚠',
+  live_only_by_design:      'Live (design)',
+  backtest_only_by_design:  'BT (design)',
+  disabled:                 'Disabled',
+};
+
+function scRender(data) {
+  const strategies = data.strategies || [];
+  const summary    = data.summary    || {};
+
+  // Summary badges
+  const sum = document.getElementById('sc-summary');
+  if (sum) sum.innerHTML = `
+    <span class="sc-badge synced">${summary.synced || 0} synced</span>
+    <span class="sc-badge gap">${summary.gaps || 0} gaps</span>
+    ${summary.missing_models ? `<span class="sc-badge missing">${summary.missing_models} missing models</span>` : ''}
+    <span style="color:#64748b;font-size:.72rem">${summary.total || 0} total strategies</span>`;
+
+  const inl = document.getElementById('sc-summary-inline');
+  if (inl) inl.textContent = `${summary.synced}/${summary.total} synced`;
+
+  // Table rows
+  const tbody = document.getElementById('sc-tbody');
+  if (!tbody) return;
+
+  tbody.innerHTML = strategies.map(s => {
+    const groupCls = s.group.replace(/[^A-Za-z_]/g,'_');
+    const statusCls = s.sync_status;
+    const liveDisabled  = !s.can_live     ? 'disabled' : '';
+    const btDisabled    = !s.can_backtest ? 'disabled' : '';
+    const modelWarn = !s.models_ok && s.models.length
+      ? `<div class="sc-model-warn">⚠ ${s.models.filter(m => !s.models_present[m]).join(', ')} missing</div>`
+      : '';
+    return `<tr>
+      <td>
+        <div style="font-weight:500">${s.label}</div>
+        <div class="sc-desc">${s.description}</div>
+        ${modelWarn}
+      </td>
+      <td><span class="sc-group-badge ${groupCls}">${s.group}</span></td>
+      <td style="text-align:center">
+        <label class="sc-toggle">
+          <input type="checkbox" ${s.live_enabled ? 'checked' : ''} ${liveDisabled}
+            onchange="scToggleStrategy('${s.name}', 'live', this.checked)">
+          <span class="sc-slider"></span>
+        </label>
+      </td>
+      <td style="text-align:center">
+        <label class="sc-toggle">
+          <input type="checkbox" ${s.backtest_enabled ? 'checked' : ''} ${btDisabled}
+            onchange="scToggleStrategy('${s.name}', 'backtest', this.checked)">
+          <span class="sc-slider"></span>
+        </label>
+      </td>
+      <td><span class="sc-status ${statusCls}">${STATUS_LABELS[s.sync_status] || s.sync_status}</span></td>
+      <td style="color:#64748b;font-size:.72rem">${s.can_live && s.can_backtest ? '' : s.can_live ? 'No BT implementation' : 'No live implementation'}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function scPoll() {
+  try {
+    const r = await fetch('/api/strategy-sync', { headers: hdrs() });
+    if (!r.ok) return;
+    scRender(await r.json());
+  } catch {}
+}
+
+async function scToggleStrategy(name, scope, enabled) {
+  try {
+    const body = { name };
+    body[scope] = enabled;
+    const r = await fetch('/api/strategy-sync', {
+      method: 'POST',
+      headers: { ...hdrs(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) { console.warn('Strategy toggle failed'); return; }
+    scRender(await r.json());
+  } catch (e) { console.error('scToggleStrategy error', e); }
+}
+
+// Poll strategy control every 15s on monitor tab
+setInterval(() => { if (activeTab === 'monitor') scPoll(); }, 15_000);
+
+// ─── SIMULATOR TAB ────────────────────────────────────────────────────────────
+let simPollTimer = null;
+
+async function simStart() {
+  const cfg = simCollectConfig();
+  await fetch('/api/simulator/start', {method:'POST', headers:hdrs(), body:JSON.stringify(cfg)});
+  simPoll();
+}
+async function simPause()  { await fetch('/api/simulator/pause',  {method:'POST', headers:hdrs()}); simPoll(); }
+async function simResume() { await fetch('/api/simulator/resume', {method:'POST', headers:hdrs()}); simPoll(); }
+async function simStop()   { await fetch('/api/simulator/stop',   {method:'POST', headers:hdrs()}); simPoll(); }
+
+async function simApplyConfig() {
+  const cfg = simCollectConfig();
+  await fetch('/api/simulator/config', {method:'POST', headers:hdrs(), body:JSON.stringify(cfg)});
+}
+
+function simCollectConfig() {
+  const trainModels = [];
+  if (document.getElementById('sim-train-scalping')?.checked) trainModels.push('ScalpingML');
+  if (document.getElementById('sim-train-tft')?.checked)      trainModels.push('TFT_MM');
+  if (document.getElementById('sim-train-ou')?.checked)       trainModels.push('OU_Filter');
+  return {
+    symbol:       document.getElementById('sim-sym')?.value    || 'BTC_USDT',
+    timeframe:    document.getElementById('sim-tf')?.value     || '1m',
+    speed:        parseFloat(document.getElementById('sim-speed')?.value || '1000'),
+    scenario:     document.getElementById('sim-scenario')?.value || 'AUTO',
+    train_models: trainModels.length ? trainModels : ['ScalpingML', 'OU_Filter'],
+  };
+}
+
+async function simPoll() {
+  if (activeTab !== 'simulator') return;
+  try {
+    const r = await fetch('/api/simulator/status', {headers: hdrs()});
+    const d = await r.json();
+    if (d.error) {
+      const errBar = document.getElementById('sim-error-bar');
+      if (errBar) { errBar.style.display=''; errBar.textContent=`⚠ ${d.error}`; }
+    } else {
+      simRenderStatus(d);
+    }
+  } catch(e) {
+    const errBar = document.getElementById('sim-error-bar');
+    if (errBar) { errBar.style.display=''; errBar.textContent=`⚠ Could not reach /api/simulator/status: ${e}`; }
+  }
+}
+
+function simRenderStatus(d) {
+  const stateEl = document.getElementById('sim-state');
+  if (stateEl) {
+    stateEl.textContent = d.state || 'IDLE';
+    stateEl.style.color = {RUNNING:'#34d399',PAUSED:'#fbbf24',ERROR:'#f87171',IDLE:'#94a3b8',LOADING:'#60a5fa',COMPLETE:'#a78bfa'}[d.state] || '#e2e8f0';
+    const badge = document.getElementById('nb-sim');
+    if (badge) { badge.style.display = d.state === 'RUNNING' ? '' : 'none'; badge.textContent = '▶'; }
+  }
+  // Show error message if any
+  const errBar = document.getElementById('sim-error-bar');
+  if (errBar) {
+    const errMsg = d.error || (d.state === 'ERROR' ? 'Replay error — check logs' : '');
+    errBar.style.display = errMsg ? '' : 'none';
+    errBar.textContent = errMsg ? `⚠ ${errMsg}` : '';
+  }
+  const ts = (d.current_ts || '').replace('T',' ').replace(/\..*/,'');
+  setText('sim-curr-ts', ts || '—');
+  setText('sim-bars', (d.bars_emitted||0).toLocaleString());
+  setText('sim-bps', `${d.bars_per_sec||0} bars/sec`);
+
+  const scen = d.scenario || {};
+  setText('sim-scen-type', scen.type || '—');
+  setText('sim-scen-sym', scen.symbol ? `${scen.symbol} / ${scen.timeframe}` : '—');
+
+  // DB summary
+  const db = d.db_summary || {};
+  setText('sim-trade-count', (db.total_paper_trades||0).toLocaleString());
+  const pnl = db.total_pnl_usd || 0;
+  const pnlEl = document.getElementById('sim-pnl-total');
+  if (pnlEl) {
+    pnlEl.textContent = `P&L: $${pnl.toFixed(2)}`;
+    pnlEl.className = 'sim-sub ' + (pnl >= 0 ? 'sim-pnl-pos' : 'sim-pnl-neg');
+  }
+  const cycles = (db.models||[]).reduce((s,m)=>s+(m.cycles||0), 0);
+  setText('sim-train-cycles', cycles.toLocaleString());
+
+  // Model cards
+  simRenderModelCards(db.models||[], d.trainer_stats||{});
+}
+
+function simRenderModelCards(dbModels, trainerStats) {
+  const grid = document.getElementById('sim-model-cards');
+  if (!grid) return;
+  const modelNames = ['ScalpingML','TFT_MM','OU_Filter'];
+  const dbMap = {};
+  for (const m of dbModels) dbMap[m.name] = m;
+  grid.innerHTML = modelNames.map(name => {
+    const db = dbMap[name] || {};
+    const tr = trainerStats[name] || {};
+    const acc = db.last_accuracy ?? tr.accuracy;
+    const loss = db.last_loss ?? tr.loss;
+    const bars = db.bars_trained ?? tr.bars;
+    const cycles = db.cycles || 0;
+    const lastAt = db.last_trained || tr.ts;
+    const hasData = cycles > 0 || bars > 0;
+    return `<div class="sim-model-card">
+      <div class="sim-model-name">${name}</div>
+      ${hasData ? `
+      <div class="sim-metric"><span class="mk">Accuracy</span><span class="mv" style="color:#34d399">${acc!=null?acc.toFixed(3):'—'}</span></div>
+      <div class="sim-metric"><span class="mk">Train Loss</span><span class="mv sim-pnl-neg">${loss!=null?loss.toFixed(5):'—'}</span></div>
+      <div class="sim-metric"><span class="mk">Bars Trained</span><span class="mv">${(bars||0).toLocaleString()}</span></div>
+      <div class="sim-metric"><span class="mk">Cycles</span><span class="mv">${cycles}</span></div>
+      <div class="sim-metric"><span class="mk">Last Trained</span><span class="mv" style="color:#64748b;font-size:.62rem">${(lastAt||'').replace('T',' ').replace(/\..*/,'')}</span></div>
+      ` : `<div class="sim-metric"><span class="mk">Status</span><span class="mv" style="color:#64748b">Buffering data…</span></div>`}
+    </div>`;
+  }).join('');
+}
+
+async function simLoadHistory() {
+  if (activeTab !== 'simulator') return;
+  try {
+    const r = await fetch('/api/simulator/training_history?limit=50', {headers:hdrs()});
+    if (!r.ok) return;
+    const d = await r.json();
+    simRenderEvents(d.events||[]);
+    simRenderPnlChart(d.pnl_series||[]);
+  } catch(e) {}
+}
+
+function simRenderEvents(events) {
+  const el = document.getElementById('sim-event-list');
+  if (!el) return;
+  if (!events.length) { el.innerHTML = '<div style="color:#64748b;font-size:.67rem">No training events yet.</div>'; return; }
+  el.innerHTML = events.map(e => `
+    <div class="sim-event">
+      <span class="se-model">${e.model}</span>
+      <span class="se-acc">acc:${(e.accuracy||0).toFixed(3)}</span>
+      <span class="se-loss">loss:${(e.train_loss||0).toFixed(4)}</span>
+      <span style="color:#94a3b8">${(e.bars||0).toLocaleString()}bars</span>
+      <span class="se-ts">${(e.at||'').replace('T',' ').replace(/\..*/,'').slice(5)}</span>
+    </div>`).join('');
+}
+
+function simRenderPnlChart(series) {
+  const el = document.getElementById('sim-pnl-chart');
+  if (!el || !series.length) return;
+  const vals = series.map(p => p.cumulative);
+  const min = Math.min(...vals, 0);
+  const max = Math.max(...vals, 0.001);
+  const range = max - min || 1;
+  const h = 120;
+  el.innerHTML = vals.map(v => {
+    const pct = ((v - min) / range * h).toFixed(1);
+    const col = v >= 0 ? '#34d399' : '#f87171';
+    return `<div style="flex:1;max-width:4px;height:${pct}px;background:${col};border-radius:1px 1px 0 0"></div>`;
+  }).join('');
+}
+
+async function simLoadAvailableData() {
+  try {
+    const r = await fetch('/api/simulator/available_data', {headers:hdrs()});
+    if (!r.ok) return;
+    const d = await r.json();
+    const files = d.files || [];
+    setText('sim-file-count', files.length);
+    const el = document.getElementById('sim-avail-list');
+    if (!el) return;
+    if (!files.length) { el.innerHTML = '<div style="color:#f87171;font-size:.67rem">No GZ files found in data/raw/</div>'; return; }
+    el.innerHTML = files.map(f => `
+      <div class="sim-avail-row">
+        <span class="sim-avail-sym">${f.symbol}</span>
+        <span class="sim-avail-tf">${f.timeframe}</span>
+        <span class="sim-avail-sz">${f.size_mb} MB</span>
+        <button style="margin-left:auto;font-size:.6rem;padding:2px 8px;border-radius:4px;border:1px solid rgba(96,165,250,.3);background:rgba(96,165,250,.08);color:#60a5fa;cursor:pointer"
+          onclick="simUseFile('${f.symbol}','${f.timeframe}')">Use</button>
+      </div>`).join('');
+  } catch(e) {}
+}
+
+function simUseFile(symbol, timeframe) {
+  const symEl  = document.getElementById('sim-sym');
+  const tfEl   = document.getElementById('sim-tf');
+  if (symEl) {
+    // Add option if not present
+    if (![...symEl.options].some(o=>o.value===symbol)) {
+      symEl.appendChild(new Option(symbol, symbol));
+    }
+    symEl.value = symbol;
+  }
+  if (tfEl) {
+    if (![...tfEl.options].some(o=>o.value===timeframe)) {
+      tfEl.appendChild(new Option(timeframe, timeframe));
+    }
+    tfEl.value = timeframe;
+  }
+  simApplyConfig();
+}
+
+// Tab-level polling
+setInterval(() => { if (activeTab === 'simulator') { simPoll(); simLoadHistory(); } }, 5_000);
+
+// Load available data once when tab is first opened
+let simDataLoaded = false;
+document.querySelectorAll('[data-tab="simulator"]').forEach(b => b.addEventListener('click', () => {
+  if (!simDataLoaded) { simLoadAvailableData(); simDataLoaded = true; }
+  simPoll();
+}));
 </script>
 </body>
 </html>

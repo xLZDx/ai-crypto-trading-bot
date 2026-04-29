@@ -856,5 +856,321 @@ def monitor_model_stats():
     return jsonify({'models': result, 'cuda': cuda})
 
 
+@app.route('/api/strategy-sync', methods=['GET'])
+def strategy_sync_get():
+    """Return full strategy registry with sync status and enabled flags."""
+    try:
+        from src.engine.strategy_registry import get_sync_report
+        return jsonify(get_sync_report())
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/strategy-sync', methods=['POST'])
+def strategy_sync_post():
+    """
+    Toggle a strategy's live/backtest flag.
+    Body: {"name": "RSI_MeanReversion", "live": true, "backtest": false}
+    Or bulk: {"strategies": [{"name": ..., "live": ..., "backtest": ...}, ...]}
+    """
+    try:
+        from src.engine.strategy_registry import update_strategy, get_sync_report
+        data = request.get_json(force=True) or {}
+
+        updates = data.get('strategies', [data] if 'name' in data else [])
+        results = []
+        for upd in updates:
+            name = upd.get('name')
+            if not name:
+                continue
+            entry = update_strategy(
+                name,
+                live     = upd['live']     if 'live'     in upd else None,
+                backtest = upd['backtest'] if 'backtest' in upd else None,
+            )
+            results.append({'name': name, **entry})
+
+        return jsonify({'updated': results, **get_sync_report()})
+    except KeyError as e:
+        return jsonify({'error': f'Unknown strategy: {e}'}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ─── Quant matrix (independent of live bot) ──────────────────────────────────
+import time as _time_mod
+_qm_cache: dict = {}
+_qm_cache_ts: float = 0.0
+_QM_TTL = 300  # 5-minute cache
+
+
+@app.route('/api/quant_matrix')
+@require_api_key
+def quant_matrix():
+    """
+    Compute OU deviation, GARCH vol, and RF signal for all watchlist pairs
+    directly from GZ files — works without main.py running.
+    Results are cached for 5 minutes.
+    """
+    global _qm_cache, _qm_cache_ts
+    now = _time_mod.time()
+    if _qm_cache and (now - _qm_cache_ts) < _QM_TTL:
+        return jsonify(_qm_cache)
+
+    symbols = read_json(_WATCHLIST_FILE, default=_DEFAULT_WATCHLIST)
+    raw_dir = _PROJECT_ROOT / 'data' / 'raw'
+    result: dict = {}
+
+    try:
+        from src.analysis.ml_predictor import MLPredictor
+        from src.analysis.feature_engineering import add_rsi, add_macd
+        _ml = MLPredictor('btc_rf_model.joblib', 'base')
+    except Exception:
+        _ml = None
+
+    for sym in symbols:
+        key = sym.replace('/', '_').replace('-', '_')
+        gz = raw_dir / f'{key}_1h.csv.gz'
+        if not gz.exists():
+            gz = raw_dir / f'{key.replace("_USDT", "")}USDT_1h.csv.gz'
+        if not gz.exists():
+            result[sym] = {'signal': 'NO_DATA', 'ou_dev': 0.0,
+                           'garch_vol': 0.0, 'ml_return': None, 'as_spread': None}
+            continue
+        try:
+            df = _read_last_n_bars(gz, 200)
+            if df is None or len(df) < 50:
+                continue
+
+            # OU deviation (200-bar window, OLS fit)
+            prices = df['close'].values
+            ou_dev = _calc_ou_dev(prices)
+
+            # GARCH volatility proxy (realized vol ratio)
+            rets = df['close'].pct_change().dropna()
+            vol5  = float(rets.tail(5).std() * 100) if len(rets) >= 5 else 0.0
+            vol60 = float(rets.tail(60).std() * 100) if len(rets) >= 60 else 0.0
+            garch_flag = 'HIGH' if vol5 > vol60 * 1.8 else 'NORMAL'
+            garch_vol  = round(vol60, 3)
+
+            # Base RF signal → expected return proxy
+            ml_return = None
+            if _ml and _ml.is_loaded:
+                try:
+                    p = _ml.predict_proba_long(df.tail(60).to_dict('records'))
+                    ml_return = round((p - 0.5) * 4, 2)  # map [0,1] → [-2%,+2%]
+                except Exception:
+                    pass
+
+            # Overall signal
+            if ou_dev <= -2.0 and ml_return is not None and ml_return > 0:
+                sig = 'OVERSOLD'
+            elif ou_dev >= 2.0 and ml_return is not None and ml_return < 0:
+                sig = 'OVERBOUGHT'
+            elif ou_dev <= -2.5 or (ml_return is not None and ml_return < -1.0):
+                sig = 'OVERSOLD'
+            elif ou_dev >= 2.5 or (ml_return is not None and ml_return > 1.0):
+                sig = 'OVERBOUGHT'
+            else:
+                sig = 'NEUTRAL'
+
+            result[sym] = {
+                'signal':    sig,
+                'ou_dev':    round(ou_dev, 2),
+                'ou_mu':     len(df),
+                'garch_vol': garch_vol,
+                'garch_flag': garch_flag,
+                'ml_return': ml_return,
+                'as_spread': None,
+            }
+        except Exception as exc:
+            logger.warning('quant_matrix %s: %s', sym, exc)
+            result[sym] = {'signal': 'ERROR', 'ou_dev': 0.0,
+                           'garch_vol': 0.0, 'ml_return': None, 'as_spread': None}
+
+    _qm_cache = {'quant': result, 'computed_at': _time_mod.time()}
+    _qm_cache_ts = now
+    return jsonify(_qm_cache)
+
+
+def _read_last_n_bars(gz_path, n: int = 200):
+    """Read last N rows from a gzipped CSV without loading the full file."""
+    try:
+        import pandas as pd
+        chunks = []
+        reader = pd.read_csv(gz_path, compression='gzip', chunksize=50_000,
+                             index_col=0, parse_dates=True)
+        for chunk in reader:
+            chunks.append(chunk)
+        if not chunks:
+            return None
+        df = pd.concat(chunks).tail(n)
+        df.columns = [c.lower() for c in df.columns]
+        for col in ('open', 'high', 'low', 'close', 'volume'):
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        return df.dropna(subset=['close'])
+    except Exception:
+        return None
+
+
+def _calc_ou_dev(prices) -> float:
+    """OU deviation in sigma units via OLS: X_t+1 = a + b*X_t."""
+    import numpy as np
+    if len(prices) < 10:
+        return 0.0
+    x = prices[:-1]
+    y = prices[1:]
+    try:
+        b = np.cov(x, y)[0, 1] / np.var(x)
+        a = np.mean(y) - b * np.mean(x)
+        mu = a / (1 - b) if abs(1 - b) > 1e-9 else np.mean(prices)
+        resid = y - (a + b * x)
+        sigma = float(resid.std())
+        return float((prices[-1] - mu) / sigma) if sigma > 0 else 0.0
+    except Exception:
+        return 0.0
+
+
+# ─── Simulator agent singletons (lazy-started on first /start call) ───────────
+_simulator_agent = None
+_trainer_agent   = None
+_sim_lock        = threading.Lock()
+
+
+def _get_simulator():
+    global _simulator_agent, _trainer_agent
+    with _sim_lock:
+        if _simulator_agent is None:
+            from src.engine.agents.simulator_agent import SimulatorAgent
+            from src.engine.agents.training_agent  import ContinuousTrainerAgent
+            _simulator_agent = SimulatorAgent(auto_cycle=True)
+            _trainer_agent   = ContinuousTrainerAgent()
+    return _simulator_agent, _trainer_agent
+
+
+@app.route('/api/simulator/status', methods=['GET'])
+def simulator_status():
+    """Return current simulator state, config, and per-model training metrics."""
+    try:
+        sim, trainer = _get_simulator()
+        status = sim.get_status()
+        status['trainer_stats'] = trainer.get_stats()
+
+        # Augment with DB summary if available
+        try:
+            from src.simulation.data_store import SimulatorDataStore
+            store = SimulatorDataStore()
+            status['db_summary'] = store.get_summary()
+        except Exception:
+            status['db_summary'] = {}
+
+        return jsonify(status)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/simulator/start', methods=['POST'])
+def simulator_start():
+    """Start or resume the simulator replay."""
+    try:
+        sim, trainer = _get_simulator()
+        # Apply any config from the request body
+        cfg = request.get_json(force=True) or {}
+        if cfg:
+            sim.configure(cfg)
+        # Configure trainer models from request
+        train_models = cfg.pop('train_models', None)
+        if train_models and isinstance(train_models, list):
+            trainer.configure_models(train_models)
+        # Start trainer (idempotent)
+        if not trainer._running:
+            trainer.start()
+        sim.start()
+        return jsonify({'ok': True, 'status': sim.get_status()})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/simulator/pause', methods=['POST'])
+def simulator_pause():
+    try:
+        sim, _ = _get_simulator()
+        sim.pause()
+        return jsonify({'ok': True, 'status': sim.get_status()})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/simulator/resume', methods=['POST'])
+def simulator_resume():
+    try:
+        sim, _ = _get_simulator()
+        sim.resume()
+        return jsonify({'ok': True, 'status': sim.get_status()})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/simulator/stop', methods=['POST'])
+def simulator_stop():
+    try:
+        sim, trainer = _get_simulator()
+        sim.stop()
+        trainer.stop()
+        return jsonify({'ok': True, 'status': sim.get_status()})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/simulator/config', methods=['POST'])
+def simulator_config():
+    """Update simulator config (symbol, timeframe, speed, scenario, date range)."""
+    try:
+        sim, _ = _get_simulator()
+        cfg = request.get_json(force=True) or {}
+        allowed = {'symbol', 'timeframe', 'speed', 'scenario', 'start_date', 'end_date'}
+        clean = {k: v for k, v in cfg.items() if k in allowed}
+        sim.configure(clean)
+        return jsonify({'ok': True, 'config': sim.get_status()['config']})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/simulator/training_history', methods=['GET'])
+def simulator_training_history():
+    """Return recent training events and cumulative paper P&L series."""
+    try:
+        from src.simulation.data_store import SimulatorDataStore
+        store  = SimulatorDataStore()
+        model  = request.args.get('model')
+        limit  = int(request.args.get('limit', 200))
+        events = store.get_recent_training_events(model_name=model, limit=limit)
+        pnl    = store.get_paper_pnl_series(limit=500)
+        return jsonify({'events': events, 'pnl_series': pnl})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/simulator/available_data', methods=['GET'])
+def simulator_available_data():
+    """List all GZ files available for replay."""
+    try:
+        raw_dir = os.path.join(project_root, 'data', 'raw')
+        files = []
+        if os.path.isdir(raw_dir):
+            for f in sorted(os.listdir(raw_dir)):
+                if f.endswith('.csv.gz') and '_funding' not in f:
+                    parts = f.replace('.csv.gz', '').rsplit('_', 1)
+                    if len(parts) == 2:
+                        symbol, tf = parts
+                        size_mb = round(os.path.getsize(os.path.join(raw_dir, f)) / 1e6, 1)
+                        files.append({'symbol': symbol, 'timeframe': tf,
+                                      'file': f, 'size_mb': size_mb})
+        return jsonify({'files': files, 'total': len(files)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False)
