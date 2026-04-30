@@ -1,0 +1,31 @@
+version: "3.8"
+
+# ── QuestDB time-series database ──────────────────────────────────────────────
+# Start:   docker-compose up -d questdb
+# Web UI:  http://localhost:9000
+# REST:    http://localhost:9000/exec?query=SELECT+1
+# ILP:     localhost:9009  (InfluxDB Line Protocol — fast bulk writes)
+# PG wire: localhost:8812  (psycopg2-compatible)
+
+services:
+  questdb:
+    image: questdb/questdb:latest
+    container_name: trading_questdb
+    restart: unless-stopped
+    ports:
+      - "9000:9000"   # HTTP / SQL console
+      - "9009:9009"   # InfluxDB Line Protocol (ILP) — fastest write path
+      - "8812:8812"   # PostgreSQL wire protocol
+    volumes:
+      - ./data/questdb:/root/.questdb
+    environment:
+      - QDB_TELEMETRY_ENABLED=false
+      - QDB_SHARED_WORKER_COUNT=4
+      - QDB_HTTP_ENABLED=true
+      - QDB_HTTP_BIND_TO=0.0.0.0:9000
+    mem_limit: 4g
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

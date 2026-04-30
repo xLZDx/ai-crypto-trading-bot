@@ -1225,6 +1225,96 @@ select.field option{background:#0d1628;color:#e2e8f0}
         </div>
       </div>
 
+      <!-- ── Data Downloader ─────────────────────────────────────── -->
+      <div class="ms-section" id="dl-section" style="margin-top:12px">
+        <div class="ms-section-hdr" onclick="dlToggleSection()">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:.72rem;font-weight:700;color:#e2e8f0;text-transform:uppercase;letter-spacing:.06em">Data Downloader</span>
+            <span class="chip" id="dl-summary-chip" style="font-size:.58rem">Loading…</span>
+          </div>
+          <span class="ms-chevron-main" id="dl-chevron">▼</span>
+        </div>
+        <div class="ms-section-body ms-collapsed" id="dl-section-body">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+            <div>
+              <div style="font-size:.62rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em;margin-bottom:7px">Historical Archive (pre-2026 · 1s bars)</div>
+              <div class="card-sm" style="padding:10px">
+                <div style="display:flex;justify-content:space-between;margin-bottom:7px">
+                  <div><div class="sim-label">Files</div><div id="dl-hist-count" style="font-size:1rem;font-weight:700;color:#e2e8f0">--</div></div>
+                  <div style="text-align:right"><div class="sim-label">Status</div><div id="dl-hist-status" style="font-size:1rem;font-weight:700">--</div></div>
+                </div>
+                <div style="font-size:.6rem;color:#64748b;margin-bottom:8px">Missing: <span id="dl-hist-missing" style="color:#f87171">--</span></div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap">
+                  <button onclick="monStart('historical_dl')" class="btn btn-green btn-sm">▶ Start Archive</button>
+                  <button onclick="monStop('historical_dl')" class="btn btn-red btn-sm">⏹ Stop</button>
+                </div>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:.62rem;color:#64748b;text-transform:uppercase;letter-spacing:.08em;margin-bottom:7px">Current Data (1m / 1h / 1d)</div>
+              <div class="card-sm" style="padding:10px">
+                <div style="display:flex;justify-content:space-between;margin-bottom:7px">
+                  <div><div class="sim-label">Files</div><div id="dl-curr-count" style="font-size:1rem;font-weight:700;color:#e2e8f0">--</div></div>
+                  <div style="text-align:right"><div class="sim-label">Status</div><div id="dl-curr-status" style="font-size:1rem;font-weight:700">--</div></div>
+                </div>
+                <div style="font-size:.6rem;color:#64748b;margin-bottom:8px">Missing 1m: <span id="dl-curr-missing" style="color:#f87171">--</span></div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap">
+                  <button onclick="monStart('watchlist')" class="btn btn-green btn-sm">▶ Start Watchlist</button>
+                  <button onclick="monStop('watchlist')" class="btn btn-red btn-sm">⏹ Stop</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button onclick="dlMigrate()" class="btn btn-blue btn-sm" id="dl-migrate-btn">📦 Migrate 1s → historical/</button>
+            <button onclick="dlPollStatus()" class="btn btn-ghost btn-sm">↻ Refresh</button>
+            <span id="dl-last-checked" style="font-size:.6rem;color:#64748b"></span>
+          </div>
+          <div id="dl-migrate-result" style="margin-top:8px;font-size:.66rem;display:none"></div>
+        </div>
+      </div>
+
+      <!-- ── Training Cluster ──────────────────────────────────────── -->
+      <div class="ms-section" id="cluster-section" style="margin-top:12px">
+        <div class="ms-section-hdr" onclick="(()=>{ const b=document.getElementById('cluster-section-body'),s=document.getElementById('cluster-section'); if(!b)return; const o=s.classList.toggle('ms-open'); b.classList.toggle('ms-collapsed',!o); })()">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:.72rem;font-weight:700;color:#e2e8f0;text-transform:uppercase;letter-spacing:.06em">Training Cluster</span>
+            <span class="chip" id="cluster-summary-chip" style="font-size:.58rem;color:#64748b">Loading…</span>
+          </div>
+          <span class="ms-chevron-main">▼</span>
+        </div>
+        <div class="ms-section-body ms-collapsed" id="cluster-section-body">
+          <div id="cluster-workers-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-bottom:14px">
+            <div style="color:#64748b;font-size:.72rem">Loading workers…</div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+            <button onclick="clusterSubmitAll()" class="btn btn-blue btn-sm">🚀 Train All Models</button>
+            <button onclick="clusterPoll()" class="btn btn-ghost btn-sm">↻ Refresh</button>
+          </div>
+          <div id="cluster-tasks-list" style="font-size:.68rem;color:#64748b">No tasks yet</div>
+          <div style="margin-top:10px;font-size:.62rem;color:#475569;line-height:1.7">
+            <strong style="color:#94a3b8">Add a worker laptop:</strong><br>
+            1. Copy project folder to the laptop (or mount via network share)<br>
+            2. Run: <code style="background:rgba(0,0,0,.3);padding:1px 6px;border-radius:3px">python -m src.training.distributed.worker --master http://YOUR_MASTER_IP:7700</code><br>
+            3. Worker auto-detects GPU/CUDA and registers here automatically
+          </div>
+        </div>
+      </div>
+
+      <!-- ── QuestDB Database ─────────────────────────────────────── -->
+      <div class="ms-section" id="db-section" style="margin-top:12px">
+        <div class="ms-section-hdr" onclick="(()=>{ const b=document.getElementById('db-section-body'),s=document.getElementById('db-section'); if(!b)return; const o=s.classList.toggle('ms-open'); b.classList.toggle('ms-collapsed',!o); })()">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:.72rem;font-weight:700;color:#e2e8f0;text-transform:uppercase;letter-spacing:.06em">QuestDB Time-Series Store</span>
+            <span class="chip" id="db-status-chip" style="font-size:.58rem;color:#64748b">Loading…</span>
+          </div>
+          <span class="ms-chevron-main">▼</span>
+        </div>
+        <div class="ms-section-body ms-collapsed" id="db-section-body">
+          <div id="db-status-body" style="font-size:.72rem;color:#94a3b8">Loading…</div>
+        </div>
+      </div>
+
     </div><!-- /monitor -->
 
 
@@ -1490,6 +1580,16 @@ function switchTab(name) {
   if (name === 'logs') pollLogs();
   if (name === 'watchlist') renderWatchlist();
   if (name === 'strategy') renderStrategyTab(botState);
+  if (name === 'monitor') {
+    monPollHealth();
+    monPollLog();
+    monLoadModelStats();
+    agPoll();
+    scPoll();
+    dlPollStatus();
+    dbPollStatus();
+  }
+  if (name === 'simulator') { simPoll(); simLoadStrategyStats(); }
 }
 
 // ─── MARKET FILTER ───────────────────────────────────────────────────────────
@@ -2079,7 +2179,7 @@ function renderStrategyTab(state) {
   if (!_stratFull) { loadStrategyFull(); return; }
   _renderMLCards(_stratFull);
   _renderStratCards(_stratFull);
-  // Quant matrix is independently managed by pollQuantMatrix() — do not overwrite here
+  _renderBtSummary(_stratFull);
 }
 
 // ── ML Model Cards ────────────────────────────────────────────────────────────
@@ -2152,13 +2252,14 @@ function _renderStratCards(data) {
   const cont   = $('body-strat-cards');
   const chip   = $('chip-strat-count');
   if (!cont) return;
-  const strats     = data.strategies || [];
+  const strats     = data.strategies  || [];
   const tradeStats = data.trade_stats || {};
-  const agg        = data.aggregate  || {};
+  const paperStats = data.paper_stats || {};
+  const wfStats    = data.wf_stats    || {};
+  const agg        = data.aggregate   || {};
 
   if (chip) chip.textContent = `${agg.strategies_live||0} live / ${agg.strategies_total||0} total`;
 
-  // Group by category
   const groups = {};
   for (const s of strats) {
     const g = s.group || 'Other';
@@ -2169,20 +2270,67 @@ function _renderStratCards(data) {
   const allGroups  = [...groupOrder, ...Object.keys(groups).filter(g => !groupOrder.includes(g))];
 
   cont.innerHTML = allGroups.filter(g => groups[g]).map(g => {
-    const gm  = _GROUP_META[g] || {label: g, col: '#64748b'};
+    const gm      = _GROUP_META[g] || {label: g, col: '#64748b'};
     const gStrats = groups[g];
     const cards = gStrats.map(s => {
       const ts  = tradeStats[s.name] || {};
+      const ps  = paperStats[s.name] || {};
+      const wf  = wfStats[s.name]    || {};
+
+      // Backtest / live row
       const wr  = ts.win_rate != null ? ts.win_rate.toFixed(1)+'%' : '--';
       const pnl = ts.pnl != null ? (ts.pnl >= 0 ? '+' : '') + ts.pnl.toFixed(2) : '--';
-      const statSrc = ts.source === 'backtest' ? ' <span style="font-size:.42rem;color:#64748b;vertical-align:middle">BT</span>' : '';
-      const pnlCol = ts.pnl > 0 ? '#34d399' : ts.pnl < 0 ? '#fb7185' : '#64748b';
-      const liveDot = s.live_enabled ? 'live' : (s.backtest_enabled ? 'bt-only' : 'off');
+      const statSrc    = ts.source === 'backtest' ? 'BT' : (ts.source === 'live' ? 'LIVE' : '');
+      const pnlCol     = ts.pnl > 0 ? '#34d399' : ts.pnl < 0 ? '#fb7185' : '#64748b';
+      const grossPnl   = ts.gross_pnl;
+      const totalFees  = ts.total_fees_usdt;
+      const feesNote   = (totalFees != null && totalFees > 0)
+        ? `<div style="font-size:.45rem;color:#64748b;margin-top:2px">Gross ${grossPnl != null ? (grossPnl>=0?'+':'')+grossPnl.toFixed(0) : '?'} · Fees ${totalFees.toFixed(0)}</div>`
+        : '';
+
+      // WF row
+      const wfSharpe = wf.wf_mean_sharpe;
+      const wfConsistency = wf.wf_consistency;
+      const wfDecay = wf.wf_decay;
+      const wfRow = wfSharpe != null
+        ? `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-top:4px;border-top:1px solid rgba(148,163,184,.06);padding-top:4px">
+            <div style="background:rgba(99,102,241,.08);border-radius:6px;padding:3px 5px;text-align:center">
+              <div style="font-size:.44rem;color:#818cf8">WF SHARPE</div>
+              <div style="font-size:.75rem;font-weight:800;color:${wfSharpe>=0?'#818cf8':'#f87171'}">${wfSharpe.toFixed(2)}</div>
+            </div>
+            <div style="background:rgba(99,102,241,.08);border-radius:6px;padding:3px 5px;text-align:center">
+              <div style="font-size:.44rem;color:#818cf8">CONSISTENCY</div>
+              <div style="font-size:.75rem;font-weight:800;color:#818cf8">${wfConsistency != null ? Math.round(wfConsistency*100)+'%' : '--'}</div>
+            </div>
+            <div style="background:rgba(99,102,241,.08);border-radius:6px;padding:3px 5px;text-align:center">
+              <div style="font-size:.44rem;color:#818cf8">DECAY</div>
+              <div style="font-size:.75rem;font-weight:800;color:${wfDecay>=0?'#34d399':'#f87171'}">${wfDecay != null ? (wfDecay>=0?'+':'')+wfDecay.toFixed(0) : '--'}</div>
+            </div>
+          </div>` : '';
+
+      // Paper trading row
+      const paperRow = ps.n
+        ? `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-top:4px;border-top:1px solid rgba(124,58,237,.15);padding-top:4px">
+            <div style="background:rgba(124,58,237,.08);border-radius:6px;padding:3px 5px;text-align:center">
+              <div style="font-size:.44rem;color:#a78bfa">📄 PAPER</div>
+              <div style="font-size:.75rem;font-weight:800;color:#a78bfa">${ps.n}</div>
+            </div>
+            <div style="background:rgba(124,58,237,.08);border-radius:6px;padding:3px 5px;text-align:center">
+              <div style="font-size:.44rem;color:#a78bfa">WIN%</div>
+              <div style="font-size:.75rem;font-weight:800;color:#a78bfa">${ps.win_rate != null ? ps.win_rate.toFixed(1)+'%' : '--'}</div>
+            </div>
+            <div style="background:rgba(124,58,237,.08);border-radius:6px;padding:3px 5px;text-align:center">
+              <div style="font-size:.44rem;color:#a78bfa">PNL</div>
+              <div style="font-size:.75rem;font-weight:800;color:${ps.pnl>0?'#a78bfa':'#f87171'}">${ps.pnl != null ? (ps.pnl>=0?'+':'')+ps.pnl.toFixed(2) : '--'}</div>
+            </div>
+          </div>` : '';
+
+      const liveDot  = s.live_enabled ? 'live' : (s.backtest_enabled ? 'bt-only' : 'off');
       const syncBadge = {synced:'LIVE+BT',live_only:'LIVE',live_only_by_design:'LIVE',
         backtest_only:'BT',backtest_only_by_design:'BT',disabled:'OFF'}[s.sync_status]||'?';
-      const syncCol = s.sync_status === 'synced' ? '#34d399' : s.sync_status.startsWith('live') ? '#60a5fa' : '#475569';
+      const syncCol   = s.sync_status === 'synced' ? '#34d399' : s.sync_status.startsWith('live') ? '#60a5fa' : '#475569';
+      const modelsOk  = s.models_ok !== false;
 
-      const modelsOk = s.models_ok !== false;
       return `<div class="str-card">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:6px">
           <div style="display:flex;align-items:center;gap:6px">
@@ -2193,9 +2341,9 @@ function _renderStratCards(data) {
             background:${syncCol}18;color:${syncCol};border:1px solid ${syncCol}30">${syncBadge}</span>
         </div>
         <div style="font-size:.58rem;color:#475569;margin-bottom:7px">${esc(s.description||'')}</div>
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:6px">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:4px">
           <div style="background:rgba(5,8,22,.55);border-radius:6px;padding:4px 6px;text-align:center">
-            <div style="font-size:.48rem;color:#475569">TRADES${statSrc}</div>
+            <div style="font-size:.48rem;color:#475569">TRADES${statSrc ? ` <span style="color:#64748b">${statSrc}</span>` : ''}</div>
             <div style="font-size:.82rem;font-weight:800;color:#fff">${ts.n||'--'}</div>
           </div>
           <div style="background:rgba(5,8,22,.55);border-radius:6px;padding:4px 6px;text-align:center">
@@ -2203,11 +2351,14 @@ function _renderStratCards(data) {
             <div style="font-size:.82rem;font-weight:800;color:#fbbf24">${wr}</div>
           </div>
           <div style="background:rgba(5,8,22,.55);border-radius:6px;padding:4px 6px;text-align:center">
-            <div style="font-size:.48rem;color:#475569">PNL</div>
+            <div style="font-size:.48rem;color:#475569">NET PNL</div>
             <div style="font-size:.78rem;font-weight:800;color:${pnlCol}">${pnl}</div>
+            ${feesNote}
           </div>
         </div>
-        ${s.models && s.models.length ? `<div style="font-size:.54rem;color:${modelsOk?'#34d399':'#fb7185'}">
+        ${wfRow}
+        ${paperRow}
+        ${s.models && s.models.length ? `<div style="font-size:.54rem;color:${modelsOk?'#34d399':'#fb7185'};margin-top:5px">
           ${modelsOk?'✓':'✗'} Model: ${esc(s.models.join(', '))}
         </div>` : ''}
         <div style="display:flex;gap:5px;margin-top:6px">
@@ -2224,6 +2375,31 @@ function _renderStratCards(data) {
     return `<div class="str-group-hdr" style="color:${gm.col}">${gm.label} (${gStrats.length})</div>
       <div class="str-grid">${cards}</div>`;
   }).join('');
+}
+
+// ── Backtest summary banner (fee drag context) ────────────────────────────────
+function _renderBtSummary(data) {
+  const tradeStats = data.trade_stats || {};
+  // Count strategies with negative PNL but positive gross PNL (fee drag issue)
+  let feeDragCount = 0, totalFees = 0;
+  for (const ts of Object.values(tradeStats)) {
+    if (ts.source === 'backtest' && ts.pnl < 0 && ts.gross_pnl > 0) feeDragCount++;
+    if (ts.total_fees_usdt) totalFees += ts.total_fees_usdt;
+  }
+  let banner = document.getElementById('bt-fee-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'bt-fee-banner';
+    banner.style.cssText = 'font-size:.62rem;color:#94a3b8;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);border-radius:8px;padding:7px 12px;margin-bottom:10px';
+    const sec = document.getElementById('body-strat-cards');
+    if (sec) sec.parentNode.insertBefore(banner, sec);
+  }
+  if (feeDragCount > 0) {
+    banner.innerHTML = `⚠ <strong style="color:#fbbf24">${feeDragCount} strategies</strong> show negative Net PNL driven by fee drag (raw rule signals trade too frequently). Enable <strong>MetaLabeler</strong> + <strong>GARCH</strong> filters to improve. Walk-Forward Sharpe shows out-of-sample robustness.`;
+    banner.style.display = '';
+  } else {
+    banner.style.display = 'none';
+  }
 }
 
 async function stratToggleFlag(name, mode, val) {
@@ -2756,6 +2932,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(() => { if (activeTab==='monitor') { monPollHealth(); monPollLog(); } }, 4_000);
   setInterval(() => { if (activeTab==='monitor') monLoadModelStats(); }, 30_000);
   setInterval(() => { if (activeTab==='monitor') agPoll(); }, 5_000);
+  setInterval(() => { if (activeTab==='monitor') dbPollStatus(); }, 30_000);
   setInterval(pollQuantMatrix, 60_000);
   pollQuantMatrix();
   scPoll();
@@ -3103,15 +3280,190 @@ function logToggleSection() {
   body.classList.toggle('ms-collapsed', !open);
 }
 
-// Auto-init when tab becomes active
-const _origSwitch = window.switchTab;
-if (typeof _origSwitch === 'function') {
-  // switchTab is defined earlier — patch it to trigger monitor init
-  document.addEventListener('DOMContentLoaded', () => {
-    document.querySelectorAll('[data-tab="monitor"]').forEach(b =>
-      b.addEventListener('click', () => { monPollHealth(); monPollLog(); monLoadModelStats(); agPoll(); scPoll(); })
-    );
-  });
+// ── QuestDB status ───────────────────────────────────────────────────────────
+async function dbPollStatus() {
+  try {
+    const r = await fetch('/api/db/status', { headers: hdrs() });
+    if (!r.ok) return;
+    const d = await r.json();
+    const chip = document.getElementById('db-status-chip');
+    const body = document.getElementById('db-status-body');
+    if (!chip) return;
+    if (d.available) {
+      chip.textContent = '● Connected';
+      chip.style.color = '#34d399';
+    } else {
+      chip.textContent = '○ Offline';
+      chip.style.color = '#fb7185';
+    }
+    if (body) {
+      if (!d.available) {
+        body.innerHTML = `<div style="color:#fb7185;font-size:.72rem">QuestDB not running.<br>
+          Start with: <code style="background:rgba(0,0,0,.3);padding:2px 6px;border-radius:4px">docker-compose up -d questdb</code></div>`;
+        return;
+      }
+      const rows = Object.entries(d.tables || {}).map(([t, n]) =>
+        `<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(148,163,184,.06)">
+          <span style="font-size:.7rem;color:#94a3b8">${t}</span>
+          <span style="font-size:.7rem;color:#e2e8f0;font-weight:700">${Number(n).toLocaleString()}</span>
+        </div>`
+      ).join('');
+      body.innerHTML = `<div style="margin-bottom:8px;font-size:.62rem;color:#64748b">
+        ${d.host}:${d.http_port} &nbsp;·&nbsp; ILP :${d.ilp_port}</div>${rows}
+        <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
+          <button onclick="dbIngest()" class="btn btn-blue btn-sm">⬆ Ingest CSV.gz → QuestDB</button>
+          <a href="http://${d.host}:${d.http_port}" target="_blank" class="btn btn-ghost btn-sm">🌐 Open Console</a>
+        </div>`;
+    }
+  } catch {}
+}
+
+async function dbIngest() {
+  try {
+    const r = await fetch('/api/db/ingest', { method: 'POST', headers: hdrs(),
+      body: JSON.stringify({ timeframes: ['1m','1h','1d'] }) });
+    const d = await r.json();
+    alert(d.msg || 'Ingestion started');
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+// ── Training Cluster ──────────────────────────────────────────────────────────
+async function clusterPoll() {
+  try {
+    const r = await fetch('/api/cluster/status', { headers: hdrs() });
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.error) return;
+
+    const chip = document.getElementById('cluster-summary-chip');
+    if (chip) chip.textContent = `${d.workers_online||0} nodes · ${d.tasks_running||0} running · ${d.tasks_pending||0} queued`;
+
+    // Workers
+    const grid = document.getElementById('cluster-workers-grid');
+    if (grid) {
+      if (!d.workers || !d.workers.length) {
+        grid.innerHTML = '<div style="color:#64748b;font-size:.72rem;grid-column:1/-1">No workers connected yet — start worker.py on other laptops.</div>';
+      } else {
+        grid.innerHTML = d.workers.map(w => {
+          const online = w.online;
+          const busy   = w.status === 'busy';
+          const dot    = online ? (busy ? '#fbbf24' : '#34d399') : '#fb7185';
+          const status = online ? (busy ? `BUSY — ${w.current_task||'task'}` : 'IDLE') : 'OFFLINE';
+          return `<div style="background:rgba(15,23,42,.7);border:1px solid rgba(148,163,184,.12);border-radius:10px;padding:12px 14px">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+              <span style="width:8px;height:8px;border-radius:50%;background:${dot};display:inline-block;flex-shrink:0"></span>
+              <span style="font-size:.75rem;font-weight:700;color:#e2e8f0">${w.name||w.node_id}</span>
+            </div>
+            <div style="font-size:.62rem;color:#94a3b8">${w.gpu_name||'CPU only'}</div>
+            <div style="font-size:.62rem;color:#64748b">${w.cuda_available?'CUDA ✓':'CPU only'} &nbsp;·&nbsp; ${w.gpu_vram_gb||0} GB VRAM</div>
+            <div style="font-size:.62rem;color:#64748b">${w.cpu_cores||'?'} cores &nbsp;·&nbsp; ${w.ram_gb||'?'} GB RAM</div>
+            <div style="font-size:.62rem;color:#64748b;margin-top:4px">${w.ip}:${w.port}</div>
+            <div style="font-size:.62rem;font-weight:700;color:${dot};margin-top:4px">${status}</div>
+            <div style="font-size:.58rem;color:#334155;margin-top:3px">Done: ${w.tasks_done||0} · Failed: ${w.tasks_failed||0}</div>
+          </div>`;
+        }).join('');
+      }
+    }
+
+    // Recent tasks
+    const tasksList = document.getElementById('cluster-tasks-list');
+    if (tasksList && d.recent_tasks) {
+      if (!d.recent_tasks.length) { tasksList.textContent = 'No tasks yet'; return; }
+      const statusColor = { pending:'#94a3b8', running:'#fbbf24', done:'#34d399', failed:'#fb7185', cancelled:'#475569' };
+      tasksList.innerHTML = `<table style="width:100%;border-collapse:collapse">
+        <tr style="font-size:.6rem;color:#475569">
+          <th style="text-align:left;padding:3px 6px">Task</th>
+          <th style="text-align:left;padding:3px 6px">Model</th>
+          <th style="text-align:left;padding:3px 6px">Symbol</th>
+          <th style="text-align:left;padding:3px 6px">Worker</th>
+          <th style="text-align:left;padding:3px 6px">Status</th>
+        </tr>
+        ${d.recent_tasks.map(t => `<tr style="border-top:1px solid rgba(148,163,184,.06)">
+          <td style="padding:3px 6px;font-size:.6rem;color:#64748b;font-family:monospace">${t.task_id}</td>
+          <td style="padding:3px 6px;font-size:.62rem;color:#cbd5e1">${t.model_type}</td>
+          <td style="padding:3px 6px;font-size:.62rem;color:#cbd5e1">${t.symbol}</td>
+          <td style="padding:3px 6px;font-size:.6rem;color:#94a3b8">${t.assigned_to||'—'}</td>
+          <td style="padding:3px 6px;font-size:.62rem;font-weight:700;color:${statusColor[t.status]||'#94a3b8'}">${t.status.toUpperCase()}</td>
+        </tr>`).join('')}
+      </table>`;
+    }
+  } catch {}
+}
+
+async function clusterSubmitAll() {
+  if (!confirm('Submit all model training tasks to the cluster?')) return;
+  try {
+    const r = await fetch('/api/cluster/submit_all', { method: 'POST', headers: hdrs(), body: '{}' });
+    const d = await r.json();
+    if (d.ok) {
+      alert(`${d.count} tasks submitted to cluster`);
+      await clusterPoll();
+    } else {
+      alert(d.error || 'Failed');
+    }
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+setInterval(() => { if (activeTab === 'monitor') clusterPoll(); }, 10_000);
+
+// ── Downloader status & controls ────────────────────────────────────────────
+function dlToggleSection() {
+  const body    = document.getElementById('dl-section-body');
+  const chevron = document.getElementById('dl-chevron');
+  const sec     = document.getElementById('dl-section');
+  if (!body || !sec) return;
+  const open = sec.classList.toggle('ms-open');
+  body.classList.toggle('ms-collapsed', !open);
+}
+
+async function dlPollStatus() {
+  try {
+    const r = await fetch('/api/monitor/downloader/status', { headers: hdrs() });
+    if (!r.ok) return;
+    const d = await r.json();
+    const hist = d.historical || {};
+    const curr = d.current    || {};
+
+    setText('dl-hist-count', hist.file_count ?? '--');
+    setText('dl-curr-count', curr.file_count ?? '--');
+
+    const dlHistSt = document.getElementById('dl-hist-status');
+    if (dlHistSt) { dlHistSt.textContent = hist.running ? 'RUNNING' : 'IDLE'; dlHistSt.style.color = hist.running ? '#34d399' : '#94a3b8'; }
+
+    const dlCurrSt = document.getElementById('dl-curr-status');
+    if (dlCurrSt) { dlCurrSt.textContent = curr.running ? 'RUNNING' : 'IDLE'; dlCurrSt.style.color = curr.running ? '#34d399' : '#94a3b8'; }
+
+    const missingHist = (hist.missing_symbols || []);
+    const missingCurr = (curr.missing_1m      || []);
+    setText('dl-hist-missing', missingHist.length ? missingHist.join(', ') : 'None ✓');
+    setText('dl-curr-missing', missingCurr.length ? missingCurr.join(', ') : 'None ✓');
+
+    const chip = document.getElementById('dl-summary-chip');
+    if (chip) chip.textContent = `${hist.file_count||0} hist · ${curr.file_count||0} current`;
+
+    const saved = d.saved_state || {};
+    setText('dl-last-checked', saved.last_checked ? `Checked: ${saved.last_checked}` : '');
+  } catch {}
+}
+
+async function dlMigrate() {
+  const btn = document.getElementById('dl-migrate-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Migrating…'; }
+  const res = document.getElementById('dl-migrate-result');
+  try {
+    const r = await fetch('/api/monitor/downloader/migrate', { method: 'POST', headers: hdrs() });
+    const d = await r.json();
+    if (res) {
+      const moved = (d.moved||[]).length, del = (d.deleted||[]).length, sk = (d.skipped||[]).length;
+      res.style.display = '';
+      res.innerHTML = `<span style="color:#34d399">✓ Moved: ${moved}</span> &nbsp; <span style="color:#f87171">Deleted (corrupt): ${del}</span> &nbsp; <span style="color:#64748b">Skipped (already there): ${sk}</span>`;
+    }
+    await dlPollStatus();
+  } catch(e) {
+    if (res) { res.style.display=''; res.innerHTML = `<span style="color:#f87171">Error: ${esc(e.message)}</span>`; }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📦 Migrate 1s → historical/'; }
+  }
 }
 
 // ─── STRATEGY CONTROL ────────────────────────────────────────────────────────

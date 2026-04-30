@@ -72,6 +72,14 @@ class BacktestResult:
         return sum(t.pnl for t in self.trades)
 
     @property
+    def total_fees(self) -> float:
+        return sum(t.fees_paid + t.funding_paid for t in self.trades)
+
+    @property
+    def gross_pnl(self) -> float:
+        return self.total_pnl + self.total_fees
+
+    @property
     def n_trades(self) -> int:
         return len(self.trades)
 
@@ -122,6 +130,8 @@ class BacktestResult:
             "symbol": self.symbol,
             "n_trades": self.n_trades,
             "total_pnl_usdt": round(self.total_pnl, 2),
+            "gross_pnl_usdt": round(self.gross_pnl, 2),
+            "total_fees_usdt": round(self.total_fees, 2),
             "win_rate_pct": round(self.win_rate * 100, 1),
             "sharpe": round(self.sharpe(), 3),
             "sortino": round(self.sortino(), 3),
@@ -279,6 +289,49 @@ class Backtester:
         if not df.empty:
             df = df.sort_values("sharpe", ascending=False).reset_index(drop=True)
         return df
+
+    def walk_forward(
+        self,
+        df: pd.DataFrame,
+        signal_col: str,
+        strategy_name: str,
+        symbol: str,
+        n_folds: int = 5,
+        funding_col: str = "funding_rate",
+    ) -> dict:
+        """
+        Walk-forward validation: splits df into n_folds sequential test windows,
+        runs the backtest on each, returns fold-by-fold and aggregate metrics.
+        """
+        n = len(df)
+        fold_size = max(48, n // (n_folds + 2))
+        fold_sharpes, fold_pnls, fold_win_rates = [], [], []
+
+        for i in range(n_folds):
+            start = (i + 1) * fold_size
+            end   = min(start + fold_size, n)
+            if end - start < 20:
+                break
+            fold_df = df.iloc[start:end].copy().reset_index(drop=True)
+            r = self.run(fold_df, signal_col, f"{strategy_name}_f{i+1}", symbol, funding_col)
+            fold_sharpes.append(r.sharpe())
+            fold_pnls.append(r.total_pnl)
+            fold_win_rates.append(r.win_rate)
+
+        if not fold_sharpes:
+            return {}
+
+        return {
+            "strategy":        strategy_name,
+            "symbol":          symbol,
+            "n_folds":         len(fold_sharpes),
+            "wf_mean_sharpe":  round(float(np.mean(fold_sharpes)), 3),
+            "wf_std_sharpe":   round(float(np.std(fold_sharpes)),  3),
+            "wf_mean_pnl":     round(float(np.mean(fold_pnls)),    2),
+            "wf_consistency":  round(sum(1 for p in fold_pnls if p > 0) / len(fold_pnls), 2),
+            "wf_decay":        round(float(fold_pnls[-1] - fold_pnls[0]), 2) if len(fold_pnls) >= 2 else 0,
+            "fold_pnls":       [round(p, 2) for p in fold_pnls],
+        }
 
 
 def _batch_ml_predict(df: pd.DataFrame, model_filename: str) -> pd.Series:
@@ -663,6 +716,26 @@ def run_full_backtest(
         ab = comparison.groupby("group")[["sharpe", "sortino", "win_rate_pct",
                                          "max_drawdown_pct", "n_trades"]].mean()
         ab.to_json(ab_path, indent=2)
+
+    # ── Walk-forward analysis ─────────────────────────────────────────────
+    # Run WF on the last symbol's df (representative sample)
+    wf_rows: List[dict] = []
+    try:
+        if df is not None and len(df) >= 200:
+            for reg_name, label, sig_col in enabled_backtest_signal_cols():
+                if sig_col not in df.columns:
+                    continue
+                wf = bt.walk_forward(df, sig_col, reg_name, sym if sym else "BTC_USDT")
+                if wf:
+                    wf_rows.append(wf)
+        if wf_rows:
+            wf_path = os.path.join(output_dir, "wf_results.json")
+            import json as _wfj
+            with open(wf_path, "w", encoding="utf-8") as f:
+                _wfj.dump(wf_rows, f, indent=2)
+            logger.info("Walk-forward results saved: %d strategies", len(wf_rows))
+    except Exception as exc:
+        logger.warning("Walk-forward analysis failed: %s", exc)
 
     logger.info("Backtest complete. Results saved to %s", output_dir)
     return comparison

@@ -994,6 +994,38 @@ def strategy_full():
         except Exception:
             pass
 
+    # ── Simulator paper stats (from StrategySimulatorAgent) ──────────────────
+    paper_stats: dict[str, dict] = {}
+    try:
+        _, _, strat_sim = _get_simulator()
+        for row in strat_sim.get_stats():
+            sname = row.get("strategy")
+            if sname and row.get("n_trades", 0) > 0:
+                paper_stats[sname] = {
+                    "n":        row.get("n_trades",  0),
+                    "wins":     row.get("n_wins",    0),
+                    "losses":   row.get("n_losses",  0),
+                    "pnl":      row.get("total_pnl", 0.0),
+                    "pnl_pct":  row.get("pnl_pct",   0.0),
+                    "win_rate": row.get("win_rate",   0.0),
+                    "balance":  row.get("balance",    10_000.0),
+                }
+    except Exception:
+        pass
+
+    # ── Walk-forward results ──────────────────────────────────────────────────
+    wf_stats: dict[str, dict] = {}
+    wf_path = _PROJECT_ROOT / 'data' / 'backtest' / 'wf_results.json'
+    if wf_path.exists():
+        try:
+            import json as _wfj
+            for row in _wfj.loads(wf_path.read_text()):
+                key = row.get('strategy', '')
+                if key:
+                    wf_stats[key] = row
+        except Exception:
+            pass
+
     # ── Aggregate ──────────────────────────────────────────────────────────────
     trained_count = sum(1 for m in ml_models if m['model_exists'])
     live_count    = sum(1 for s in strategies if s.get('live_enabled'))
@@ -1002,6 +1034,8 @@ def strategy_full():
         'ml_models':   ml_models,
         'strategies':  strategies,
         'trade_stats': trade_stats,
+        'paper_stats': paper_stats,
+        'wf_stats':    wf_stats,
         'summary':     summary,
         'aggregate': {
             'models_trained': trained_count,
@@ -1192,11 +1226,12 @@ def _calc_ou_dev(prices) -> float:
 _simulator_agent   = None
 _trainer_agent     = None
 _strategy_sim      = None
+_db_agent          = None
 _sim_lock          = threading.Lock()
 
 
 def _get_simulator():
-    global _simulator_agent, _trainer_agent, _strategy_sim
+    global _simulator_agent, _trainer_agent, _strategy_sim, _db_agent
     with _sim_lock:
         if _simulator_agent is None:
             from src.engine.agents.simulator_agent    import SimulatorAgent
@@ -1205,6 +1240,14 @@ def _get_simulator():
             _simulator_agent = SimulatorAgent(auto_cycle=True)
             _trainer_agent   = ContinuousTrainerAgent()
             _strategy_sim    = StrategySimulatorAgent()
+            # Start DatabaseAgent if QuestDB is available
+            try:
+                from src.database.db_agent import DatabaseAgent
+                _db_agent = DatabaseAgent(bus=_simulator_agent.bus)
+                _db_agent.start()
+            except Exception as _dbe:
+                import logging as _lg
+                _lg.getLogger(__name__).debug("DatabaseAgent not started: %s", _dbe)
     return _simulator_agent, _trainer_agent, _strategy_sim
 
 
@@ -1382,14 +1425,11 @@ def simulator_available_data():
 @app.route('/api/monitor/downloader/status')
 def monitor_downloader_status():
     """
-    Returns the state of both data folders:
+    Returns the state of both data folders — stat() only, never reads file contents.
       - data/raw/historical/  — pre-2026 archive (1s spot files)
       - data/raw/             — current data (1m/1h/1d + recent 1s)
-    Checks which watchlist symbols are missing in each folder.
     """
     import json as _json
-    import gzip as _gz
-    import collections as _col
 
     watchlist = read_json('data/watchlist.json', default=['BTC/USDT','ETH/USDT','SOL/USDT','ADA/USDT'])
     raw_dir  = _PROJECT_ROOT / 'data' / 'raw'
@@ -1402,15 +1442,11 @@ def monitor_downloader_status():
         for f in d.iterdir():
             if not f.name.endswith('.csv.gz'):
                 continue
-            sz = f.stat().st_size
-            try:
-                last = list(_col.deque(_gz.open(f, 'rt', encoding='utf-8'), maxlen=1))
-                last_ts = last[0].split(',')[0].strip() if last else None
-                if last_ts == 'timestamp':
-                    last_ts = None
-            except Exception:
-                last_ts = 'CORRUPTED'
-            result[f.name] = {'size_mb': round(sz / 1e6, 1), 'last_ts': last_ts}
+            st = f.stat()
+            result[f.name] = {
+                'size_mb': round(st.st_size / 1e6, 1),
+                'mtime':   _time.strftime('%Y-%m-%d %H:%M', _time.localtime(st.st_mtime)),
+            }
         return result
 
     hist_files = _scan_dir(hist_dir)
@@ -1520,6 +1556,208 @@ def monitor_migrate_to_historical():
         moved.append(f.name)
 
     return jsonify({'moved': moved, 'deleted': deleted, 'skipped': skipped})
+
+
+# ─── QuestDB / Database endpoints ────────────────────────────────────────────
+
+@app.route('/api/db/status')
+def db_status():
+    """QuestDB connection status + table row counts."""
+    try:
+        from src.database.questdb_client import get_client
+        c = get_client()
+        available = c.is_available(force=True)
+        tables = {}
+        if available:
+            for tbl in ['market_data', 'trade_events', 'model_signals',
+                        'training_telemetry', 'strategy_performance',
+                        'news_sentiment', 'backtest_results']:
+                rows = c.query(f"SELECT COUNT(*) as n FROM {tbl}")
+                tables[tbl] = rows[0]['n'] if rows else 0
+        return jsonify({
+            'available': available,
+            'host': c.host,
+            'http_port': c.http_port,
+            'ilp_port': c.ilp_port,
+            'tables': tables,
+        })
+    except Exception as e:
+        return jsonify({'available': False, 'error': str(e)})
+
+
+@app.route('/api/db/query', methods=['POST'])
+def db_query():
+    """Execute arbitrary SQL against QuestDB (read-only SELECT only)."""
+    body = request.get_json(force=True) or {}
+    sql = (body.get('sql') or '').strip()
+    if not sql:
+        return jsonify({'error': 'sql required'}), 400
+    # Safety: only allow SELECT
+    if not sql.upper().lstrip().startswith('SELECT'):
+        return jsonify({'error': 'Only SELECT queries allowed'}), 403
+    try:
+        from src.database.questdb_client import get_client
+        c = get_client()
+        rows = c.query(sql)
+        return jsonify({'rows': rows, 'count': len(rows)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/db/strategy_history')
+def db_strategy_history():
+    """Return PNL history for one strategy over last N days."""
+    strategy = request.args.get('strategy', '')
+    days = int(request.args.get('days', 7))
+    if not strategy:
+        return jsonify({'error': 'strategy required'}), 400
+    try:
+        from src.database.questdb_client import get_client
+        rows = get_client().get_strategy_history(strategy, days)
+        return jsonify({'rows': rows, 'strategy': strategy, 'days': days})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/db/training_history')
+def db_training_history():
+    """Return training telemetry for one model."""
+    model = request.args.get('model', '')
+    runs = int(request.args.get('runs', 5))
+    if not model:
+        return jsonify({'error': 'model required'}), 400
+    try:
+        from src.database.questdb_client import get_client
+        rows = get_client().get_training_history(model, runs)
+        return jsonify({'rows': rows, 'model': model})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/db/market_stats')
+def db_market_stats():
+    """Return stored market data summary per symbol/timeframe."""
+    try:
+        from src.database.questdb_client import get_client
+        c = get_client()
+        if not c.is_available():
+            return jsonify({'available': False, 'rows': []})
+        rows = c.query(
+            "SELECT symbol, timeframe, "
+            "COUNT(*) as row_count, "
+            "MIN(ts) as first_ts, MAX(ts) as last_ts "
+            "FROM market_data "
+            "GROUP BY symbol, timeframe "
+            "ORDER BY symbol, timeframe"
+        )
+        return jsonify({'available': True, 'rows': rows})
+    except Exception as e:
+        return jsonify({'available': False, 'error': str(e)})
+
+
+@app.route('/api/db/ingest', methods=['POST'])
+def db_ingest():
+    """Trigger background CSV.gz → QuestDB ingestion for given symbols."""
+    body = request.get_json(force=True) or {}
+    symbols    = body.get('symbols') or None
+    timeframes = body.get('timeframes') or None
+    since_str  = body.get('since') or None
+
+    def _run():
+        try:
+            from src.database.ingest_pipeline import run
+            from datetime import datetime, timezone
+            since_dt = None
+            if since_str:
+                since_dt = datetime.strptime(since_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            run(symbols=symbols, timeframes=timeframes, since=since_dt)
+        except Exception as exc:
+            import logging as _lg
+            _lg.getLogger(__name__).error("DB ingest error: %s", exc)
+
+    threading.Thread(target=_run, daemon=True, name="db-ingest").start()
+    return jsonify({'ok': True, 'msg': 'Ingestion started in background'})
+
+
+# ─── Training Cluster endpoints ──────────────────────────────────────────────
+
+def _get_orchestrator():
+    try:
+        from src.training.distributed.orchestrator import get_orchestrator
+        return get_orchestrator()
+    except Exception:
+        return None
+
+
+@app.route('/api/cluster/status')
+def cluster_status():
+    orch = _get_orchestrator()
+    if orch is None:
+        return jsonify({'error': 'Orchestrator not available'}), 503
+    return jsonify(orch.get_status())
+
+
+@app.route('/api/cluster/workers')
+def cluster_workers():
+    orch = _get_orchestrator()
+    if orch is None:
+        return jsonify([])
+    return jsonify(orch.list_workers())
+
+
+@app.route('/api/cluster/submit', methods=['POST'])
+def cluster_submit():
+    orch = _get_orchestrator()
+    if orch is None:
+        return jsonify({'error': 'Orchestrator not available'}), 503
+    spec = request.get_json(force=True) or {}
+    tid  = orch.submit_task(spec)
+    return jsonify({'ok': True, 'task_id': tid})
+
+
+@app.route('/api/cluster/submit_all', methods=['POST'])
+def cluster_submit_all():
+    orch = _get_orchestrator()
+    if orch is None:
+        return jsonify({'error': 'Orchestrator not available'}), 503
+    body    = request.get_json(force=True) or {}
+    symbols = body.get('symbols')
+    ids     = orch.submit_full_training_run(symbols)
+    return jsonify({'ok': True, 'task_ids': ids, 'count': len(ids)})
+
+
+@app.route('/api/cluster/register', methods=['POST'])
+def cluster_register():
+    orch = _get_orchestrator()
+    if orch is None:
+        return jsonify({'error': 'Orchestrator not available'}), 503
+    orch.register_worker(request.get_json(force=True) or {})
+    return jsonify({'ok': True})
+
+
+@app.route('/api/cluster/task_update', methods=['POST'])
+def cluster_task_update():
+    orch = _get_orchestrator()
+    if orch is None:
+        return jsonify({'ok': True})   # silently accept
+    body = request.get_json(force=True) or {}
+    orch.update_task(
+        body.get('task_id', ''),
+        body.get('status', ''),
+        node_id=body.get('node_id', ''),
+        result=body.get('result'),
+        error=body.get('error', ''),
+    )
+    return jsonify({'ok': True})
+
+
+@app.route('/api/cluster/task/<task_id>', methods=['DELETE'])
+def cluster_cancel_task(task_id):
+    orch = _get_orchestrator()
+    if orch is None:
+        return jsonify({'ok': False})
+    ok = orch.cancel_task(task_id)
+    return jsonify({'ok': ok})
 
 
 if __name__ == '__main__':

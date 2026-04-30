@@ -32,3 +32,6 @@ statsmodels
 vectorbt
 yfinance
 duckdb>=0.10.0
+
+# Time-series database
+questdb>=1.2.0        # QuestDB Python client (ILP + REST)
