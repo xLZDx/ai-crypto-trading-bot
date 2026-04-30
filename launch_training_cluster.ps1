@@ -9,7 +9,16 @@ $ErrorActionPreference = "Continue"
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $LogFile = "$ProjectRoot\logs\cluster.log"
 
-$LocalIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.*" } | Select-Object -First 1).IPAddress
+# Prefer 192.168.0.x LAN interface; fall back to any non-loopback IPv4
+$LocalIP = (Get-NetIPAddress -AddressFamily IPv4 |
+    Where-Object { $_.IPAddress -like "192.168.0.*" } |
+    Select-Object -First 1).IPAddress
+
+if (-not $LocalIP) {
+    $LocalIP = (Get-NetIPAddress -AddressFamily IPv4 |
+        Where-Object { $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.*" } |
+        Select-Object -First 1).IPAddress
+}
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan

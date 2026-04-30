@@ -99,6 +99,15 @@ def _detect_hardware() -> dict:
 
 
 def _local_ip() -> str:
+    """Return 192.168.0.x LAN IP if available, otherwise any non-loopback IP."""
+    try:
+        import psutil
+        for iface_addrs in psutil.net_if_addrs().values():
+            for addr in iface_addrs:
+                if addr.family == socket.AF_INET and addr.address.startswith("192.168.0."):
+                    return addr.address
+    except Exception:
+        pass
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
