@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import gc
 from datetime import datetime, timezone
 
 import numpy as np
@@ -116,10 +117,15 @@ class QuantAgent(BaseAgent):
                 df = pd.read_csv(os.path.join(raw_dir, fname),
                                  usecols=["timestamp", "close"])
                 df["timestamp"] = pd.to_datetime(df["timestamp"])
-                df = df.sort_values("timestamp").tail(168)  # last 1 week
+                # Sort and keep only what's needed, then copy to drop the large original from memory
+                df = df.sort_values("timestamp").tail(168).copy()  # last 1 week
                 returns[sym] = df["close"].pct_change().dropna().values
             except Exception:
                 pass
+            finally:
+                # Explicitly free memory after processing each potentially large dataframe
+                del df
+                gc.collect()
 
         if len(returns) < 2 or "BTC_USDT" not in returns:
             return

@@ -173,12 +173,12 @@ REGISTRY: dict[str, dict[str, Any]] = {
     },
     "Scalping_ML": {
         "label": "Scalping RF Model (1m)",
-        "description": "1-minute RF model for scalping",
+        "description": "1-minute RF model for scalping. BT: model approximated on 1h bars, max_hold=6h, scalping fees",
         "group": "ML",
         "signal_col": "signal_scalping",
         "models": ["scalping_model.joblib"],
         "can_live": True,
-        "can_backtest": False,  # 1m data not in hourly backtest
+        "can_backtest": True,
     },
     "TFT_MarketMaker": {
         "label": "TFT + Avellaneda-Stoikov MM",
@@ -229,12 +229,12 @@ REGISTRY: dict[str, dict[str, Any]] = {
     },
     "OU_MeanReversion_Filter": {
         "label": "Ornstein-Uhlenbeck Filter",
-        "description": "Blocks trend entries when price is statistically stretched (>2σ from OU mean)",
+        "description": "Blocks trend entries when price is statistically stretched (>2σ from OU mean). BT: Ensemble B gated by |dev|<2σ on rolling 200-bar window",
         "group": "RiskFilter",
         "signal_col": "ou_filter",
         "models": [],
         "can_live": True,
-        "can_backtest": False,  # requires online calibration
+        "can_backtest": True,
     },
 
     # ── New high-performance strategies ──────────────────────────────────────

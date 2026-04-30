@@ -152,6 +152,7 @@ class Backtester:
         initial_capital: float = 10_000.0,
         maker_fee: float = 0.0002,       # 0.02% Binance futures maker
         taker_fee: float = 0.0004,       # 0.04% Binance futures taker
+        slippage_pct: float = 0.0005,    # 0.05% slippage/spread per side
         fee_preset: str | None = None,   # override both fees from FEE_PRESETS
         position_size_pct: float = 0.10, # 10% of capital per trade
         max_hold_bars: int = 48,         # max hours to hold a position
@@ -163,6 +164,7 @@ class Backtester:
         else:
             self.maker_fee = maker_fee
             self.taker_fee = taker_fee
+        self.slippage_pct = slippage_pct
         # backward-compat alias
         self.fee_rate = self.taker_fee
         self.position_size_pct = position_size_pct
@@ -184,6 +186,10 @@ class Backtester:
         """
         result = BacktestResult(strategy_name=strategy_name, symbol=symbol)
         df = df.copy().reset_index(drop=True)
+
+        # --- LATENCY ---
+        # Shift signal by 1 bar to simulate realistic execution delay
+        df[signal_col] = df[signal_col].shift(1).fillna(0.0)
 
         if "timestamp" not in df.columns:
             df["timestamp"] = pd.date_range("2020-01-01", periods=len(df), freq="1h")
@@ -216,6 +222,9 @@ class Backtester:
                     should_close = True
 
             if should_close and position is not None:
+                # --- SLIPPAGE on EXIT ---
+                # Sell at a slightly worse price (lower for long, higher for short)
+                exit_price = price * (1 - self.slippage_pct) if position["direction"] == 1 else price * (1 + self.slippage_pct)
                 fee = position["size_usdt"] * self.maker_fee  # exit via limit order
                 trade = TradeRecord(
                     symbol=symbol,
@@ -223,7 +232,7 @@ class Backtester:
                     exit_time=row["timestamp"] if hasattr(row["timestamp"], "year") else datetime.now(_tz.utc),
                     direction=position["direction"],
                     entry_price=position["entry_price"],
-                    exit_price=price,
+                    exit_price=exit_price,
                     size_usdt=position["size_usdt"],
                     fees_paid=position["entry_fee"] + fee,
                     funding_paid=position["funding_accrued"],
@@ -245,10 +254,13 @@ class Backtester:
                         equity_series.append(equity)
                         continue
                 direction = 1 if signal > 0 else -1
+                # --- SLIPPAGE on ENTRY ---
+                # Buy at a slightly worse price (higher for long, lower for short)
+                entry_price = price * (1 + self.slippage_pct) if direction == 1 else price * (1 - self.slippage_pct)
                 entry_fee = size * self.taker_fee  # entry via market order
                 position = {
                     "direction": direction,
-                    "entry_price": price,
+                    "entry_price": entry_price,
                     "entry_idx": i,
                     "size_usdt": size,
                     "entry_fee": entry_fee,
@@ -262,6 +274,7 @@ class Backtester:
         # Close any open position at end
         if position is not None and len(df) > 0:
             last = df.iloc[-1]
+            exit_price = last["close"] * (1 - self.slippage_pct) if position["direction"] == 1 else last["close"] * (1 + self.slippage_pct)
             fee = position["size_usdt"] * self.taker_fee  # forced market exit at end
             trade = TradeRecord(
                 symbol=symbol,
@@ -269,7 +282,7 @@ class Backtester:
                 exit_time=last["timestamp"] if hasattr(last["timestamp"], "year") else datetime.now(_tz.utc),
                 direction=position["direction"],
                 entry_price=position["entry_price"],
-                exit_price=last["close"],
+                exit_price=exit_price,
                 size_usdt=position["size_usdt"],
                 fees_paid=position["entry_fee"] + fee,
                 funding_paid=position["funding_accrued"],
@@ -392,7 +405,7 @@ def _batch_ml_predict(df: pd.DataFrame, model_filename: str) -> pd.Series:
             bull_p = proba[:, 1]
         else:
             bull_p = proba[:, 0]
-        signal = np.where(bull_p > 0.60, 1.0, np.where(bull_p < 0.40, -1.0, 0.0))
+        signal = np.where(bull_p > 0.52, 1.0, np.where(bull_p < 0.48, -1.0, 0.0))
         return pd.Series(signal, index=df.index)
     except Exception as e:
         logger.debug("Batch ML predict failed (%s): %s", model_filename, e)
@@ -505,6 +518,7 @@ def _build_signals(df: pd.DataFrame) -> pd.DataFrame:
     )
     df_ml = df.copy()
     df_ml["return"]            = df_ml["close"].pct_change()
+    df_ml["log_return"]        = np.log(df_ml["close"] / df_ml["close"].shift(1))
     df_ml["volatility"]        = df_ml["return"].rolling(20, min_periods=5).std()
     df_ml["dist_sma_7"]        = df_ml["close"] / df_ml["close"].rolling(7).mean() - 1
     df_ml["dist_sma_30"]       = df_ml["close"] / df_ml["close"].rolling(30).mean() - 1
@@ -512,6 +526,7 @@ def _build_signals(df: pd.DataFrame) -> pd.DataFrame:
     df_ml["atr_pct"]           = df_ml.get("atr_14", pd.Series(0.0, index=df_ml.index)) / df_ml["close"].clip(lower=1e-9)
     for lag in range(1, 6):
         df_ml[f"return_lag{lag}"] = df_ml["return"].shift(lag)
+        df_ml[f"log_return_lag{lag}"] = df_ml["log_return"].shift(lag)
     df_ml["stoch_k"] = 0.0  # placeholder if not available
     df_ml["news_sentiment"] = 0.0
     df_ml["trend_alignment"] = (df_ml["close"] > df_ml["close"].rolling(50).mean()).astype(float)
@@ -522,6 +537,31 @@ def _build_signals(df: pd.DataFrame) -> pd.DataFrame:
     df["signal_base_ml"]    = _batch_ml_predict(df_ml, "btc_rf_model.joblib")
     df["signal_trend_ml"]   = _batch_ml_predict(df_ml, "trend_model.joblib")
     df["signal_futures_ml"] = _batch_ml_predict(df_ml, "futures_short_model.joblib")
+
+    # ── Scalping ML (1m model, approximated on 1h data) ───────────────────────
+    # Feature set mirrors FEATURE_COLUMNS from train_scalping_model.py.
+    # Running a 1m-trained model on 1h bars is an approximation — signals are
+    # directionally meaningful but magnitude/frequency differs vs live 1m mode.
+    df_sc = df_ml.copy()
+    df_sc["signal_rsi"] = df["signal_rsi"]
+    df_sc["signal_bb"]  = df["signal_bb"]
+    try:
+        from src.analysis.feature_engineering import add_rsi as _add_rsi_sc
+        df_sc = _add_rsi_sc(df_sc, 7)   # adds rsi_7
+    except Exception:
+        df_sc["rsi_7"] = df_sc["close"].ewm(span=7, adjust=False).mean()
+    try:
+        from src.analysis.feature_engineering import add_roc as _add_roc_sc
+        df_sc = _add_roc_sc(df_sc, [3, 5, 10])   # adds roc_3, roc_5, roc_10
+    except Exception:
+        for _p in [3, 5, 10]:
+            df_sc[f"roc_{_p}"] = df_sc["close"].pct_change(_p)
+    # macd_fast = raw MACD line (EMA12 - EMA26)
+    df_sc["macd_fast"] = (df_sc["close"].ewm(span=12, adjust=False).mean()
+                          - df_sc["close"].ewm(span=26, adjust=False).mean())
+    # dist_to_micro_supp — microstructure feature, not available at 1h → 0
+    df_sc["dist_to_micro_supp"] = 0.0
+    df["signal_scalping"] = _batch_ml_predict(df_sc, "scalping_model.joblib")
 
     # ── Elliott Wave proxy (vectorized approximation) ─────────────────────────
     # Impulse (Wave 3/5): strong 5-bar momentum above SMA-50, confirmed by ML
@@ -569,19 +609,22 @@ def _build_signals(df: pd.DataFrame) -> pd.DataFrame:
         logger.debug("MACD divergence signal skipped: %s", e)
         df["signal_macd_div"] = 0.0
 
-    # ── OU Mean-Reversion Entry (RANGING regime) ──────────────────────────────
-    # Vectorized OU calibration on rolling 200-bar window.
-    # When price deviates >1.5σ from rolling mean → fade the move.
+    # ── OU signals: entry (RANGING) and filter (not-stretched gate) ──────────────
     df["signal_ou_entry"] = 0.0
+    df["ou_filter"] = 0.0
     try:
         rolling_mu  = df["close"].rolling(200, min_periods=50).mean()
         rolling_std = df["close"].rolling(200, min_periods=50).std().clip(lower=1e-9)
         deviation   = (df["close"] - rolling_mu) / rolling_std
         is_ranging  = df["signal_regime"] == 0  # only activate in RANGING regime
-        df.loc[is_ranging & (deviation < -1.5), "signal_ou_entry"] =  1.0  # fade down-move
-        df.loc[is_ranging & (deviation >  1.5), "signal_ou_entry"] = -1.0  # fade up-move
+        # Entry: fade moves >1.5σ in RANGING regime
+        df.loc[is_ranging & (deviation < -1.5), "signal_ou_entry"] =  1.0
+        df.loc[is_ranging & (deviation >  1.5), "signal_ou_entry"] = -1.0
+        # Filter: pass Ensemble B signal only when price is NOT stretched (|dev| < 2σ)
+        # This shows the backtest value of filtering out overextended entries.
+        df["ou_filter"] = df["signal_ensemble_b"] * (deviation.abs() < 2.0).astype(float)
     except Exception as e:
-        logger.debug("OU entry signal skipped: %s", e)
+        logger.debug("OU signals skipped: %s", e)
 
     return df
 
@@ -660,12 +703,16 @@ def run_full_backtest(
         from src.engine.strategy_registry import enabled_backtest_signal_cols, is_enabled_backtest
 
         _A_ORIG = {"RSI_MeanReversion", "MACD_Momentum", "BB_Reversion", "Ensemble_A"}
+        # Scalping uses short hold window (1h bars approximating 1m scalping)
+        _bt_scalping = Backtester(initial_capital=initial_capital,
+                                  fee_preset="scalping", max_hold_bars=6)
         for reg_name, label, sig_col in enabled_backtest_signal_cols():
             if sig_col not in df.columns:
                 continue
             try:
                 group_prefix = "A_" if reg_name in _A_ORIG else "B_"
-                res = bt.run(df, sig_col, f"{group_prefix}{label}", sym)
+                _bt_run = _bt_scalping if reg_name == "Scalping_ML" else bt
+                res = _bt_run.run(df, sig_col, f"{group_prefix}{label}", sym)
                 (group_a_results if group_prefix == "A_" else group_b_results).append(res)
             except Exception as e:
                 logger.error("Backtest failed for %s/%s: %s", sym, reg_name, e)

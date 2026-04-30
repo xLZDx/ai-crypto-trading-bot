@@ -31,6 +31,8 @@ import pandas as pd
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.metrics import accuracy_score, classification_report, roc_auc_score
+from sklearn.utils.class_weight import compute_sample_weight
+from mlfinlab.cross_validation import PurgedKFold
 import joblib
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -43,7 +45,8 @@ if PROJECT_ROOT not in sys.path:
 from src.analysis.feature_engineering import (
     add_rsi, add_macd, add_bollinger_bands, add_roc, add_atr,
     add_ofi, add_vwap, add_funding_zscore, add_liquidity_proximity,
-    add_donchian, add_keltner, add_time_features, add_taker_and_trade_features
+    add_donchian, add_keltner, add_time_features, add_taker_and_trade_features,
+    _compute_regime_features
 )
 from src.analysis.fractional_diff import add_fractional_diff
 from src.analysis.triple_barrier import triple_barrier_labels_vectorized
@@ -51,83 +54,76 @@ from src.analysis.triple_barrier import triple_barrier_labels_vectorized
 # Features the meta-labeler sees at signal time (market context)
 META_FEATURES = [
     # Market regime context
-    'frac_diff_d40',
+    'prob_base',
+    'prob_trend',
+    'regime',
     'volatility_7',       # rolling 7-bar realized vol
-    'rsi_14',
-    'macd_hist',
-    'bb_pb',
     'ofi_z',
     'vwap_dist',
     'funding_z',
-    'funding_positive',
     'liq_proximity',
     'kc_width',           # Keltner width = volatility regime
-    'don_pos_20',
     'hour', 'day_of_week',
     'taker_buy_ratio',
     'atr_pct',
-    # The primary strategy signal itself
-    'primary_signal',     # +1 long, -1 short, 0 flat
-    'signal_rsi',
-    'signal_macd',
-    'signal_bb',
 ]
 
 
 def _build_signal_dataset(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
     """
-    Run all strategies over df, collect rows where a signal fires,
-    and label each signal as won (1) or lost (0) using Triple Barrier.
+    Run primary models over df to generate probabilities, then label each
+    potential trade as won (1) or lost (0) for meta-model training.
     """
     df = df.copy().reset_index(drop=True)
+    models_dir = os.path.join(PROJECT_ROOT, 'models')
 
-    # Features
-    df = add_fractional_diff(df, d=0.4)
-    df['return'] = df['close'].pct_change()
-    df['volatility_7'] = df['return'].rolling(7).std()
-    df = add_rsi(df, 14)
-    df = add_macd(df)
-    df = add_bollinger_bands(df, window=20)
-    df = add_roc(df, [7])
-    df = add_atr(df, 14)
-    df = add_ofi(df)
-    df = add_vwap(df)
-    df = add_funding_zscore(df)
-    df = add_liquidity_proximity(df)
-    df = add_donchian(df, n=20)
-    df = add_keltner(df)
-    df = add_time_features(df)
-    df = add_taker_and_trade_features(df)
-    df['atr_pct'] = (df['high'] - df['low']) / df['close']
+    # --- 1. Load primary models ---
+    try:
+        base_model = joblib.load(os.path.join(models_dir, 'btc_rf_model.joblib'))
+        trend_model = joblib.load(os.path.join(models_dir, 'trend_model.joblib'))
+        regime_model_data = joblib.load(os.path.join(models_dir, 'regime_classifier.joblib'))
+    except FileNotFoundError as e:
+        log.error("Primary models for meta-labeler not found: %s. Train them first.", e)
+        return pd.DataFrame()
 
-    # Strategy signals
-    df['signal_rsi'] = 0.0
-    df.loc[df['rsi_14'] < 30, 'signal_rsi'] = 1.0
-    df.loc[df['rsi_14'] > 70, 'signal_rsi'] = -1.0
+    # --- 2. Engineer a superset of all features ---
+    from src.analysis.ml_predictor import MLPredictor
+    feature_builder = MLPredictor()
+    df_feat = feature_builder._build_all_features(df)
+    df_feat['volatility_7'] = df_feat['return'].rolling(7).std()
 
-    df['signal_macd'] = np.where(df['macd_hist'] > 0, 1.0, -1.0)
+    # --- 3. Generate primary model probabilities ---
+    base_features = MLPredictor(model_filename='btc_rf_model.joblib')._get_model_features()
+    X_base = df_feat[base_features].fillna(0)
+    df_feat['prob_base'] = base_model.predict_proba(X_base)[:, 1]
 
-    df['signal_bb'] = 0.0
-    df.loc[df['bb_pb'] < 0.1, 'signal_bb'] = 1.0
-    df.loc[df['bb_pb'] > 0.9, 'signal_bb'] = -1.0
+    trend_features = MLPredictor(model_filename='trend_model.joblib')._get_model_features()
+    X_trend = df_feat[trend_features].fillna(0)
+    df_feat['prob_trend'] = trend_model.predict_proba(X_trend)[:, 1]
 
-    # Ensemble signal
-    df['primary_signal'] = (df['signal_rsi'] + df['signal_macd'] + df['signal_bb']) / 3.0
+    # --- 4. Generate regime context ---
+    from src.analysis.regime_classifier import RegimeClassifier
+    regime_features_df = _compute_regime_features(df_feat)
+    X_regime_scaled = regime_model_data["scaler"].transform(regime_features_df[RegimeClassifier.FEATURE_COLS])
+    raw_labels = regime_model_data["gmm"].predict(X_regime_scaled)
+    df_feat['regime'] = pd.Series([regime_model_data['label_map'].get(int(r), 0) for r in raw_labels], index=regime_features_df.index).ffill()
 
-    # Triple Barrier outcome labels (2% profit, 1% loss, 24h timeout)
-    tb_labels = triple_barrier_labels_vectorized(df, profit_pct=0.02, loss_pct=0.01, max_bars=24)
-    df['tb_label'] = tb_labels
+    # Dynamic Triple Barrier outcome labels
+    tb_labels, t1_times = triple_barrier_labels_vectorized(df, pt_multiplier=2.0, sl_multiplier=2.0, max_bars=24)
+    df_feat['tb_label'] = tb_labels
+    df_feat['t1_timestamp'] = t1_times
+    
+    # Remove timeouts to enforce strict binary classification on resolved trades
+    df_feat = df_feat[df_feat['tb_label'] != 0].copy()
 
-    # Meta-label: did the trade WIN (+1 hit upper barrier) = 1, else 0
-    df['meta_label'] = (df['tb_label'] == 1).astype(int)
+    # --- 6. Define primary signal and meta-label ---
+    primary_signal = np.where(df_feat['prob_base'] > 0.52, 1, np.where(df_feat['prob_base'] < 0.48, -1, 0))
+    df_feat = df_feat[primary_signal != 0].copy()
+    primary_signal_filtered = primary_signal[primary_signal != 0]
+    df_feat['meta_label'] = (np.sign(primary_signal_filtered) == df_feat['tb_label']).astype(int)
 
-    # Only keep rows where at least one strategy has a non-zero signal
-    signal_fired = (df['signal_rsi'].abs() > 0.1) | \
-                   (df['signal_macd'].abs() > 0.1) | \
-                   (df['signal_bb'].abs() > 0.1)
-    df = df[signal_fired].copy()
-    df['symbol'] = symbol
-    return df
+    df_feat['symbol'] = symbol
+    return df_feat
 
 
 def train_meta_labeler():
@@ -172,6 +168,9 @@ def train_meta_labeler():
         return
 
     combined = pd.concat(all_frames, ignore_index=True)
+    combined = combined.sort_values('timestamp')
+    combined.set_index('timestamp', inplace=True)
+
     missing = [f for f in META_FEATURES if f not in combined.columns]
     for col in missing:
         combined[col] = 0.0
@@ -188,13 +187,36 @@ def train_meta_labeler():
     calib_split = int(n * 0.75)
     test_start = int(n * 0.90)
 
+    _wf_fold_accs = []
+    t1_series = combined['t1_timestamp']
+    # Embargo = 2 * horizon (24 bars for meta model)
+    pct_embargo = (2.0 * 24) / len(X)
+    cv = PurgedKFold(n_splits=5, t1=t1_series, pct_embargo=pct_embargo)
+    for _fi, (tr_idx, te_idx) in enumerate(cv.split(X)):
+        _wf_clf = HistGradientBoostingClassifier(
+            random_state=42, max_iter=200, max_depth=4,
+            learning_rate=0.05, l2_regularization=0.3, class_weight='balanced'
+        )
+        weights = compute_sample_weight('balanced', y.iloc[tr_idx])
+        _wf_clf.fit(X.iloc[tr_idx], y.iloc[tr_idx], sample_weight=weights)
+        _fold_acc = accuracy_score(y.iloc[te_idx], _wf_clf.predict(X.iloc[te_idx]))
+        _wf_fold_accs.append(_fold_acc)
+        log.info("Meta-labeler WF fold %d/5: accuracy=%.2f%%", _fi + 1, _fold_acc * 100)
+    _wf_mean_acc = float(np.mean(_wf_fold_accs)) * 100 if _wf_fold_accs else 0.0
+    _wf_std_acc  = float(np.std(_wf_fold_accs))  * 100 if _wf_fold_accs else 0.0
+    log.info("Meta-labeler WF mean accuracy: %.2f%% ± %.2f%%", _wf_mean_acc, _wf_std_acc)
+
     base_clf = HistGradientBoostingClassifier(
         random_state=42, max_iter=300, max_depth=4,
         learning_rate=0.05, l2_regularization=0.3,
         early_stopping=True, class_weight='balanced'
     )
     log.info("Training meta-labeler base model on %d samples...", calib_split)
-    base_clf.fit(X.iloc[:calib_split], y.iloc[:calib_split])
+    calib_start_time = combined.index[calib_split]
+    valid_train_mask = combined['t1_timestamp'].iloc[:calib_split] < calib_start_time
+    safe_train_idx = np.arange(calib_split)[valid_train_mask]
+    weights_calib = compute_sample_weight('balanced', y.iloc[safe_train_idx])
+    base_clf.fit(X.iloc[safe_train_idx], y.iloc[safe_train_idx], sample_weight=weights_calib)
 
     log.info("Calibrating probabilities with isotonic regression...")
     calibrated = CalibratedClassifierCV(base_clf, method='isotonic', cv='prefit', n_jobs=-1)
@@ -241,6 +263,9 @@ def train_meta_labeler():
             "win_rate_pct": round(float(y.mean()) * 100, 1),
             "symbols": symbols,
             "timeframe": "1h",
+            "walk_forward_mean_acc": round(_wf_mean_acc, 2),
+            "walk_forward_std_acc":  round(_wf_std_acc,  2),
+            "walk_forward_folds":    len(_wf_fold_accs),
             "last_trained": datetime.now(timezone.utc).isoformat()
         }, f)
 

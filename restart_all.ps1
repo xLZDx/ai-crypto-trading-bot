@@ -8,6 +8,64 @@ Write-Host "   AI TRADER: POWERSHELL AUTO-SETUP"
 Write-Host "   Root: $root"
 Write-Host "==========================================" -ForegroundColor Cyan
 
+# Step 0: Start QuestDB (primary time-series database — must be up before bot/dashboard)
+Write-Host ""
+Write-Host "[0/6] Starting QuestDB (primary database)..." -ForegroundColor Yellow
+$dockerOk = $true
+if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+    Write-Host "  WARNING: Docker not found — QuestDB will not start. Install Docker Desktop." -ForegroundColor Red
+    $dockerOk = $false
+}
+if ($dockerOk) {
+    # Check if container already running
+    $qdbRunning = docker ps --filter "name=trading_questdb" --format "{{.Names}}" 2>$null
+    if ($qdbRunning -eq "trading_questdb") {
+        Write-Host "  QuestDB container already running." -ForegroundColor DarkCyan
+    } else {
+        # Container exists but stopped → start it; else create it
+        $qdbExists = docker ps -a --filter "name=trading_questdb" --format "{{.Names}}" 2>$null
+        if ($qdbExists -eq "trading_questdb") {
+            Write-Host "  Restarting stopped QuestDB container..."
+            docker start trading_questdb 2>&1 | Out-Null
+        } else {
+            Write-Host "  Creating new QuestDB container..." -ForegroundColor Magenta
+            docker run -d `
+                --name trading_questdb `
+                --restart unless-stopped `
+                -p 9000:9000 -p 9009:9009 -p 8812:8812 `
+                -v "${root}\data\questdb:/root/.questdb" `
+                -e QDB_TELEMETRY_ENABLED=false `
+                -e QDB_SHARED_WORKER_COUNT=4 `
+                -m 4g `
+                questdb/questdb:latest 2>&1 | Out-Null
+        }
+        # Wait for HTTP health endpoint (up to 30 s)
+        Write-Host "  Waiting for QuestDB to be ready..." -NoNewline
+        $ready = $false
+        for ($i = 0; $i -lt 15; $i++) {
+            Start-Sleep 2
+            try {
+                $resp = Invoke-WebRequest "http://localhost:9000/health" -TimeoutSec 2 -ErrorAction Stop
+                if ($resp.StatusCode -eq 200) { $ready = $true; break }
+            } catch {}
+            Write-Host "." -NoNewline
+        }
+        Write-Host ""
+        if ($ready) {
+            Write-Host "  QuestDB is healthy." -ForegroundColor Green
+        } else {
+            Write-Host "  WARNING: QuestDB may still be starting — check Docker Desktop." -ForegroundColor Red
+        }
+    }
+    # Ensure schema tables exist (idempotent)
+    $venvPy = Join-Path $root 'venv\Scripts\python.exe'
+    if (-not (Test-Path $venvPy)) { $venvPy = "python" }
+    Write-Host "  Ensuring DB schema tables exist..."
+    & $venvPy -m src.database.schema 2>&1 | Out-Null
+    Write-Host "  Schema ready." -ForegroundColor Green
+}
+Write-Host "[0/6] QuestDB ready." -ForegroundColor Green
+
 # Step 1: Kill ONLY known managed processes (bot, dashboard, monitor, training).
 #         Download processes (archive / watchlist) are NOT killed — they finish on their own.
 Write-Host ""

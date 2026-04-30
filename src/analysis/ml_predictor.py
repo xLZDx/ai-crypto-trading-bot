@@ -83,9 +83,9 @@ class MLPredictor:
                 proba = self.model.predict_proba(last_row)[0]
                 p_long = float(proba[1]) if len(proba) > 1 else float(proba[0])
                 self._last_confidence = p_long
-                if p_long >= 0.60:
+                if p_long >= 0.52:
                     return 1
-                elif (1.0 - p_long) >= 0.60:
+                elif (1.0 - p_long) >= 0.52:
                     return 0
                 else:
                     self.last_error = f"Low confidence ({p_long:.2f}) — no trade"
@@ -180,6 +180,9 @@ class MLPredictor:
                 "don_pos_20", "kc_pos", "kc_width", "frac_diff_d40",
             ]
         # base
+        # NOTE: This list now includes the new regime features.
+        # If a model was trained without them, it will gracefully ignore them
+        # due to the `_get_model_features` logic which reads `feature_names_in_`.
         return [
             "return", "volatility", "dist_sma_7", "dist_sma_30",
             "rsi_14", "macd", "macd_hist", "volume_momentum", "stoch_k",
@@ -187,7 +190,8 @@ class MLPredictor:
             "atr_pct", "taker_buy_ratio", "avg_trade_size",
             "hour", "day_of_week", "roc_14", "roc_3", "roc_7",
             "bb_pb", "news_sentiment", "ofi_z", "signal_bb", "signal_macd",
-            "frac_diff_d40", "liq_proximity",
+            "frac_diff_d40", "liq_proximity", "trend_strength", "vol_regime",
+            "is_trending", "is_volatile",
         ]
 
     def _build_all_features(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -213,6 +217,7 @@ class MLPredictor:
 
         # ── Core returns & time ───────────────────────────────────────────────
         df["return"] = df["close"].pct_change()
+        df["log_return"] = np.log(df["close"] / df["close"].shift(1))
 
         if "timestamp" in df.columns:
             df = _safe(add_time_features, df)
@@ -286,6 +291,7 @@ class MLPredictor:
 
         for lag in (1, 2, 3, 5):
             df[f"return_lag{lag}"] = df["return"].shift(lag)
+            df[f"log_return_lag{lag}"] = df["log_return"].shift(lag)
 
         df["atr_pct"] = (df["high"] - df["low"]) / df["close"].replace(0, np.nan)
 
@@ -297,6 +303,16 @@ class MLPredictor:
         # Futures-specific
         df["low_30"]           = df["low"].rolling(30).min()
         df["dist_to_support"]  = (df["close"] - df["low_30"]) / df["close"].replace(0, np.nan)
+
+        # Regime Features
+        df['ema_fast'] = df['close'].ewm(span=12, adjust=False).mean()
+        df['ema_slow'] = df['close'].ewm(span=26, adjust=False).mean()
+        df['trend_strength'] = (df['ema_fast'] - df['ema_slow']).abs() / df['atr_14'].replace(0, 1e-9)
+        df['vol_short'] = df['return'].rolling(window=7).std()
+        df['vol_long'] = df['return'].rolling(window=100, min_periods=10).std()
+        df['vol_regime'] = df['vol_short'] / df['vol_long'].replace(0, 1e-9)
+        df['is_trending'] = (df['trend_strength'] > 1.5).astype(int)
+        df['is_volatile'] = (df['vol_regime'] > 1.5).astype(int)
 
         # Strategy signals used as ML features in some models
         rsi_s  = df.get("rsi_14", pd.Series(50.0, index=df.index))

@@ -7,6 +7,8 @@ import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import accuracy_score, classification_report
+from sklearn.utils.class_weight import compute_sample_weight
+from mlfinlab.cross_validation import PurgedKFold
 import joblib
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -45,30 +47,12 @@ FEATURE_COLUMNS = [
     'vwap_dist',            # distance from VWAP
     'liq_proximity',        # proximity to liquidation zone
     # strategy-conditioned features (meta-learning signal filter)
+    'trend_strength',       # Regime: EMA spread / ATR
+    'vol_regime',           # Regime: short-term vol vs long-term vol
+    'is_trending',          # Regime: binary flag
+    'is_volatile',          # Regime: binary flag
     'signal_rsi', 'signal_macd', 'signal_bb',
 ]
-
-
-def _walk_forward_splits(n: int, n_splits: int = 5, test_pct: float = 0.10,
-                         gap_pct: float = 0.05):
-    """
-    Generate (train_idx, test_idx) tuples for walk-forward cross-validation.
-    Each fold trains on an expanding window and tests on the next slice.
-    """
-    gap = int(n * gap_pct)
-    test_size = int(n * test_pct)
-    train_end_start = int(n * 0.50)  # first fold uses at least 50% for training
-
-    step = (n - train_end_start - test_size - gap) // max(n_splits - 1, 1)
-    splits = []
-    for i in range(n_splits):
-        train_end = train_end_start + i * step
-        test_start = train_end + gap
-        test_end = test_start + test_size
-        if test_end > n:
-            break
-        splits.append((np.arange(0, train_end), np.arange(test_start, test_end)))
-    return splits
 
 
 def prepare_data(filepath):
@@ -99,6 +83,16 @@ def prepare_data(filepath):
     df = add_vwap(df)
     df = add_liquidity_proximity(df)
 
+    # Regime Features
+    df['ema_fast'] = df['close'].ewm(span=12, adjust=False).mean()
+    df['ema_slow'] = df['close'].ewm(span=26, adjust=False).mean()
+    df['trend_strength'] = (df['ema_fast'] - df['ema_slow']).abs() / df['atr_14'].replace(0, 1e-9)
+    df['vol_long'] = df['return'].rolling(window=100, min_periods=10).std()
+    df['vol_regime'] = df['volatility'] / df['vol_long'].replace(0, 1e-9)
+    df['is_trending'] = (df['trend_strength'] > 1.5).astype(int)
+    df['is_volatile'] = (df['vol_regime'] > 1.5).astype(int)
+
+
     df['vol_sma_14'] = df['volume'].rolling(window=14).mean()
     df['volume_momentum'] = df['volume'] / df['vol_sma_14']
 
@@ -125,15 +119,17 @@ def prepare_data(filepath):
     news_path = os.path.join(base_dir, 'data', 'raw', 'cryptocompare_news.csv')
     df = add_news_sentiment(df, news_path)
 
-    # Triple Barrier labels replace binary target
-    labels = triple_barrier_labels_vectorized(df, profit_pct=0.02, loss_pct=0.01, max_bars=24)
-    df['target'] = labels
-    # Remap to binary: treat +1 as 1 (long win), {-1, 0} as 0 (no trade / loss)
-    # This preserves compatibility with existing binary classifier while encoding risk info
-    df['target_tb'] = (df['target'] == 1).astype(int)
+    # Dynamic Volatility-based Triple Barrier
+    labels, t1_times = triple_barrier_labels_vectorized(df, pt_multiplier=2.0, sl_multiplier=2.0, max_bars=24)
+    df['target_raw'] = labels
+    df['t1_timestamp'] = t1_times
+    
+    # Remove timeouts (0) to formulate a strict binary classification: TP hit vs SL hit
+    df = df[df['target_raw'] != 0].copy()
+    df['target_tb'] = (df['target_raw'] == 1).astype(int)
 
     df = df.dropna()
-    stats = label_stats(df['target'])
+    stats = label_stats(df['target_raw'])
     log.info("Triple Barrier label distribution: %s", stats)
     return df
 
@@ -172,6 +168,9 @@ def train_model():
         return
 
     combined_df = pd.concat(all_data, ignore_index=True)
+    combined_df = combined_df.sort_values('timestamp')
+    combined_df.set_index('timestamp', inplace=True)
+
     missing = [f for f in FEATURE_COLUMNS if f not in combined_df.columns]
     if missing:
         log.warning("Missing features (will fill with 0): %s", missing)
@@ -185,18 +184,22 @@ def train_model():
              len(combined_df), len(FEATURE_COLUMNS), symbols)
 
     # Walk-forward cross-validation
-    splits = _walk_forward_splits(len(X), n_splits=5)
+    t1_series = combined_df['t1_timestamp']
+    # Embargo = 2 * horizon (24 bars for base model)
+    pct_embargo = (2.0 * 24) / len(X)
+    cv = PurgedKFold(n_splits=5, t1=t1_series, pct_embargo=pct_embargo)
     fold_accuracies = []
-    for fold_i, (train_idx, test_idx) in enumerate(splits):
+    for fold_i, (train_idx, test_idx) in enumerate(cv.split(X)):
         base_clf = HistGradientBoostingClassifier(
             random_state=42, max_iter=500, max_depth=6,
             learning_rate=0.03, l2_regularization=0.5,
             early_stopping=True, class_weight='balanced'
         )
-        base_clf.fit(X.iloc[train_idx], y.iloc[train_idx])
+        weights = compute_sample_weight('balanced', y.iloc[train_idx])
+        base_clf.fit(X.iloc[train_idx], y.iloc[train_idx], sample_weight=weights)
         fold_acc = accuracy_score(y.iloc[test_idx], base_clf.predict(X.iloc[test_idx]))
         fold_accuracies.append(fold_acc)
-        log.info("Walk-forward fold %d/%d: accuracy=%.2f%%", fold_i + 1, len(splits), fold_acc * 100)
+        log.info("Walk-forward fold %d/%d: accuracy=%.2f%%", fold_i + 1, cv.n_splits, fold_acc * 100)
 
     log.info("Walk-forward mean accuracy: %.2f%% ± %.2f%%",
              np.mean(fold_accuracies) * 100, np.std(fold_accuracies) * 100)
@@ -210,8 +213,13 @@ def train_model():
         learning_rate=0.03, l2_regularization=0.5,
         early_stopping=True, class_weight='balanced'
     )
+    calib_start_time = combined_df.index[calib_split]
+    valid_train_mask = combined_df['t1_timestamp'].iloc[:calib_split] < calib_start_time
+    safe_train_idx = np.arange(calib_split)[valid_train_mask]
+    
     calibrated = CalibratedClassifierCV(base_clf, method='isotonic', cv='prefit', n_jobs=-1)
-    base_clf.fit(X.iloc[:calib_split], y.iloc[:calib_split])
+    weights_calib = compute_sample_weight('balanced', y.iloc[safe_train_idx])
+    base_clf.fit(X.iloc[safe_train_idx], y.iloc[safe_train_idx], sample_weight=weights_calib)
     calibrated.fit(X.iloc[calib_split:], y.iloc[calib_split:])
 
     X_test = X.iloc[int(n * 0.90):]

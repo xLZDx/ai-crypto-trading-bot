@@ -4,7 +4,13 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
+import sys
 from pathlib import Path
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 import numpy as np
 import pandas as pd
@@ -13,14 +19,14 @@ from src.analysis.feature_engineering import add_ofi, add_taker_and_trade_featur
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RAW_DIR = PROJECT_ROOT / "data" / "raw"
-MODEL_DIR = PROJECT_ROOT / "models"
+ROOT_PATH = Path(__file__).resolve().parents[2]
+RAW_DIR = ROOT_PATH / "data" / "raw"
+MODEL_DIR = ROOT_PATH / "models"
 DEFAULT_SYMBOLS = ["BTC_USDT", "SOL_USDT", "ADA_USDT", "ETH_USDT"]
 
 
 def load_symbols() -> list[str]:
-    watchlist_path = PROJECT_ROOT / "data" / "watchlist.json"
+    watchlist_path = ROOT_PATH / "data" / "watchlist.json"
     if watchlist_path.exists():
         with watchlist_path.open("r", encoding="utf-8") as handle:
             return [symbol.replace("/", "_") for symbol in json.load(handle)]
@@ -61,7 +67,11 @@ def engineer_frame(df: pd.DataFrame, asset_id: int, freq: str, symbol: str = "")
     elif "funding_rate" not in df.columns:
         df["funding_rate"] = 0.0
 
-    df = df.set_index("timestamp").asfreq(freq).ffill().reset_index()
+    df = df.dropna(subset=["timestamp"])
+    df = df.drop_duplicates(subset=["timestamp"], keep="last")
+    df = df.set_index("timestamp")
+    df = df[~df.index.duplicated(keep="last")]
+    df = df.asfreq(freq).ffill().reset_index()
     df["return"] = df["close"].pct_change().fillna(0.0)
     df["funding_rate"] = df["funding_rate"].fillna(0.0)
     df = add_taker_and_trade_features(df)
@@ -109,6 +119,28 @@ def build_series_bundle(df: pd.DataFrame, freq: str):
     return target, past_covariates, future_covariates
 
 
+def load_frame_from_db(symbol: str, timeframe: str) -> pd.DataFrame | None:
+    """Load OHLCV from QuestDB. Returns None if DB unavailable or data insufficient."""
+    try:
+        from src.database.questdb_client import get_client
+        db = get_client()
+        if not db.is_available():
+            return None
+        df = db.query_df(
+            f"SELECT ts as timestamp, open, high, low, close, volume, funding_rate "
+            f"FROM market_data "
+            f"WHERE symbol='{symbol}' AND timeframe='{timeframe}' "
+            f"ORDER BY ts"
+        )
+        if df.empty or len(df) < 500:
+            return None
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        return df.sort_values("timestamp").reset_index(drop=True)
+    except Exception as exc:
+        logger.debug("DB load skipped for %s/%s: %s", symbol, timeframe, exc)
+        return None
+
+
 def train_tft_model(
     timeframe: str = "1h",
     input_chunk_length: int = 168,
@@ -123,7 +155,12 @@ def train_tft_model(
     dry_run_summary: dict[str, int] = {}
 
     for asset_id, symbol in enumerate(symbols):
-        frame = load_frame(symbol, timeframe, history_days)
+        # Try QuestDB first (faster), fall back to CSV
+        frame = load_frame_from_db(symbol, timeframe)
+        if frame is not None:
+            logger.info("Loaded %s/%s from QuestDB (%d rows)", symbol, timeframe, len(frame))
+        else:
+            frame = load_frame(symbol, timeframe, history_days)
         if frame is None or len(frame) < input_chunk_length + output_chunk_length + 50:
             logger.warning("Skipping %s due to insufficient data.", symbol)
             continue
@@ -152,17 +189,32 @@ def train_tft_model(
     if not series_bundle:
         raise RuntimeError("No training series were prepared. Check raw data availability.")
 
+    # Split each series 80/20 train/val (chronological — no shuffle)
+    VAL_FRAC = 0.20
+    targets_all     = [bundle[1] for bundle in series_bundle]
+    past_cov_all    = [bundle[2] for bundle in series_bundle]
+    future_cov_all  = [bundle[3] for bundle in series_bundle]
+
+    split_idx = [max(input_chunk_length + output_chunk_length, int(len(t) * (1 - VAL_FRAC)))
+                 for t in targets_all]
+
+    train_targets = [t[:s] for t, s in zip(targets_all, split_idx)]
+    val_targets   = [t[s:] for t, s in zip(targets_all, split_idx)]
+    train_past    = [p[:s] for p, s in zip(past_cov_all, split_idx)]
+    val_past      = [p[s:] for p, s in zip(past_cov_all, split_idx)]
+    train_future  = [f[:s] for f, s in zip(future_cov_all, split_idx)]
+    val_future    = [f[s:] for f, s in zip(future_cov_all, split_idx)]
+
     target_scaler = Scaler()
-    past_scaler = Scaler()
+    past_scaler   = Scaler()
     future_scaler = Scaler()
 
-    targets = [bundle[1] for bundle in series_bundle]
-    past_covariates = [bundle[2] for bundle in series_bundle]
-    future_covariates = [bundle[3] for bundle in series_bundle]
-
-    scaled_targets = target_scaler.fit_transform(targets)
-    scaled_past = past_scaler.fit_transform(past_covariates)
-    scaled_future = future_scaler.fit_transform(future_covariates)
+    scaled_train_tgt    = target_scaler.fit_transform(train_targets)
+    scaled_val_tgt      = target_scaler.transform(val_targets)
+    scaled_train_past   = past_scaler.fit_transform(train_past)
+    scaled_val_past     = past_scaler.transform(val_past)
+    scaled_train_future = future_scaler.fit_transform(train_future)
+    scaled_val_future   = future_scaler.transform(val_future)
 
     # Apply CPU/GPU optimisations (TF32, cuDNN benchmark, thread count)
     try:
@@ -178,38 +230,58 @@ def train_tft_model(
         if _use_gpu:
             gpu_count = torch.cuda.device_count()
             logger.info("CUDA GPU detected: %d device(s) found. Primary: %s — training on all GPUs.", gpu_count, torch.cuda.get_device_name(0))
+            torch.cuda.empty_cache()
         else:
             logger.warning("No CUDA GPU detected — training on CPU (slow). Run install_cuda_torch.ps1 to enable GPU.")
     except Exception:
         _use_gpu = False
 
+    # EarlyStopping on val_loss — saves compute when training plateaus
+    try:
+        from pytorch_lightning.callbacks import EarlyStopping
+        _early_stop_cb = [EarlyStopping(monitor="val_loss", patience=5, mode="min", verbose=True)]
+    except Exception:
+        _early_stop_cb = []
+
+    _trainer_kw: dict = {"enable_progress_bar": True}
+    if _use_gpu:
+        _trainer_kw.update({"accelerator": "gpu", "devices": -1, "strategy": "auto"})
+    else:
+        _trainer_kw["accelerator"] = "cpu"
+    if _early_stop_cb:
+        _trainer_kw["callbacks"] = _early_stop_cb
+
     model = TFTModel(
         input_chunk_length=input_chunk_length,
         output_chunk_length=output_chunk_length,
-        hidden_size=256 if _use_gpu else 32,
+        hidden_size=64 if _use_gpu else 32,
         lstm_layers=2 if _use_gpu else 1,
         num_attention_heads=4,
         dropout=0.1,
-        batch_size=256 if _use_gpu else 32,
+        batch_size=64 if _use_gpu else 32,
         n_epochs=n_epochs,
         random_state=42,
         force_reset=True,
         save_checkpoints=True,
-        pl_trainer_kwargs={"accelerator": "gpu", "devices": -1, "strategy": "auto", "enable_progress_bar": True} if _use_gpu else {"accelerator": "cpu", "enable_progress_bar": True},
+        pl_trainer_kwargs=_trainer_kw,
     )
 
     logger.info(
-        "Training TFT on %d series with input=%d output=%d epochs=%d device=%s",
-        len(scaled_targets),
+        "Training TFT on %d series with input=%d output=%d epochs=%d device=%s val_split=%.0f%%",
+        len(scaled_train_tgt),
         input_chunk_length,
         output_chunk_length,
         n_epochs,
         "GPU" if _use_gpu else "CPU",
+        VAL_FRAC * 100,
     )
     model.fit(
-        series=scaled_targets,
-        past_covariates=scaled_past,
-        future_covariates=scaled_future,
+        series=scaled_train_tgt,
+        past_covariates=scaled_train_past,
+        future_covariates=scaled_train_future,
+        val_series=scaled_val_tgt,
+        val_past_covariates=scaled_val_past,
+        val_future_covariates=scaled_val_future,
         verbose=True,
     )
 
@@ -236,7 +308,7 @@ def train_tft_model(
         )
 
     logger.info("TFT model saved to %s", model_path)
-    return {"model_path": str(model_path), "series_count": len(series_bundle)}
+    return {"model_path": str(model_path), "series_count": len(series_bundle), "val_split": VAL_FRAC}
 
 
 def main() -> None:

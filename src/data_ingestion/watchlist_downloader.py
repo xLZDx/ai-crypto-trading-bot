@@ -126,6 +126,31 @@ _CSV_HEADER = ["timestamp", "open", "high", "low", "close", "volume",
                "quote_volume", "trades_count", "taker_buy_base", "taker_buy_quote"]
 
 
+def _write_to_db(symbol: str, timeframe: str, raw_rows: list) -> None:
+    """Write raw Binance kline rows to QuestDB (best-effort, non-blocking)."""
+    try:
+        from src.database.questdb_client import get_client
+        db = get_client()
+        if not db.is_available():
+            return
+        bars = []
+        for row in raw_rows:
+            dt = datetime.fromtimestamp(row[0] / 1000, tz=timezone.utc)
+            bars.append({
+                "timestamp": dt,
+                "open":   float(row[1]),
+                "high":   float(row[2]),
+                "low":    float(row[3]),
+                "close":  float(row[4]),
+                "volume": float(row[5]),
+                "funding_rate": 0.0,
+            })
+        written = db.write_market_candles_bulk(symbol, timeframe, bars)
+        logger.debug("[%s/%s] Wrote %d bars to QuestDB", symbol, timeframe, written)
+    except Exception as exc:
+        logger.debug("[%s/%s] QuestDB write skipped: %s", symbol, timeframe, exc)
+
+
 def _fetch_klines(symbol: str, interval: str, start_ms: int | None, limit: int) -> list:
     safe = symbol.replace("/", "")
     url = (f"https://api.binance.com/api/v3/klines"
@@ -170,6 +195,8 @@ def backfill(symbol: str, timeframe: str, history_days: int, limit: int) -> int:
                 break
             for row in rows:
                 writer.writerow(_row_to_csv(row))
+            # Mirror batch to QuestDB (non-blocking, best-effort)
+            _write_to_db(symbol, timeframe, rows)
             total    += len(rows)
             since_ms  = rows[-1][0] + 1
             if len(rows) < limit:
@@ -205,6 +232,9 @@ def sync(symbol: str, timeframe: str, limit: int) -> int:
             writer.writerow(_CSV_HEADER)
         for row in rows:
             writer.writerow(_row_to_csv(row))
+
+    # Mirror to QuestDB (non-blocking, best-effort)
+    _write_to_db(symbol, timeframe, rows)
 
     logger.info("[%s/%s] Synced %d new candles", symbol, timeframe, len(rows))
     return len(rows)

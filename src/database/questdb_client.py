@@ -326,6 +326,134 @@ class QuestDBClient:
             f"LIMIT {last_n_runs * 200}"
         )
 
+    # ── Analytics: training runs ──────────────────────────────────────────────
+
+    def write_training_run(self, run: dict) -> bool:
+        """Write one training run summary to training_runs."""
+        ts       = _to_ns(run.get("end_ts")) or _now_ns()
+        start_ns = _to_ns(run.get("start_ts")) or ts
+        end_ns   = _to_ns(run.get("end_ts"))   or ts
+        model    = _tag(run.get("model_name", "unknown"))
+        strategy = _tag(run.get("strategy", "unknown"))
+        symbol   = _tag(run.get("symbol", "ALL"))
+        tf       = _tag(run.get("timeframe", "1h"))
+        trigger  = _tag(run.get("trigger", "scheduled"))
+        hp       = str(run.get("hyperparams_json", "{}")).replace('"', '\\"')[:500]
+        feats    = str(run.get("feature_list_json", "[]")).replace('"', '\\"')[:500]
+        notes    = str(run.get("notes", "")).replace('"', '\\"')[:200]
+        es       = "true" if run.get("early_stopped") else "false"
+        line = (
+            f"training_runs,model_name={model},strategy={strategy},"
+            f"symbol={symbol},timeframe={tf},trigger={trigger} "
+            f'run_id="{run.get("run_id", "")}",'
+            f"start_ts={start_ns}i,"
+            f"end_ts={end_ns}i,"
+            f"duration_secs={float(run.get('duration_secs', 0))},"
+            f"train_rows={int(run.get('train_rows', 0))}i,"
+            f"val_rows={int(run.get('val_rows', 0))}i,"
+            f"n_wf_folds={int(run.get('n_wf_folds', 0))}i,"
+            f"best_epoch={int(run.get('best_epoch', 0))}i,"
+            f"final_train_loss={float(run.get('final_train_loss', 0))},"
+            f"final_val_loss={float(run.get('final_val_loss', 0))},"
+            f"early_stopped={es},"
+            f"oos_sharpe={float(run.get('oos_sharpe', 0))},"
+            f"oos_win_rate={float(run.get('oos_win_rate', 0))},"
+            f"oos_max_drawdown={float(run.get('oos_max_drawdown', 0))},"
+            f"n_oos_trades={int(run.get('n_oos_trades', 0))}i,"
+            f'hyperparams_json="{hp}",'
+            f'feature_list_json="{feats}",'
+            f'notes="{notes}" '
+            f"{ts}"
+        )
+        return self.write_ilp([line])
+
+    def write_wf_fold(self, run_id: str, model_name: str, fold: dict) -> bool:
+        """Write one Walk-Forward fold result to model_wf_folds."""
+        ts          = _now_ns()
+        train_start = _to_ns(fold.get("train_start")) or ts
+        train_end   = _to_ns(fold.get("train_end"))   or ts
+        test_start  = _to_ns(fold.get("test_start"))  or ts
+        test_end    = _to_ns(fold.get("test_end"))     or ts
+        model       = _tag(model_name)
+        line = (
+            f"model_wf_folds,model_name={model} "
+            f'run_id="{run_id}",'
+            f"fold_index={int(fold.get('fold_index', 0))}i,"
+            f"train_start={train_start}i,"
+            f"train_end={train_end}i,"
+            f"test_start={test_start}i,"
+            f"test_end={test_end}i,"
+            f"train_rows={int(fold.get('train_rows', 0))}i,"
+            f"test_rows={int(fold.get('test_rows', 0))}i,"
+            f"oos_sharpe={float(fold.get('oos_sharpe', 0))},"
+            f"oos_pnl={float(fold.get('oos_pnl', 0))},"
+            f"oos_win_rate={float(fold.get('oos_win_rate', 0))},"
+            f"oos_max_dd={float(fold.get('oos_max_dd', 0))},"
+            f"n_trades={int(fold.get('n_trades', 0))}i "
+            f"{ts}"
+        )
+        return self.write_ilp([line])
+
+    def write_testnet_trade(self, trade: dict) -> bool:
+        """Write one testnet/live trade to testnet_trades."""
+        ts       = _to_ns(trade.get("exit_ts") or trade.get("ts")) or _now_ns()
+        entry_ns = _to_ns(trade.get("entry_ts")) or ts
+        exit_ns  = _to_ns(trade.get("exit_ts"))  or ts
+        sym      = _tag(trade.get("symbol", "UNKNOWN"))
+        strategy = _tag(trade.get("strategy", "unknown"))
+        model    = _tag(trade.get("model", "unknown"))
+        exit_r   = _tag(trade.get("exit_reason", "unknown"))
+        is_live  = "true" if trade.get("is_live") else "false"
+        tid      = str(trade.get("trade_id", "")).replace('"', '')
+        line = (
+            f"testnet_trades,symbol={sym},strategy={strategy},"
+            f"model={model},exit_reason={exit_r} "
+            f'trade_id="{tid}",'
+            f"direction={int(trade.get('direction', 0))}i,"
+            f"is_live={is_live},"
+            f"entry_ts={entry_ns}i,"
+            f"exit_ts={exit_ns}i,"
+            f"entry_price={float(trade.get('entry_price', 0))},"
+            f"exit_price={float(trade.get('exit_price', 0))},"
+            f"size_usd={float(trade.get('size_usd', 0))},"
+            f"pnl_usd={float(trade.get('pnl_usd', 0))},"
+            f"fees_usd={float(trade.get('fees_usd', 0))},"
+            f"funding_pnl={float(trade.get('funding_pnl', 0))},"
+            f"net_pnl={float(trade.get('net_pnl', 0))},"
+            f"bars_held={int(trade.get('bars_held', 0))}i,"
+            f"meta_label={int(trade.get('meta_label', 0))}i,"
+            f"regime={int(trade.get('regime', 0))}i,"
+            f"garch_vol_at_entry={float(trade.get('garch_vol_at_entry', 0))},"
+            f"stop_loss={float(trade.get('stop_loss', 0))},"
+            f"take_profit={float(trade.get('take_profit', 0))},"
+            f"meta_prob={float(trade.get('meta_prob', 0))},"
+            f"signal_strength={float(trade.get('signal_strength', 0))} "
+            f"{ts}"
+        )
+        return self.write_ilp([line])
+
+    def write_testnet_session_stats(self, stats: dict) -> bool:
+        """Write one hourly testnet session snapshot."""
+        ts       = _now_ns()
+        strategy = _tag(stats.get("strategy", "ALL"))
+        symbol   = _tag(stats.get("symbol", "ALL"))
+        sid      = str(stats.get("session_id", "")).replace('"', '')
+        line = (
+            f"testnet_session_stats,strategy={strategy},symbol={symbol} "
+            f'session_id="{sid}",'
+            f"balance={float(stats.get('balance', 0))},"
+            f"total_pnl={float(stats.get('total_pnl', 0))},"
+            f"unrealized_pnl={float(stats.get('unrealized_pnl', 0))},"
+            f"n_open_trades={int(stats.get('n_open_trades', 0))}i,"
+            f"n_closed_trades={int(stats.get('n_closed_trades', 0))}i,"
+            f"win_rate={float(stats.get('win_rate', 0))},"
+            f"sharpe={float(stats.get('sharpe', 0))},"
+            f"max_drawdown={float(stats.get('max_drawdown', 0))},"
+            f"funding_collected={float(stats.get('funding_collected', 0))} "
+            f"{ts}"
+        )
+        return self.write_ilp([line])
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

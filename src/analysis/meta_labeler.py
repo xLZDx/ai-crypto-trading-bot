@@ -100,12 +100,28 @@ class MetaLabeler:
             return 'BLOCK', 0.0  # no signal to filter
 
         try:
-            row = pd.Series(features) if not isinstance(features, pd.Series) else features
-            # Add primary_signal to the feature set
-            row = row.copy()
-            row['primary_signal'] = float(signal)
+            # This is complex in live mode. We need to run primary models first.
+            # The `main.py` orchestrator should provide these probabilities.
+            # For now, we assume `features` dict contains `prob_base`, `prob_trend`, etc.
+            if not all(f in features for f in ['prob_base', 'prob_trend', 'regime']):
+                logger.warning("Meta-labeler missing required probability/regime features. Passing signal.")
+                return 'PASS', 0.5
 
-            X = pd.DataFrame([row])[META_FEATURES].fillna(0)
+            # Ensure all features are present
+            feature_row = {}
+            if isinstance(features, pd.Series):
+                feature_row = features.to_dict()
+            elif isinstance(features, list) and len(features) > 0 and isinstance(features[-1], dict):
+                # Handle list of dicts from data loader
+                feature_row = features[-1]
+            elif isinstance(features, dict):
+                feature_row = features
+
+            for f in META_FEATURES:
+                if f not in feature_row:
+                    feature_row[f] = 0.0
+
+            X = pd.DataFrame([feature_row])[META_FEATURES].fillna(0)
             proba = self.model.predict_proba(X)[0]
             # Index 1 = probability of win (class 1)
             p_win = float(proba[1]) if len(proba) > 1 else float(proba[0])
@@ -138,11 +154,14 @@ class MetaLabeler:
 
         try:
             feat_df = features_df.copy()
-            feat_df['primary_signal'] = signals.values
+            # In backtesting, we assume the features_df already contains
+            # 'prob_base', 'prob_trend', 'regime' etc. from a pre-computation step.
 
             missing = [f for f in META_FEATURES if f not in feat_df.columns]
             for col in missing:
                 feat_df[col] = 0.0
+            if missing:
+                logger.warning("Meta-labeler backtest missing features, filled with 0: %s", missing)
 
             X = feat_df[META_FEATURES].fillna(0)
             proba = self.model.predict_proba(X)

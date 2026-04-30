@@ -1,0 +1,106 @@
+{
+  "RSI_MeanReversion": {
+    "live": true,
+    "backtest": true
+  },
+  "MACD_Momentum": {
+    "live": true,
+    "backtest": true
+  },
+  "BB_Reversion": {
+    "live": true,
+    "backtest": true
+  },
+  "Ensemble_A": {
+    "live": true,
+    "backtest": true
+  },
+  "VWAP_Reversion": {
+    "live": true,
+    "backtest": true
+  },
+  "Donchian_Breakout": {
+    "live": true,
+    "backtest": true
+  },
+  "Keltner_Breakout": {
+    "live": true,
+    "backtest": true
+  },
+  "Funding_Arb": {
+    "live": true,
+    "backtest": true
+  },
+  "OFI_Momentum": {
+    "live": true,
+    "backtest": true
+  },
+  "Volatility_Breakout": {
+    "live": true,
+    "backtest": true
+  },
+  "Ensemble_B": {
+    "live": true,
+    "backtest": true
+  },
+  "ElliottWave_ML": {
+    "live": true,
+    "backtest": true
+  },
+  "Base_ML": {
+    "live": true,
+    "backtest": true
+  },
+  "Trend_ML": {
+    "live": true,
+    "backtest": true
+  },
+  "Futures_Short_ML": {
+    "live": true,
+    "backtest": true
+  },
+  "Scalping_ML": {
+    "live": true,
+    "backtest": true
+  },
+  "TFT_MarketMaker": {
+    "live": true,
+    "backtest": false
+  },
+  "MetaLabeler_Filter": {
+    "live": true,
+    "backtest": true
+  },
+  "RegimeClassifier_Router": {
+    "live": true,
+    "backtest": true
+  },
+  "GARCH_PositionSizing": {
+    "live": true,
+    "backtest": true
+  },
+  "MTF_SMA200_Filter": {
+    "live": true,
+    "backtest": true
+  },
+  "OU_MeanReversion_Filter": {
+    "live": true,
+    "backtest": true
+  },
+  "Ichimoku_Cloud": {
+    "live": true,
+    "backtest": true
+  },
+  "Supertrend": {
+    "live": true,
+    "backtest": true
+  },
+  "MACD_Divergence": {
+    "live": true,
+    "backtest": true
+  },
+  "OU_Entry": {
+    "live": true,
+    "backtest": true
+  }
+}

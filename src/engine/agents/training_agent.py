@@ -158,11 +158,12 @@ class ContinuousTrainerAgent(BaseAgent):
             from src.analysis.triple_barrier import triple_barrier_labels_vectorized
 
             # Labels
-            labels = triple_barrier_labels_vectorized(
-                df["close"],
-                pt_multiplier=1.5, sl_multiplier=1.0, horizon=5,
+            labels, _ = triple_barrier_labels_vectorized(
+                df,
+                pt_multiplier=1.5, sl_multiplier=1.5, max_bars=5,
             )
             df["label"] = labels
+            df = df[df["label"] != 0].copy()
 
             feat_cols = [c for c in FEATURE_COLUMNS if c in df.columns]
             valid = df[feat_cols + ["label"]].dropna()
@@ -170,7 +171,7 @@ class ContinuousTrainerAgent(BaseAgent):
                 return
 
             X = valid[feat_cols].values
-            y = (valid["label"] > 0).astype(int).values
+            y = (valid["label"] == 1).astype(int).values
 
             from sklearn.ensemble import HistGradientBoostingClassifier
             from sklearn.calibration import CalibratedClassifierCV
@@ -187,7 +188,8 @@ class ContinuousTrainerAgent(BaseAgent):
                 early_stopping=True, validation_fraction=0.1,
             )
             model = CalibratedClassifierCV(base, cv=3, method="sigmoid", n_jobs=-1)
-            model.fit(X_tr, y_tr)
+            weights = compute_sample_weight('balanced', y_tr)
+            model.fit(X_tr, y_tr, sample_weight=weights)
 
             acc = float(accuracy_score(y_val, model.predict(X_val)))
             loss = float(1.0 - acc)

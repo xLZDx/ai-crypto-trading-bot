@@ -52,7 +52,7 @@ def test_template():
         'trades-mf-group', 'open-trades-tbody', 'closed-trades-tbody',
         'ov-open-tbody', 'ov-closed-tbody',
         'chart-ml-acc', 'chart-ml-long', 'chart-ml-short',
-        'strat-agg', 'ml-agg', 'strategy-cards',
+        'quant-matrix', 'tab-strategy',
         'pivot-row', 'chart-wave',
         'port-total-capital', 'port-free-usdt', 'port-deployed',
     ]:
@@ -458,7 +458,12 @@ def test_monitor_module():
         check(f'{script} exists', os.path.exists(path))
         if os.path.exists(path):
             src = open(path, encoding='utf-8').read()
-            check(f'{script} uses Tee-Object for log capture', 'Tee-Object' in src)
+            # launch_monitor uses Remove-Item + >> to avoid file lock; others use Tee-Object
+            if script == 'launch_monitor.ps1':
+                check(f'{script} uses Remove-Item to clear stale log', 'Remove-Item' in src)
+                check(f'{script} uses append redirect for log capture', '2>&1 >>' in src or '>>' in src)
+            else:
+                check(f'{script} uses Tee-Object for log capture', 'Tee-Object' in src)
             check(f'{script} uses venv python path', 'venv' in src and 'python.exe' in src)
 
     # restart_all.ps1 updated checks
@@ -466,7 +471,7 @@ def test_monitor_module():
     if os.path.exists(restart_path):
         src = open(restart_path, encoding='utf-8').read()
         check('restart_all.ps1 launches monitor (step 0)', 'launch_monitor.ps1' in src)
-        check('restart_all.ps1 uses Start-Component helper', 'Start-Component' in src)
+        check('restart_all.ps1 uses Start-Window helper', 'Start-Window' in src)
         check('restart_all.ps1 uses -File launcher pattern', '-File' in src)
         check('restart_all.ps1 saves monitor PID', 'monitor' in src and 'ConvertTo-Json' in src)
         check('restart_all.ps1 no hanging Get-CimInstance', 'Get-CimInstance Win32_Process' not in src)

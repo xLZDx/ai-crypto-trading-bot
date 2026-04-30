@@ -1,4 +1,4 @@
-import os
+ета обновляй план import os
 import sys
 import json
 import logging
@@ -7,6 +7,8 @@ import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import accuracy_score, classification_report
+from sklearn.utils.class_weight import compute_sample_weight
+from mlfinlab.cross_validation import PurgedKFold
 import joblib
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -38,23 +40,11 @@ FEATURE_COLUMNS = [
     'dist_to_supply',
     'liq_proximity',
     'signal_rsi',        # strategy signal as feature
+    'trend_strength',
+    'vol_regime',
+    'is_trending',
+    'is_volatile',
 ]
-
-
-def _walk_forward_splits(n, n_splits=5, test_pct=0.10, gap_pct=0.05):
-    gap = int(n * gap_pct)
-    test_size = int(n * test_pct)
-    train_end_start = int(n * 0.50)
-    step = max((n - train_end_start - test_size - gap) // max(n_splits - 1, 1), 1)
-    splits = []
-    for i in range(n_splits):
-        train_end = train_end_start + i * step
-        test_start = train_end + gap
-        test_end = test_start + test_size
-        if test_end > n:
-            break
-        splits.append((np.arange(0, train_end), np.arange(test_start, test_end)))
-    return splits
 
 
 def prepare_futures_data(filepath):
@@ -73,6 +63,16 @@ def prepare_futures_data(filepath):
     df = add_funding_zscore(df)
     df = add_liquidity_proximity(df)
 
+    # Regime Features
+    df['ema_fast'] = df['close'].ewm(span=12, adjust=False).mean()
+    df['ema_slow'] = df['close'].ewm(span=26, adjust=False).mean()
+    df['trend_strength'] = (df['ema_fast'] - df['ema_slow']).abs() / df['atr_14'].replace(0, 1e-9)
+    df['vol_short'] = df['return'].rolling(window=7).std()
+    df['vol_long'] = df['return'].rolling(window=100, min_periods=10).std()
+    df['vol_regime'] = df['vol_short'] / df['vol_long'].replace(0, 1e-9)
+    df['is_trending'] = (df['trend_strength'] > 1.5).astype(int)
+    df['is_volatile'] = (df['vol_regime'] > 1.5).astype(int)
+
     df['low_30'] = df['low'].rolling(30).min()
     df['dist_to_support'] = (df['close'] - df['low_30']) / df['close']
 
@@ -84,11 +84,16 @@ def prepare_futures_data(filepath):
     df.loc[df['rsi_14'] < 30, 'signal_rsi'] = 1.0
     df.loc[df['rsi_14'] > 70, 'signal_rsi'] = -1.0
 
-    # Triple barrier for SHORTS: inverted — we label -1 as the "win"
-    # profit=1% down, loss=2% up, 12h timeout (shorter hold for futures)
-    labels = triple_barrier_labels_vectorized(df, profit_pct=0.02, loss_pct=0.01, max_bars=12)
-    # For futures short model: label 1 = "short win" = price fell (barrier -1 hit)
-    df['target_short'] = (labels == -1).astype(int)
+    # Triple barrier for SHORTS: dynamic ATR-based barriers
+    labels, t1_times = triple_barrier_labels_vectorized(df, pt_multiplier=2.0, sl_multiplier=2.0, max_bars=12)
+    df['target_raw'] = labels
+    df['t1_timestamp'] = t1_times
+    
+    # Remove timeouts
+    df = df[df['target_raw'] != 0].copy()
+    
+    # For futures short model: label 1 = "short win" = price fell (barrier -1 hit first)
+    df['target_short'] = (df['target_raw'] == -1).astype(int)
     df = df.dropna()
     log.info("Futures TB distribution: %s", label_stats(labels))
     return df
@@ -125,6 +130,9 @@ def train_futures_model():
         return
 
     combined_df = pd.concat(all_data, ignore_index=True)
+    combined_df = combined_df.sort_values('timestamp')
+    combined_df.set_index('timestamp', inplace=True)
+
     for col in [f for f in FEATURE_COLUMNS if f not in combined_df.columns]:
         combined_df[col] = 0.0
 
@@ -134,14 +142,18 @@ def train_futures_model():
     log.info("Futures dataset: %d total | features %d | symbols %s | timeframe 1h",
              len(combined_df), len(FEATURE_COLUMNS), symbols)
 
-    splits = _walk_forward_splits(len(X), n_splits=5)
+    t1_series = combined_df['t1_timestamp']
+    # Embargo = 2 * horizon (12 bars for futures model)
+    pct_embargo = (2.0 * 12) / len(X)
+    cv = PurgedKFold(n_splits=5, t1=t1_series, pct_embargo=pct_embargo)
     fold_accs = []
-    for i, (tr, te) in enumerate(splits):
+    for i, (tr, te) in enumerate(cv.split(X)):
         clf = HistGradientBoostingClassifier(
             random_state=42, max_iter=400, max_depth=6,
             learning_rate=0.03, l2_regularization=0.2, early_stopping=True, class_weight='balanced'
         )
-        clf.fit(X.iloc[tr], y.iloc[tr])
+        weights = compute_sample_weight('balanced', y.iloc[tr])
+        clf.fit(X.iloc[tr], y.iloc[tr], sample_weight=weights)
         fold_accs.append(accuracy_score(y.iloc[te], clf.predict(X.iloc[te])))
         log.info("Futures walk-forward fold %d: %.2f%%", i + 1, fold_accs[-1] * 100)
 
@@ -154,7 +166,12 @@ def train_futures_model():
         random_state=42, max_iter=400, max_depth=6,
         learning_rate=0.03, l2_regularization=0.2, early_stopping=True, class_weight='balanced'
     )
-    base_clf.fit(X.iloc[:calib_split], y.iloc[:calib_split])
+    calib_start_time = combined_df.index[calib_split]
+    valid_train_mask = combined_df['t1_timestamp'].iloc[:calib_split] < calib_start_time
+    safe_train_idx = np.arange(calib_split)[valid_train_mask]
+    
+    weights_calib = compute_sample_weight('balanced', y.iloc[safe_train_idx])
+    base_clf.fit(X.iloc[safe_train_idx], y.iloc[safe_train_idx], sample_weight=weights_calib)
     calibrated = CalibratedClassifierCV(base_clf, method='isotonic', cv='prefit', n_jobs=-1)
     calibrated.fit(X.iloc[calib_split:], y.iloc[calib_split:])
 

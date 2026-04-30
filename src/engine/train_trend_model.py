@@ -7,6 +7,8 @@ import pandas as pd
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import accuracy_score, classification_report
+from sklearn.utils.class_weight import compute_sample_weight
+from mlfinlab.cross_validation import PurgedKFold
 import joblib
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -37,23 +39,11 @@ FEATURE_COLUMNS = [
     'ofi_z',
     'funding_z',
     'signal_macd', 'signal_don',
+    'trend_strength',
+    'vol_regime',
+    'is_trending',
+    'is_volatile',
 ]
-
-
-def _walk_forward_splits(n, n_splits=5, test_pct=0.10, gap_pct=0.05):
-    gap = int(n * gap_pct)
-    test_size = int(n * test_pct)
-    train_end_start = int(n * 0.50)
-    step = max((n - train_end_start - test_size - gap) // max(n_splits - 1, 1), 1)
-    splits = []
-    for i in range(n_splits):
-        train_end = train_end_start + i * step
-        test_start = train_end + gap
-        test_end = test_start + test_size
-        if test_end > n:
-            break
-        splits.append((np.arange(0, train_end), np.arange(test_start, test_end)))
-    return splits
 
 
 def prepare_trend_data(filepath):
@@ -72,6 +62,17 @@ def prepare_trend_data(filepath):
     df = add_donchian(df, n=20)
     df = add_keltner(df)
     df = add_funding_zscore(df)
+    df = add_atr(df, 14) # Ensure atr_14 exists
+
+    # Regime Features
+    df['ema_fast'] = df['close'].ewm(span=12, adjust=False).mean()
+    df['ema_slow'] = df['close'].ewm(span=26, adjust=False).mean()
+    df['trend_strength'] = (df['ema_fast'] - df['ema_slow']).abs() / df['atr_14'].replace(0, 1e-9)
+    df['vol_short'] = df['return'].rolling(window=7).std()
+    df['vol_long'] = df['return'].rolling(window=100, min_periods=10).std()
+    df['vol_regime'] = df['vol_short'] / df['vol_long'].replace(0, 1e-9)
+    df['is_trending'] = (df['trend_strength'] > 1.5).astype(int)
+    df['is_volatile'] = (df['vol_regime'] > 1.5).astype(int)
 
     df['sma_50'] = df['close'].rolling(window=50).mean()
     df['sma_200'] = df['close'].rolling(window=200).mean()
@@ -85,8 +86,14 @@ def prepare_trend_data(filepath):
     df.loc[df['don_pos_20'] > 0.95, 'signal_don'] = 1.0
     df.loc[df['don_pos_20'] < 0.05, 'signal_don'] = -1.0
 
-    labels = triple_barrier_labels_vectorized(df, profit_pct=0.04, loss_pct=0.02, max_bars=48)
-    df['target'] = (labels == 1).astype(int)
+    labels, t1_times = triple_barrier_labels_vectorized(df, pt_multiplier=3.0, sl_multiplier=3.0, max_bars=48)
+    df['target_raw'] = labels
+    df['t1_timestamp'] = t1_times
+    
+    # Remove timeouts
+    df = df[df['target_raw'] != 0].copy()
+    df['target'] = (df['target_raw'] == 1).astype(int)
+    
     df = df.dropna()
     log.info("Trend TB distribution: %s", label_stats(labels))
     return df
@@ -123,6 +130,9 @@ def train_trend_model():
         return
 
     combined_df = pd.concat(all_data, ignore_index=True)
+    combined_df = combined_df.sort_values('timestamp')
+    combined_df.set_index('timestamp', inplace=True)
+
     for col in [f for f in FEATURE_COLUMNS if f not in combined_df.columns]:
         combined_df[col] = 0.0
 
@@ -132,14 +142,18 @@ def train_trend_model():
     log.info("Trend dataset: %d total | features %d | symbols %s | timeframe 1h",
              len(combined_df), len(FEATURE_COLUMNS), symbols)
 
-    splits = _walk_forward_splits(len(X), n_splits=5)
+    t1_series = combined_df['t1_timestamp']
+    # Embargo = 2 * horizon (48 bars for trend model)
+    pct_embargo = (2.0 * 48) / len(X)
+    cv = PurgedKFold(n_splits=5, t1=t1_series, pct_embargo=pct_embargo)
     fold_accs = []
-    for i, (tr, te) in enumerate(splits):
+    for i, (tr, te) in enumerate(cv.split(X)):
         clf = HistGradientBoostingClassifier(
             random_state=42, max_iter=500, max_depth=5,
-            learning_rate=0.02, early_stopping=True, l2_regularization=0.5
+            learning_rate=0.02, early_stopping=True, l2_regularization=0.5, class_weight='balanced'
         )
-        clf.fit(X.iloc[tr], y.iloc[tr])
+        weights = compute_sample_weight('balanced', y.iloc[tr])
+        clf.fit(X.iloc[tr], y.iloc[tr], sample_weight=weights)
         fold_accs.append(accuracy_score(y.iloc[te], clf.predict(X.iloc[te])))
         log.info("Trend walk-forward fold %d: %.2f%%", i + 1, fold_accs[-1] * 100)
 
@@ -150,9 +164,14 @@ def train_trend_model():
     calib_split = int(n * 0.80)
     base_clf = HistGradientBoostingClassifier(
         random_state=42, max_iter=500, max_depth=5,
-        learning_rate=0.02, early_stopping=True, l2_regularization=0.5
+        learning_rate=0.02, early_stopping=True, l2_regularization=0.5, class_weight='balanced'
     )
-    base_clf.fit(X.iloc[:calib_split], y.iloc[:calib_split])
+    calib_start_time = combined_df.index[calib_split]
+    valid_train_mask = combined_df['t1_timestamp'].iloc[:calib_split] < calib_start_time
+    safe_train_idx = np.arange(calib_split)[valid_train_mask]
+    
+    weights_calib = compute_sample_weight('balanced', y.iloc[safe_train_idx])
+    base_clf.fit(X.iloc[safe_train_idx], y.iloc[safe_train_idx], sample_weight=weights_calib)
     calibrated = CalibratedClassifierCV(base_clf, method='isotonic', cv='prefit', n_jobs=-1)
     calibrated.fit(X.iloc[calib_split:], y.iloc[calib_split:])
 

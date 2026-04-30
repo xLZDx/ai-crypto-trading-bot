@@ -178,6 +178,122 @@ CREATE TABLE IF NOT EXISTS backtest_results (
 ) TIMESTAMP(ts)
 PARTITION BY MONTH;
 """),
+
+    ("csv_ingestion_log", """
+CREATE TABLE IF NOT EXISTS csv_ingestion_log (
+    ts              TIMESTAMP,
+    filename        VARCHAR,
+    source_path     VARCHAR,
+    symbol          SYMBOL  CAPACITY 64 CACHE,
+    timeframe       SYMBOL  CAPACITY 16 CACHE,
+    rows_written    LONG,
+    file_size_bytes LONG,
+    first_bar_ts    TIMESTAMP,
+    last_bar_ts     TIMESTAMP
+) TIMESTAMP(ts)
+PARTITION BY YEAR;
+"""),
+
+    ("training_runs", """
+CREATE TABLE IF NOT EXISTS training_runs (
+    ts                TIMESTAMP,
+    run_id            VARCHAR,
+    model_name        SYMBOL  CAPACITY 64  CACHE,
+    strategy          SYMBOL  CAPACITY 64  CACHE,
+    symbol            SYMBOL  CAPACITY 64  CACHE,
+    timeframe         SYMBOL  CAPACITY 16  CACHE,
+    trigger           SYMBOL  CAPACITY 32  CACHE,
+    start_ts          TIMESTAMP,
+    end_ts            TIMESTAMP,
+    duration_secs     DOUBLE,
+    train_rows        LONG,
+    val_rows          LONG,
+    n_wf_folds        INT,
+    best_epoch        INT,
+    final_train_loss  DOUBLE,
+    final_val_loss    DOUBLE,
+    early_stopped     BOOLEAN,
+    oos_sharpe        DOUBLE,
+    oos_win_rate      DOUBLE,
+    oos_max_drawdown  DOUBLE,
+    n_oos_trades      INT,
+    hyperparams_json  VARCHAR,
+    feature_list_json VARCHAR,
+    notes             VARCHAR
+) TIMESTAMP(ts)
+PARTITION BY MONTH;
+"""),
+
+    ("model_wf_folds", """
+CREATE TABLE IF NOT EXISTS model_wf_folds (
+    ts           TIMESTAMP,
+    run_id       VARCHAR,
+    model_name   SYMBOL  CAPACITY 64 CACHE,
+    fold_index   INT,
+    train_start  TIMESTAMP,
+    train_end    TIMESTAMP,
+    test_start   TIMESTAMP,
+    test_end     TIMESTAMP,
+    train_rows   LONG,
+    test_rows    LONG,
+    oos_sharpe   DOUBLE,
+    oos_pnl      DOUBLE,
+    oos_win_rate DOUBLE,
+    oos_max_dd   DOUBLE,
+    n_trades     INT
+) TIMESTAMP(ts)
+PARTITION BY MONTH;
+"""),
+
+    ("testnet_trades", """
+CREATE TABLE IF NOT EXISTS testnet_trades (
+    ts                  TIMESTAMP,
+    trade_id            VARCHAR,
+    symbol              SYMBOL  CAPACITY 64 CACHE,
+    strategy            SYMBOL  CAPACITY 64 CACHE,
+    model               SYMBOL  CAPACITY 64 CACHE,
+    exit_reason         SYMBOL  CAPACITY 16 CACHE,
+    direction           INT,
+    is_live             BOOLEAN,
+    entry_ts            TIMESTAMP,
+    exit_ts             TIMESTAMP,
+    entry_price         DOUBLE,
+    exit_price          DOUBLE,
+    size_usd            DOUBLE,
+    pnl_usd             DOUBLE,
+    fees_usd            DOUBLE,
+    funding_pnl         DOUBLE,
+    net_pnl             DOUBLE,
+    bars_held           INT,
+    meta_label          INT,
+    regime              INT,
+    garch_vol_at_entry  DOUBLE,
+    stop_loss           DOUBLE,
+    take_profit         DOUBLE,
+    meta_prob           DOUBLE,
+    signal_strength     DOUBLE
+) TIMESTAMP(ts)
+PARTITION BY MONTH;
+"""),
+
+    ("testnet_session_stats", """
+CREATE TABLE IF NOT EXISTS testnet_session_stats (
+    ts                TIMESTAMP,
+    session_id        VARCHAR,
+    strategy          SYMBOL  CAPACITY 64 CACHE,
+    symbol            SYMBOL  CAPACITY 64 CACHE,
+    balance           DOUBLE,
+    total_pnl         DOUBLE,
+    unrealized_pnl    DOUBLE,
+    n_open_trades     INT,
+    n_closed_trades   INT,
+    win_rate          DOUBLE,
+    sharpe            DOUBLE,
+    max_drawdown      DOUBLE,
+    funding_collected DOUBLE
+) TIMESTAMP(ts)
+PARTITION BY MONTH;
+"""),
 ]
 
 

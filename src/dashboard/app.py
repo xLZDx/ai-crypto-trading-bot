@@ -587,6 +587,21 @@ _managed: dict = {}
 _managed_lock = threading.Lock()
 
 
+def _find_external_pid(script_name: str):
+    """Scan all running processes for one whose cmdline contains script_name."""
+    if not script_name:
+        return None
+    try:
+        import psutil
+        for p in psutil.process_iter(['pid', 'cmdline']):
+            cmd = ' '.join(p.info.get('cmdline') or [])
+            if script_name in cmd:
+                return p.info['pid']
+    except Exception:
+        pass
+    return None
+
+
 def _pid_alive(pid) -> bool:
     if not pid:
         return False
@@ -627,17 +642,6 @@ def monitor_health():
 
     # Services managed by this dashboard (started via /api/monitor/start)
     # Also detect externally-launched processes by scanning cmdlines
-    def _find_external_pid(script_name):
-        try:
-            import psutil
-            for p in psutil.process_iter(['pid', 'cmdline']):
-                cmd = ' '.join(p.info.get('cmdline') or [])
-                if script_name in cmd:
-                    return p.info['pid']
-        except Exception:
-            pass
-        return None
-
     with _managed_lock:
         for svc_key, svc in _SERVICES.items():
             proc = _managed.get(svc_key)
@@ -693,6 +697,10 @@ def monitor_start(service):
         proc = _managed.get(service)
         if proc is not None and proc.poll() is None:
             return jsonify({'ok': False, 'msg': 'already running', 'pid': proc.pid})
+        # Also check externally-launched instances to avoid duplicates
+        ext_pid = _find_external_pid(_EXTERNAL_SCRIPTS.get(service, ''))
+        if ext_pid:
+            return jsonify({'ok': False, 'msg': f'already running externally (PID {ext_pid})', 'pid': ext_pid})
         _LOG_DIR.mkdir(parents=True, exist_ok=True)
         log_path = _LOG_DIR / f'{service}.log'
         log_fh = open(log_path, 'a', encoding='utf-8')
@@ -710,16 +718,33 @@ def monitor_stop(service):
     if service not in _SERVICES:
         return jsonify({'error': 'unknown service'}), 404
     killed = False
-    # Kill dashboard-managed instance
+
+    def _kill_tree(pid):
+        """Terminate process and all its children (handles GPU subprocs)."""
+        try:
+            import psutil
+            parent = psutil.Process(int(pid))
+            for child in parent.children(recursive=True):
+                try:
+                    child.terminate()
+                except Exception:
+                    pass
+            parent.terminate()
+            return True
+        except Exception:
+            return False
+
+    # Kill dashboard-managed instance (+ its children)
     with _managed_lock:
         proc = _managed.pop(service, None)
     if proc is not None and proc.poll() is None:
-        proc.terminate()
+        killed = _kill_tree(proc.pid)
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
         killed = True
+
     # Also kill any externally-launched instance (e.g. via launch_training.ps1)
     script_frag = _EXTERNAL_SCRIPTS.get(service, '')
     if script_frag:
@@ -728,11 +753,8 @@ def monitor_stop(service):
             for p in psutil.process_iter(['pid', 'cmdline']):
                 cmd = ' '.join(p.info.get('cmdline') or [])
                 if script_frag in cmd:
-                    try:
-                        p.terminate()
+                    if _kill_tree(p.info['pid']):
                         killed = True
-                    except Exception:
-                        pass
         except Exception:
             pass
     return jsonify({'ok': killed, 'msg': 'stopped' if killed else 'not running'})
@@ -1044,6 +1066,97 @@ def strategy_full():
             'strategies_total': len(strategies),
         },
     })
+
+
+@app.route('/api/backtest/summary', methods=['GET'])
+def backtest_summary():
+    """
+    Aggregate latest_comparison.json + wf_results.json into one sortable table.
+    Each row: strategy, n_trades, win_rate_pct, total_pnl_usdt, sharpe, sortino,
+               max_drawdown_pct, calmar, profit_factor, wf_mean_sharpe, wf_consistency, symbols_count
+    Symbols are aggregated by averaging ratio metrics and summing count/pnl metrics.
+    """
+    import json as _j, re as _re
+    bt_path  = _PROJECT_ROOT / 'data' / 'backtest' / 'latest_comparison.json'
+    wf_path  = _PROJECT_ROOT / 'data' / 'backtest' / 'wf_results.json'
+    hist_dir = _PROJECT_ROOT / 'data' / 'backtest'
+
+    # Aggregate per-strategy across symbols
+    agg: dict[str, dict] = {}
+    if bt_path.exists():
+        try:
+            for row in _j.loads(bt_path.read_text()):
+                strat = _re.sub(r'^[AB]_', '', row.get('strategy', '')).strip()
+                if not strat:
+                    continue
+                a = agg.setdefault(strat, {
+                    'strategy': strat, 'n_trades': 0, 'total_pnl_usdt': 0.0,
+                    'gross_pnl_usdt': 0.0, 'total_fees_usdt': 0.0,
+                    '_wins': 0, '_symbols': set(),
+                    '_sharpe': [], '_sortino': [], '_calmar': [],
+                    '_max_dd': [], '_pf': [], '_wr': [],
+                })
+                n   = int(row.get('n_trades', 0))
+                wr  = float(row.get('win_rate_pct', 0))
+                a['n_trades']        += n
+                a['total_pnl_usdt']  += float(row.get('total_pnl_usdt', 0))
+                a['gross_pnl_usdt']  += float(row.get('gross_pnl_usdt', 0))
+                a['total_fees_usdt'] += float(row.get('total_fees_usdt', 0))
+                a['_wins']           += round(n * wr / 100)
+                sym = row.get('symbol', '')
+                if sym:
+                    a['_symbols'].add(sym)
+                for key, lst in [('sharpe','_sharpe'),('sortino','_sortino'),
+                                  ('calmar','_calmar'),('max_drawdown_pct','_max_dd'),
+                                  ('profit_factor','_pf'),('win_rate_pct','_wr')]:
+                    v = row.get(key)
+                    if v is not None:
+                        a[lst].append(float(v))
+        except Exception:
+            pass
+
+    # Load walk-forward results
+    wf_map: dict[str, dict] = {}
+    if wf_path.exists():
+        try:
+            for row in _j.loads(wf_path.read_text()):
+                k = row.get('strategy', '')
+                if k:
+                    wf_map[k] = row
+        except Exception:
+            pass
+
+    # Build final rows
+    rows = []
+    def _avg(lst): return round(sum(lst)/len(lst), 3) if lst else None
+    for strat, a in agg.items():
+        wf = wf_map.get(strat, {})
+        rows.append({
+            'strategy':        strat,
+            'n_trades':        a['n_trades'],
+            'win_rate_pct':    round(_avg(a['_wr']) or 0, 1),
+            'total_pnl_usdt':  round(a['total_pnl_usdt'], 2),
+            'gross_pnl_usdt':  round(a['gross_pnl_usdt'], 2),
+            'total_fees_usdt': round(a['total_fees_usdt'], 2),
+            'sharpe':          _avg(a['_sharpe']),
+            'sortino':         _avg(a['_sortino']),
+            'max_drawdown_pct':_avg(a['_max_dd']),
+            'calmar':          _avg(a['_calmar']),
+            'profit_factor':   _avg(a['_pf']),
+            'symbols_count':   len(a['_symbols']),
+            'wf_mean_sharpe':  wf.get('wf_mean_sharpe'),
+            'wf_consistency':  wf.get('wf_consistency'),
+            'wf_decay':        wf.get('wf_decay'),
+        })
+
+    # Historical runs list (filenames only, for UI reference)
+    hist_files = sorted(
+        [f.name for f in hist_dir.glob('comparison_*.csv')],
+        reverse=True
+    )[:20]
+
+    rows.sort(key=lambda r: (r.get('sharpe') or -999), reverse=True)
+    return jsonify({'rows': rows, 'history': hist_files})
 
 
 @app.route('/api/strategy-sync', methods=['GET'])

@@ -111,6 +111,7 @@ class MultiAssetTrader:
             self.regime_clf = RegimeClassifier()
         except Exception:
             self.regime_clf = None
+        self._regime_cache: dict = {}  # symbol → {regime, regime_name, size_mult}
 
         # --- Meta-Labeler ---
         try:
@@ -314,10 +315,12 @@ class MultiAssetTrader:
                 regime = self.regime_clf.predict(df)
                 regime_name = self.regime_clf.regime_name(regime)
                 size_mult = self.regime_clf.size_multiplier(regime)
-                if regime == 2:  # VOLATILE
-                    return "HOLD", f"Regime: {regime_name} — holding all entries, size_mult={size_mult}", "Regime_Volatile", "RegimeClassifier_Router"
             except Exception as e:
                 logger.debug("[%s] Regime predict failed: %s", symbol, e)
+        # Cache regime so process_kline can apply size_mult and adjust TFT thresholds
+        self._regime_cache[symbol] = {"regime": regime, "regime_name": regime_name, "size_mult": size_mult}
+        if regime == 2:  # VOLATILE — hold all entries
+            return "HOLD", f"Regime: {regime_name} — holding all entries, size_mult={size_mult:.2f}", "Regime_Volatile", "RegimeClassifier_Router"
 
         # ── Elliott Wave + Base ML (primary signal) ───────────────────────────
         signal, reason, wave_stage, strategy_used = "HOLD", "No signal", "Neutral", "Neutral"
@@ -727,28 +730,44 @@ class MultiAssetTrader:
         self.feature_store.update_features(symbol, pd.DataFrame(data), sentiment, volatility, ou_signal)
         
         # --- 🧠 TFT Inference Engine & Avellaneda-Stoikov Market Maker ---
+        # evaluate_all_strategies must run first to populate _regime_cache
+        signal, reason, wave_stage, strategy_used = self.evaluate_all_strategies(symbol, data, pivots, sentiment, trend_pred, rsi_value, ou_signal=ou_signal)
+
+        # Read regime result cached by evaluate_all_strategies
+        _reg = self._regime_cache.get(symbol, {"regime": 1, "regime_name": "TRENDING", "size_mult": 1.0})
+        _regime      = _reg["regime"]
+        _regime_name = _reg["regime_name"]
+        _size_mult   = _reg["size_mult"]
+
+        # Apply regime size multiplier to position size
+        # VOLATILE already returns HOLD above; RANGING gets 0.6× (mean-rev sizes smaller)
+        trade_amount = max(MIN_TRADE_USDT, trade_amount * _size_mult)
+
+        # Regime-aware TFT threshold: RANGING markets are noisy → raise threshold to reduce false signals
+        _tft_threshold = {0: 0.02, 1: 0.01, 2: 0.03}.get(_regime, 0.01)  # RANGING=2%, TRENDING=1%, VOLATILE=3%
+
         tft_pred = self.inference_engine.get_latest_prediction(symbol)
         expected_return = tft_pred["expected_return"] if tft_pred else 0.0
-        
+
         base_asset = symbol.split('/')[0]
         inventory_q = self.get_real_or_sim_balance(base_asset)
         mm_quotes = self.market_makers[symbol].calculate_quotes(current_price, inventory_q, volatility)
-        
-        if expected_return <= -0.01:
-            logger.warning(f"[{symbol}] 📉 TFT predicts DROP ({expected_return*100:.1f}%). Disabling AvellanedaStoikov Buys, shifting to SHORT.")
+
+        if expected_return <= -_tft_threshold:
+            logger.warning(f"[{symbol}] 📉 TFT predicts DROP ({expected_return*100:.1f}%) [{_regime_name}]. Shifting to SHORT.")
             try:
                 self.engine.cancel_all_orders(symbol)
                 self.engine.execute_limit_futures_order(symbol, "SELL", trade_amount / current_price, mm_quotes["optimal_ask"])
             except Exception as e:
                 logger.error(f"MM Execution Error: {e}")
-        elif expected_return >= 0.01:
-            logger.info(f"[{symbol}] 🚀 TFT predicts PUMP ({expected_return*100:.1f}%). Disabling AvellanedaStoikov Sells, shifting to LONG.")
+        elif expected_return >= _tft_threshold:
+            logger.info(f"[{symbol}] 🚀 TFT predicts PUMP ({expected_return*100:.1f}%) [{_regime_name}]. Shifting to LONG.")
             try:
                 self.engine.cancel_all_orders(symbol)
                 self.engine.execute_limit_futures_order(symbol, "BUY", trade_amount / current_price, mm_quotes["optimal_bid"])
             except Exception as e:
                 logger.error(f"MM Execution Error: {e}")
-        
+
         # --- 📊 Push quant metrics to dashboard state (read by /api/state) ---
         _ou_r = self.ou_results.get(symbol, {})
         _ou_mu = float(_ou_r.get('mu', 0.0))
@@ -763,14 +782,15 @@ class MultiAssetTrader:
             "garch_hist":     round(float(garch_result.get("historical_volatility", 0.0)) * 100, 4),
             "garch_status":   garch_result.get("status", "pending"),
             "tft_return":     round(expected_return * 100, 2),
+            "tft_threshold":  round(_tft_threshold * 100, 1),
+            "regime":         _regime_name,
+            "size_mult":      round(_size_mult, 2),
             "as_bid":         round(float(mm_quotes.get("optimal_bid", 0.0)), 2),
             "as_ask":         round(float(mm_quotes.get("optimal_ask", 0.0)), 2),
             "as_spread":      round(float(mm_quotes.get("optimal_spread", 0.0)), 2),
             "as_reservation": round(float(mm_quotes.get("reservation_price", 0.0)), 2),
             "momentum_signal": round(float(self.momentum_signals.get(symbol, 0.0)), 3),
         }
-
-        signal, reason, wave_stage, strategy_used = self.evaluate_all_strategies(symbol, data, pivots, sentiment, trend_pred, rsi_value, ou_signal=ou_signal)
         
         if not self.ml_predictor.is_loaded:
             ml_text = "MODEL NOT FOUND"
@@ -805,7 +825,9 @@ class MultiAssetTrader:
             "recent_pivots": formatted_pivots,
             "tft_prediction_pct": round(expected_return * 100, 3),
             "ou_mean_reversion": ou_signal,
-            "funding_rate": round(self.funding_rates.get(symbol, 0.0) * 100, 4)
+            "funding_rate": round(self.funding_rates.get(symbol, 0.0) * 100, 4),
+            "regime": _regime_name,
+            "size_mult": round(_size_mult, 2),
         }
         
         # Build FUTURES state with specific Futures ML Model predictions
