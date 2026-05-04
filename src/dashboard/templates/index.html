@@ -336,6 +336,625 @@ select.field option{background:#0d1628;color:#e2e8f0}
 </style>
 </head>
 <body>
+
+<!-- Phase 6 — Institutional controls (MODE switcher + 8 sub-tabs) live inside #tab-institutional pane below -->
+<style>
+  .p6-tab { background:#0a0a0a; border:1px solid #1a1a1a; color:#888; padding:4px 10px;
+            font-family:'JetBrains Mono',monospace; font-size:11px; cursor:pointer; white-space:nowrap; }
+  .p6-tab:hover { border-color:#444; color:#ccc; }
+  .p6-tab.active { background:#1a1a1a; color:#fff; border-color:#3b82f6; }
+  .p6-pane { display:none; padding:14px; min-height:120px; }
+  .p6-pane.active { display:block; }
+  .p6-card { background:linear-gradient(180deg,rgba(15,23,42,.85),rgba(13,20,40,.72));
+             border:1px solid rgba(148,163,184,.13); border-radius:14px;
+             box-shadow:0 12px 36px rgba(2,6,23,.3),inset 0 1px 0 rgba(255,255,255,.04);
+             backdrop-filter:blur(16px);
+             padding:14px 16px; margin-bottom:12px;
+             font-family:'JetBrains Mono',monospace; font-size:12px; color:#cbd5e1; }
+  .p6-card h3 { color:#fff; font-size:13px; font-weight:800; margin:0 0 10px 0;
+                letter-spacing:.06em; text-transform:uppercase; }
+  .p6-grid { display:grid; gap:12px; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); }
+  .p6-pill { display:inline-block; padding:2px 8px; border-radius:10px;
+             background:rgba(148,163,184,.10); color:#cbd5e1;
+             margin-right:6px; font-size:10px; }
+</style>
+<script>
+(function(){
+  function _renderTabs(){
+    var content = document.getElementById('phase6-content');
+    if (!content) return;
+    // Must match the 9 .p6-tab buttons in the nav strip — missing 'scheduler'
+    // here was why the Scheduler sub-tab rendered as a blank pane.
+    var tabs = ['portfolio','alpha','orderflow','risk','training','simulation','data','strategies','scheduler'];
+    if (content.children.length === 0) {
+      tabs.forEach(function(t){
+        var pane = document.createElement('div');
+        pane.id = 'p6-' + t;
+        pane.className = 'p6-pane' + (t === 'portfolio' ? ' active' : '');
+        pane.innerHTML = '<div class="p6-card"><h3>'+ t.toUpperCase() +
+          '</h3><div id="p6-body-'+t+'">loading...</div></div>';
+        content.appendChild(pane);
+      });
+    }
+  }
+  function setActiveBtn(name){
+    document.querySelectorAll('.p6-tab').forEach(function(b){
+      b.classList.toggle('active', b.dataset.tab === name);
+    });
+  }
+  function showPane(name){
+    document.querySelectorAll('.p6-pane').forEach(function(p){
+      p.classList.toggle('active', p.id === 'p6-' + name);
+    });
+  }
+  window.setP6Tab = function(name){
+    try { localStorage.setItem('p6-tab', name); } catch(e){}
+    setActiveBtn(name);
+    showPane(name);
+    refreshPhase6Pane(name);
+  };
+  // Per-tab AbortController so switching tabs cancels stale fetches.
+  // Without this, every tab showed the same "Loading /api/decision_summary..."
+  // message because old in-flight requests would resolve and overwrite the
+  // newly-active pane.
+  var _p6Ctrls = {};
+  async function fillCard(id, url, render){
+    var el = document.getElementById('p6-body-' + id);
+    if (!el) return;
+    if (_p6Ctrls[id]) { try { _p6Ctrls[id].abort(); } catch(e){} }
+    var ctrl = new AbortController();
+    _p6Ctrls[id] = ctrl;
+    el.innerHTML = '<span style="color:#666">loading ' + url + '</span>';
+    var t = setTimeout(function(){ ctrl.abort(); }, 8000);   // 8 s budget
+    try {
+      var r = await fetch(url, { signal: ctrl.signal });
+      clearTimeout(t);
+      if (_p6Ctrls[id] !== ctrl) return; // superseded by newer fetch
+      if (!r.ok) {
+        el.innerHTML = '<span style="color:#ef4444">HTTP ' + r.status + ' on ' + url + '</span>';
+        return;
+      }
+      var d = await r.json();
+      if (_p6Ctrls[id] !== ctrl) return;
+      if (d && d.error) {
+        el.innerHTML = '<span style="color:#ef4444">backend error: ' + d.error + '</span>';
+        return;
+      }
+      el.innerHTML = render(d);
+    } catch(e) {
+      clearTimeout(t);
+      if (_p6Ctrls[id] !== ctrl) return;
+      var msg = (e.name === 'AbortError') ? 'timed out (>8s) on ' + url : ('error: ' + e.message);
+      el.innerHTML = '<span style="color:#f59e0b">' + msg + '</span>';
+    }
+  }
+  window.refreshPhase6Pane = async function(tab){
+    if (tab === 'portfolio') {
+      // getMode() returns 'real' or 'test' but the backend route is 'virtual'
+      // for the test/training balance — translate here so we don't 404.
+      var _mode = (window.getMode ? window.getMode() : 'real');
+      var _path = (_mode === 'real') ? '/api/balance/real' : '/api/balance/virtual';
+      fillCard('portfolio', _path, function(d){
+        return '<div class="p6-grid">'
+          + '<div>Cash: <b>$' + (d.cash_usdt || 0).toFixed(2) + '</b></div>'
+          + '<div>Equity: <b>$' + (d.equity_usdt || 0).toFixed(2) + '</b></div>'
+          + '<div>PnL 24h: <b>' + (d.pnl_24h || 0).toFixed(2) + '</b></div>'
+          + '<div>Trades 24h: <b>' + (d.trade_count_24h || 0) + '</b></div>'
+          + '</div><div style="margin-top:8px">Holdings: '
+          + JSON.stringify(d.holdings || {}) + '</div>';
+      });
+    } else if (tab === 'alpha') {
+      fillCard('alpha', '/api/decision_summary/BTC%2FUSDT?tf=1h', function(d){
+        var b = d.blockers || [];
+        return '<div class="p6-grid">'
+          + '<div>GO: <b style="color:'+(d.go?"#10b981":"#ef4444")+'">'+ (d.go?'YES':'NO') +'</b></div>'
+          + '<div>Coverage: ' + (d.coverage && d.coverage.rows || 0) + ' rows</div>'
+          + '<div>Close: $' + (d.feature && d.feature.close || 0) + '</div>'
+          + '<div>News 24h: ' + (d.feature && d.feature.news_sentiment_24h || 0) + '</div>'
+          + '</div>'
+          + (b.length ? '<div style="margin-top:8px;color:#ef4444">Blockers: '
+              + b.map(function(x){return '<span class="p6-pill">'+x+'</span>'}).join('') + '</div>' : '');
+      });
+    } else if (tab === 'orderflow') {
+      fillCard('orderflow', '/api/oft_signal/' + encodeURIComponent('BTC/USDT'), function(d){
+        if (d.available === false) return 'OFT model not trained yet (no checkpoint).';
+        return '<div class="p6-grid">'
+          + '<div>μ: <b>' + (d.mu||0).toFixed(5) + '</b></div>'
+          + '<div>σ: <b>' + (d.sigma||0).toFixed(5) + '</b></div>'
+          + '<div>p_move: <b>' + (d.p_move_calibrated||0).toFixed(3) + '</b></div>'
+          + '<div>Liq risk: <b>' + (d.liquidity_risk||0).toFixed(3) + '</b></div></div>';
+      });
+    } else if (tab === 'risk') {
+      renderRiskPanel();
+    } else if (tab === 'training') {
+      fillCard('training', '/api/cluster/status', function(d){
+        return 'Workers: <b>'+ (d.workers_total||0) +'</b> ('+ (d.workers_online||0) +' online)<br>'
+          + 'Tasks pending/running/done/failed: '+ (d.tasks_pending||0) +'/'+ (d.tasks_running||0) +'/'
+          + (d.tasks_done||0) +'/'+ (d.tasks_failed||0);
+      });
+    } else if (tab === 'simulation') {
+      fillCard('simulation', '/api/simulator/status', function(d){
+        var state = String(d.state || d.status || 'idle').toUpperCase();
+        var stateColor = state === 'RUNNING' ? '#34d399'
+                       : state === 'IDLE'    ? '#94a3b8'
+                       : state === 'ERROR'   ? '#fb7185'
+                       : '#fbbf24';
+        var sc = d.scenario || {};
+        var dbs = d.db_summary || {};
+        var ts = d.trainer_stats || {};
+        var bufs = (ts._buffers || {});
+        var cfg = d.config || {};
+        function bufRow(name) {
+          var b = bufs[name] || {};
+          var pct = (b.buf_pct || 0);
+          var w = Math.max(0, Math.min(100, pct));
+          return '<div style="display:flex;align-items:center;gap:8px;margin:3px 0;font-size:11px">'
+            + '<span style="width:90px;color:#94a3b8">'+ name +'</span>'
+            + '<div style="flex:1;height:6px;background:rgba(148,163,184,.12);border-radius:3px;overflow:hidden">'
+            + '<div style="width:'+ w.toFixed(0) +'%;height:100%;background:#7c3aed"></div></div>'
+            + '<span style="width:80px;text-align:right;color:#cbd5e1">'+ (b.buf||0) +' / '+ (b.buf_max||'?') +'</span>'
+            + '</div>';
+        }
+        return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:10px">'
+          + '<div>State: <b style="color:'+ stateColor +'">'+ state +'</b></div>'
+          + '<div>Bars: <b>'+ (d.bars_emitted || 0).toLocaleString() +'</b></div>'
+          + '<div>Bars/sec: <b>'+ (d.bars_per_sec || 0).toFixed(1) +'</b></div>'
+          + '<div>Symbol: <b>'+ (cfg.symbol || '--') +'</b></div>'
+          + '<div>TF: <b>'+ (cfg.timeframe || '--') +'</b></div>'
+          + '<div>Speed: <b>'+ (cfg.speed || '--') +'×</b></div>'
+          + '</div>'
+          + (sc.type ? '<div style="margin-bottom:8px;font-size:11px;color:#94a3b8">Active scenario: <b style="color:#cbd5e1">'+ sc.type +'</b> · '+ (sc.symbol||'') +'/'+ (sc.timeframe||'') +'</div>' : '')
+          + '<div style="margin-bottom:8px;font-size:11px;color:#94a3b8">Paper trades: <b style="color:#cbd5e1">'+ (dbs.total_paper_trades || 0) +'</b> · PnL <b style="color:'+ ((dbs.total_pnl_usd||0) >= 0 ? '#34d399' : '#fb7185') +'">$'+ (dbs.total_pnl_usd || 0).toFixed(2) +'</b> · Scenarios: '+ (dbs.total_scenarios || 0) +'</div>'
+          + '<div style="font-size:.6rem;color:#64748b;letter-spacing:.06em;text-transform:uppercase;margin:6px 0 4px">Training buffers</div>'
+          + bufRow('ScalpingML') + bufRow('TFT_MM') + bufRow('OU_Filter')
+          + (d.message ? '<div style="margin-top:8px;font-size:11px;color:#fbbf24">'+ esc(d.message) +'</div>' : '');
+      });
+    } else if (tab === 'data') {
+      fillCard('data', '/api/parquet/coverage', function(d){
+        return '<div class="p6-grid">'
+          + '<div>Symbols: <b>'+ (d.symbols||0) +'</b></div>'
+          + '<div>Rows: <b>'+ (d.rows_total||0).toLocaleString() +'</b></div>'
+          + '<div>Size: <b>'+ (d.size_gb||0) +' GB</b></div></div>'
+          + '<div style="margin-top:8px">Top 5:</div><ul>'
+          + ((d.per_symbol||[]).slice(0,5).map(function(s){
+              return '<li>'+ s.symbol +' — '+ s.rows.toLocaleString()
+                  +' rows, '+ (s.size_bytes/1e9).toFixed(2) +' GB</li>'; }).join('')) + '</ul>';
+      });
+    } else if (tab === 'strategies') {
+      fillCard('strategies', '/api/orchestrator/sources', function(d){
+        if (!Array.isArray(d)) return 'no sources';
+        if (d.length === 0) {
+          return '<div style="padding:14px;font-size:11px;line-height:1.6;color:#94a3b8">'
+            + '<div style="font-weight:700;color:#fbbf24;margin-bottom:6px">No data sources registered</div>'
+            + 'The data-governance orchestrator hasn\'t registered any feeds yet. To populate this list:'
+            + '<ul style="margin:6px 0 0 18px;color:#cbd5e1">'
+              + '<li>Confirm <code style="background:rgba(255,255,255,.08);padding:1px 5px;border-radius:3px">data/orchestrator/sources.json</code> exists and lists feeds.</li>'
+              + '<li>Make sure the orchestrator process is running (<code style="background:rgba(255,255,255,.08);padding:1px 5px;border-radius:3px">restart_all.ps1</code> launches it as <i>orch</i>).</li>'
+              + '<li>Refresh this tab — sources are picked up at startup.</li>'
+            + '</ul></div>';
+        }
+        return '<table style="width:100%;font-size:11px;border-collapse:collapse">'
+          + '<tr><th align=left>Name</th><th align=left>Category</th><th>Auth</th><th align=left>Description</th></tr>'
+          + d.map(function(s){
+              return '<tr><td>'+ s.name +'</td><td>'+ s.category +'</td>'
+                + '<td>'+ (s.requires_auth?'🔑':'free') +'</td>'
+                + '<td style="color:#888">'+ s.description +'</td></tr>';
+          }).join('') + '</table>';
+      });
+    } else if (tab === 'scheduler') {
+      renderSchedulerPanel();
+    }
+  };
+
+  // ── Scheduler panel ───────────────────────────────────────────────────────
+  // Local-only Windows Task Scheduler wrapper. All execution stays on this
+  // machine — no cloud, no remote agents. Each task invokes
+  // scripts/check_training_status.py which writes data/training_status_report.json.
+  // ── Risk overrides panel ─────────────────────────────────────────────────
+  // Edits data/runtime_overrides.json. The bot loop hot-reloads it every 1s
+  // so changes apply WITHOUT a restart. Two controls + a kill-list.
+  async function renderRiskPanel() {
+    var el = document.getElementById('p6-body-risk');
+    if (!el) return;
+    el.innerHTML = '<span style="color:#666">loading risk panel…</span>';
+
+    try {
+      var [ovRes, rlRes] = await Promise.all([
+        fetch('/api/risk/overrides').then(r => r.json()).catch(() => ({})),
+        fetch('/api/rate_limiter/stats').then(r => r.json()).catch(() => ({})),
+      ]);
+
+      var ov = ovRes || {};
+      var disabled = (ov.scalping_disabled_symbols || []).slice();
+      var capVal   = (ov.max_position_usdt == null) ? '' : String(ov.max_position_usdt);
+      var tstopVal = (ov.trailing_stop_pct_scalping == null) ? '' : String(ov.trailing_stop_pct_scalping);
+      var savedAt  = ov._updated_at ? new Date(ov._updated_at).toLocaleString() : '—';
+
+      // Symbols universe — pull from the watchlist endpoint (already on the bot).
+      // Fall back to a small list if the API isn't ready yet.
+      var watchlist = [];
+      try {
+        var wlR = await fetch('/api/watchlist');
+        if (wlR.ok) {
+          var wlD = await wlR.json();
+          watchlist = (wlD.symbols || []).map(function(s){ return String(s).replace('_','/').toUpperCase(); });
+        }
+      } catch(e) {}
+      if (!watchlist.length) {
+        watchlist = ['BTC/USDT','ETH/USDT','SOL/USDT','BNB/USDT','XRP/USDT','DOGE/USDT',
+                     'TRX/USDT','ADA/USDT','AVAX/USDT','SHIB/USDT','DOT/USDT','LINK/USDT',
+                     'NEAR/USDT','UNI/USDT','LTC/USDT','APT/USDT','ATOM/USDT','HBAR/USDT',
+                     'ICP/USDT','SUI/USDT'];
+      }
+
+      var symChips = watchlist.map(function(sym){
+        var on = disabled.indexOf(sym) >= 0;
+        var bg = on ? 'rgba(251,113,133,.18)' : 'rgba(148,163,184,.08)';
+        var border = on ? '#fb7185' : 'rgba(148,163,184,.2)';
+        var color = on ? '#fecaca' : '#cbd5e1';
+        return '<button data-sym="'+ sym +'" data-on="'+ (on?1:0) +'" '
+             + 'onclick="window._riskToggleSym(this)" '
+             + 'style="background:'+ bg +';border:1px solid '+ border +';color:'+ color
+             + ';padding:3px 8px;border-radius:5px;cursor:pointer;font-family:inherit;'
+             + 'font-size:10px;margin:2px">'
+             + (on ? '🚫 ' : '') + sym + '</button>';
+      }).join('');
+
+      // Rate-limiter rows (kept on the same panel so the user sees both
+      // their tunables AND the live rate-budget at once).
+      var rlRows = '';
+      Object.keys(rlRes || {}).forEach(function(host){
+        var h = rlRes[host];
+        rlRows += '<div style="display:flex;font-size:10px;color:#cbd5e1;padding:3px 0;border-bottom:1px solid rgba(148,163,184,.06)">'
+          + '<span style="flex:1">'+ host +'</span>'
+          + '<span style="margin-right:14px">'+ (h.weight_used_60s||0) +' / '+ (h.weight_cap_60s||0) +' wt</span>'
+          + '<span style="margin-right:14px">'+ (h.req_used_60s||0) +' / '+ (h.req_cap_60s||0) +' req</span>'
+          + ((h.banned_for_sec||0) > 0 ? '<span style="color:#fb7185">BANNED '+ Math.round(h.banned_for_sec) +'s</span>':'')
+          + '</div>';
+      });
+
+      el.innerHTML = ''
+        + '<div style="background:rgba(15,23,42,.55);border:1px solid rgba(251,191,36,.20);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:11px;color:#cbd5e1">'
+        + '<div style="font-weight:800;color:#fbbf24;letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;font-size:10px">Runtime overrides — applies live, no restart</div>'
+
+        // Position-size cap + trailing stop
+        + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:10px">'
+        + '  <div>'
+        + '    <div style="color:#94a3b8;font-size:9px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:4px">Max position USDT (cap after Kelly+GARCH+OFT)</div>'
+        + '    <input id="risk-cap" type="number" step="1" min="0" placeholder="(no cap)" value="'+ esc(capVal) +'"'
+        + '      style="width:100%;background:#0a0a0a;border:1px solid #2b2b2b;color:#fff;padding:6px 8px;border-radius:5px;font-family:inherit;font-size:11px"></div>'
+        + '  <div>'
+        + '    <div style="color:#94a3b8;font-size:9px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:4px">Scalping trailing stop %</div>'
+        + '    <input id="risk-tstop" type="number" step="0.1" min="0" placeholder="(default '+ '2.0%)" value="'+ esc(tstopVal) +'"'
+        + '      style="width:100%;background:#0a0a0a;border:1px solid #2b2b2b;color:#fff;padding:6px 8px;border-radius:5px;font-family:inherit;font-size:11px"></div>'
+        + '</div>'
+
+        // Scalping kill-list
+        + '<div style="margin-bottom:10px">'
+        + '  <div style="color:#94a3b8;font-size:9px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px">Scalping kill-list (1m path disabled — macro 1h still trades)</div>'
+        + '  <div>'+ symChips +'</div>'
+        + '</div>'
+
+        + '<div style="display:flex;align-items:center;gap:10px">'
+        + '  <button onclick="window._riskSaveOverrides()" style="background:linear-gradient(135deg,#1d4ed8,#7c3aed);border:none;color:#fff;padding:7px 16px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:11px;font-weight:700">SAVE</button>'
+        + '  <button onclick="window._riskClearAll()" style="background:#0a0a0a;border:1px solid #444;color:#cbd5e1;padding:7px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:10px">CLEAR ALL</button>'
+        + '  <span id="risk-saved" style="margin-left:auto;color:#64748b;font-size:10px">Last saved: '+ esc(savedAt) +' (by '+ esc(ov._updated_by||'—') +')</span>'
+        + '</div>'
+        + '</div>'
+
+        // Rate-limiter live stats
+        + '<div style="background:rgba(15,23,42,.55);border:1px solid rgba(148,163,184,.12);border-radius:8px;padding:10px 12px;font-size:11px;color:#cbd5e1">'
+        + '  <div style="font-weight:800;color:#94a3b8;letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;font-size:10px">Rate limiter (last 60s)</div>'
+        + (rlRows || '<div style="color:#64748b;font-size:10px;font-style:italic">no rate-limiter data yet — populates after first API call</div>')
+        + '</div>';
+    } catch (e) {
+      el.innerHTML = '<span style="color:#ef4444">risk panel load error: '+ esc(e.message) +'</span>';
+    }
+  }
+
+  window._riskToggleSym = function(btn){
+    var on = btn.dataset.on === '1';
+    btn.dataset.on = on ? '0' : '1';
+    if (on) {
+      btn.style.background = 'rgba(148,163,184,.08)';
+      btn.style.borderColor = 'rgba(148,163,184,.2)';
+      btn.style.color = '#cbd5e1';
+      btn.textContent = btn.dataset.sym;
+    } else {
+      btn.style.background = 'rgba(251,113,133,.18)';
+      btn.style.borderColor = '#fb7185';
+      btn.style.color = '#fecaca';
+      btn.textContent = '🚫 ' + btn.dataset.sym;
+    }
+  };
+
+  window._riskSaveOverrides = async function(){
+    var capInp = document.getElementById('risk-cap');
+    var tsInp  = document.getElementById('risk-tstop');
+    var capV = capInp && capInp.value.trim() !== '' ? Number(capInp.value) : null;
+    var tsV  = tsInp  && tsInp.value.trim()  !== '' ? Number(tsInp.value)  : null;
+    var disabled = [...document.querySelectorAll('#p6-body-risk button[data-sym]')]
+      .filter(function(b){ return b.dataset.on === '1'; })
+      .map(function(b){ return b.dataset.sym; });
+    try {
+      var r = await fetch('/api/risk/overrides', {
+        method: 'POST', headers: hdrs(),
+        body: JSON.stringify({
+          max_position_usdt:           capV,
+          trailing_stop_pct_scalping:  tsV,
+          scalping_disabled_symbols:   disabled,
+          _updated_by:                 'dashboard',
+        }),
+      });
+      var d = await r.json();
+      if (!d.ok) { alert('Save failed: ' + (d.error || 'unknown')); return; }
+      renderRiskPanel();
+    } catch(e) { alert('Save error: ' + e.message); }
+  };
+
+  window._riskClearAll = async function(){
+    if (!confirm('Clear all runtime overrides (cap, trailing stop, kill-list)?')) return;
+    try {
+      var r = await fetch('/api/risk/overrides', {
+        method: 'POST', headers: hdrs(),
+        body: JSON.stringify({
+          max_position_usdt:           null,
+          trailing_stop_pct_scalping:  null,
+          scalping_disabled_symbols:   [],
+          _updated_by:                 'dashboard',
+        }),
+      });
+      var d = await r.json();
+      if (!d.ok) { alert('Clear failed: ' + (d.error || 'unknown')); return; }
+      renderRiskPanel();
+    } catch(e) { alert('Clear error: ' + e.message); }
+  };
+
+  async function renderSchedulerPanel() {
+    var el = document.getElementById('p6-body-scheduler');
+    if (!el) return;
+    el.innerHTML = '<span style="color:#666">loading scheduler…</span>';
+
+    try {
+      var [taskRes, repRes] = await Promise.all([
+        fetch('/api/scheduler/list').then(r => r.json()).catch(e => ({tasks:[],error:String(e)})),
+        fetch('/api/scheduler/report').then(r => r.json()).catch(e => ({present:false,error:String(e)})),
+      ]);
+      var tasks = (taskRes && taskRes.tasks) || [];
+      var rep = repRes || {};
+
+      var instr = `
+        <div style="background:rgba(15,23,42,.55);border:1px solid rgba(59,130,246,.25);border-radius:10px;padding:12px;margin-bottom:14px;font-size:11px;line-height:1.6;color:#cbd5e1">
+          <div style="font-weight:800;color:#fff;font-size:12px;margin-bottom:6px;letter-spacing:.06em">⏰ HOW THIS WORKS</div>
+          <div>Each task runs <code style="background:rgba(255,255,255,.08);padding:1px 5px;border-radius:3px">scripts/check_training_status.py</code> on a schedule using <b>Windows Task Scheduler</b> (built-in, runs locally — no cloud).</div>
+          <div>The script decodes the TFT log, stats the model file, hits <code style="background:rgba(255,255,255,.08);padding:1px 5px;border-radius:3px">127.0.0.1:5000/api/models</code>, and writes <code style="background:rgba(255,255,255,.08);padding:1px 5px;border-radius:3px">data/training_status_report.json</code>.</div>
+          <div style="margin-top:6px;color:#94a3b8">Tasks survive reboot. Manage from this panel or with <code style="background:rgba(255,255,255,.08);padding:1px 5px;border-radius:3px">.\\local_scheduler.ps1</code>. View raw with <code style="background:rgba(255,255,255,.08);padding:1px 5px;border-radius:3px">schtasks /Query /TN AI-Trader-* /V</code>.</div>
+        </div>`;
+
+      var form = `
+        <div id="sch-flash" style="display:none;margin-bottom:10px;padding:7px 11px;border-radius:6px;font-size:11px;font-weight:600"></div>
+        <div style="display:grid;grid-template-columns:1.4fr 1fr 1.4fr auto auto;gap:8px;align-items:end;margin-bottom:14px;font-size:11px">
+          <div>
+            <div style="color:#94a3b8;font-size:.6rem;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px">Task name</div>
+            <input id="sch-name" value="TrainingStatus" placeholder="TrainingStatus"
+              style="width:100%;background:#0a0a0a;border:1px solid #2b2b2b;color:#fff;padding:7px 8px;border-radius:6px;font-family:inherit;font-size:11px">
+          </div>
+          <div>
+            <div style="color:#94a3b8;font-size:.6rem;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px">Mode</div>
+            <select id="sch-mode" onchange="window._schModeChanged()"
+              style="width:100%;background:#0a0a0a;border:1px solid #2b2b2b;color:#fff;padding:7px 8px;border-radius:6px;font-family:inherit;font-size:11px">
+              <option value="every_minutes">Every N minutes</option>
+              <option value="daily">Daily at HH:MM</option>
+              <option value="once">Once at YYYY-MM-DDTHH:MM</option>
+            </select>
+          </div>
+          <div>
+            <div style="color:#94a3b8;font-size:.6rem;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px" id="sch-value-label">Minutes</div>
+            <input id="sch-value" value="60" placeholder="60"
+              style="width:100%;background:#0a0a0a;border:1px solid #2b2b2b;color:#fff;padding:7px 8px;border-radius:6px;font-family:inherit;font-size:11px">
+          </div>
+          <button onclick="window._schRegister()"
+            style="background:linear-gradient(135deg,#1d4ed8,#7c3aed);border:none;color:#fff;padding:8px 16px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px;font-weight:700">+ REGISTER</button>
+          <button onclick="window.renderSchedulerPanel()" title="Reload tasks + latest report"
+            style="background:#1f2937;border:1px solid #374151;color:#cbd5e1;padding:8px 12px;border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px;font-weight:700">🔄 REFRESH</button>
+        </div>`;
+
+      var rows = tasks.length
+        ? tasks.map(function(t){
+            return `<tr style="border-bottom:1px solid rgba(148,163,184,.08)">
+              <td style="padding:8px 10px"><b style="color:#fff">${esc(t.name)}</b></td>
+              <td style="padding:8px 10px;color:#94a3b8">${esc(t.next_run)}</td>
+              <td style="padding:8px 10px"><span style="background:${t.status==='Ready'?'rgba(52,211,153,.15)':'rgba(251,191,36,.15)'};color:${t.status==='Ready'?'#34d399':'#fbbf24'};padding:2px 8px;border-radius:10px;font-size:10px">${esc(t.status)}</span></td>
+              <td style="padding:8px 10px;text-align:right;white-space:nowrap">
+                <button onclick="window._schRun('${esc(t.name)}')" style="background:#0c4a6e;border:1px solid #075985;color:#7dd3fc;padding:4px 9px;border-radius:5px;cursor:pointer;font-size:10px;margin-right:4px">▶ RUN NOW</button>
+                <button onclick="window._schUnregister('${esc(t.name)}')" style="background:#7f1d1d;border:1px solid #991b1b;color:#fecaca;padding:4px 9px;border-radius:5px;cursor:pointer;font-size:10px">✕ DELETE</button>
+              </td>
+            </tr>`;
+          }).join('')
+        : '<tr><td colspan=4 style="padding:14px;text-align:center;color:#64748b;font-style:italic">No scheduled tasks yet — register one above.</td></tr>';
+
+      var taskTable = `
+        <div style="font-weight:700;color:#fff;font-size:11px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px">Active scheduled tasks (${tasks.length})</div>
+        <table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:14px">
+          <thead><tr style="color:#64748b;font-size:.6rem;letter-spacing:.08em;text-transform:uppercase;border-bottom:1px solid rgba(148,163,184,.15)">
+            <th style="padding:7px 10px;text-align:left">Name</th>
+            <th style="padding:7px 10px;text-align:left">Next run</th>
+            <th style="padding:7px 10px;text-align:left">Status</th>
+            <th style="padding:7px 10px;text-align:right">Actions</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+
+      var reportBlock = '';
+      if (rep.present && rep.report) {
+        var r = rep.report;
+        var bullets = (r.summary_bullets || []).map(function(b){
+          return '<li style="margin-bottom:3px">'+ esc(b) +'</li>';
+        }).join('');
+        reportBlock = `
+          <div style="font-weight:700;color:#fff;font-size:11px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px">Latest report  <span style="color:#94a3b8;font-weight:400">(${rep.age_s ? Math.round(rep.age_s)+'s ago' : ''})</span></div>
+          <div style="background:rgba(15,23,42,.55);border:1px solid rgba(148,163,184,.12);border-radius:10px;padding:11px;font-size:11px">
+            <div style="margin-bottom:6px"><span style="background:${r.status==='completed'?'rgba(52,211,153,.15)':'rgba(251,191,36,.15)'};color:${r.status==='completed'?'#34d399':'#fbbf24'};padding:2px 8px;border-radius:10px;font-size:10px">${esc((r.status||'').toUpperCase())}</span>
+            <span style="color:#94a3b8;margin-left:8px">epochs ${r.epochs_completed}/${r.epochs_target} · execution: ${esc(r.execution||'')}</span></div>
+            <ul style="margin:5px 0 0 18px;padding:0;color:#cbd5e1">${bullets}</ul>
+          </div>`;
+      } else {
+        reportBlock = '<div style="color:#64748b;font-style:italic;font-size:11px">No report yet — register a task and click ▶ RUN NOW.</div>';
+      }
+
+      el.innerHTML = instr + form + taskTable + reportBlock;
+    } catch (e) {
+      el.innerHTML = '<span style="color:#ef4444">scheduler load error: '+ esc(e.message) +'</span>';
+    }
+  }
+  // Exposed so the 🔄 REFRESH button's inline onclick can reach it.
+  window.renderSchedulerPanel = renderSchedulerPanel;
+
+  window._schModeChanged = function(){
+    var sel = document.getElementById('sch-mode');
+    var lbl = document.getElementById('sch-value-label');
+    var val = document.getElementById('sch-value');
+    if (!sel || !lbl || !val) return;
+    if (sel.value === 'daily') { lbl.textContent = 'Time (HH:MM)'; val.value = '09:00'; val.placeholder = '09:00'; }
+    else if (sel.value === 'once') {
+      lbl.textContent = 'Date+Time (YYYY-MM-DDTHH:MM)';
+      var d = new Date(Date.now() + 60*60*1000);
+      var iso = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')
+              +'T'+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+      val.value = iso; val.placeholder = '2026-05-03T15:30';
+    }
+    else { lbl.textContent = 'Minutes'; val.value = '60'; val.placeholder = '60'; }
+  };
+
+  async function _schPost(path, body){
+    var r = await fetch(path, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{}) });
+    return r.json();
+  }
+  // Inline status pill — gives the user immediate visible confirmation
+  // that a click actually did something (the panel-rerender approach
+  // alone was too silent and felt broken).
+  function _schFlash(msg, kind){
+    var el = document.getElementById('sch-flash');
+    if (!el) return;
+    var bg = (kind === 'err')   ? 'rgba(239,68,68,.15)'
+           : (kind === 'warn')  ? 'rgba(251,191,36,.15)'
+           :                      'rgba(52,211,153,.15)';
+    var fg = (kind === 'err')   ? '#fca5a5'
+           : (kind === 'warn')  ? '#fbbf24'
+           :                      '#34d399';
+    var br = (kind === 'err')   ? 'rgba(239,68,68,.4)'
+           : (kind === 'warn')  ? 'rgba(251,191,36,.4)'
+           :                      'rgba(52,211,153,.4)';
+    el.style.display = 'block';
+    el.style.background = bg;
+    el.style.color = fg;
+    el.style.border = '1px solid ' + br;
+    el.textContent = msg;
+    if (window._schFlashTimer) clearTimeout(window._schFlashTimer);
+    window._schFlashTimer = setTimeout(function(){
+      var e2 = document.getElementById('sch-flash');
+      if (e2) e2.style.display = 'none';
+    }, 5000);
+  }
+  window._schRegister = async function(){
+    var name = document.getElementById('sch-name').value.trim();
+    var mode = document.getElementById('sch-mode').value;
+    var value = document.getElementById('sch-value').value.trim();
+    if (!name) { _schFlash('Task name required', 'err'); return; }
+    _schFlash('Registering ' + name + '…', 'warn');
+    var d = await _schPost('/api/scheduler/register', { name:name, mode:mode, value:value });
+    if (!d.ok) { _schFlash('Register failed: ' + (d.error || d.stderr || 'unknown'), 'err'); return; }
+    _schFlash('✓ Registered ' + (d.name || name) + ' (' + mode + ' · ' + value + ')', 'ok');
+    renderSchedulerPanel();
+  };
+  window._schRun = async function(name){
+    _schFlash('Triggering ' + name + '…', 'warn');
+    var d = await _schPost('/api/scheduler/run', { name:name });
+    if (!d.ok) { _schFlash('Run failed: ' + (d.stderr || 'unknown'), 'err'); return; }
+    _schFlash('▶ ' + name + ' started — refreshing in 1.5s', 'ok');
+    setTimeout(renderSchedulerPanel, 1500);
+  };
+  window._schUnregister = async function(name){
+    if (!confirm('Delete task ' + name + '?')) return;
+    var d = await _schPost('/api/scheduler/unregister', { name:name });
+    if (!d.ok) { _schFlash('Delete failed: ' + (d.stderr || 'unknown'), 'err'); return; }
+    _schFlash('✕ Deleted ' + name, 'ok');
+    renderSchedulerPanel();
+  };
+  // Lazy init — switchTab('institutional') calls window._initPhase6() when
+  // the user opens the tab. Avoids preloading 8 panes' worth of fetches at boot.
+  var _initialised = false;
+  window._initPhase6 = function(){
+    _renderTabs();
+    if (!_initialised) {
+      _initialised = true;
+      var saved = (localStorage.getItem('p6-tab') || 'portfolio');
+      setP6Tab(saved);
+      setInterval(function(){
+        // Only refresh while the Institutional tab itself is active.
+        var pane = document.getElementById('tab-institutional');
+        if (!pane || !pane.classList.contains('active')) return;
+        var t = document.querySelector('.p6-tab.active');
+        if (!t) return;
+        // Scheduler is opt-in only — auto-refresh would wipe an open
+        // dropdown / half-typed task name. User clicks 🔄 REFRESH instead.
+        if (t.dataset.tab === 'scheduler') return;
+        refreshPhase6Pane(t.dataset.tab);
+      }, 30000);
+    }
+  };
+})();
+</script>
+<script>
+(function(){
+  function applyMode(m) {
+    document.body.dataset.mode = m;
+    var R = document.getElementById('mode-real');
+    var T = document.getElementById('mode-test');
+    if (R && T) {
+      if (m === 'real') {
+        R.style.borderColor = '#10b981'; R.style.color = '#10b981';
+        T.style.borderColor = '#333';    T.style.color = '#888';
+      } else {
+        T.style.borderColor = '#f59e0b'; T.style.color = '#f59e0b';
+        R.style.borderColor = '#333';    R.style.color = '#888';
+      }
+    }
+    refreshModeBar();
+  }
+  window.setMode = function(m) {
+    try { localStorage.setItem('ai-trader-mode', m); } catch(e) {}
+    applyMode(m);
+  };
+  window.getMode = function() {
+    try { return localStorage.getItem('ai-trader-mode') || 'real'; } catch(e) { return 'real'; }
+  };
+  window.refreshModeBar = async function() {
+    var mode = window.getMode();
+    var balEl = document.getElementById('mode-balance');
+    var covEl = document.getElementById('mode-coverage');
+    // Skip the network round-trips if the tab isn't visible — saves work
+    // and avoids hammering the bot when the user is on Overview.
+    var pane = document.getElementById('tab-institutional');
+    if (!pane || !pane.classList.contains('active')) return;
+    var url = mode === 'real' ? '/api/balance/real' : '/api/balance/virtual';
+    try {
+      var r = await fetch(url); var d = await r.json();
+      var bal = (d.cash_usdt || 0).toFixed(2);
+      if (balEl) balEl.textContent = (mode === 'real' ? '⚡ ' : '🧪 ') + 'Balance: $' + bal;
+    } catch(e) {}
+    try {
+      var r2 = await fetch('/api/parquet/coverage'); var d2 = await r2.json();
+      if (covEl) covEl.textContent = 'Parquet: ' + (d2.symbols || 0) + ' sym / ' + (d2.size_gb || 0) + ' GB';
+    } catch(e) {}
+  };
+  document.addEventListener('DOMContentLoaded', function(){
+    applyMode(window.getMode());
+    setInterval(window.refreshModeBar, 15000);
+  });
+})();
+</script>
+
 <div id="shell">
 
 <!-- ════════════════ SIDEBAR ════════════════ -->
@@ -401,6 +1020,9 @@ select.field option{background:#0d1628;color:#e2e8f0}
       <span class="nav-icon">🎮</span> Simulator
       <span class="nav-badge" id="nb-sim" style="display:none">▶</span>
     </button>
+    <button class="nav-item" data-tab="institutional">
+      <span class="nav-icon">🏛</span> Institutional
+    </button>
   </nav>
 
   <!-- Symbol search -->
@@ -424,6 +1046,18 @@ select.field option{background:#0d1628;color:#e2e8f0}
 
 <!-- ════════════════ MAIN ════════════════ -->
 <div id="main">
+
+  <!-- Critical-error banner (auto-hides when no active issues) -->
+  <div id="err-banner" style="display:none;background:linear-gradient(90deg,#7f1d1d,#991b1b);border-bottom:1px solid #dc2626;color:#fecaca;padding:8px 14px;font-size:11px;font-family:'JetBrains Mono',monospace;cursor:pointer" onclick="toggleErrBanner()">
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="font-weight:800;color:#fef2f2">⚠ <span id="err-banner-count">0</span> active issue(s)</span>
+      <span id="err-banner-summary" style="flex:1;color:#fecaca;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">--</span>
+      <button id="err-banner-copy-all" onclick="event.stopPropagation(); copyAllErrors(this)" style="background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);color:#fef2f2;padding:3px 9px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:9px;letter-spacing:.06em">📋 COPY ALL</button>
+      <button id="err-banner-clear-all" onclick="event.stopPropagation(); dismissAllErrors()" style="background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);color:#fef2f2;padding:3px 9px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:9px;letter-spacing:.06em">CLEAR ALL</button>
+      <span id="err-banner-toggle" style="color:#fef2f2;font-size:10px;letter-spacing:.06em">▼ EXPAND</span>
+    </div>
+    <div id="err-banner-detail" style="display:none;margin-top:8px;background:rgba(0,0,0,.35);border-radius:6px;padding:8px;max-height:240px;overflow:auto;cursor:default" onclick="event.stopPropagation()"></div>
+  </div>
 
   <!-- Top bar -->
   <div class="topbar">
@@ -1079,6 +1713,10 @@ select.field option{background:#0d1628;color:#e2e8f0}
       <div class="section-label" style="margin-bottom:8px">Component Health</div>
       <div class="mon-grid" id="mon-health-grid"><!-- filled by JS --></div>
 
+      <!-- Service / data-store health (QuestDB, DuckDB, Simulator, ZMQ, etc.) -->
+      <div class="section-label" style="margin:14px 0 8px">Services &amp; Data Stores</div>
+      <div class="mon-grid" id="mon-services-grid"><!-- filled by JS --></div>
+
       <!-- ── Agents card ── -->
       <style>
         .agents-section{background:var(--bg-2);border:1px solid rgba(148,163,184,.12);border-radius:12px;overflow:hidden;margin-bottom:12px}
@@ -1334,6 +1972,8 @@ select.field option{background:#0d1628;color:#e2e8f0}
           <span class="ms-chevron-main">▼</span>
         </div>
         <div class="ms-section-body ms-collapsed" id="cluster-section-body">
+          <!-- Live local-training progress (this PC). Populated by clusterPoll(). -->
+          <div id="cluster-local-training" style="margin-bottom:14px"></div>
           <div id="cluster-workers-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin-bottom:14px">
             <div style="color:#64748b;font-size:.72rem">Loading workers…</div>
           </div>
@@ -1544,6 +2184,32 @@ select.field option{background:#0d1628;color:#e2e8f0}
 
     </div><!-- /simulator -->
 
+    <!-- ════════════════ INSTITUTIONAL (Phase 6) ════════════════ -->
+    <div id="tab-institutional" class="tab-pane">
+      <!-- MODE switcher -->
+      <div id="mode-switcher" style="background:#0a0a0a;border:1px solid #222;border-radius:8px;display:flex;align-items:center;padding:8px 14px;font-family:'JetBrains Mono',monospace;font-size:11px;gap:12px;margin-bottom:10px">
+        <span style="color:#888">MODE</span>
+        <button id="mode-real" onclick="setMode('real')" style="border:1px solid #333;background:#0a0a0a;color:#fff;padding:4px 10px;cursor:pointer;font-family:inherit">⚡ REAL</button>
+        <button id="mode-test" onclick="setMode('test')" style="border:1px solid #333;background:#0a0a0a;color:#888;padding:4px 10px;cursor:pointer;font-family:inherit">🧪 TEST/TRAIN</button>
+        <span style="margin-left:auto" id="mode-balance">--</span>
+        <span style="color:#666" id="mode-coverage">--</span>
+      </div>
+      <!-- 8-tab nav strip -->
+      <nav id="phase6-nav" style="background:#070707;border:1px solid #1a1a1a;border-radius:8px;display:flex;align-items:center;padding:6px 10px;font-family:'JetBrains Mono',monospace;font-size:11px;gap:4px;overflow-x:auto;margin-bottom:10px">
+        <button class="p6-tab" data-tab="portfolio"  onclick="setP6Tab('portfolio')">📊 Portfolio</button>
+        <button class="p6-tab" data-tab="alpha"      onclick="setP6Tab('alpha')">🧠 Alpha Engine</button>
+        <button class="p6-tab" data-tab="orderflow"  onclick="setP6Tab('orderflow')">🌊 Order Flow</button>
+        <button class="p6-tab" data-tab="risk"       onclick="setP6Tab('risk')">🛡 Risk</button>
+        <button class="p6-tab" data-tab="training"   onclick="setP6Tab('training')">🏋 Training</button>
+        <button class="p6-tab" data-tab="simulation" onclick="setP6Tab('simulation')">🎮 Simulation</button>
+        <button class="p6-tab" data-tab="data"       onclick="setP6Tab('data')">💾 Data</button>
+        <button class="p6-tab" data-tab="strategies" onclick="setP6Tab('strategies')">📈 Strategies</button>
+        <button class="p6-tab" data-tab="scheduler"  onclick="setP6Tab('scheduler')">⏰ Scheduler</button>
+        <span style="margin-left:auto;color:#666" id="phase6-status">phase 6</span>
+      </nav>
+      <!-- Pane content -->
+      <div id="phase6-content"></div>
+    </div><!-- /institutional -->
 
   </div><!-- /content -->
 </div><!-- /main -->
@@ -1608,12 +2274,13 @@ async function apiFetch(path, opts={}) {
 
 // ─── TAB NAVIGATION ──────────────────────────────────────────────────────────
 const TAB_TITLES = {
-  overview:  ['Overall Bot Performance', 'Spot, futures, and scalping context in one place with live state, strategy analytics, and execution controls.'],
-  strategy:  ['Strategy & ML',           'Historical performance, model accuracy, and regime analytics'],
-  watchlist: ['Watchlist',               'Real-time quotes, holdings, and PnL — add symbols to trigger archive history download'],
-  trades:    ['Trades',                  'Open positions and closed ledger across all markets'],
-  logs:      ['Terminal Log',            'Live tail of the trading bot log for diagnostics'],
-  chat:      ['AI Assistant',            'Gemini-powered trading analysis and market advisor'],
+  overview:     ['Overall Bot Performance', 'Spot, futures, and scalping context in one place with live state, strategy analytics, and execution controls.'],
+  strategy:     ['Strategy & ML',           'Historical performance, model accuracy, and regime analytics'],
+  watchlist:    ['Watchlist',               'Real-time quotes, holdings, and PnL — add symbols to trigger archive history download'],
+  trades:       ['Trades',                  'Open positions and closed ledger across all markets'],
+  logs:         ['Terminal Log',            'Live tail of the trading bot log for diagnostics'],
+  chat:         ['AI Assistant',            'Gemini-powered trading analysis and market advisor'],
+  institutional:['Institutional Controls',  'REAL/TEST mode + Phase 6 panels: portfolio, alpha, order flow, risk, training, simulation, data, strategies'],
 };
 
 function switchTab(name) {
@@ -1640,6 +2307,12 @@ function switchTab(name) {
     dbPollStatus();
   }
   if (name === 'simulator') { simPoll(); simLoadStrategyStats(); }
+  if (name === 'institutional') {
+    // Lazy-init Phase 6 only when this tab is opened — avoids the
+    // "loading on every other tab" spam from the old fixed overlay.
+    if (typeof window._initPhase6 === 'function') window._initPhase6();
+    if (typeof window.refreshModeBar === 'function') window.refreshModeBar();
+  }
 }
 
 // ─── MARKET FILTER ───────────────────────────────────────────────────────────
@@ -2285,6 +2958,7 @@ function _renderMLCards(data) {
       ${accNum > 0 ? `<div style="background:rgba(5,8,22,.55);border-radius:999px;height:3px;overflow:hidden;margin-top:7px">
         <div style="width:${Math.min(100,accNum)}%;height:100%;background:linear-gradient(90deg,#1d4ed8,${accCol});border-radius:999px"></div>
       </div>` : ''}
+      ${m.accuracy_warning ? `<div style="margin-top:7px;padding:5px 8px;background:rgba(251,113,133,.08);border:1px solid rgba(251,113,133,.25);border-radius:6px;font-size:.55rem;color:#fbbf24;line-height:1.35">⚠ ${esc(m.accuracy_warning)}</div>` : ''}
     </div>`;
   }).join('');
 }
@@ -2302,13 +2976,27 @@ function _renderStratCards(data) {
   const cont   = $('body-strat-cards');
   const chip   = $('chip-strat-count');
   if (!cont) return;
-  const strats     = data.strategies  || [];
-  const tradeStats = data.trade_stats || {};
-  const paperStats = data.paper_stats || {};
-  const wfStats    = data.wf_stats    || {};
-  const agg        = data.aggregate   || {};
+  const allStrats   = data.strategies  || [];
+  const tradeStats  = data.trade_stats || {};
+  const paperStats  = data.paper_stats || {};
+  const wfStats     = data.wf_stats    || {};
+  const agg         = data.aggregate   || {};
 
-  if (chip) chip.textContent = `${agg.strategies_live||0} live / ${agg.strategies_total||0} total`;
+  // Phase 11 — hide redundant strategies whose live AND backtest are both
+  // disabled in data/strategy_config.json (i.e. "we don't use them").
+  // Operator can re-enable via /api/strategy-sync POST then refresh page.
+  // The registry exposes live_enabled / backtest_enabled — the older shorter
+  // names didn't exist on the wire, so the filter was a no-op until now.
+  const showHidden = localStorage.getItem('show-disabled-strats') === '1';
+  const strats = showHidden ? allStrats : allStrats.filter(s => {
+    const live = s.live_enabled === true || s.live === true;
+    const bt   = s.backtest_enabled === true || s.backtest === true;
+    return live || bt;
+  });
+  const hiddenCount = allStrats.length - strats.length;
+
+  if (chip) chip.textContent = `${agg.strategies_live||0} live / ${agg.strategies_total||0} total` +
+    (hiddenCount ? ` · ${hiddenCount} hidden` : '');
 
   const groups = {};
   for (const s of strats) {
@@ -2962,6 +3650,222 @@ async function updateAIModel() {
   } catch(e) { console.error(e); }
 }
 
+// ─── ERROR BANNER ────────────────────────────────────────────────────────────
+function toggleErrBanner() {
+  const det = document.getElementById('err-banner-detail');
+  const tog = document.getElementById('err-banner-toggle');
+  if (!det) return;
+  const open = det.style.display === 'none';
+  det.style.display = open ? 'block' : 'none';
+  if (tog) tog.textContent = open ? '▲ COLLAPSE' : '▼ EXPAND';
+}
+
+// In-memory map of key → entry so the COPY button can grab the full sample
+// without any re-encoding. The previous design embedded raw log text into
+// inline `onclick="dismissError('...')"` strings, which broke any time the
+// log line contained a `'` (e.g. `Order's notional...`) — the unbalanced
+// quote leaked the rest of the HTML attribute into visible text.
+const _errEntries = {};
+
+async function dismissError(key) {
+  try {
+    await fetch('/api/errors/dismiss', {
+      method: 'POST', headers: hdrs(),
+      body: JSON.stringify({ key: key })
+    });
+    pollErrors();
+  } catch(e) { console.error(e); }
+}
+
+async function dismissAllErrors() {
+  if (!confirm('Clear all active errors and warnings? They will reappear if they fire again.')) return;
+  try {
+    await fetch('/api/errors/dismiss_all', { method: 'POST', headers: hdrs() });
+    pollErrors();
+  } catch(e) { console.error(e); }
+}
+
+async function copyAllErrors(btn) {
+  // Snapshot every active entry currently in the cache, formatted in
+  // priority order (CRITICAL first, then WARNING) — same order the banner
+  // renders. Useful for pasting a full incident summary into Slack / email.
+  const rows = Object.values(_errEntries).slice().sort((a, b) => {
+    const ka = a.kind === 'critical' ? 0 : 1;
+    const kb = b.kind === 'critical' ? 0 : 1;
+    if (ka !== kb) return ka - kb;
+    return (b.last_seen || 0) - (a.last_seen || 0);
+  });
+  if (!rows.length) {
+    if (btn) {
+      const orig = btn.textContent;
+      btn.textContent = 'NOTHING TO COPY';
+      setTimeout(() => { btn.textContent = orig; }, 1200);
+    }
+    return;
+  }
+  const lines = [
+    '=== AI Trader — active issues snapshot ===',
+    'time: ' + new Date().toISOString(),
+    'count: ' + rows.length + ' (critical=' + rows.filter(r => r.kind==='critical').length
+              + ', warning=' + rows.filter(r => r.kind==='warning').length + ')',
+    '',
+  ];
+  rows.forEach((e, i) => {
+    const ageText = e.age_s < 60   ? Math.round(e.age_s)        + 's ago'
+                  : e.age_s < 3600 ? Math.round(e.age_s / 60)   + 'm ago'
+                  :                  Math.round(e.age_s / 3600) + 'h ago';
+    lines.push((i + 1) + '. [' + (e.kind || '').toUpperCase() + '] ' + (e.file || '') + ' ×' + (e.count || 0) + ' (' + ageText + ')');
+    lines.push('   ' + (e.sample || ''));
+    lines.push('');
+  });
+  const text = lines.join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+    if (btn) {
+      const orig = btn.textContent;
+      btn.textContent = '✓ COPIED ' + rows.length;
+      setTimeout(() => { btn.textContent = orig; }, 1500);
+    }
+  } catch(err) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch(e2) {}
+    document.body.removeChild(ta);
+  }
+}
+
+async function copyError(key, btn) {
+  const e = _errEntries[key];
+  if (!e) return;
+  const text = `[${(e.kind || '').toUpperCase()}] ${e.file} ×${e.count}\n${e.sample || ''}`;
+  try {
+    await navigator.clipboard.writeText(text);
+    if (btn) {
+      const orig = btn.textContent;
+      btn.textContent = '✓ COPIED';
+      setTimeout(() => { btn.textContent = orig; }, 1200);
+    }
+  } catch(err) {
+    // Fallback for older browsers / non-secure contexts
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch(e2) {}
+    document.body.removeChild(ta);
+  }
+}
+
+async function pollErrors() {
+  try {
+    const r = await fetch('/api/errors/recent', { headers: hdrs() });
+    if (!r.ok) return;
+    const d = await r.json();
+    const banner = document.getElementById('err-banner');
+    if (!banner) return;
+    const crit = d.critical || [];
+    const warn = d.warning || [];
+    const total = crit.length + warn.length;
+    if (total === 0) {
+      banner.style.display = 'none';
+      const det = document.getElementById('err-banner-detail');
+      if (det) det.style.display = 'none';
+      const tog = document.getElementById('err-banner-toggle');
+      if (tog) tog.textContent = '▼ EXPAND';
+      return;
+    }
+    banner.style.display = 'block';
+    setText('err-banner-count', total);
+    const summaryParts = [];
+    if (crit.length) summaryParts.push('🔴 ' + crit.length + ' critical');
+    if (warn.length) summaryParts.push('🟡 ' + warn.length + ' warning');
+    const top = crit[0] || warn[0];
+    if (top) summaryParts.push('— ' + (top.sample || '').slice(0, 100));
+    setText('err-banner-summary', summaryParts.join('  '));
+
+    const det = document.getElementById('err-banner-detail');
+    if (!det) return;
+
+    // Refresh the lookup map and the rendered DOM in one pass. Each entry
+    // is a real DOM node with delegated handlers — NO inline `onclick`,
+    // NO interpolation of log text into attributes — so apostrophes /
+    // quotes / HTML in the sample line can never escape into markup.
+    Object.keys(_errEntries).forEach(k => delete _errEntries[k]);
+    det.innerHTML = '';
+    [...crit, ...warn].forEach(e => {
+      _errEntries[e.key] = e;
+      const sevColor = e.kind === 'critical' ? '#fb7185' : '#fbbf24';
+      const sevBg    = e.kind === 'critical' ? 'rgba(251,113,133,.12)' : 'rgba(251,191,36,.10)';
+      const ageText  = e.age_s < 60   ? Math.round(e.age_s)        + 's ago'
+                     : e.age_s < 3600 ? Math.round(e.age_s / 60)   + 'm ago'
+                     :                  Math.round(e.age_s / 3600) + 'h ago';
+
+      const row = document.createElement('div');
+      row.style.cssText = 'border-left:3px solid ' + sevColor + ';background:' + sevBg
+        + ';padding:6px 10px;margin-bottom:5px;border-radius:0 4px 4px 0';
+
+      const hdr = document.createElement('div');
+      hdr.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:10px;color:#fef2f2;margin-bottom:3px';
+      const lbl = document.createElement('b');
+      lbl.textContent = (e.kind || '').toUpperCase();
+      hdr.appendChild(lbl);
+      const fileSp = document.createElement('span');
+      fileSp.style.color = '#fecaca';
+      fileSp.textContent = e.file || '';
+      hdr.appendChild(fileSp);
+      const cntSp = document.createElement('span');
+      cntSp.style.color = '#fecaca';
+      cntSp.textContent = '×' + (e.count || 0);
+      hdr.appendChild(cntSp);
+      const ageSp = document.createElement('span');
+      ageSp.style.color = '#fca5a5';
+      ageSp.textContent = ageText;
+      hdr.appendChild(ageSp);
+
+      const btnWrap = document.createElement('span');
+      btnWrap.style.cssText = 'margin-left:auto;display:flex;gap:6px';
+      const btnStyle = 'background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);'
+        + 'color:#fef2f2;padding:2px 7px;border-radius:3px;cursor:pointer;'
+        + 'font-size:9px;font-family:inherit';
+
+      const copyBtn = document.createElement('button');
+      copyBtn.style.cssText = btnStyle;
+      copyBtn.textContent = '📋 COPY';
+      copyBtn.dataset.key = e.key;
+      copyBtn.addEventListener('click', ev => {
+        ev.stopPropagation();
+        copyError(copyBtn.dataset.key, copyBtn);
+      });
+      btnWrap.appendChild(copyBtn);
+
+      const dismissBtn = document.createElement('button');
+      dismissBtn.style.cssText = btnStyle;
+      dismissBtn.textContent = 'DISMISS';
+      dismissBtn.dataset.key = e.key;
+      dismissBtn.addEventListener('click', ev => {
+        ev.stopPropagation();
+        dismissError(dismissBtn.dataset.key);
+      });
+      btnWrap.appendChild(dismissBtn);
+
+      hdr.appendChild(btnWrap);
+      row.appendChild(hdr);
+
+      const body = document.createElement('div');
+      body.style.cssText = "color:#e2e8f0;font-size:10px;font-family:'JetBrains Mono',monospace;"
+        + 'white-space:pre-wrap;word-break:break-word';
+      // textContent — never innerHTML — for the sample so any HTML / quotes
+      // in the log line are rendered as literal characters.
+      body.textContent = e.sample || '';
+      row.appendChild(body);
+
+      det.appendChild(row);
+    });
+  } catch(e) {}
+}
+
 // ─── AI STATUS ───────────────────────────────────────────────────────────────
 async function pollAiStatus() {
   try {
@@ -3013,7 +3917,11 @@ async function pollTrades() {
 
 // ─── INIT ────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  document.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
+  // IMPORTANT: scope the selector to .nav-item only. The Institutional Phase-6
+  // tab buttons (.p6-tab) ALSO use data-tab, so a bare [data-tab] selector
+  // would bind switchTab() to them — and switching to a non-existent main tab
+  // like "alpha" wipes .active off every .tab-pane, blanking the whole panel.
+  document.querySelectorAll('.nav-item[data-tab]').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
   document.querySelectorAll('.mf-btn[data-market]').forEach(b => b.addEventListener('click', () => setMarket(b.dataset.market)));
   document.querySelectorAll('[data-tmarket]').forEach(b => b.addEventListener('click', () => setTradesMarket(b.dataset.tmarket)));
   $('btn-start')?.addEventListener('click', () => setControl(true));
@@ -3049,6 +3957,10 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(fetchBinanceTickers,15_000);
   setInterval(() => { if (activeTab==='logs') pollLogs(); }, 10_000);
   setInterval(pollAiStatus,       60_000);
+  // Error banner — poll every 30s. Tab-agnostic so the banner fires
+  // regardless of which view the user is on.
+  pollErrors();
+  setInterval(pollErrors, 30_000);
   setInterval(() => { if (activeTab==='monitor') { monPollHealth(); monPollLog(); } }, 4_000);
   setInterval(() => { if (activeTab==='monitor') monLoadModelStats(); }, 30_000);
   setInterval(() => { if (activeTab==='monitor') agPoll(); }, 5_000);
@@ -3085,6 +3997,38 @@ async function monPollHealth() {
     monHealth = await r.json();
     renderMonHealth();
   } catch {}
+  monPollServices();
+}
+
+async function monPollServices() {
+  const grid = document.getElementById('mon-services-grid');
+  if (!grid) return;
+  try {
+    const r = await fetch('/api/monitor/services', { headers: hdrs() });
+    if (!r.ok) { grid.innerHTML = '<div style="color:#fb7185">/api/monitor/services HTTP '+ r.status +'</div>'; return; }
+    const svc = await r.json();
+    let html = '';
+    for (const [key, d] of Object.entries(svc)) {
+      const ok    = !!d.up;
+      const dot   = ok ? 'running' : 'stopped';
+      const label = d.label || key;
+      const meta  = ok
+        ? (d.detail || '').replace(/\n/g, '<br>')
+        : `<span style="color:#fb7185">${(d.error || 'offline')}</span>`;
+      const hint  = d.hint
+        ? `<div style="font-size:.6rem;color:#64748b;margin-top:4px">${d.hint}</div>`
+        : '';
+      html += `<div class="mon-card ${dot}">
+        <div class="mon-label">${label}</div>
+        <div class="mon-status"><span class="mon-dot ${dot}"></span>${ok ? 'Up' : 'Down'}</div>
+        <div class="mon-meta">${meta || '&nbsp;'}</div>
+        ${hint}
+      </div>`;
+    }
+    grid.innerHTML = html || '<div style="color:#64748b">no services reported</div>';
+  } catch (e) {
+    grid.innerHTML = '<div style="color:#fb7185">services probe failed: '+ e.message +'</div>';
+  }
 }
 
 function renderMonHealth() {
@@ -3235,6 +4179,7 @@ function renderModelStats(models, cuda) {
 
   grid.innerHTML = models.map(m => {
     const isUnsupervised = m.accuracy === null || m.accuracy_note;
+    const isDirectionless = !!m.directionless;
     const acc  = isUnsupervised ? null : (m.accuracy       || 0);
     const lAcc = isUnsupervised ? null : (m.long_accuracy  || 0);
     const sAcc = isUnsupervised ? null : (m.short_accuracy || 0);
@@ -3270,6 +4215,13 @@ function renderModelStats(models, cuda) {
       </div>
       ${isUnsupervised
         ? `<div style="font-size:.58rem;color:#64748b;font-style:italic;margin-bottom:6px">${esc(m.accuracy_note||'Unsupervised — no labelled accuracy')}</div>`
+        : (isDirectionless
+        ? `<div class="ms-bar-wrap">
+        <span style="width:52px;font-size:.6rem;color:#94a3b8">Overall</span>
+        ${bar(acc,'#6366f1')}
+        <span style="width:36px;text-align:right;font-size:.62rem;color:#e2e8f0">${(acc||0).toFixed(1)}%</span>
+      </div>
+      <div style="font-size:.58rem;color:#64748b;font-style:italic;margin-bottom:6px">Binary win/loss classifier — no direction split</div>`
         : `<div class="ms-bar-wrap">
         <span style="width:52px;font-size:.6rem;color:#94a3b8">Overall</span>
         ${bar(acc,'#6366f1')}
@@ -3284,7 +4236,7 @@ function renderModelStats(models, cuda) {
         <span style="width:52px;font-size:.6rem;color:#fb7185">Short</span>
         ${bar(sAcc,'#fb7185')}
         <span style="width:36px;text-align:right;font-size:.62rem;color:#fb7185">${(sAcc||0).toFixed(1)}%</span>
-      </div>`
+      </div>`)
       }
       ${liveRow}
       <div style="margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:.62rem;color:#94a3b8;font-family:'JetBrains Mono',monospace">
@@ -3418,8 +4370,11 @@ async function dbPollStatus() {
     }
     if (body) {
       if (!d.available) {
-        body.innerHTML = `<div style="color:#fb7185;font-size:.72rem">QuestDB not running.<br>
-          Start with: <code style="background:rgba(0,0,0,.3);padding:2px 6px;border-radius:4px">docker-compose up -d questdb</code></div>`;
+        body.innerHTML = `<div style="color:#fb7185;font-size:.72rem;line-height:1.5">QuestDB not running.<br>
+          <span style="color:#94a3b8">Cold-path Parquet store still works; QuestDB is only required for high-frequency tick streaming.</span><br>
+          <span style="color:#94a3b8">Start options:</span><br>
+          • Docker: <code style="background:rgba(0,0,0,.3);padding:2px 6px;border-radius:4px">docker-compose up -d questdb</code><br>
+          • Native: download from <a href="https://questdb.io/download/" target="_blank" style="color:#60a5fa">questdb.io/download</a></div>`;
         return;
       }
       const rows = Object.entries(d.tables || {}).map(([t, n]) =>
@@ -3448,7 +4403,163 @@ async function dbIngest() {
 }
 
 // ── Training Cluster ──────────────────────────────────────────────────────────
+// Render the live local-training progress section that lives at the
+// top of the Training Cluster card. Two data sources:
+//   • /api/scheduler/report — the most-recently-snapshotted training run
+//     (TFT epoch progress, train/val loss, log line excerpt).
+//   • /api/models — last-trained timestamps + val accuracy for every
+//     model the bot uses.
+// If nothing is training, the section shrinks to a one-line summary.
+async function renderLocalTrainingProgress() {
+  const el = document.getElementById('cluster-local-training');
+  if (!el) return;
+
+  let rep = null, models = null;
+  try {
+    const r1 = await fetch('/api/scheduler/report');
+    if (r1.ok) rep = await r1.json();
+  } catch {}
+  try {
+    const r2 = await fetch('/api/models', { headers: hdrs() });
+    if (r2.ok) models = await r2.json();
+  } catch {}
+
+  // ── Active run block (TFT or whatever the report file last captured) ──
+  let activeBlock = '';
+  const r = (rep && rep.report) ? rep.report : null;
+  if (r) {
+    const status   = (r.status || '').toLowerCase();
+    const done     = +r.epochs_completed || 0;
+    const target   = +r.epochs_target || 0;
+    const pct      = target > 0 ? Math.min(100, Math.round((done / target) * 100)) : 0;
+    const ageS     = rep.age_s != null ? Math.round(rep.age_s) : null;
+    const trainLs  = (r.log && r.log.last_train_loss != null) ? r.log.last_train_loss : null;
+    const valLs    = (r.log && r.log.last_val_loss != null) ? r.log.last_val_loss : null;
+    const curEp    = (r.log && r.log.current_epoch != null) ? r.log.current_epoch : null;
+    const curPct   = (r.log && r.log.current_progress_pct != null) ? r.log.current_progress_pct : null;
+    const lastLine = (r.log && r.log.last_line_excerpt) ? r.log.last_line_excerpt : '';
+    const linesTot = (r.log && r.log.lines_total) ? r.log.lines_total : 0;
+
+    const stateColor = status === 'completed' ? '#34d399'
+                     : status === 'failed'    ? '#fb7185'
+                     : status === 'in_progress' ? '#fbbf24'
+                                                : '#94a3b8';
+    const stateBg    = status === 'completed' ? 'rgba(52,211,153,.15)'
+                     : status === 'failed'    ? 'rgba(251,113,133,.15)'
+                     : status === 'in_progress' ? 'rgba(251,191,36,.15)'
+                                                : 'rgba(148,163,184,.15)';
+
+    const ageStr = ageS == null
+      ? ''
+      : ageS < 90 ? `${ageS}s ago`
+      : ageS < 5400 ? `${Math.round(ageS/60)}m ago`
+      :               `${Math.round(ageS/3600)}h ago`;
+
+    const innerEpochLine = (curEp != null && curPct != null)
+      ? `<div style="font-size:.62rem;color:#94a3b8;margin-top:5px">
+            Inner epoch ${curEp}: ${curPct}%
+            <div style="margin-top:3px;height:4px;background:rgba(148,163,184,.12);border-radius:2px;overflow:hidden">
+              <div style="height:100%;width:${curPct}%;background:#7c3aed"></div>
+            </div>
+         </div>` : '';
+
+    const lossLine = (trainLs != null || valLs != null)
+      ? `<div style="font-size:.62rem;color:#cbd5e1;margin-top:5px;font-family:monospace">
+            train_loss=${trainLs != null ? Number(trainLs).toFixed(4) : '—'}
+            · val_loss=${valLs != null ? Number(valLs).toFixed(4) : '—'}
+         </div>` : '';
+
+    const sample = lastLine
+      ? `<div style="font-size:.58rem;color:#64748b;margin-top:6px;font-family:monospace;
+                     overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                     title="${(''+lastLine).replace(/"/g,'&quot;')}">${lastLine}</div>` : '';
+
+    activeBlock = `
+      <div style="background:rgba(15,23,42,.55);border:1px solid rgba(124,58,237,.25);border-radius:10px;padding:11px 13px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:8px">
+          <div>
+            <div style="font-size:.6rem;font-weight:700;color:#94a3b8;letter-spacing:.06em;text-transform:uppercase">🏋 Active local training</div>
+            <div style="font-size:.86rem;font-weight:700;color:#e2e8f0;margin-top:2px">${(r.execution || 'LOCAL_ONLY')} on ${(r.host || 'this PC')}</div>
+          </div>
+          <span style="background:${stateBg};color:${stateColor};padding:3px 10px;border-radius:10px;
+                       font-size:.6rem;font-weight:700;letter-spacing:.06em">${(status || 'unknown').toUpperCase()}</span>
+        </div>
+        <div style="font-size:.65rem;color:#cbd5e1;margin-bottom:4px">
+          <span>Epochs ${done}/${target}</span>
+          <span style="color:#475569"> · ${pct}%</span>
+          ${ageStr ? `<span style="color:#64748b;margin-left:10px">snapshot ${ageStr}</span>` : ''}
+          ${linesTot ? `<span style="color:#475569;margin-left:10px">${linesTot.toLocaleString()} log lines</span>` : ''}
+        </div>
+        <div style="height:8px;background:rgba(148,163,184,.10);border-radius:4px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#7c3aed,#1d4ed8);transition:width .6s"></div>
+        </div>
+        ${innerEpochLine}
+        ${lossLine}
+        ${sample}
+      </div>`;
+  } else {
+    activeBlock = `
+      <div style="background:rgba(15,23,42,.4);border:1px dashed rgba(148,163,184,.18);border-radius:10px;padding:11px 13px;
+                  font-size:.65rem;color:#64748b">
+        🏋 No active training snapshot yet. The Scheduler tab's RUN NOW (or any retraining run) writes
+        <code style="background:rgba(0,0,0,.3);padding:1px 5px;border-radius:3px">data/training_status_report.json</code>
+        which this card reads.
+      </div>`;
+  }
+
+  // ── Per-model "last trained" grid ────────────────────────────────────
+  let modelGrid = '';
+  if (models && typeof models === 'object') {
+    const labels = { spot:'BTC RF', trend:'Trend', futures:'Futures Short',
+                     scalping:'Scalping', tft:'TFT (Darts)' };
+    const cards  = [];
+    for (const k of ['spot','trend','futures','scalping','tft']) {
+      const m = models[k] || {};
+      const acc = m.val_accuracy != null ? Number(m.val_accuracy)
+                : m.test_accuracy != null ? Number(m.test_accuracy)
+                : null;
+      const accStr = acc == null ? '—' : (acc * 100).toFixed(1) + '%';
+      const trained = m.last_trained || m.trained_at || m.training_completed || '';
+      let ageStr = '—';
+      if (trained) {
+        try {
+          const dt = new Date(trained);
+          const ageS = (Date.now() - dt.getTime()) / 1000;
+          ageStr = ageS < 90 ? `${Math.round(ageS)}s ago`
+                  : ageS < 5400 ? `${Math.round(ageS/60)}m ago`
+                  : ageS < 172800 ? `${Math.round(ageS/3600)}h ago`
+                  :                 `${Math.round(ageS/86400)}d ago`;
+        } catch {}
+      }
+      const fresh = ageStr.endsWith('m ago') || ageStr.endsWith('s ago') || ageStr === '—' ? false
+                  : (ageStr.endsWith('h ago') ? parseInt(ageStr) < 24 : false);
+      const accColor = acc == null ? '#64748b'
+                     : acc >= 0.6  ? '#34d399'
+                     : acc >= 0.5  ? '#fbbf24'
+                                   : '#fb7185';
+      cards.push(`
+        <div style="background:rgba(15,23,42,.45);border:1px solid rgba(148,163,184,.10);border-radius:8px;padding:8px 10px">
+          <div style="font-size:.56rem;font-weight:700;color:#94a3b8;letter-spacing:.06em;text-transform:uppercase">${labels[k]}</div>
+          <div style="font-size:.78rem;font-weight:700;color:${accColor};margin-top:2px">${accStr}</div>
+          <div style="font-size:.56rem;color:#64748b;margin-top:1px">trained ${ageStr}</div>
+        </div>`);
+    }
+    modelGrid = `
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:10px">
+        ${cards.join('')}
+      </div>`;
+  }
+
+  el.innerHTML = activeBlock + modelGrid;
+}
+
+
 async function clusterPoll() {
+  // Local-training progress runs in parallel with the cluster fetch.
+  // The cluster card is collapsed by default; we still want to populate
+  // its body so opening it shows fresh data immediately.
+  renderLocalTrainingProgress();
+
   try {
     const r = await fetch('/api/cluster/status', { headers: hdrs() });
     if (!r.ok) return;
@@ -3685,14 +4796,34 @@ setInterval(() => { if (activeTab === 'monitor') scPoll(); }, 15_000);
 // ─── SIMULATOR TAB ────────────────────────────────────────────────────────────
 let simPollTimer = null;
 
-async function simStart() {
-  const cfg = simCollectConfig();
-  await fetch('/api/simulator/start', {method:'POST', headers:hdrs(), body:JSON.stringify(cfg)});
-  simPoll();
+async function _simAction(label, url, body) {
+  const errBar = document.getElementById('sim-error-bar');
+  if (errBar) { errBar.style.display=''; errBar.style.color='#94a3b8'; errBar.textContent = `… ${label}`; }
+  try {
+    const opts = { method:'POST', headers:hdrs() };
+    if (body) opts.body = JSON.stringify(body);
+    const r = await fetch(url, opts);
+    let payload = {};
+    try { payload = await r.json(); } catch (_) {}
+    if (!r.ok) throw new Error(payload.error || `HTTP ${r.status}`);
+    if (errBar) {
+      errBar.style.color = '#34d399';
+      errBar.textContent = `✓ ${label} OK`;
+      setTimeout(() => { if (errBar.textContent.startsWith('✓')) errBar.style.display='none'; }, 1800);
+    }
+  } catch (e) {
+    if (errBar) {
+      errBar.style.display=''; errBar.style.color='#f87171';
+      errBar.textContent = `⚠ ${label} failed: ${e.message}`;
+    }
+  } finally {
+    simPoll();
+  }
 }
-async function simPause()  { await fetch('/api/simulator/pause',  {method:'POST', headers:hdrs()}); simPoll(); }
-async function simResume() { await fetch('/api/simulator/resume', {method:'POST', headers:hdrs()}); simPoll(); }
-async function simStop()   { await fetch('/api/simulator/stop',   {method:'POST', headers:hdrs()}); simPoll(); }
+async function simStart()  { await _simAction('start',  '/api/simulator/start',  simCollectConfig()); }
+async function simPause()  { await _simAction('pause',  '/api/simulator/pause'); }
+async function simResume() { await _simAction('resume', '/api/simulator/resume'); }
+async function simStop()   { await _simAction('stop',   '/api/simulator/stop'); }
 
 async function simApplyConfig() {
   const cfg = simCollectConfig();
@@ -3846,7 +4977,11 @@ function simRenderEvents(events) {
 
 function simRenderPnlChart(series) {
   const el = document.getElementById('sim-pnl-chart');
-  if (!el || !series.length) return;
+  if (!el) return;
+  if (!series.length) {
+    el.innerHTML = '<div style="color:#64748b;font-size:.67rem;font-style:italic;padding:20px 0">No paper-trade P&amp;L yet — populated as training cycles complete.</div>';
+    return;
+  }
   const vals = series.map(p => p.cumulative);
   const min = Math.min(...vals, 0);
   const max = Math.max(...vals, 0.001);

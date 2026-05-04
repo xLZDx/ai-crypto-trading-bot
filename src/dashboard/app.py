@@ -657,6 +657,168 @@ def monitor_health():
                 entry.update(_proc_stats(pid))
             out[svc_key] = entry
 
+    # Telegram is embedded in the bot process — detect via heartbeat file.
+    # Without this, the card always shows "Stopped" because no standalone
+    # telegram_scraper.py process exists.
+    try:
+        import json as _json
+        tg_path = _PROJECT_ROOT / 'data' / 'telegram_status.json'
+        if tg_path.exists():
+            tg = _json.loads(tg_path.read_text(encoding='utf-8'))
+            fresh = (_time.time() - float(tg.get('last_update_ts', 0))) < 600
+            if fresh and tg.get('connected'):
+                channels = tg.get('channels', [])
+                detail = f"embedded in bot · {len(channels)} ch" if channels else 'embedded in bot'
+                out['telegram'] = {
+                    'label': 'Telegram Monitor', 'running': True,
+                    'pid': out.get('bot', {}).get('pid'),
+                    'managed': False, 'embedded': True, 'detail': detail,
+                }
+    except Exception:
+        pass
+
+    return jsonify(out)
+
+
+@app.route('/api/monitor/services')
+def monitor_services():
+    """Probe non-process services: QuestDB, DuckDB, Simulator, ZMQ broker,
+    Parquet store, Realtime feed. Returns a {key: {label, up, detail, error, hint}}
+    dict. Each probe is wrapped in a tight try/except + small timeout so a
+    single hung dependency cannot stall the dashboard."""
+    import socket
+    import urllib.request
+    import urllib.error
+
+    out: dict[str, dict] = {}
+
+    # ── QuestDB (HTTP REST on :9000) ────────────────────────────────────────
+    try:
+        req = urllib.request.Request('http://127.0.0.1:9000/exec?query=SELECT%201')
+        with urllib.request.urlopen(req, timeout=0.8) as resp:
+            up = resp.status == 200
+            out['questdb'] = {
+                'label': 'QuestDB (hot tick store)', 'up': up,
+                'detail': 'localhost:9000 · ILP :9009',
+            }
+    except Exception as e:
+        out['questdb'] = {
+            'label': 'QuestDB (hot tick store)', 'up': False,
+            'error': type(e).__name__,
+            'hint': 'docker-compose up -d questdb  ·or·  install native binary',
+        }
+
+    # ── DuckDB (in-process; check both library + temp dir writable) ─────────
+    try:
+        import duckdb  # noqa: F401
+        tmp = _PROJECT_ROOT / 'data' / 'cache' / 'duckdb_temp'
+        tmp.mkdir(parents=True, exist_ok=True)
+        con = duckdb.connect(':memory:')
+        try:
+            con.execute(f"PRAGMA temp_directory='{tmp.as_posix()}'")
+            ver = con.execute('SELECT version()').fetchone()[0]
+        finally:
+            con.close()
+        out['duckdb'] = {
+            'label': 'DuckDB (cold path / parquet)', 'up': True,
+            'detail': f'in-process · v{ver} · temp → data/cache/duckdb_temp',
+        }
+    except Exception as e:
+        out['duckdb'] = {
+            'label': 'DuckDB (cold path / parquet)', 'up': False,
+            'error': f'{type(e).__name__}: {e}',
+            'hint': 'pip install duckdb>=0.10.0',
+        }
+
+    # ── Parquet store (count partitions, sum size) ─────────────────────────
+    try:
+        pq_root = _PROJECT_ROOT / 'data' / 'parquet'
+        if pq_root.exists():
+            files = list(pq_root.rglob('*.parquet'))
+            size_gb = sum(f.stat().st_size for f in files) / 1e9
+            symbols = len({p.parts[len(pq_root.parts)] for p in files if len(p.parts) > len(pq_root.parts)})
+            out['parquet'] = {
+                'label': 'Parquet Store',
+                'up': len(files) > 0,
+                'detail': f'{len(files):,} files · {symbols} symbols · {size_gb:.2f} GB',
+            }
+        else:
+            out['parquet'] = {'label': 'Parquet Store', 'up': False,
+                              'error': 'data/parquet missing',
+                              'hint': 'run scripts/migrate_news_to_parquet.py / archive downloader'}
+    except Exception as e:
+        out['parquet'] = {'label': 'Parquet Store', 'up': False, 'error': str(e)}
+
+    # ── Simulator (read /api/simulator/status state) ───────────────────────
+    try:
+        sim_status_path = _PROJECT_ROOT / 'data' / 'sim_state.json'
+        if sim_status_path.exists():
+            import json as _j
+            st = _j.loads(sim_status_path.read_text())
+            running = bool(st.get('running'))
+            out['simulator'] = {
+                'label': 'Synthetic Exchange / Simulator',
+                'up': running,
+                'detail': f"state: {st.get('state','idle')} · scenario: {st.get('scenario','--')}",
+            }
+        else:
+            out['simulator'] = {
+                'label': 'Synthetic Exchange / Simulator', 'up': False,
+                'error': 'idle (no run started)',
+                'hint': 'open Simulator tab → ▶ Start',
+            }
+    except Exception as e:
+        out['simulator'] = {'label': 'Synthetic Exchange / Simulator', 'up': False, 'error': str(e)}
+
+    # ── ZeroMQ control plane (probe :5555 PUB) ─────────────────────────────
+    # The data-bus binds 5555 lazily on the first publish_orderflow() call —
+    # so port-closed isn't a fault. Only orderbook_collector / distributed
+    # training PUBLISH; the standard bot loop doesn't, so the port stays
+    # closed by design unless the user enables L2 streaming.
+    def _tcp_open(host, port, timeout=0.5):
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except OSError:
+            return False
+    zmq_up = _tcp_open('127.0.0.1', 5555)
+    out['zmq'] = {
+        'label': 'ZeroMQ Data Plane',
+        'up': zmq_up,
+        'detail': ('tcp://127.0.0.1:5555 · bound, streaming'
+                   if zmq_up else 'tcp://127.0.0.1:5555 · idle (binds on first orderflow publish)'),
+        'hint': None if zmq_up else 'enable orderbook_collector / distributed training to bind',
+    }
+
+    # ── FastAPI control plane (:8100) ──────────────────────────────────────
+    try:
+        with urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=0.5) as resp:
+            out['fastapi'] = {'label': 'FastAPI Control Plane', 'up': resp.status == 200,
+                              'detail': 'localhost:8100'}
+    except Exception:
+        out['fastapi'] = {'label': 'FastAPI Control Plane', 'up': False,
+                          'error': 'unreachable', 'detail': 'localhost:8100'}
+
+    # ── Realtime feed (Binance L2) — check status JSON ─────────────────────
+    try:
+        rt_path = _PROJECT_ROOT / 'data' / 'realtime_status.json'
+        if rt_path.exists():
+            import json as _j
+            st = _j.loads(rt_path.read_text())
+            up = bool(st.get('connected'))
+            last = st.get('last_msg_iso', '')
+            sym  = st.get('symbol', '--')
+            out['realtime'] = {
+                'label': 'Realtime Feed (Binance L2)', 'up': up,
+                'detail': f'sym: {sym} · last: {last}',
+            }
+        else:
+            out['realtime'] = {'label': 'Realtime Feed (Binance L2)', 'up': False,
+                               'error': 'no status file',
+                               'hint': 'started by orderbook_realtime.py'}
+    except Exception as e:
+        out['realtime'] = {'label': 'Realtime Feed (Binance L2)', 'up': False, 'error': str(e)}
+
     return jsonify(out)
 
 
@@ -669,21 +831,31 @@ def monitor_logs(component):
     if not path.exists():
         return jsonify({'lines': [], 'size': 0})
     try:
-        # Read last 40 KB to avoid loading huge files
+        # Read last 40 KB to avoid loading huge files. PowerShell Tee-Object
+        # writes UTF-16 LE; for tail reads the BOM is at file-start, not in
+        # our chunk — detect by null-byte ratio instead.
         with open(path, 'rb') as f:
             f.seek(0, 2)
             size = f.tell()
             f.seek(max(0, size - 40960))
             chunk = f.read()
-        # Handle UTF-16 LE (PowerShell Tee-Object default) and UTF-8
-        if chunk[:2] == b'\xff\xfe':
-            raw = chunk[2:].decode('utf-16-le', errors='replace').replace('\x00', '')
+
+        is_utf16 = chunk[:2] == b'\xff\xfe'
+        if not is_utf16 and len(chunk) > 200:
+            null_ratio = chunk.count(b'\x00') / len(chunk)
+            is_utf16 = null_ratio > 0.30          # UTF-16 ASCII ≈ 50% nulls
+
+        if is_utf16:
+            # If we landed mid-character, drop the first byte to align.
+            start = 2 if chunk[:2] == b'\xff\xfe' else (1 if size % 2 == 1 else 0)
+            raw = chunk[start:].decode('utf-16-le', errors='replace').replace('\x00', '')
         else:
             raw = chunk.decode('utf-8', errors='replace')
-        lines = raw.splitlines()
+
+        lines = [ln for ln in raw.splitlines() if ln.strip()]
         if size > 40960 and lines:
-            lines = lines[1:]   # first line may be partial
-        return jsonify({'lines': lines[-300:], 'size': size})
+            lines = lines[1:]
+        return jsonify({'lines': lines[-300:], 'size': size, 'encoding': 'utf-16' if is_utf16 else 'utf-8'})
     except Exception as e:
         return jsonify({'lines': [str(e)], 'size': 0})
 
@@ -841,6 +1013,7 @@ def monitor_model_stats():
         ('futures',  'futures_short_model_meta.json', 'Futures Short',     'futures_short_model.joblib'),
         ('scalping', 'scalping_model_meta.json',      'Scalping (1m)',     'scalping_model.joblib'),
         ('tft',      'tft_model_meta.json',           'TFT (Neural)',      'tft_model.pt'),
+        ('oft',      'oft_model_meta.json',           'OFT (Microstructure)','oft_model.pt'),
         ('meta',     'meta_labeler_meta.json',        'Meta-Labeler',      'meta_labeler.joblib'),
         ('regime',   'regime_classifier_meta.json',   'Regime Classifier', 'regime_classifier.joblib'),
     ]
@@ -908,9 +1081,21 @@ def strategy_full():
         ('futures', 'futures_short_model_meta.json', 'Futures Short RF',    'futures_short_model.joblib',   '📉', 'FUTURES'),
         ('scalping','scalping_model_meta.json',      'Scalping RF (1m)',    'scalping_model.joblib',        '⚡', 'SCALPING'),
         ('tft',     'tft_model_meta.json',           'TFT Neural (1h)',     'tft_model.pt',                 '🔮', 'SPOT'),
+        ('oft',     'oft_model_meta.json',           'OFT (Microstructure)','oft_model.pt',                 '🌊', 'L2/L3'),
         ('meta',    'meta_labeler_meta.json',        'Meta-Labeler',        'meta_labeler.joblib',          '🔍', 'ALL'),
         ('regime',  'regime_classifier_meta.json',   'Regime Classifier',   'regime_classifier.joblib',     '🎯', 'ALL'),
     ]
+    def _to_pct(v):
+        # Normalize accuracy to percent: trainers vary — some save 0.486, others 48.6.
+        # Heuristic: any non-null value ≤ 1.0 is a fraction; multiply by 100.
+        if v is None:
+            return None
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+        return f * 100.0 if 0.0 <= f <= 1.0 else f
+
     ml_models = []
     for key, mf, label, model_file, icon, market in _ML:
         meta_path  = models_dir / mf
@@ -919,18 +1104,78 @@ def strategy_full():
         if meta_path.exists():
             try: meta = _json.loads(meta_path.read_text())
             except Exception: pass
-        raw_acc = meta.get('accuracy')
+        acc_pct  = _to_pct(meta.get('accuracy'))
+        long_pct = _to_pct(meta.get('long_accuracy', 0)) or 0.0
+        shrt_pct = _to_pct(meta.get('short_accuracy', 0)) or 0.0
+        wf_pct = _to_pct(meta.get('walk_forward_mean_acc'))
+
+        # Derive missing display fields for models whose trainers don't write
+        # the standard n_features/n_iterations keys (TFT, GMM regime).
+        n_feat = meta.get('n_features')
+        n_iter = meta.get('n_iterations')
+        n_samp = meta.get('n_samples')
+        if key == 'tft':
+            # Darts TFT meta currently lacks n_features/n_samples — surface
+            # what we DO know so the card isn't all dashes.
+            n_iter = n_iter or meta.get('n_epochs')
+            if n_feat is None and meta.get('input_chunk_length'):
+                n_feat = meta.get('input_chunk_length')  # sequence length proxy
+        elif key == 'regime':
+            # Probe the GMM joblib once for n_features (cheap — pickled covar).
+            # Trainer wraps it as {'model': {'gmm': GaussianMixture, 'scaler': ...}, 'label_map': ...}
+            if n_feat is None and model_path.exists():
+                try:
+                    import joblib as _jl
+                    blob = _jl.load(model_path)
+                    gmm = None
+                    if hasattr(blob, 'means_'):
+                        gmm = blob
+                    elif isinstance(blob, dict):
+                        cand = blob.get('model', blob)
+                        if hasattr(cand, 'means_'):
+                            gmm = cand
+                        elif isinstance(cand, dict):
+                            gmm = cand.get('gmm') or cand.get('model')
+                    if gmm is not None and hasattr(gmm, 'means_'):
+                        n_feat = int(gmm.means_.shape[1])
+                        n_iter = n_iter or getattr(gmm, 'n_iter_', None)
+                except Exception:
+                    pass
+
+        # Class imbalance check: if one direction is near-zero while the other is
+        # near the headline, the test-set accuracy is misleading. Prefer the
+        # walk-forward mean (when present) and surface a warning to the UI.
+        accuracy_warning = None
+        headline_acc = acc_pct
+        # Meta-labeler is a binary win-or-not classifier — long/short fields
+        # don't apply, so suppress the "Long 0% Short 0%" rendering and don't
+        # treat the perfect 0/0 split as imbalance.
+        is_directionless = (key == 'meta')
+        if acc_pct is not None and (long_pct or shrt_pct) and not is_directionless:
+            spread = abs(long_pct - shrt_pct)
+            if spread >= 30 and min(long_pct, shrt_pct) < 10:
+                accuracy_warning = (
+                    f"Class-imbalance: long={long_pct:.1f}% short={shrt_pct:.1f}% — "
+                    f"the headline {acc_pct:.1f}% over-reports. "
+                    + (f"Walk-forward mean {wf_pct:.1f}% is more honest." if wf_pct is not None else "")
+                ).strip()
+                if wf_pct is not None:
+                    headline_acc = wf_pct
         ml_models.append({
             'key': key, 'label': label, 'icon': icon, 'market': market,
             'model_exists':   model_path.exists(),
-            'accuracy':       round(raw_acc, 2) if raw_acc is not None else None,
-            'long_accuracy':  round(meta.get('long_accuracy', 0), 2),
-            'short_accuracy': round(meta.get('short_accuracy', 0), 2),
+            'accuracy':       round(headline_acc, 2) if headline_acc is not None else None,
+            'accuracy_test':  round(acc_pct, 2) if acc_pct is not None else None,
+            'accuracy_walk_forward': round(wf_pct, 2) if wf_pct is not None else None,
+            'accuracy_warning': accuracy_warning,
+            'long_accuracy':  round(long_pct, 2),
+            'short_accuracy': round(shrt_pct, 2),
             'accuracy_note':  meta.get('accuracy_note'),
             'model_type':     meta.get('model_type'),
-            'n_samples':      meta.get('n_samples'),
-            'n_features':     meta.get('n_features'),
-            'n_iterations':   meta.get('n_iterations'),
+            'directionless':  is_directionless,
+            'n_samples':      n_samp,
+            'n_features':     n_feat,
+            'n_iterations':   n_iter,
             'symbols':        meta.get('symbols', []),
             'timeframe':      meta.get('timeframe', '--'),
             'last_trained':   meta.get('last_trained', ''),
@@ -1336,76 +1581,209 @@ def _calc_ou_dev(prices) -> float:
 
 
 # ─── Simulator agent singletons (lazy-started on first /start call) ───────────
+# Init runs entirely on a background thread so neither /api/simulator/status
+# nor /api/simulator/start ever block the Flask worker. The previous design
+# called _get_simulator() synchronously, which timed out the Start request
+# (>30s) because SimulatorAgent + ContinuousTrainerAgent + StrategySimulatorAgent
+# + DatabaseAgent + DuckDB schema replay are all heavy at construction.
 _simulator_agent   = None
 _trainer_agent     = None
 _strategy_sim      = None
 _db_agent          = None
 _sim_lock          = threading.Lock()
+_sim_init_thread   = None
+_sim_init_error: str | None = None
+_sim_pending_start_cfg: dict | None = None  # config queued during init
+_sim_data_store    = None  # SimulatorDataStore singleton (caches DuckDB schema)
+
+
+def _ensure_sim_init() -> bool:
+    """Kick off async simulator construction. Returns True if agents are ready,
+    False if init is still in progress. Never blocks for more than the lock."""
+    global _sim_init_thread
+    if _simulator_agent is not None:
+        return True
+    with _sim_lock:
+        if _simulator_agent is not None:
+            return True
+        if _sim_init_thread is None or not _sim_init_thread.is_alive():
+            _sim_init_thread = threading.Thread(
+                target=_do_sim_init, daemon=True, name='sim-init')
+            _sim_init_thread.start()
+    return False
+
+
+def _do_sim_init() -> None:
+    """Background-only constructor. Installs agents atomically, then drains
+    any start config queued via /api/simulator/start during init."""
+    global _simulator_agent, _trainer_agent, _strategy_sim, _db_agent
+    global _sim_init_error, _sim_pending_start_cfg
+    try:
+        from src.engine.agents.simulator_agent    import SimulatorAgent
+        from src.engine.agents.training_agent     import ContinuousTrainerAgent
+        from src.engine.agents.strategy_simulator import StrategySimulatorAgent
+        sim   = SimulatorAgent(auto_cycle=True)
+        train = ContinuousTrainerAgent()
+        strat = StrategySimulatorAgent()
+        db = None
+        try:
+            from src.database.db_agent import DatabaseAgent
+            db = DatabaseAgent(bus=sim.bus)
+            db.start()
+        except Exception as _dbe:
+            import logging as _lg
+            _lg.getLogger(__name__).debug("DatabaseAgent not started: %s", _dbe)
+        with _sim_lock:
+            _simulator_agent = sim
+            _trainer_agent   = train
+            _strategy_sim    = strat
+            _db_agent        = db
+            queued_cfg = _sim_pending_start_cfg
+            _sim_pending_start_cfg = None
+        _sim_init_error = None
+        if queued_cfg is not None:
+            try:
+                _apply_sim_start(sim, train, strat, queued_cfg)
+            except Exception as e:
+                _sim_init_error = f"queued start failed: {e}"
+    except Exception as e:
+        _sim_init_error = str(e)
+        import logging as _lg
+        _lg.getLogger(__name__).error("[sim-init] failed: %s", e)
+
+
+def _apply_sim_start(sim, trainer, strat_sim, cfg: dict) -> None:
+    """Apply /api/simulator/start config to already-constructed agents."""
+    cfg = dict(cfg or {})
+    train_models = cfg.pop('train_models', None)
+    if cfg:
+        sim.configure(cfg)
+    if train_models and isinstance(train_models, list):
+        trainer.configure_models(train_models)
+    if not trainer._running:
+        trainer.start()
+    if not strat_sim._running:
+        strat_sim.start()
+    sim.start()
+
+
+def _get_sim_store():
+    """Cached SimulatorDataStore — DuckDB schema-replay runs once per process,
+    not once per status poll (which was eating most of the 4-second budget)."""
+    global _sim_data_store
+    if _sim_data_store is None:
+        with _sim_lock:
+            if _sim_data_store is None:
+                from src.simulation.data_store import SimulatorDataStore
+                _sim_data_store = SimulatorDataStore()
+    return _sim_data_store
 
 
 def _get_simulator():
-    global _simulator_agent, _trainer_agent, _strategy_sim, _db_agent
-    with _sim_lock:
-        if _simulator_agent is None:
-            from src.engine.agents.simulator_agent    import SimulatorAgent
-            from src.engine.agents.training_agent     import ContinuousTrainerAgent
-            from src.engine.agents.strategy_simulator import StrategySimulatorAgent
-            _simulator_agent = SimulatorAgent(auto_cycle=True)
-            _trainer_agent   = ContinuousTrainerAgent()
-            _strategy_sim    = StrategySimulatorAgent()
-            # Start DatabaseAgent if QuestDB is available
-            try:
-                from src.database.db_agent import DatabaseAgent
-                _db_agent = DatabaseAgent(bus=_simulator_agent.bus)
-                _db_agent.start()
-            except Exception as _dbe:
-                import logging as _lg
-                _lg.getLogger(__name__).debug("DatabaseAgent not started: %s", _dbe)
-    return _simulator_agent, _trainer_agent, _strategy_sim
+    """Legacy entry point — agents are required. Kicks off async init if
+    needed and waits up to 250ms; raises if still warming up so callers can
+    return a clean 'initializing' response instead of hanging."""
+    import time as _t
+    if _simulator_agent is not None:
+        return _simulator_agent, _trainer_agent, _strategy_sim
+    _ensure_sim_init()
+    deadline = _t.time() + 0.25
+    while _t.time() < deadline:
+        if _simulator_agent is not None:
+            return _simulator_agent, _trainer_agent, _strategy_sim
+        _t.sleep(0.01)
+    raise RuntimeError("Simulator initializing — retry in a moment")
+
+
+_db_summary_cache: dict = {'value': {}, 'updated': 0.0}
+_DB_SUMMARY_TTL_S = 5.0
+
+
+def _refresh_db_summary_async():
+    """Refresh the DuckDB summary on a background thread. Uses a TTL so the
+    UI poll path never waits on DuckDB; the cached value is stale for at
+    most _DB_SUMMARY_TTL_S seconds."""
+    import time as _t
+    if (_t.time() - _db_summary_cache['updated']) < _DB_SUMMARY_TTL_S:
+        return
+    if _db_summary_cache.get('refreshing'):
+        return
+    _db_summary_cache['refreshing'] = True
+    def _run():
+        try:
+            val = _get_sim_store().get_summary()
+            _db_summary_cache['value'] = val or {}
+        except Exception:
+            pass
+        finally:
+            _db_summary_cache['updated'] = _t.time()
+            _db_summary_cache['refreshing'] = False
+    threading.Thread(target=_run, daemon=True, name='sim-db-summary').start()
 
 
 @app.route('/api/simulator/status', methods=['GET'])
 def simulator_status():
-    """Return current simulator state, config, and per-model training metrics."""
-    try:
-        sim, trainer, _ = _get_simulator()
-        status = sim.get_status()
-        status['trainer_stats'] = trainer.get_stats()
+    """Non-blocking. Returns sim.get_status() inline (fast in-memory dict
+    access) and a TTL-cached DuckDB summary refreshed on a background
+    thread. The Simulator tab polls this every few seconds, so this path
+    must never wait on disk I/O.
 
-        # Augment with DB summary if available
+    Defensive timeout: even though get_status() should be sub-millisecond,
+    we still run it on a worker thread with a 2.5s budget so any future
+    lock-contention regression in SimulatorAgent can't hang Flask."""
+    import queue as _q
+    if not _ensure_sim_init():
+        msg = ('Agents bootstrapping (first call only, ~5-10s).'
+               if _sim_init_error is None
+               else f'Init failed: {_sim_init_error}')
+        return jsonify({
+            'state': 'initializing' if _sim_init_error is None else 'error',
+            'message': msg,
+            'trainer_stats': {}, 'db_summary': {},
+        })
+    out_q: _q.Queue = _q.Queue(maxsize=1)
+    def _build():
         try:
-            from src.simulation.data_store import SimulatorDataStore
-            store = SimulatorDataStore()
-            status['db_summary'] = store.get_summary()
-        except Exception:
-            status['db_summary'] = {}
-
-        return jsonify(status)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+            sim, trainer = _simulator_agent, _trainer_agent
+            st = sim.get_status()
+            st['trainer_stats'] = trainer.get_stats() if trainer else {}
+            out_q.put(('ok', st))
+        except Exception as exc:
+            out_q.put(('err', str(exc)))
+    threading.Thread(target=_build, daemon=True, name='sim-status').start()
+    try:
+        kind, payload = out_q.get(timeout=2.5)
+    except _q.Empty:
+        return jsonify({
+            'state': 'busy',
+            'message': 'sim.get_status() did not return within 2.5s — agent may be busy.',
+            'trainer_stats': {}, 'db_summary': {},
+        })
+    if kind == 'err':
+        return jsonify({'error': payload, 'state': 'error'}), 500
+    _refresh_db_summary_async()
+    payload['db_summary'] = _db_summary_cache.get('value', {}) or {}
+    return jsonify(payload)
 
 
 @app.route('/api/simulator/start', methods=['POST'])
 def simulator_start():
-    """Start or resume the simulator replay."""
+    """Start or resume the simulator replay. Returns immediately — if agents
+    are still initializing, the start config is queued and applied as soon
+    as init completes."""
+    global _sim_pending_start_cfg
+    cfg = request.get_json(force=True) or {}
+    if _simulator_agent is None:
+        with _sim_lock:
+            _sim_pending_start_cfg = dict(cfg)
+        _ensure_sim_init()
+        return jsonify({
+            'ok': True, 'queued': True, 'state': 'initializing',
+            'message': 'Simulator agents are bootstrapping; start command queued.',
+        })
     try:
-        sim, trainer, strat_sim = _get_simulator()
-        # Apply any config from the request body
-        cfg = request.get_json(force=True) or {}
-        if cfg:
-            sim.configure(cfg)
-        # Configure trainer models from request
-        train_models = cfg.pop('train_models', None)
-        if train_models and isinstance(train_models, list):
-            trainer.configure_models(train_models)
-        # Start trainer (idempotent)
-        if not trainer._running:
-            trainer.start()
-        # Start strategy simulator (idempotent)
-        if not strat_sim._running:
-            strat_sim.start()
-        sim.start()
-        return jsonify({'ok': True, 'status': sim.get_status()})
+        _apply_sim_start(_simulator_agent, _trainer_agent, _strategy_sim, cfg)
+        return jsonify({'ok': True, 'status': _simulator_agent.get_status()})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -1873,5 +2251,486 @@ def cluster_cancel_task(task_id):
     return jsonify({'ok': ok})
 
 
+# ────────────────────────────────────────────────────────────────────────────
+#  Phase 9 — dual-balance, news, OFT signal, orchestrator stats, retention,
+#  rate-limiter usage. These power the REAL vs TEST/TRAIN mode switcher.
+# ────────────────────────────────────────────────────────────────────────────
+
+
+@app.route('/api/balance/real')
+def api_balance_real():
+    try:
+        from src.engine.dual_balance import read_real
+        return jsonify(read_real())
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
+
+# ─── Local scheduler endpoints (Windows Task Scheduler wrapper) ──────────────
+# All execution stays on the local machine. No cloud, no remote agents.
+# The dashboard's Scheduler panel calls these to register/run/list/remove
+# native Windows scheduled tasks that invoke scripts/check_training_status.py.
+
+_SCHEDULER_PS1 = _PROJECT_ROOT / 'local_scheduler.ps1'
+_DEFAULT_TASK_PREFIX = 'AI-Trader-'
+_TRAINING_REPORT_PATH = _PROJECT_ROOT / 'data' / 'training_status_report.json'
+
+
+def _safe_task_name(name: str) -> str:
+    """Restrict task names to alphanum + dash/underscore + AI-Trader- prefix.
+    Prevents shell injection via the task name."""
+    import re as _re
+    name = (name or '').strip()
+    name = _re.sub(r'[^A-Za-z0-9_\-]', '', name)
+    if not name:
+        name = 'TrainingStatus'
+    if not name.startswith(_DEFAULT_TASK_PREFIX):
+        name = _DEFAULT_TASK_PREFIX + name
+    return name[:120]
+
+
+def _run_schtasks(args: list[str]) -> dict:
+    """Run schtasks.exe and return {ok, code, stdout, stderr}."""
+    import subprocess as _sp
+    try:
+        r = _sp.run(['schtasks.exe', *args], capture_output=True,
+                    text=True, timeout=15)
+        return {
+            'ok': r.returncode == 0,
+            'code': r.returncode,
+            'stdout': (r.stdout or '').strip(),
+            'stderr': (r.stderr or '').strip(),
+        }
+    except Exception as exc:
+        return {'ok': False, 'code': -1, 'stdout': '', 'stderr': str(exc)}
+
+
+@app.route('/api/scheduler/list', methods=['GET'])
+def api_scheduler_list():
+    """Return all Windows scheduled tasks whose name starts with AI-Trader-."""
+    res = _run_schtasks(['/Query', '/FO', 'CSV', '/NH'])
+    if not res['ok']:
+        return jsonify({'tasks': [], 'error': res['stderr']}), 200
+    tasks = []
+    for line in res['stdout'].splitlines():
+        cols = [c.strip('"') for c in line.split('","')]
+        if not cols or len(cols) < 3:
+            continue
+        name = cols[0].lstrip('\\')
+        if not name.startswith(_DEFAULT_TASK_PREFIX):
+            continue
+        tasks.append({
+            'name':       name,
+            'next_run':   cols[1] if len(cols) > 1 else '',
+            'status':     cols[2] if len(cols) > 2 else '',
+        })
+    return jsonify({'tasks': tasks})
+
+
+@app.route('/api/scheduler/register', methods=['POST'])
+def api_scheduler_register():
+    """body: {name, mode: 'daily'|'every_minutes'|'once', value}"""
+    body = request.get_json(silent=True) or {}
+    name = _safe_task_name(body.get('name', ''))
+    mode = (body.get('mode') or '').strip().lower()
+    value = str(body.get('value') or '').strip()
+
+    if not _SCHEDULER_PS1.exists():
+        return jsonify({'ok': False, 'error': f'launcher missing: {_SCHEDULER_PS1}'}), 500
+    if mode not in ('daily', 'every_minutes', 'once'):
+        return jsonify({'ok': False, 'error': "mode must be daily/every_minutes/once"}), 400
+
+    cmd = ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+           '-File', str(_SCHEDULER_PS1), 'register', '-Name', name]
+    if mode == 'daily':
+        # Validate HH:MM
+        import re as _re
+        if not _re.fullmatch(r'\d{2}:\d{2}', value):
+            return jsonify({'ok': False, 'error': "value must be HH:MM"}), 400
+        cmd += ['-At', value]
+    elif mode == 'every_minutes':
+        if not value.isdigit() or not (1 <= int(value) <= 1440):
+            return jsonify({'ok': False, 'error': "value must be 1..1440 minutes"}), 400
+        cmd += ['-EveryMinutes', value]
+    else:  # once
+        # Accept ISO YYYY-MM-DDTHH:MM or YYYY-MM-DDTHH:MM:SS
+        import re as _re
+        if not _re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?', value):
+            return jsonify({'ok': False, 'error': "value must be YYYY-MM-DDTHH:MM[:SS]"}), 400
+        cmd += ['-Once', value]
+
+    import subprocess as _sp
+    try:
+        r = _sp.run(cmd, capture_output=True, text=True, timeout=20,
+                    cwd=str(_PROJECT_ROOT))
+        return jsonify({
+            'ok': r.returncode == 0,
+            'name': name,
+            'mode': mode,
+            'value': value,
+            'stdout': (r.stdout or '').strip(),
+            'stderr': (r.stderr or '').strip(),
+        })
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 500
+
+
+@app.route('/api/scheduler/run', methods=['POST'])
+def api_scheduler_run():
+    """body: {name}"""
+    body = request.get_json(silent=True) or {}
+    name = _safe_task_name(body.get('name', ''))
+    res = _run_schtasks(['/Run', '/TN', name])
+    return jsonify({
+        'ok': res['ok'], 'name': name,
+        'stdout': res['stdout'], 'stderr': res['stderr'],
+    })
+
+
+@app.route('/api/scheduler/unregister', methods=['POST'])
+def api_scheduler_unregister():
+    """body: {name}"""
+    body = request.get_json(silent=True) or {}
+    name = _safe_task_name(body.get('name', ''))
+    res = _run_schtasks(['/Delete', '/TN', name, '/F'])
+    return jsonify({
+        'ok': res['ok'], 'name': name,
+        'stdout': res['stdout'], 'stderr': res['stderr'],
+    })
+
+
+@app.route('/api/scheduler/report', methods=['GET'])
+def api_scheduler_report():
+    """Return the latest training_status_report.json (the file the scheduled
+    task writes). Includes file mtime + age so the UI can show 'last run'."""
+    if not _TRAINING_REPORT_PATH.exists():
+        return jsonify({'present': False, 'hint': 'Run a task at least once first.'})
+    try:
+        import json as _json, time as _t
+        from datetime import datetime as _dt, timezone as _tz
+        st = _TRAINING_REPORT_PATH.stat()
+        return jsonify({
+            'present':     True,
+            'age_s':       round(_t.time() - st.st_mtime, 1),
+            'mtime_iso':   _dt.fromtimestamp(st.st_mtime, tz=_tz.utc).isoformat(),
+            'size_bytes':  st.st_size,
+            'report':      _json.loads(_TRAINING_REPORT_PATH.read_text(encoding='utf-8')),
+        })
+    except Exception as exc:
+        return jsonify({'present': True, 'error': str(exc)}), 500
+
+
+# ─── End scheduler endpoints ──────────────────────────────────────────────────
+
+
+_VIRTUAL_STUB_VALUE = 12345.67  # historical placeholder written by an early dev fixture
+_VIRTUAL_DEFAULT_CASH = 100_000.0
+
+
+@app.route('/api/balance/virtual')
+@app.route('/api/balance/test')  # legacy alias — frontend uses 'test' mode label
+def api_balance_virtual():
+    try:
+        from src.engine.dual_balance import read_virtual, reset_virtual
+        snap = read_virtual()
+        # Auto-heal: an early stub wrote $12345.67 to the virtual balance file.
+        # Replace it once with a sensible $100k so the Portfolio panel doesn't
+        # display a bogus default until the simulator generates real PnL.
+        if (abs(float(snap.get('cash_usdt', 0)) - _VIRTUAL_STUB_VALUE) < 1e-3
+                and abs(float(snap.get('equity_usdt', 0)) - _VIRTUAL_STUB_VALUE) < 1e-3
+                and not snap.get('holdings')):
+            snap = reset_virtual(_VIRTUAL_DEFAULT_CASH)
+        return jsonify(snap)
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/balance/virtual/reset', methods=['POST'])
+def api_balance_virtual_reset():
+    try:
+        from src.engine.dual_balance import reset_virtual
+        body = request.get_json(silent=True) or {}
+        cash = float(body.get('cash', 100_000.0))
+        return jsonify(reset_virtual(initial_cash=cash))
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/news')
+def api_news():
+    """Most recent news from `_NEWS/news/yyyymm=*/`. The news partition uses
+    `published_at` (not `timestamp`) as its time column — query directly."""
+    import traceback as _tb
+    try:
+        from src.database.parquet_store import _partition_glob, get_store
+        store = get_store()
+        glob = _partition_glob(store.base_dir, "_NEWS", "news")
+        from pathlib import Path
+        if not list(Path(store.base_dir).glob("_NEWS/news/yyyymm=*/*.parquet")):
+            return jsonify([])
+        # Use a direct DuckDB query — the generic .query() expects a `timestamp` col.
+        sql = f"SELECT * FROM read_parquet('{glob}') ORDER BY published_at DESC LIMIT 50"
+        df = store._conn_or_open().execute(sql).df()
+        if df is None or df.empty:
+            return jsonify([])
+        # Convert datetime columns to strings for JSON serialisation
+        for c in df.select_dtypes(include=['datetime64', 'datetimetz']).columns:
+            df[c] = df[c].astype(str)
+        return jsonify(df.to_dict(orient='records'))
+    except Exception as exc:
+        print('[/api/news] FAILED:', exc, flush=True)
+        _tb.print_exc()
+        return jsonify({'error': str(exc), 'trace': _tb.format_exc()[-800:]}), 500
+
+
+@app.route('/api/oft_signal/<path:symbol>')
+def api_oft_signal(symbol):
+    """Return the latest OFT prediction for a symbol from inference_engine."""
+    try:
+        # Inference engine is held by the live bot; we read its
+        # state via the existing state.json (set by the main loop).
+        from src.utils.safe_json import read_json
+        st = read_json('data/state.json', default={}) or {}
+        oft = (st.get('quant', {}) or {}).get(symbol, {}).get('oft', None)
+        if oft:
+            return jsonify(oft)
+        return jsonify({'available': False})
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/orchestrator/sources')
+def api_orchestrator_sources():
+    try:
+        from src.data_governance import list_sources
+        return jsonify(list_sources())
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/orchestrator/config')
+def api_orchestrator_config():
+    try:
+        from src.data_governance import GovernanceConfig
+        cfg = GovernanceConfig.load()
+        return jsonify({
+            "history_days":         cfg.history_days,
+            "store_local":          cfg.store_local,
+            "google_drive_archive": cfg.google_drive_archive,
+            "sources": {n: s.__dict__ for n, s in cfg.sources.items()},
+        })
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/retention/stats')
+def api_retention_stats():
+    try:
+        from src.database.retention_manager import RetentionManager
+        return jsonify(RetentionManager().stats())
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/rate_limiter/stats')
+def api_rate_limiter_stats():
+    try:
+        from src.data_ingestion.rate_limiter import stats as rl_stats
+        return jsonify(rl_stats())
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/decision_summary/<path:symbol>')
+def api_decision_summary(symbol):
+    try:
+        from src.analytics import DecisionMetrics
+        tf = request.args.get('tf', '1h')
+        return jsonify(DecisionMetrics().summarize(symbol=symbol, timeframe=tf).to_dict())
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
+
+# ─── Error monitor + log retention ─────────────────────────────────────────────
+
+@app.route('/api/errors/recent')
+def api_errors_recent():
+    """Return active error/warning entries (last 30 min). The dashboard
+    banner polls this and shows critical entries until they auto-clear."""
+    try:
+        from src.dashboard import error_monitor as _em
+        # Force a fresh scan if the cached state is stale (>60s) so the
+        # banner doesn't lag behind a brand-new failure. We probe both
+        # log files AND live status surfaces (services / processes /
+        # agents / cluster / scheduler) so any non-OK card shows up here.
+        _em.scan()
+        _em.scan_status_surfaces()
+        rows = _em.get_active()
+        crit = [r for r in rows if r.get('kind') == 'critical']
+        warn = [r for r in rows if r.get('kind') == 'warning']
+        return jsonify({
+            'critical': crit,
+            'warning':  warn,
+            'count_critical': len(crit),
+            'count_warning':  len(warn),
+        })
+    except Exception as exc:
+        return jsonify({'error': str(exc),
+                        'critical': [], 'warning': [],
+                        'count_critical': 0, 'count_warning': 0}), 200
+
+
+@app.route('/api/errors/dismiss', methods=['POST'])
+def api_errors_dismiss():
+    """Manual dismiss from the UI. Body: {key}."""
+    try:
+        from src.dashboard import error_monitor as _em
+        body = request.get_json(silent=True) or {}
+        key = body.get('key', '').strip()
+        if not key:
+            return jsonify({'ok': False, 'error': 'key required'}), 400
+        ok = _em.dismiss(key)
+        return jsonify({'ok': ok})
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 500
+
+
+@app.route('/api/errors/dismiss_all', methods=['POST'])
+def api_errors_dismiss_all():
+    """Wipe every active entry. Used by the banner's 'Clear All' button."""
+    try:
+        from src.dashboard import error_monitor as _em
+        n = _em.dismiss_all()
+        return jsonify({'ok': True, 'cleared': n})
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 500
+
+
+# ─── Runtime risk overrides ────────────────────────────────────────────────────
+_RUNTIME_OVERRIDES_PATH = _PROJECT_ROOT / 'data' / 'runtime_overrides.json'
+
+_RUNTIME_OVERRIDES_DEFAULT = {
+    "max_position_usdt":           None,    # None = no cap, override Kelly+GARCH+OFT
+    "scalping_disabled_symbols":   [
+        "BTC/USDT", "ETH/USDT", "DOGE/USDT", "TRX/USDT", "UNI/USDT", "SUI/USDT",
+    ],
+    "trailing_stop_pct_scalping":  None,    # None = use DEFAULT_TRAILING_STOP_PCT
+    "_updated_at":                 "",
+    "_updated_by":                 "",
+}
+
+
+def _read_runtime_overrides() -> dict:
+    """Load with defaults — never raises, never returns None."""
+    try:
+        if _RUNTIME_OVERRIDES_PATH.exists():
+            with open(_RUNTIME_OVERRIDES_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f) or {}
+        else:
+            data = {}
+    except Exception:
+        data = {}
+    out = dict(_RUNTIME_OVERRIDES_DEFAULT)
+    out.update({k: v for k, v in data.items() if k in _RUNTIME_OVERRIDES_DEFAULT})
+    return out
+
+
+def _write_runtime_overrides(payload: dict) -> dict:
+    from datetime import datetime, timezone
+    cur = _read_runtime_overrides()
+    # Whitelist-merge so unknown keys can't sneak in.
+    for k in ('max_position_usdt', 'scalping_disabled_symbols',
+              'trailing_stop_pct_scalping'):
+        if k in payload:
+            cur[k] = payload[k]
+    cur['_updated_at'] = datetime.now(timezone.utc).isoformat()
+    cur['_updated_by'] = (payload.get('_updated_by') or 'dashboard')[:80]
+    _RUNTIME_OVERRIDES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(_RUNTIME_OVERRIDES_PATH, 'w', encoding='utf-8') as f:
+        json.dump(cur, f, indent=2)
+    return cur
+
+
+@app.route('/api/risk/overrides', methods=['GET'])
+def api_risk_overrides_get():
+    return jsonify(_read_runtime_overrides())
+
+
+@app.route('/api/risk/overrides', methods=['POST'])
+@require_api_key
+def api_risk_overrides_set():
+    body = request.get_json(silent=True) or {}
+    # Soft validation
+    cap = body.get('max_position_usdt')
+    if cap is not None:
+        try:
+            cap = float(cap)
+            if cap < 0 or cap > 1_000_000:
+                return jsonify({'ok': False, 'error': 'max_position_usdt out of range'}), 400
+            body['max_position_usdt'] = cap
+        except (TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'max_position_usdt must be numeric or null'}), 400
+    syms = body.get('scalping_disabled_symbols')
+    if syms is not None:
+        if not isinstance(syms, list) or not all(isinstance(s, str) for s in syms):
+            return jsonify({'ok': False, 'error': 'scalping_disabled_symbols must be list[str]'}), 400
+        body['scalping_disabled_symbols'] = [s.strip() for s in syms if s.strip()]
+    tstop = body.get('trailing_stop_pct_scalping')
+    if tstop is not None:
+        try:
+            tstop = float(tstop)
+            if tstop <= 0 or tstop > 50:
+                return jsonify({'ok': False, 'error': 'trailing_stop_pct_scalping out of range (0-50)'}), 400
+            body['trailing_stop_pct_scalping'] = tstop
+        except (TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'trailing_stop_pct_scalping must be numeric or null'}), 400
+    saved = _write_runtime_overrides(body)
+    return jsonify({'ok': True, 'overrides': saved})
+
+
+_parquet_coverage_cache = {'ts': 0.0, 'data': None}
+
+@app.route('/api/parquet/coverage')
+def api_parquet_coverage():
+    """Coverage iterates 25+ symbols × multiple timeframes × COUNT/MIN/MAX.
+    First call is slow (~30-60 s); cache the result for 5 minutes."""
+    import time as _time, traceback as _tb
+    now = _time.time()
+    if _parquet_coverage_cache['data'] is not None and (now - _parquet_coverage_cache['ts']) < 300:
+        return jsonify(_parquet_coverage_cache['data'])
+    try:
+        from src.database.parquet_store import get_store
+        data = get_store().status()
+        _parquet_coverage_cache.update({'ts': now, 'data': data})
+        return jsonify(data)
+    except Exception as exc:
+        print('[parquet/coverage] FAILED:', exc, flush=True)
+        _tb.print_exc()
+        return jsonify({'error': str(exc), 'trace': _tb.format_exc()[-800:]}), 500
+
+
+# ────────────────────────────────────────────────────────────────────────────
+
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    # Phase 21 — start log retention + error monitor as daemon threads inside
+    # the dashboard process. Both are idempotent and silent if logs/ is empty.
+    try:
+        from src.utils.log_retention import start_retention_thread, sweep_once
+        sweep_once()  # one prune at boot
+        start_retention_thread()
+    except Exception as _e:
+        print(f"[dashboard] log_retention init failed: {_e}")
+    try:
+        from src.dashboard.error_monitor import start_monitor_thread
+        start_monitor_thread()
+    except Exception as _e:
+        print(f"[dashboard] error_monitor init failed: {_e}")
+
+    # Phase 11 — bind to a dedicated IP via env var. Defaults to 0.0.0.0
+    # so the dashboard remains reachable on every interface unless the
+    # operator explicitly binds it to e.g. 192.168.0.99.
+    _host = os.getenv('DASHBOARD_BIND_HOST', '0.0.0.0')
+    _port = int(os.getenv('DASHBOARD_BIND_PORT', '5000'))
+    print(f"[dashboard] binding {_host}:{_port}")
+    app.run(host=_host, port=_port, debug=False)

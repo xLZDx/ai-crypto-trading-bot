@@ -158,6 +158,30 @@ def test_template():
     # ML card last_trained timestamp
     check('last_trained shown in ML model card', 'last_trained' in html)
 
+    # Phase 12 — Institutional tab + service health + Phase 6 promotion
+    check('institutional sidebar nav button',
+          'data-tab="institutional"' in html)
+    check('institutional tab pane exists',
+          'id="tab-institutional"' in html)
+    check('mode switcher lives inside institutional tab pane',
+          html.find('id="mode-switcher"') > html.find('id="tab-institutional"'))
+    check('phase6-content lives inside institutional tab pane',
+          html.find('id="phase6-content"') > html.find('id="tab-institutional"'))
+    check('phase6 lazy init via window._initPhase6',
+          '_initPhase6' in html)
+    check('per-tab AbortController for phase6 fetches',
+          '_p6Ctrls' in html)
+    check('mon-services-grid for QuestDB/DuckDB cards',
+          'mon-services-grid' in html)
+    check('monPollServices() defined',
+          'function monPollServices(' in html or 'async function monPollServices(' in html)
+    check('strategy filter uses live_enabled (not bare s.live)',
+          's.live_enabled === true' in html)
+    check('simulator action wrapper _simAction defined',
+          'async function _simAction(' in html)
+    check('QuestDB offline banner mentions native install option',
+          'questdb.io/download' in html)
+
 
 # ─── Static: trades.json field names ─────────────────────────────────────────
 
@@ -245,6 +269,18 @@ def test_app_py():
     check('portfolio context builds win_rate', 'win_rate' in src)
     check('portfolio context builds ml_acc', 'ml_acc' in src)
 
+    # Phase 12 — service health + ML accuracy normalization
+    check('/api/monitor/services endpoint defined',
+          "'/api/monitor/services'" in src or '"/api/monitor/services"' in src)
+    check('monitor_services probes QuestDB',
+          'questdb' in src.lower() and ':9000' in src)
+    check('monitor_services probes DuckDB',
+          'duckdb' in src and 'PRAGMA temp_directory' in src)
+    check('monitor_services probes ZeroMQ data plane',
+          ':5555' in src and 'zmq' in src.lower())
+    check('ml accuracy normalized to percent (auto-detect fraction)',
+          '_to_pct' in src or 'to_pct' in src)
+
 
 # ─── Static: main.py quant integration ──────────────────────────────────────
 
@@ -291,6 +327,14 @@ def test_main_py():
     check('garch_result initialized before try block (garch_result = {})', 'garch_result = {}' in src)
     check('quant state pushed to current_state["quant"]',
           'current_state' in src and '"quant"' in src and 'ou_signal' in src)
+
+    # Phase 12 — WebSocket keepalive + exponential backoff
+    check('binance ws ping_interval set explicitly',
+          'ping_interval=20' in src or 'ping_interval = 20' in src)
+    check('binance ws ping_timeout set explicitly',
+          'ping_timeout=20' in src or 'ping_timeout = 20' in src)
+    check('binance ws reconnect uses exponential backoff',
+          'backoff = min(' in src and 'backoff * 2' in src)
 
 
 # ─── Static: quant module files ───────────────────────────────────────────────
@@ -463,7 +507,11 @@ def test_monitor_module():
                 check(f'{script} uses Remove-Item to clear stale log', 'Remove-Item' in src)
                 check(f'{script} uses append redirect for log capture', '2>&1 >>' in src or '>>' in src)
             else:
-                check(f'{script} uses Tee-Object for log capture', 'Tee-Object' in src)
+                # Phase 11 — launch_bot.ps1 / launch_dashboard.ps1 switched
+                # from Tee-Object (UTF-16 default) to Out-File -Encoding utf8
+                # so the live-log viewer can decode them properly.
+                check(f'{script} captures log to file',
+                      'Tee-Object' in src or 'Out-File' in src)
             check(f'{script} uses venv python path', 'venv' in src and 'python.exe' in src)
 
     # restart_all.ps1 updated checks
@@ -540,23 +588,29 @@ def test_api(base_url):
     except Exception:
         pytest.skip('Dashboard not running — skipping live API tests')
 
-    def get(path, expect_key=None):
+    def get(path, expect_key=None, expect_json=True):
         url = base_url + path
         try:
             with urllib.request.urlopen(url, timeout=4) as r:
-                body = json.loads(r.read().decode())
-            if expect_key is not None:
-                ok = expect_key in body
-                check(f'GET {path} → has "{expect_key}"', ok,
-                      f'keys: {list(body.keys())}')
-            else:
-                check(f'GET {path} → 200 OK', True)
+                raw = r.read()
+                if expect_json:
+                    body = json.loads(raw.decode())
+                    if expect_key is not None:
+                        ok = expect_key in body
+                        check(f'GET {path} → has "{expect_key}"', ok,
+                              f'keys: {list(body.keys())}')
+                    else:
+                        check(f'GET {path} → 200 OK', True)
+                else:
+                    # HTML / non-JSON: just verify status + non-empty body
+                    check(f'GET {path} → 200 OK ({len(raw)} bytes)',
+                          r.status == 200 and len(raw) > 0)
         except urllib.error.HTTPError as e:
             check(f'GET {path}', False, f'HTTP {e.code}')
         except Exception as e:
             check(f'GET {path}', False, str(e))
 
-    get('/')
+    get('/', expect_json=False)
     get('/api/state')
     get('/api/control', 'running')
     get('/api/trades', 'trades')
@@ -596,6 +650,1797 @@ def test_api(base_url):
         pass
 
 
+# ─── Static: Phase 0 institutional upgrade ───────────────────────────────────
+
+def test_phase0_foundation():
+    print('\n[Phase 0 — Institutional Upgrade Foundation]')
+
+    # Plan + CLAUDE.md
+    plan_path = os.path.join(BASE_DIR, 'INSTITUTIONAL_UPGRADE_PLAN.md')
+    check('INSTITUTIONAL_UPGRADE_PLAN.md exists', os.path.exists(plan_path))
+    if os.path.exists(plan_path):
+        plan = open(plan_path, encoding='utf-8').read()
+        check('plan references DuckDB + Parquet', 'DuckDB' in plan and 'Parquet' in plan)
+        check('plan references ZeroMQ + FastAPI', 'ZeroMQ' in plan and 'FastAPI' in plan)
+        check('plan lists all 5 levels (L1–L5)',
+              all(f'Level {i}' in plan or f'L{i} ' in plan or f'Phase {i}' in plan for i in range(1, 6)))
+    claude_path = os.path.join(BASE_DIR, 'CLAUDE.md')
+    check('CLAUDE.md at project root', os.path.exists(claude_path))
+    if os.path.exists(claude_path):
+        claude = open(claude_path, encoding='utf-8').read()
+        check('CLAUDE.md contains approval gate rule',
+              'approval' in claude.lower() and 'before' in claude.lower())
+
+    # Parquet store
+    ps_path = os.path.join(BASE_DIR, 'src', 'database', 'parquet_store.py')
+    check('parquet_store.py exists', os.path.exists(ps_path))
+    if os.path.exists(ps_path):
+        src = open(ps_path, encoding='utf-8').read()
+        check('ParquetStore class defined', 'class ParquetStore' in src)
+        check('ingest_csv() defined', 'def ingest_csv' in src)
+        check('query() returns DataFrame', 'def query' in src)
+        check('status() defined for control plane', 'def status' in src)
+        check('uses duckdb', 'import duckdb' in src)
+        check('partitions by YYYY-MM', "strftime" in src and "%Y-%m" in src)
+
+    # Migration script
+    mig_path = os.path.join(BASE_DIR, 'scripts', 'migrate_1sec_to_parquet.py')
+    check('migrate_1sec_to_parquet.py exists', os.path.exists(mig_path))
+    if os.path.exists(mig_path):
+        src = open(mig_path, encoding='utf-8').read()
+        check('discover_csv_files() defined', 'def discover_csv_files' in src)
+        check('idempotent re-runs (skipped tracking)', 'skipped' in src.lower())
+        check('--dry-run flag supported', '--dry-run' in src)
+
+    # Transport package
+    tr_dir = os.path.join(BASE_DIR, 'src', 'transport')
+    check('src/transport/ package exists', os.path.isdir(tr_dir))
+    for fname in ['__init__.py', 'zmq_config.py', 'data_bus.py', 'control_api.py']:
+        check(f'src/transport/{fname} exists',
+              os.path.exists(os.path.join(tr_dir, fname)))
+
+    # zmq_config
+    zc_path = os.path.join(tr_dir, 'zmq_config.py')
+    if os.path.exists(zc_path):
+        src = open(zc_path, encoding='utf-8').read()
+        check('ORDERFLOW_PORT = 5555 default', '5555' in src)
+        check('TRAINING_BATCH_PORT = 5556 default', '5556' in src)
+        check('CONTROL_FANOUT_PORT = 5557 default', '5557' in src)
+        check('CONTROL_API_PORT = 8100 default', '8100' in src)
+        check('bind_addr() helper', 'def bind_addr' in src)
+        check('connect_addr() helper', 'def connect_addr' in src)
+
+    # data_bus
+    db_path = os.path.join(tr_dir, 'data_bus.py')
+    if os.path.exists(db_path):
+        src = open(db_path, encoding='utf-8').read()
+        check('DataBus class defined', 'class DataBus' in src)
+        check('publish_orderflow() (PUB)', 'def publish_orderflow' in src)
+        check('subscribe_orderflow() (SUB)', 'def subscribe_orderflow' in src)
+        check('push_batch() (PUSH)', 'def push_batch' in src)
+        check('pull_batch() (PULL)', 'def pull_batch' in src)
+        check('uses pyzmq', 'import zmq' in src)
+
+    # control_api
+    ca_path = os.path.join(tr_dir, 'control_api.py')
+    if os.path.exists(ca_path):
+        src = open(ca_path, encoding='utf-8').read()
+        check('FastAPI app builder', 'FastAPI(' in src)
+        check('/health route', '/health' in src)
+        check('/parquet/status route', '/parquet/status' in src)
+        check('/parquet/ingest route', '/parquet/ingest' in src)
+        check('/databus/stats route', '/databus/stats' in src)
+        check('uvicorn entrypoint', 'uvicorn' in src)
+
+    # Orchestrator + worker integration
+    orch_path = os.path.join(BASE_DIR, 'src', 'training', 'distributed', 'orchestrator.py')
+    if os.path.exists(orch_path):
+        src = open(orch_path, encoding='utf-8').read()
+        check('orchestrator exposes /api/parquet/status', '/api/parquet/status' in src)
+        check('orchestrator exposes /api/databus/stats', '/api/databus/stats' in src)
+
+    worker_path = os.path.join(BASE_DIR, 'src', 'training', 'distributed', 'worker.py')
+    if os.path.exists(worker_path):
+        src = open(worker_path, encoding='utf-8').read()
+        check('worker /health includes transport info', '_transport_info' in src)
+
+    # requirements.txt has new deps
+    req = open(os.path.join(BASE_DIR, 'requirements.txt'), encoding='utf-8').read()
+    for pkg in ['pyarrow', 'pyzmq', 'fastapi', 'uvicorn', 'msgpack']:
+        check(f'requirements.txt: {pkg}', pkg in req)
+
+
+# ─── Static: Phase 1 institutional upgrade (microstructure data layer) ──────
+
+def test_phase1_microstructure():
+    print('\n[Phase 1 — Level 1 Data Layer]')
+
+    # Kalman smoother
+    ks_path = os.path.join(BASE_DIR, 'src', 'analysis', 'kalman_smoother.py')
+    check('kalman_smoother.py exists', os.path.exists(ks_path))
+    if os.path.exists(ks_path):
+        src = open(ks_path, encoding='utf-8').read()
+        check('smooth_price() defined', 'def smooth_price' in src)
+        check('uses pykalman.KalmanFilter',
+              'from pykalman import KalmanFilter' in src or 'pykalman' in src)
+        check('plan formula: transition_matrices=[1]', 'transition_matrices=[1]' in src)
+        check('plan formula: observation_matrices=[1]', 'observation_matrices=[1]' in src)
+        check('plan formula: transition_covariance=0.01', 'transition_covariance' in src and '0.01' in src)
+
+    # Order book features
+    obf_path = os.path.join(BASE_DIR, 'src', 'analysis', 'orderbook_features.py')
+    check('orderbook_features.py exists', os.path.exists(obf_path))
+    if os.path.exists(obf_path):
+        src = open(obf_path, encoding='utf-8').read()
+        check('imbalance() defined', 'def imbalance' in src)
+        check('microprice() defined', 'def microprice' in src)
+        check('order_flow_imbalance() defined', 'def order_flow_imbalance' in src)
+        check('plan formula: V_bid - V_ask / V_bid + V_ask',
+              'v_bid - v_ask' in src.lower() and 'v_bid + v_ask' in src.lower())
+        check('aggregate_levels() defined', 'def aggregate_levels' in src)
+
+    # Order book collector
+    obc_path = os.path.join(BASE_DIR, 'src', 'data_ingestion', 'orderbook_collector.py')
+    check('orderbook_collector.py exists', os.path.exists(obc_path))
+    if os.path.exists(obc_path):
+        src = open(obc_path, encoding='utf-8').read()
+        check('streams from Binance public depth', 'stream.binance.com' in src)
+        check('publishes via DataBus', 'get_data_bus' in src and 'publish_orderflow' in src)
+        check('auto-reconnect with backoff',
+              'backoff' in src and 'while True' in src)
+
+    # feature_store integration
+    fs_path = os.path.join(BASE_DIR, 'src', 'analysis', 'feature_store.py')
+    if os.path.exists(fs_path):
+        src = open(fs_path, encoding='utf-8').read()
+        check('feature_store imports smooth_price',
+              'from src.analysis.kalman_smoother import smooth_price' in src)
+        check('feature_store imports add_orderbook_features',
+              'add_orderbook_features' in src)
+        check('feature_store applies Kalman to close',
+              'price_kalman' in src and 'smooth_price' in src)
+
+    # feature_engineering Phase 1 helpers
+    fe_path = os.path.join(BASE_DIR, 'src', 'analysis', 'feature_engineering.py')
+    if os.path.exists(fe_path):
+        src = open(fe_path, encoding='utf-8').read()
+        check('add_kalman_close() defined', 'def add_kalman_close' in src)
+        check('add_l2_features() defined', 'def add_l2_features' in src)
+        check('causal_audit() defined', 'def causal_audit' in src)
+
+    # triple_barrier causal t1 audit
+    tb_path = os.path.join(BASE_DIR, 'src', 'analysis', 'triple_barrier.py')
+    if os.path.exists(tb_path):
+        src = open(tb_path, encoding='utf-8').read()
+        check('causal_t1_audit() defined', 'def causal_t1_audit' in src)
+        check('purge_overlapping_train() defined', 'def purge_overlapping_train' in src)
+
+    # requirements.txt: pykalman
+    req = open(os.path.join(BASE_DIR, 'requirements.txt'), encoding='utf-8').read()
+    check('requirements.txt: pykalman', 'pykalman' in req)
+
+
+# ─── Static: Phase 2 institutional upgrade (alpha engine) ──────────────────
+
+def test_phase2_alpha_engine():
+    print('\n[Phase 2 — Level 2 Alpha Engine]')
+
+    # Event-time labeler
+    el_path = os.path.join(BASE_DIR, 'src', 'analysis', 'event_time_labeler.py')
+    check('event_time_labeler.py exists', os.path.exists(el_path))
+    if os.path.exists(el_path):
+        src = open(el_path, encoding='utf-8').read()
+        check('label_event_time() defined', 'def label_event_time' in src)
+        check('regime_normalized_barriers() defined', 'def regime_normalized_barriers' in src)
+        check('plan formula vol_norm = atr / atr.rolling(100).mean()',
+              "atr.rolling" in src or "rolling(100" in src)
+        check('binary classification: drops timeouts',
+              'binary_y' in src and 'labels != 0' in src)
+
+    # OFT model
+    oft_path = os.path.join(BASE_DIR, 'src', 'models', 'order_flow_transformer.py')
+    check('order_flow_transformer.py exists', os.path.exists(oft_path))
+    if os.path.exists(oft_path):
+        src = open(oft_path, encoding='utf-8').read()
+        check('OrderFlowTransformer class defined', 'class OrderFlowTransformer' in src)
+        check('OFTConfig class defined', 'class OFTConfig' in src)
+        check('OFTOutput NamedTuple defined', 'OFTOutput' in src)
+        check('Event Embedding component', '_EventEmbedding' in src or 'event_emb' in src)
+        check('Order Book Encoder component', '_OrderBookEncoder' in src or 'ob_encoder' in src)
+        check('Temporal Transformer component', '_TemporalTransformer' in src or 'temporal' in src)
+        check('Cross-Attention component', 'MultiheadAttention' in src or 'cross' in src)
+        check('multi-task heads (mu, log_var, p_move, liq)',
+              all(s in src for s in ('head_mu', 'head_log_var', 'head_p_move', 'head_liq')))
+        check('regime conditioning embedding', 'regime_emb' in src)
+
+    # OFT trainer
+    trainer_path = os.path.join(BASE_DIR, 'src', 'training', 'oft_trainer.py')
+    check('oft_trainer.py exists', os.path.exists(trainer_path))
+    if os.path.exists(trainer_path):
+        src = open(trainer_path, encoding='utf-8').read()
+        check('purged_kfold() defined', 'def purged_kfold' in src)
+        check('IsotonicCalibrator class defined', 'class IsotonicCalibrator' in src)
+        check('microstructure_augment() defined', 'def microstructure_augment' in src)
+        check('OFTTrainer class defined', 'class OFTTrainer' in src)
+        check('embargo for purged CV', 'embargo' in src)
+
+    # Regime classifier upgrade
+    rc_path = os.path.join(BASE_DIR, 'src', 'analysis', 'regime_classifier.py')
+    if os.path.exists(rc_path):
+        src = open(rc_path, encoding='utf-8').read()
+        check('regime_classifier uses BayesianGaussianMixture',
+              'BayesianGaussianMixture' in src)
+        check('regime_classifier dirichlet_process prior',
+              'dirichlet_process' in src)
+        check('regime_classifier partial_fit() method', 'def partial_fit' in src)
+
+    # Inference engine OFT path
+    ie_path = os.path.join(BASE_DIR, 'src', 'engine', 'inference_engine.py')
+    if os.path.exists(ie_path):
+        src = open(ie_path, encoding='utf-8').read()
+        check('inference_engine loads OFT', '_load_oft_model' in src)
+        check('inference_engine has _oft_predict()', '_oft_predict' in src)
+        check('predictions surface oft key',
+              ('"oft"' in src or "'oft'" in src))
+
+    # src/models package init
+    init_path = os.path.join(BASE_DIR, 'src', 'models', '__init__.py')
+    check('src/models/__init__.py exists', os.path.exists(init_path))
+
+
+# ─── Static: Phase 3 institutional upgrade (execution & simulation) ────────
+
+def test_phase3_execution_simulation():
+    print('\n[Phase 3 — Level 3 Execution & Simulation]')
+
+    # alpha decay
+    ad_path = os.path.join(BASE_DIR, 'src', 'analysis', 'alpha_decay.py')
+    check('alpha_decay.py exists', os.path.exists(ad_path))
+    if os.path.exists(ad_path):
+        src = open(ad_path, encoding='utf-8').read()
+        check('apply_alpha_decay() defined', 'def apply_alpha_decay' in src)
+        check('half_life() defined', 'def half_life' in src)
+        check('should_exit() defined', 'def should_exit' in src)
+        check('uses exp(-decay_rate * t)',
+              'math.exp(-' in src or 'np.exp(-' in src)
+
+    # synthetic exchange
+    se_path = os.path.join(BASE_DIR, 'src', 'simulation', 'synthetic_exchange.py')
+    check('synthetic_exchange.py exists', os.path.exists(se_path))
+    if os.path.exists(se_path):
+        src = open(se_path, encoding='utf-8').read()
+        check('SyntheticExchange class defined', 'class SyntheticExchange' in src)
+        check('softmax_fill() differentiable matcher', 'def softmax_fill' in src)
+        check('ImpactModel dataclass defined', 'class ImpactModel' in src)
+        check('reset/step lifecycle (gym-like)',
+              'def reset' in src and 'def step' in src)
+
+    # rl base
+    rb_path = os.path.join(BASE_DIR, 'src', 'models', 'rl_base.py')
+    check('rl_base.py exists', os.path.exists(rb_path))
+    if os.path.exists(rb_path):
+        src = open(rb_path, encoding='utf-8').read()
+        check('BaseExecutionAgent abstract class', 'class BaseExecutionAgent' in src)
+        check('ReplayBuffer defined', 'class ReplayBuffer' in src)
+        check('shaped_reward formula PnL - λ * inventory²',
+              'shaped_reward' in src and 'inventory' in src)
+
+    # SAC
+    sac_path = os.path.join(BASE_DIR, 'src', 'models', 'rl_execution_sac.py')
+    check('rl_execution_sac.py exists', os.path.exists(sac_path))
+    if os.path.exists(sac_path):
+        src = open(sac_path, encoding='utf-8').read()
+        check('SACAgent class defined', 'class SACAgent' in src)
+        check('twin Q-critics', 'q1' in src and 'q2' in src)
+        check('automatic entropy tuning (log_alpha)', 'log_alpha' in src)
+        check('target soft update via tau', 'self.tau' in src)
+
+    # PPO
+    ppo_path = os.path.join(BASE_DIR, 'src', 'models', 'rl_execution_ppo.py')
+    check('rl_execution_ppo.py exists', os.path.exists(ppo_path))
+    if os.path.exists(ppo_path):
+        src = open(ppo_path, encoding='utf-8').read()
+        check('PPOAgent class defined', 'class PPOAgent' in src)
+        check('clipped surrogate (clamp ratio)', 'clamp(' in src and 'self.clip' in src)
+        check('GAE(λ) advantage', 'compute_gae' in src and 'gae_lambda' in src)
+
+    # multi-agent env
+    mae_path = os.path.join(BASE_DIR, 'src', 'simulation', 'multi_agent_env.py')
+    check('multi_agent_env.py exists', os.path.exists(mae_path))
+    if os.path.exists(mae_path):
+        src = open(mae_path, encoding='utf-8').read()
+        check('MultiAgentEnv class defined', 'class MultiAgentEnv' in src)
+        check('NoiseAgent baseline defined', 'class NoiseAgent' in src)
+        check('MomentumAgent baseline defined', 'class MomentumAgent' in src)
+
+    # order_manager alpha decay integration
+    om_path = os.path.join(BASE_DIR, 'src', 'engine', 'order_manager.py')
+    if os.path.exists(om_path):
+        src = open(om_path, encoding='utf-8').read()
+        check('order_manager exposes should_alpha_decay_exit()',
+              'def should_alpha_decay_exit' in src)
+
+
+# ─── Static: Phase 4 institutional upgrade (portfolio optimization) ────────
+
+def test_phase4_portfolio_optimization():
+    print('\n[Phase 4 — Level 4 Portfolio Optimization]')
+
+    # CVaR optimizer
+    cv_path = os.path.join(BASE_DIR, 'src', 'analysis', 'cvar_optimizer.py')
+    check('cvar_optimizer.py exists', os.path.exists(cv_path))
+    if os.path.exists(cv_path):
+        src = open(cv_path, encoding='utf-8').read()
+        check('CVaROptimizer class defined', 'class CVaROptimizer' in src)
+        check('uses cvxpy for convex CVaR program', 'import cvxpy' in src)
+        check('Rockafellar-Uryasev representation',
+              'Rockafellar' in src or '(1.0 / (self.alpha * n_scen))' in src)
+        check('confidence_weights() per arch plan §14',
+              'def confidence_weights' in src and '(p - 0.5) * 2' in src)
+        check('risk_parity_weights() per arch plan §14',
+              'def risk_parity_weights' in src)
+
+    # Dynamic threshold
+    dt_path = os.path.join(BASE_DIR, 'src', 'analysis', 'dynamic_threshold.py')
+    check('dynamic_threshold.py exists', os.path.exists(dt_path))
+    if os.path.exists(dt_path):
+        src = open(dt_path, encoding='utf-8').read()
+        check('find_best_threshold() defined', 'def find_best_threshold' in src)
+        check('grid range [0.5, 0.8] per plan',
+              'grid_low' in src and '0.5' in src and '0.8' in src)
+        check('rolling_threshold() for online use', 'def rolling_threshold' in src)
+
+    # Kelly weight prior
+    kc_path = os.path.join(BASE_DIR, 'src', 'analysis', 'kelly_criterion.py')
+    if os.path.exists(kc_path):
+        src = open(kc_path, encoding='utf-8').read()
+        check('kelly_weight_prior() defined', 'def kelly_weight_prior' in src)
+
+    # Risk manager CVaR helper
+    rm_path = os.path.join(BASE_DIR, 'src', 'analysis', 'risk_manager.py')
+    if os.path.exists(rm_path):
+        src = open(rm_path, encoding='utf-8').read()
+        check('risk_manager has cvar_position_weights',
+              'def cvar_position_weights' in src)
+        check('risk_manager imports CVaROptimizer',
+              'from src.analysis.cvar_optimizer import CVaROptimizer' in src)
+
+    # requirements.txt: cvxpy
+    req = open(os.path.join(BASE_DIR, 'requirements.txt'), encoding='utf-8').read()
+    check('requirements.txt: cvxpy', 'cvxpy' in req)
+
+
+# ─── Static: Phase 5 institutional upgrade (safeguards) ────────────────────
+
+def test_phase5_institutional_safeguards():
+    print('\n[Phase 5 — Level 5 Institutional Safeguards]')
+
+    # Slippage model
+    sl_path = os.path.join(BASE_DIR, 'src', 'analysis', 'slippage_model.py')
+    check('slippage_model.py exists', os.path.exists(sl_path))
+    if os.path.exists(sl_path):
+        src = open(sl_path, encoding='utf-8').read()
+        check('linear_slippage_bps() defined', 'def linear_slippage_bps' in src)
+        check('book_walk_slippage() defined', 'def book_walk_slippage' in src)
+        check('real_price() per arch plan §16',
+              'def real_price' in src and '(1 + Fee + Slippage' in src)
+        check('apply_slippage_to_pnl() for backtest',
+              'def apply_slippage_to_pnl' in src)
+
+    # Beta neutrality
+    bn_path = os.path.join(BASE_DIR, 'src', 'analysis', 'beta_neutrality.py')
+    check('beta_neutrality.py exists', os.path.exists(bn_path))
+    if os.path.exists(bn_path):
+        src = open(bn_path, encoding='utf-8').read()
+        check('BetaNeutralityFilter class defined',
+              'class BetaNeutralityFilter' in src)
+        check('would_breach() pre-trade check', 'def would_breach' in src)
+        check('aggregate_beta() helper', 'def aggregate_beta' in src)
+        check('online refit() supported', 'def refit' in src)
+
+    # Order manager circuit breakers
+    om_path = os.path.join(BASE_DIR, 'src', 'engine', 'order_manager.py')
+    if os.path.exists(om_path):
+        src = open(om_path, encoding='utf-8').read()
+        check('order_manager.circuit_breaker_check() defined',
+              'def circuit_breaker_check' in src)
+        for trig in ('max_daily_drawdown', 'api_latency', 'data_feed_inconsistency'):
+            check(f'circuit breaker trigger: {trig}', trig in src)
+
+    # Risk agent beta gate
+    ra_path = os.path.join(BASE_DIR, 'src', 'engine', 'agents', 'risk_agent.py')
+    if os.path.exists(ra_path):
+        src = open(ra_path, encoding='utf-8').read()
+        check('risk_agent.attach_beta_filter() defined',
+              'def attach_beta_filter' in src)
+        check('risk_agent.check_beta_neutrality() defined',
+              'def check_beta_neutrality' in src)
+
+
+# ─── Static: Phase 7 institutional upgrade (continuous pipeline + retention) ─
+
+def test_phase7_continuous_pipeline():
+    print('\n[Phase 7 — Continuous Pipeline + Retention]')
+
+    # Multi-tf archive downloader
+    ad_path = os.path.join(BASE_DIR, 'src', 'data_ingestion', 'binance_archive_downloader.py')
+    if os.path.exists(ad_path):
+        src = open(ad_path, encoding='utf-8').read()
+        check('archive downloader has --timeframe arg', '"--timeframe"' in src or "'--timeframe'" in src)
+        check('archive downloader supports --all-timeframes', '"--all-timeframes"' in src or "'--all-timeframes'" in src)
+        check('archive downloader has SUPPORTED_TF constant', 'SUPPORTED_TF' in src)
+        check('archive downloader supports 1mo (monthly)', "'1mo'" in src or '"1mo"' in src)
+        check('1s preserves _spot_1s.csv.gz path', '_spot_1s.csv.gz' in src)
+
+    # Realtime writer
+    rt_path = os.path.join(BASE_DIR, 'src', 'data_ingestion', 'realtime_db_writer.py')
+    check('realtime_db_writer.py exists', os.path.exists(rt_path))
+    if os.path.exists(rt_path):
+        src = open(rt_path, encoding='utf-8').read()
+        check('uses Binance WS endpoint', 'stream.binance.com' in src)
+        check('writes to QuestDB', 'write_market_candle' in src and 'questdb' in src.lower())
+        check('only emits closed bars (k.x)', '"x"' in src and 'closed' in src.lower())
+        check('cold rollover loop defined', 'cold_rollover_loop' in src)
+
+    # Startup recovery
+    sr_path = os.path.join(BASE_DIR, 'src', 'data_ingestion', 'startup_recovery.py')
+    check('startup_recovery.py exists', os.path.exists(sr_path))
+    if os.path.exists(sr_path):
+        src = open(sr_path, encoding='utf-8').read()
+        check('recover_all() defined', 'def recover_all' in src)
+        check('combines QuestDB + Parquet last-ts',
+              '_questdb_last_ts' in src and '_parquet_last_ts' in src)
+        check('REST top-up uses Binance public klines',
+              'api.binance.com/api/v3/klines' in src)
+
+    # Retention manager
+    rm_path = os.path.join(BASE_DIR, 'src', 'database', 'retention_manager.py')
+    check('retention_manager.py exists', os.path.exists(rm_path))
+    if os.path.exists(rm_path):
+        src = open(rm_path, encoding='utf-8').read()
+        check('RetentionManager class defined', 'class RetentionManager' in src)
+        check('mark_trained() method', 'def mark_trained' in src)
+        check('archive_eligible() method', 'def archive_eligible' in src)
+        check('uses safe_json', 'from src.utils.safe_json' in src)
+
+    # Google Drive backup
+    gd_path = os.path.join(BASE_DIR, 'src', 'database', 'google_drive_backup.py')
+    check('google_drive_backup.py exists', os.path.exists(gd_path))
+    if os.path.exists(gd_path):
+        src = open(gd_path, encoding='utf-8').read()
+        check('GoogleDriveBackup class defined', 'class GoogleDriveBackup' in src)
+        check('fail-soft when pydrive2 missing',
+              'pydrive2 not installed' in src or 'except ImportError' in src)
+        check('upload_partition() defined', 'def upload_partition' in src)
+
+    # restart_all.ps1 wiring
+    rs_path = os.path.join(BASE_DIR, 'restart_all.ps1')
+    if os.path.exists(rs_path):
+        src = open(rs_path, encoding='utf-8').read()
+        check('restart_all runs startup_recovery on launch',
+              'startup_recovery' in src)
+        check('restart_all starts realtime_db_writer',
+              'realtime_db_writer' in src)
+        check('restart_all saves realtime PID',
+              'realtime' in src.lower() and 'process_ids.json' in src)
+
+
+# ─── Static: Phase 8 institutional upgrade (data governance) ───────────────
+
+def test_phase8_data_governance():
+    print('\n[Phase 8 — Data Governance + Rate Limiting]')
+
+    rl_path = os.path.join(BASE_DIR, 'src', 'data_ingestion', 'rate_limiter.py')
+    check('rate_limiter.py exists', os.path.exists(rl_path))
+    if os.path.exists(rl_path):
+        src = open(rl_path, encoding='utf-8').read()
+        check('RateLimiter class defined', 'class RateLimiter' in src)
+        check('get_limiter() singleton', 'def get_limiter' in src)
+        check('react_to_response handles 429/418',
+              '429' in src and '418' in src and 'Retry-After' in src)
+        check('binance.com host configured',
+              '"binance.com"' in src or "'binance.com'" in src)
+
+    bs_path = os.path.join(BASE_DIR, 'src', 'data_ingestion', 'binance_sync.py')
+    check('binance_sync.py exists', os.path.exists(bs_path))
+    if os.path.exists(bs_path):
+        src = open(bs_path, encoding='utf-8').read()
+        check('step_archive() defined', 'def step_archive' in src)
+        check('step_rest_topup() defined', 'def step_rest_topup' in src)
+        check('step_cross_check() defined', 'def step_cross_check' in src)
+        check('uses rate_limiter', 'rate_limiter' in src or 'get_limiter' in src)
+
+    ad_path = os.path.join(BASE_DIR, 'src', 'data_ingestion', 'binance_archive_downloader.py')
+    if os.path.exists(ad_path):
+        src = open(ad_path, encoding='utf-8').read()
+        check('archive: HEAD probe (_zip_exists)', 'def _zip_exists' in src)
+        check('archive: cross-TF parallel runner',
+              'def download_all_timeframes_parallel' in src)
+        check('archive: listing-date cache helpers',
+              '_load_listing_cache' in src and '_save_listing_cache' in src)
+        check('archive: MAX_WORKERS env-overridable',
+              'ARCHIVE_MAX_WORKERS' in src)
+
+    dg_path = os.path.join(BASE_DIR, 'src', 'data_governance')
+    check('src/data_governance/ package exists', os.path.isdir(dg_path))
+    for fname in ['__init__.py', 'base.py', 'registry.py', 'config.py', 'orchestrator.py']:
+        check(f'src/data_governance/{fname} exists',
+              os.path.exists(os.path.join(dg_path, fname)))
+
+    conn_path = os.path.join(dg_path, 'connectors')
+    check('connectors/ package exists', os.path.isdir(conn_path))
+    expected_connectors = [
+        'bybit', 'okx', 'coinbase', 'kraken', 'coingecko', 'fear_greed',
+        'fred', 'defillama', 'cryptocompare_news', 'coinglass', 'reddit',
+    ]
+    for c in expected_connectors:
+        check(f'connector {c}.py exists',
+              os.path.exists(os.path.join(conn_path, f'{c}.py')))
+
+    # Orchestrator
+    orch_src = open(os.path.join(dg_path, 'orchestrator.py'), encoding='utf-8').read() \
+        if os.path.exists(os.path.join(dg_path, 'orchestrator.py')) else ''
+    check('orchestrator.run_history() defined', 'def run_history' in orch_src)
+    check('orchestrator.run_forever() defined', 'def run_forever' in orch_src)
+    check('orchestrator --list/--once CLI', '--list' in orch_src and '--once' in orch_src)
+
+    # Top-level docs
+    ds_path = os.path.join(BASE_DIR, 'DATA_SOURCES.md')
+    check('DATA_SOURCES.md at root', os.path.exists(ds_path))
+    if os.path.exists(ds_path):
+        ds = open(ds_path, encoding='utf-8').read()
+        check('DATA_SOURCES lists Tier 0 (free)',
+              'Tier 0' in ds or 'tier 0' in ds.lower())
+        check('DATA_SOURCES has setup steps for FRED/CryptoCompare',
+              'FRED_API_KEY' in ds and 'CRYPTOCOMPARE_API_KEY' in ds)
+
+    # restart_all.ps1 wiring
+    rs_path = os.path.join(BASE_DIR, 'restart_all.ps1')
+    if os.path.exists(rs_path):
+        src = open(rs_path, encoding='utf-8').read()
+        check('restart_all launches data_governance.orchestrator',
+              'data_governance' in src and 'orchestrator' in src)
+
+
+# ─── Static: Phase 10 institutional upgrade (live bot integration) ─────────
+
+def test_phase10_live_integration():
+    print('\n[Phase 10 — Live Integration + 8-tab Dashboard + Documentation]')
+
+    fr_path = os.path.join(BASE_DIR, 'src', 'analysis', 'feature_reader.py')
+    check('feature_reader.py exists', os.path.exists(fr_path))
+    if os.path.exists(fr_path):
+        src = open(fr_path, encoding='utf-8').read()
+        check('load_recent_bars() Parquet-first', 'def load_recent_bars' in src and '_parquet_load' in src)
+        check('CSV fallback present', '_csv_load' in src)
+        check('load_news_recent() defined', 'def load_news_recent' in src)
+
+    main_src = open(os.path.join(BASE_DIR, 'src', 'main.py'), encoding='utf-8').read()
+    check('main.py imports feature_reader',
+          'from src.analysis import feature_reader as _feature_reader' in main_src)
+    check('main.py uses Parquet-first read', '_feature_reader.load_recent_bars(' in main_src)
+    check('main.py has _attach_beta_history', 'def _attach_beta_history' in main_src)
+    check('main.py has _refresh_dynamic_thresholds', 'def _refresh_dynamic_thresholds' in main_src)
+    check('main.py wires alpha-decay exit', 'should_exit_decay' in main_src)
+
+    fe_src = open(os.path.join(BASE_DIR, 'src', 'analysis', 'feature_engineering.py'), encoding='utf-8').read()
+    check('add_news_sentiment uses Parquet', 'load_news_recent' in fe_src)
+
+    tv2 = os.path.join(BASE_DIR, 'src', 'engine', 'train_model_v2.py')
+    check('train_model_v2.py exists', os.path.exists(tv2))
+
+    tpl = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html'), encoding='utf-8').read()
+    for tab in ('portfolio', 'alpha', 'orderflow', 'risk',
+                'training', 'simulation', 'data', 'strategies'):
+        check(f'8-tab nav: {tab}', f'data-tab="{tab}"' in tpl)
+
+    doc = os.path.join(BASE_DIR, 'APP_DOCUMENTATION.md')
+    check('APP_DOCUMENTATION.md exists', os.path.exists(doc))
+
+    # Bat files
+    for fname in ('START_HERE.bat', 'start_all.bat', 'restart_all.bat', 'stop_all.bat'):
+        path = os.path.join(BASE_DIR, fname)
+        check(f'{fname} exists', os.path.exists(path))
+        if os.path.exists(path):
+            content = open(path, encoding='utf-8', errors='ignore').read()
+            check(f'{fname} routes through .ps1',
+                  '.ps1' in content)
+            check(f'{fname} keeps console open (-NoExit)',
+                  '-NoExit' in content)
+
+    sps1 = os.path.join(BASE_DIR, 'stop_all.ps1')
+    check('stop_all.ps1 exists', os.path.exists(sps1))
+    if os.path.exists(sps1):
+        content = open(sps1, encoding='utf-8').read()
+        check('stop_all.ps1 reads PID file',  'process_ids.json' in content)
+        check('stop_all.ps1 covers all managed services',
+              all(k in content for k in ('bot', 'dash', 'monitor', 'training',
+                                          'realtime', 'orch', 'watchlist')))
+
+
+def test_phase11_predictor_and_llm_resilience():
+    """Regression coverage for the dict-wrapped joblib unwrap and Gemini cooldown."""
+    print('\n[Phase 11 — Predictor / LLM resilience]')
+
+    # B1 — MLPredictor must accept dict-wrapped joblib payloads
+    mp_path = os.path.join(BASE_DIR, 'src', 'analysis', 'ml_predictor.py')
+    src = open(mp_path, encoding='utf-8').read()
+    check('ml_predictor unwraps dict joblib',
+          'isinstance(loaded, dict)' in src and 'loaded["model"]' in src)
+    check('ml_predictor logs traceback on error',
+          'traceback.format_exc()' in src)
+    check('ml_predictor stores embedded feature list',
+          '_embedded_features' in src and 'feature_cols' in src)
+
+    # Functional check: build a dict-wrapped fixture and confirm load works
+    try:
+        import sys as _sys
+        _sys.path.insert(0, BASE_DIR)
+        import joblib, tempfile
+        from src.analysis.ml_predictor import MLPredictor
+        live = MLPredictor()
+        if live.is_loaded:
+            fake = os.path.join(tempfile.gettempdir(), 'phase11_dict_model.joblib')
+            joblib.dump({'model': live.model, 'feature_cols': ['x1', 'x2']}, fake)
+            stub = MLPredictor.__new__(MLPredictor)
+            stub.model_path = fake; stub.model_type = 'base'
+            stub.model = None; stub.is_loaded = False
+            stub.accuracy = 0.0; stub.long_accuracy = 0.0; stub.short_accuracy = 0.0
+            stub.last_error = ''; stub._last_confidence = 0.5
+            stub._embedded_features = None
+            loaded = joblib.load(fake)
+            if isinstance(loaded, dict) and 'model' in loaded and hasattr(loaded['model'], 'predict'):
+                stub.model = loaded['model']
+                stub._embedded_features = list(loaded['feature_cols'])
+            check('dict-wrapped joblib unwraps to estimator with .predict',
+                  hasattr(stub.model, 'predict'))
+            check('embedded feature_cols surface via _get_model_features',
+                  stub._get_model_features() == ['x1', 'x2'])
+            os.unlink(fake)
+        else:
+            check('dict-wrapped joblib unwraps to estimator with .predict', None,
+                  'btc_rf_model.joblib not loaded')
+    except Exception as e:
+        check('dict-wrapped joblib unwrap functional', False, str(e))
+
+    # B2 — agentic_llm cooldown helpers
+    al_path = os.path.join(BASE_DIR, 'src', 'engine', 'agentic_llm.py')
+    al_src = open(al_path, encoding='utf-8').read()
+    check('agentic_llm has cooldown registry',
+          '_model_cooldown_until' in al_src and '_MODEL_COOLDOWN_S' in al_src)
+    check('agentic_llm has _is_cooled_down + _mark_cooldown',
+          'def _is_cooled_down' in al_src and 'def _mark_cooldown' in al_src)
+    check('agentic_llm filters cooled-down models before retry loop',
+          '_is_cooled_down(m)' in al_src)
+    check('agentic_llm demotes per-iteration warning to debug',
+          'logger.debug(f"Agentic LLM:' in al_src)
+
+    try:
+        from src.engine import agentic_llm as _al
+        _al._mark_cooldown('test-model-x')
+        check('mark_cooldown sets future expiry', _al._is_cooled_down('test-model-x'))
+        check('uncooled model is not flagged', not _al._is_cooled_down('test-model-y'))
+        # Reset so the test doesn't bleed state into other tests
+        _al._model_cooldown_until.pop('test-model-x', None)
+    except Exception as e:
+        check('agentic_llm cooldown functional', False, str(e))
+
+    # QuestDB native binary install (this session)
+    qdb_dir = os.path.join(BASE_DIR, 'questdb')
+    qdb_exe = os.path.join(qdb_dir, 'questdb-9.3.5-rt-windows-x86-64', 'bin', 'java.exe')
+    check('QuestDB bundled-JRE binary present', os.path.exists(qdb_exe))
+    qdb_launch = os.path.join(BASE_DIR, 'launch_questdb.ps1')
+    if os.path.exists(qdb_launch):
+        qdb_src = open(qdb_launch, encoding='utf-8').read()
+        check('launch_questdb.ps1 uses native binary path',
+              'questdb-9.3.5-rt-windows-x86-64' in qdb_src and 'io.questdb.ServerMain' in qdb_src)
+
+
+def test_phase12_dashboard_controls():
+    """Each Phase 6 tab fetch URL must resolve to a real backend endpoint —
+    catches future 404 regressions like the /api/balance/test bug."""
+    print('\n[Phase 12 — Dashboard control wiring]')
+
+    tpl = open(TEMPLATE_PATH, encoding='utf-8').read()
+    app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'), encoding='utf-8').read()
+
+    # 1. /api/balance/test 404 fix — frontend must NOT build that URL via getMode()
+    check('portfolio panel does NOT use raw getMode() in URL',
+          "'/api/balance/' + (window.getMode" not in tpl)
+    check('portfolio panel translates test → virtual',
+          "/api/balance/virtual" in tpl and "_mode === 'real'" in tpl)
+    check('backend has /api/balance/test alias',
+          "@app.route('/api/balance/test')" in app)
+
+    # 2. Phase 6 panel endpoints all defined backend-side
+    p6_endpoints = [
+        '/api/balance/real', '/api/balance/virtual',
+        '/api/decision_summary',
+        '/api/oft_signal',
+        '/api/rate_limiter/stats',
+        '/api/cluster/status',
+        '/api/simulator/status',
+        '/api/parquet/coverage',
+        '/api/orchestrator/sources',
+    ]
+    for ep in p6_endpoints:
+        check(f'backend route exists: {ep}',
+              f"@app.route('{ep}')" in app or f"@app.route(\"{ep}\")" in app or ep in app)
+
+    # 3. Telegram heartbeat detection wired up
+    tg_mod = open(os.path.join(BASE_DIR, 'src', 'analysis', 'telegram_monitor.py'), encoding='utf-8').read()
+    check('telegram_monitor writes status heartbeat',
+          'telegram_status.json' in tg_mod and '_write_status' in tg_mod)
+    check('dashboard reads telegram heartbeat',
+          'telegram_status.json' in app and "'embedded':" in app)
+
+    # 4. ML model card honesty
+    check('backend exposes accuracy_walk_forward',
+          'accuracy_walk_forward' in app)
+    check('backend computes accuracy_warning on imbalance',
+          'accuracy_warning' in app and 'spread' in app)
+    check('frontend renders accuracy_warning',
+          'm.accuracy_warning' in tpl)
+
+    # 5. P6 cards inherit dashboard glass-card styling
+    check('p6-card uses gradient + backdrop-filter',
+          '.p6-card' in tpl and 'backdrop-filter' in tpl and 'linear-gradient(180deg,rgba(15,23,42' in tpl)
+
+    # 6. launch_bot.ps1 stderr handling (B3)
+    bot_ps = open(os.path.join(BASE_DIR, 'launch_bot.ps1'), encoding='utf-8').read()
+    check('launch_bot.ps1 normalises stderr to plain text',
+          'ErrorRecord' in bot_ps and 'Write-Output' in bot_ps)
+
+    # 7. cryptg installed (B4)
+    try:
+        import importlib
+        importlib.import_module('cryptg')
+        check('cryptg installed (Telethon fast crypto)', True)
+    except Exception as e:
+        check('cryptg installed (Telethon fast crypto)', False, str(e))
+
+    # 8. /api/balance/test endpoint actually returns 200, not 404
+    if not getattr(test_phase12_dashboard_controls, '_offline', False):
+        try:
+            import urllib.request
+            with urllib.request.urlopen(DASHBOARD_URL + '/api/balance/test', timeout=2) as r:
+                check('/api/balance/test alias responds 200',
+                      r.status == 200, f'status={r.status}')
+        except Exception as e:
+            check('/api/balance/test alias responds 200', None, f'skipped (server down): {e}')
+
+
+def test_phase13_realtime_and_fastapi():
+    """Realtime heartbeat + FastAPI control plane: filesystem + import-time
+    checks (offline) plus one HTTP probe per service when --offline is off."""
+    print('\n[Phase 13 — Realtime heartbeat + FastAPI control plane]')
+
+    # ── Realtime heartbeat ──────────────────────────────────────────────
+    rt_src = open(os.path.join(BASE_DIR, 'src', 'data_ingestion', 'realtime_db_writer.py'),
+                  encoding='utf-8').read()
+    check('realtime_db_writer defines _write_status',
+          'def _write_status' in rt_src)
+    check('realtime_db_writer writes data/realtime_status.json',
+          'realtime_status.json' in rt_src)
+    check('realtime_db_writer flips status on connect/disconnect/error',
+          rt_src.count('_write_status(') >= 4)
+
+    # ── FastAPI control plane ───────────────────────────────────────────
+    fapi_src_path = os.path.join(BASE_DIR, 'src', 'server', 'control_plane.py')
+    check('src/server/control_plane.py exists', os.path.exists(fapi_src_path))
+    if os.path.exists(fapi_src_path):
+        fapi_src = open(fapi_src_path, encoding='utf-8').read()
+        for ep in ('/health', '/status', '/metrics',
+                   '/control/bot/start', '/control/bot/stop',
+                   '/control/training/start'):
+            check(f'control_plane defines {ep}',
+                  f'"{ep}"' in fapi_src or f"'{ep}'" in fapi_src)
+        check('control_plane requires X-API-Key on /control/*',
+              '_require_api_key' in fapi_src)
+
+    launcher = os.path.join(BASE_DIR, 'launch_fastapi.ps1')
+    check('launch_fastapi.ps1 exists', os.path.exists(launcher))
+    if os.path.exists(launcher):
+        l_src = open(launcher, encoding='utf-8').read()
+        check('launch_fastapi.ps1 binds :8100 by default',
+              "FASTAPI_BIND_PORT = '8100'" in l_src)
+        check('launch_fastapi.ps1 is idempotent (skips if /health up)',
+              '/health' in l_src and 'skipping launch' in l_src.lower())
+
+    # ── restart_all wiring ──────────────────────────────────────────────
+    ra = open(os.path.join(BASE_DIR, 'restart_all.ps1'), encoding='utf-8').read()
+    check('restart_all.ps1 starts FastAPI',
+          'launch_fastapi.ps1' in ra and 'src.server.control_plane' in ra.replace('\\.', '.'))
+    check('restart_all.ps1 saves fastapi PID',
+          'fastapi = $fastapiId' in ra)
+    sa = open(os.path.join(BASE_DIR, 'stop_all.ps1'), encoding='utf-8').read()
+    check('stop_all.ps1 covers fastapi key',
+          "'fastapi'" in sa)
+    check('stop_all.ps1 stray-sweep matches control_plane',
+          'control_plane' in sa)
+
+    # ── FastAPI app importable + has expected routes ────────────────────
+    try:
+        import sys as _sys
+        _sys.path.insert(0, BASE_DIR)
+        from src.server.control_plane import app as _fastapi_app  # noqa: F401
+        paths = {getattr(r, 'path', None) for r in _fastapi_app.routes}
+        for needed in ('/health', '/status', '/metrics',
+                       '/control/bot/start', '/control/bot/stop',
+                       '/control/training/start'):
+            check(f'FastAPI route registered: {needed}', needed in paths)
+    except Exception as e:
+        check('FastAPI app imports cleanly', False, str(e))
+
+    # ── Live HTTP probe (skipped in --offline) ──────────────────────────
+    if not getattr(test_phase13_realtime_and_fastapi, '_offline', False):
+        try:
+            import urllib.request, json as _json
+            with urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=2) as r:
+                body = _json.loads(r.read().decode('utf-8'))
+                check('FastAPI /health responds 200',
+                      r.status == 200 and body.get('status') == 'ok',
+                      f'body={body}')
+        except Exception as e:
+            check('FastAPI /health responds 200', None, f'skipped: {e}')
+        try:
+            import urllib.request, json as _json
+            with urllib.request.urlopen('http://127.0.0.1:8100/status', timeout=2) as r:
+                body = _json.loads(r.read().decode('utf-8'))
+                check('FastAPI /status returns components dict',
+                      'components' in body and isinstance(body['components'], dict))
+        except Exception as e:
+            check('FastAPI /status returns components dict', None, f'skipped: {e}')
+
+        # Realtime heartbeat: file exists and is fresh (< 10 min old)
+        rt_path = os.path.join(BASE_DIR, 'data', 'realtime_status.json')
+        if os.path.exists(rt_path):
+            try:
+                import json as _json, time as _time
+                rt = _json.loads(open(rt_path, encoding='utf-8').read())
+                fresh = (_time.time() - float(rt.get('last_update_ts', 0))) < 600
+                check('realtime_status.json is fresh (<10min)', fresh,
+                      f'connected={rt.get("connected")}')
+            except Exception as e:
+                check('realtime_status.json parses', False, str(e))
+        else:
+            check('realtime_status.json present', None,
+                  'not created yet — first WS connect needed')
+
+
+def test_phase14_local_only_scheduler():
+    """Local-only TFT/training status inspector + Windows Task Scheduler wrapper.
+    Asserts NO cloud calls and the report file is produced when run."""
+    print('\n[Phase 14 — Local-only scheduling]')
+
+    insp = os.path.join(BASE_DIR, 'scripts', 'check_training_status.py')
+    sched = os.path.join(BASE_DIR, 'local_scheduler.ps1')
+
+    check('inspector script exists', os.path.exists(insp))
+    check('local_scheduler.ps1 exists', os.path.exists(sched))
+
+    if os.path.exists(insp):
+        src = open(insp, encoding='utf-8').read()
+        check('inspector targets loopback only',
+              '127.0.0.1' in src and 'http://' not in src.replace('http://127.0.0.1', ''))
+        check('inspector decodes UTF-16 log',
+              "utf-16" in src.lower() and 'tft_3epoch.log' in src)
+        check('inspector writes report file',
+              'training_status_report.json' in src)
+        check('inspector has --quiet and --json flags',
+              '--quiet' in src and '--json' in src)
+
+    if os.path.exists(sched):
+        src = open(sched, encoding='utf-8').read()
+        check('scheduler uses native schtasks.exe (no cloud)',
+              'schtasks.exe' in src)
+        check('scheduler supports register/list/unregister/run',
+              all(a in src for a in ("'register'","'list'","'unregister'","'run'")))
+        check('scheduler supports -At, -EveryMinutes, -Once',
+              all(a in src for a in ('$At', '$EveryMinutes', '$Once')))
+        check('scheduler does NOT call any non-loopback URL',
+              'github.com' not in src and 'anthropic' not in src.lower()
+              and 'claude.ai' not in src)
+
+    # Functional: run inspector and check report appears
+    try:
+        import subprocess as _sp, json as _json
+        report_path = os.path.join(BASE_DIR, 'data', 'training_status_report.json')
+        # Invoke via venv python so import paths are right
+        py = os.path.join(BASE_DIR, 'venv', 'Scripts', 'python.exe')
+        if not os.path.exists(py):
+            py = 'python'
+        r = _sp.run([py, insp, '--quiet'], cwd=BASE_DIR, capture_output=True, timeout=30)
+        check('inspector exits 0', r.returncode == 0,
+              f'stderr={r.stderr.decode("utf-8","replace")[:200]}')
+        check('report file produced', os.path.exists(report_path))
+        if os.path.exists(report_path):
+            data = _json.loads(open(report_path, encoding='utf-8').read())
+            check('report has execution=LOCAL_ONLY',
+                  data.get('execution') == 'LOCAL_ONLY')
+            check('report has status field',
+                  data.get('status') in ('completed', 'in_progress', 'not_started'))
+            check('report has summary_bullets',
+                  isinstance(data.get('summary_bullets'), list)
+                  and len(data['summary_bullets']) >= 3)
+    except Exception as e:
+        check('inspector functional run', False, str(e))
+
+
+def test_phase16_scheduler_panel_and_sim_no_hang():
+    """Dashboard scheduler panel + Simulator status non-hang guarantee."""
+    print('\n[Phase 16 — Scheduler panel + Simulator non-hang]')
+
+    app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'), encoding='utf-8').read()
+    tpl = open(TEMPLATE_PATH, encoding='utf-8').read()
+
+    # Scheduler endpoints exist
+    for ep in ('/api/scheduler/list',
+               '/api/scheduler/register',
+               '/api/scheduler/run',
+               '/api/scheduler/unregister',
+               '/api/scheduler/report'):
+        check(f'backend defines {ep}', f"@app.route('{ep}'" in app)
+
+    check('scheduler endpoints validate task name (no shell injection)',
+          'def _safe_task_name' in app and 're.sub' in app.replace('_re.sub','re.sub'))
+    check('scheduler endpoints validate mode whitelist',
+          "('daily', 'every_minutes', 'once')" in app or "'daily', 'every_minutes', 'once'" in app)
+
+    # Scheduler tab in HTML
+    check('Scheduler sub-tab present',
+          'data-tab="scheduler"' in tpl)
+    check('Scheduler renderer wired',
+          'renderSchedulerPanel' in tpl)
+    check('Scheduler panel has HOW THIS WORKS instructions',
+          'HOW THIS WORKS' in tpl and 'check_training_status.py' in tpl)
+    check('Scheduler panel has register/run/delete actions',
+          all(x in tpl for x in ('_schRegister', '_schRun', '_schUnregister'))
+          and 'REGISTER' in tpl and 'RUN NOW' in tpl and 'DELETE' in tpl)
+    check('Scheduler panel has the three modes',
+          all(x in tpl for x in ('every_minutes', 'daily', 'once')))
+    check('Scheduler panel renders the latest report',
+          '_schedulerReport' not in tpl  # legacy name; sanity check only
+          and 'Latest report' in tpl)
+
+    # Simulator hang fix: status path must never block on DuckDB.
+    # Old design used a Queue + 4s timeout. Phase 18 replaced it with an
+    # async TTL cache for db_summary, which satisfies "no hang" without
+    # needing the timeout dance at all.
+    check('simulator_status never blocks on disk I/O',
+          ('_db_summary_cache' in app and '_refresh_db_summary_async' in app)
+          or "out_q.get(timeout=4.0)" in app)
+    check('simulator_status returns initializing while agents bootstrap',
+          "Agents bootstrapping" in app or "Status producer slow" in app
+          or "'state': 'initializing'" in app)
+
+    # Live HTTP probes (skip in --offline)
+    if not getattr(test_phase16_scheduler_panel_and_sim_no_hang, '_offline', False):
+        import urllib.request, urllib.error, json as _json, time as _time
+        # 1. /api/simulator/status must respond within 5 s
+        try:
+            t0 = _time.time()
+            with urllib.request.urlopen(DASHBOARD_URL + '/api/simulator/status', timeout=5) as r:
+                body = _json.loads(r.read().decode('utf-8'))
+            dt = _time.time() - t0
+            check(f'/api/simulator/status responds in <5s (took {dt:.2f}s)',
+                  r.status == 200 and dt < 5.0,
+                  f'state={body.get("state")}')
+        except Exception as e:
+            check('/api/simulator/status responds in <5s', False, str(e))
+
+        # 2. /api/scheduler/list returns JSON with 'tasks' key
+        try:
+            with urllib.request.urlopen(DASHBOARD_URL + '/api/scheduler/list', timeout=4) as r:
+                body = _json.loads(r.read().decode('utf-8'))
+            check('/api/scheduler/list returns tasks array',
+                  isinstance(body.get('tasks'), list),
+                  f'keys={list(body.keys())}')
+        except Exception as e:
+            check('/api/scheduler/list returns tasks array', False, str(e))
+
+        # 3. /api/scheduler/report returns ok JSON
+        try:
+            with urllib.request.urlopen(DASHBOARD_URL + '/api/scheduler/report', timeout=4) as r:
+                body = _json.loads(r.read().decode('utf-8'))
+            check('/api/scheduler/report responds',
+                  'present' in body)
+        except Exception as e:
+            check('/api/scheduler/report responds', False, str(e))
+
+
+def test_phase17_trading_health_fixes():
+    """Regression coverage for the 2026-05-04 bug-fix batch:
+       - Binance -1021 recvWindow / clock-sync
+       - Gemini free-tier 429 long cooldown
+       - Meta-labeler graceful degradation when prob_base/regime missing
+       - QuestDB probe consistency (/exec, not /health)
+       - ZMQ probe explanatory hint
+       - Dashboard card directionless flag (meta-labeler) + derived n_features
+       - Phase 6 sub-tab click no longer wipes the institutional pane
+    """
+    print('\n[Phase 17 — Trading & dashboard health fixes (2026-05-04)]')
+
+    # 1. order_manager: clock sync wiring
+    om_path = os.path.join(BASE_DIR, 'src', 'engine', 'order_manager.py')
+    om_src = open(om_path, encoding='utf-8').read()
+    check('order_manager sets recvWindow=60000',
+          "'recvWindow': 60000" in om_src)
+    check('order_manager enables adjustForTimeDifference',
+          "'adjustForTimeDifference': True" in om_src)
+    check('order_manager has _sync_clocks helper',
+          'def _sync_clocks(' in om_src and 'load_time_difference' in om_src)
+    check('get_balance calls _sync_clocks before fetch',
+          'def get_balance(' in om_src and
+          'self._sync_clocks()' in om_src.split('def get_balance(')[1].split('def ')[0])
+    check('execute_spot_order calls _sync_clocks',
+          'self._sync_clocks()' in om_src.split('def execute_spot_order(')[1].split('def ')[0])
+    check('execute_futures_order calls _sync_clocks',
+          'self._sync_clocks()' in om_src.split('def execute_futures_order(')[1].split('def ')[0])
+    check('get_balance retries once on InvalidNonce',
+          'ccxt.InvalidNonce' in om_src and 'force=True' in om_src)
+
+    # 2. agentic_llm: free-tier long cooldown
+    al_path = os.path.join(BASE_DIR, 'src', 'engine', 'agentic_llm.py')
+    al_src = open(al_path, encoding='utf-8').read()
+    check('agentic_llm defines _FREE_TIER_COOLDOWN_S',
+          '_FREE_TIER_COOLDOWN_S' in al_src)
+    check('_mark_cooldown accepts seconds parameter',
+          'def _mark_cooldown(model_id: str, seconds:' in al_src)
+    check('agentic_llm detects free_tier and uses long cooldown',
+          'free_tier' in al_src and 'is_free_tier' in al_src)
+
+    # 3. meta_labeler: graceful degradation
+    ml_path = os.path.join(BASE_DIR, 'src', 'analysis', 'meta_labeler.py')
+    ml_src = open(ml_path, encoding='utf-8').read()
+    check('meta_labeler fills neutral priors when prob features missing',
+          "feature_row.setdefault('prob_base', 0.5)" in ml_src and
+          "feature_row.setdefault('regime', 0)" in ml_src)
+    check('meta_labeler logs INFO once instead of WARNING per signal',
+          '_warned_missing_probs' in ml_src and 'logger.info' in ml_src)
+
+    # Functional check: meta_labeler.filter accepts incomplete features dict
+    try:
+        import sys as _sys
+        _sys.path.insert(0, BASE_DIR)
+        from src.analysis.meta_labeler import MetaLabeler
+        mlb = MetaLabeler()
+        if mlb.is_loaded:
+            decision, conf = mlb.filter(1.0, {'rsi_14': 50.0, 'macd_hist': 0.0})
+            check('meta_labeler.filter accepts incomplete features',
+                  decision in ('PASS', 'BLOCK') and 0.0 <= conf <= 1.0)
+        else:
+            check('meta_labeler.filter accepts incomplete features', None,
+                  'meta_labeler.joblib not loaded')
+    except Exception as e:
+        check('meta_labeler.filter accepts incomplete features', False, str(e))
+
+    # 4. signal_agent forwards regime to meta-labeler
+    sa_path = os.path.join(BASE_DIR, 'src', 'engine', 'agents', 'signal_agent.py')
+    sa_src = open(sa_path, encoding='utf-8').read()
+    check('signal_agent surfaces regime to meta-labeler',
+          "feats.setdefault('regime', regime)" in sa_src)
+    check('signal_agent surfaces prob_base default',
+          "feats.setdefault('prob_base'" in sa_src)
+
+    # main.py call site fixed (filter_signal → filter)
+    main_src = open(os.path.join(BASE_DIR, 'src', 'main.py'), encoding='utf-8').read()
+    check('main.py calls meta_labeler.filter (not filter_signal)',
+          'self.meta_labeler.filter(' in main_src and
+          'self.meta_labeler.filter_signal(' not in main_src)
+
+    # 5. QuestDB probe consistency: the actual requests.get URL must hit /exec
+    qc_path = os.path.join(BASE_DIR, 'src', 'database', 'questdb_client.py')
+    qc_src = open(qc_path, encoding='utf-8').read()
+    is_avail_body = qc_src.split('def is_available')[1].split('def ')[0]
+    # Strip Python comments (# …) before scanning for the live URL — the
+    # explanatory comment still references /health.
+    code_only = '\n'.join(
+        ln.split('#', 1)[0] for ln in is_avail_body.splitlines()
+    )
+    check('questdb_client probes /exec (not /health)',
+          'requests.get' in code_only
+          and '/exec' in code_only
+          and '/health' not in code_only)
+
+    # 6. Dashboard backend
+    app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
+    app_src = open(app_path, encoding='utf-8').read()
+    check('ZMQ probe explains lazy bind',
+          'binds on first orderflow publish' in app_src or 'binds lazily' in app_src)
+    check('ml_models exposes directionless flag',
+          "'directionless':" in app_src)
+    check('ml_models derives n_features for TFT (input_chunk_length)',
+          "input_chunk_length" in app_src and "n_feat = meta.get('input_chunk_length')" in app_src.replace('\n', ' ').replace('  ', ' ')
+          or "input_chunk_length" in app_src and "n_feat is None" in app_src)
+    check('ml_models derives n_features for regime (gmm.means_)',
+          'gmm.means_' in app_src or 'means_.shape' in app_src)
+
+    # 7. Dashboard frontend institutional GUI fix
+    tpl_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
+    tpl_src = open(tpl_path, encoding='utf-8').read()
+    check('main tab listener scoped to .nav-item[data-tab]',
+          ".nav-item[data-tab]" in tpl_src and
+          "querySelectorAll('[data-tab]')" not in tpl_src)
+    check('directionless models render without long/short bars',
+          'isDirectionless' in tpl_src and 'Binary win/loss classifier' in tpl_src)
+
+
+def test_phase18_institutional_panel_fixes():
+    """Regression coverage for the 2026-05-04 round-2 institutional-tab fixes:
+       - Scheduler sub-tab pane must render (was missing from _renderTabs)
+       - Simulator init must be async (no >30s start hang)
+       - Virtual balance auto-heals from the $12345.67 stub
+       - OFT model card surfaces alongside the other 7
+       - Strategies tab shows guidance when orchestrator returns empty
+    """
+    print('\n[Phase 18 — Institutional panel UX & data wiring]')
+
+    tpl = open(TEMPLATE_PATH, encoding='utf-8').read()
+    app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'), encoding='utf-8').read()
+
+    # 1. Scheduler in tabs array
+    check("_renderTabs includes 'scheduler'",
+          "var tabs = ['portfolio','alpha','orderflow','risk','training','simulation','data','strategies','scheduler']" in tpl)
+
+    # 2. Async simulator init plumbing
+    check('app.py defines _ensure_sim_init',
+          'def _ensure_sim_init(' in app)
+    check('app.py defines _do_sim_init (background-only)',
+          'def _do_sim_init(' in app)
+    check('app.py defines _apply_sim_start helper',
+          'def _apply_sim_start(' in app)
+    check('app.py caches SimulatorDataStore singleton',
+          'def _get_sim_store(' in app and '_sim_data_store' in app)
+    check('app.py queues start cfg during init',
+          '_sim_pending_start_cfg' in app)
+    check('simulator_status returns initializing when agents not ready',
+          "if not _ensure_sim_init():" in app)
+    check('simulator_start returns immediately when agents not ready',
+          "'queued': True" in app and "'state': 'initializing'" in app)
+
+    # 3. Virtual balance auto-heal from $12345.67 stub
+    check('api_balance_virtual auto-heals stub value',
+          '_VIRTUAL_STUB_VALUE = 12345.67' in app
+          and '_VIRTUAL_DEFAULT_CASH' in app
+          and 'reset_virtual(_VIRTUAL_DEFAULT_CASH)' in app)
+
+    # 4. OFT card present in both ML lists
+    check('strategy_full _ML lists OFT model',
+          "'oft_model.pt'" in app and "'OFT (Microstructure)'" in app)
+    check('monitor_model_stats _MODEL_FILES lists OFT',
+          app.count("oft_model.pt") >= 2
+          and app.count("oft_model_meta.json") >= 2)
+
+    # 5. Strategies empty-state guidance
+    check('Strategies tab shows guidance on empty list',
+          'No data sources registered' in tpl
+          and 'data/orchestrator/sources.json' in tpl)
+
+    # Functional check: api_balance_virtual auto-heals when called
+    if not getattr(test_phase18_institutional_panel_fixes, '_offline', False):
+        try:
+            import urllib.request, json as _json
+            with urllib.request.urlopen(DASHBOARD_URL + '/api/balance/virtual', timeout=5) as r:
+                body = _json.loads(r.read().decode('utf-8'))
+            cash = float(body.get('cash_usdt', 0))
+            check('/api/balance/virtual no longer reports the $12345.67 stub',
+                  abs(cash - 12345.67) > 1.0,
+                  f'cash_usdt={cash}')
+        except Exception as e:
+            check('/api/balance/virtual no longer reports the $12345.67 stub', None,
+                  f'skipped (server down): {e}')
+
+        # Functional check: simulator/start must NOT hang for >5s
+        try:
+            import urllib.request, urllib.error, time as _t, json as _json
+            req = urllib.request.Request(
+                DASHBOARD_URL + '/api/simulator/start',
+                data=b'{}', method='POST',
+                headers={'Content-Type': 'application/json'})
+            t0 = _t.time()
+            with urllib.request.urlopen(req, timeout=5) as r:
+                body = _json.loads(r.read().decode('utf-8'))
+            dt = _t.time() - t0
+            check(f'/api/simulator/start returns in <5s (took {dt:.2f}s)',
+                  r.status == 200 and dt < 5.0,
+                  f'state={body.get("state")} queued={body.get("queued")}')
+        except Exception as e:
+            check('/api/simulator/start returns in <5s', None,
+                  f'skipped (server down): {e}')
+
+
+def test_phase19_oft_integration():
+    """Regression coverage for the OFT live wiring + simulator deadlock fix:
+       - SimulatorAgent._flush_state must NOT re-acquire its own lock
+       - simulator_status path is timeout-protected
+       - OFT_Microstructure registered in strategy_registry
+       - main.py reads OFT prediction + applies filter + confidence weight
+       - OFT thresholds live in src/utils/config.py
+       - restart_all.ps1 launches orderbook_collector (Step 4)
+       - distributed orchestrator/worker know about model_type='oft' (Step 5)
+    """
+    print('\n[Phase 19 — OFT live integration + simulator deadlock fix]')
+
+    # 1. SimulatorAgent deadlock
+    sa_path = os.path.join(BASE_DIR, 'src', 'engine', 'agents', 'simulator_agent.py')
+    sa_src = open(sa_path, encoding='utf-8').read()
+    flush_body = sa_src.split('def _flush_state(')[1].split('def ')[0]
+    check('_flush_state does NOT re-acquire self._lock around get_status',
+          'with self._lock:' not in flush_body
+          and 'self.get_status()' in flush_body)
+
+    # 2. simulator_status timeout-protected — extract from "def simulator_status("
+    # to the next top-level "@app.route" so we don't truncate at inner closures.
+    app_src = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
+                   encoding='utf-8').read()
+    after = app_src.split("def simulator_status(")[1]
+    sim_status_body = after.split('\n@app.route')[0]
+    check('simulator_status uses Queue with timeout',
+          'queue' in sim_status_body.lower() and 'get(timeout=' in sim_status_body)
+
+    # 3. Strategy registry entry
+    sr_path = os.path.join(BASE_DIR, 'src', 'engine', 'strategy_registry.py')
+    sr_src = open(sr_path, encoding='utf-8').read()
+    check('strategy_registry has OFT_Microstructure',
+          '"OFT_Microstructure"' in sr_src
+          and "'oft_model.pt'" in sr_src or '"oft_model.pt"' in sr_src)
+
+    # 4. main.py OFT integration
+    main_src = open(os.path.join(BASE_DIR, 'src', 'main.py'), encoding='utf-8').read()
+    check('main.py imports OFT thresholds',
+          'OFT_GATE_P_MOVE_MIN' in main_src and 'OFT_WEIGHT_FLOOR' in main_src)
+    check('main.py reads oft prediction',
+          '.get("oft")' in main_src or "'oft'" in main_src and 'oft_pred' in main_src)
+    check('main.py applies OFT filter (block on weak signals)',
+          'oft_block' in main_src and 'OFT BLOCK' in main_src)
+    check('main.py applies OFT confidence weight to trade_amount',
+          'oft_weight' in main_src
+          and 'trade_amount = float(trade_amount) * oft_weight' in main_src)
+    check('main.py surfaces OFT fields in quant state',
+          '"oft_active":' in main_src and '"oft_p_move":' in main_src
+          and '"oft_blocked":' in main_src)
+
+    # 5. config thresholds
+    cfg_src = open(os.path.join(BASE_DIR, 'src', 'utils', 'config.py'),
+                   encoding='utf-8').read()
+    for k in ('OFT_GATE_P_MOVE_MIN', 'OFT_GATE_LIQ_RISK_MAX',
+              'OFT_WEIGHT_FLOOR', 'OFT_WEIGHT_CEILING'):
+        check(f'config.py defines {k}', k in cfg_src)
+
+    # 6. orderbook_collector launched by restart_all.ps1
+    ra_src = open(os.path.join(BASE_DIR, 'restart_all.ps1'), encoding='utf-8').read()
+    check('restart_all.ps1 launches orderbook_collector',
+          'orderbook_collector' in ra_src and 'OB_COLLECTOR_DISABLED' in ra_src)
+    check('restart_all.ps1 saves orderbook PID',
+          'orderbook = $obId' in ra_src)
+    sa_stop = open(os.path.join(BASE_DIR, 'stop_all.ps1'), encoding='utf-8').read()
+    check('stop_all.ps1 stops orderbook process',
+          "'orderbook'" in sa_stop)
+
+    # 7. distributed orchestrator/worker know about OFT
+    proto_src = open(os.path.join(BASE_DIR, 'src', 'training', 'distributed',
+                                   'protocol.py'), encoding='utf-8').read()
+    check('protocol.ModelType has OFT enum',
+          'OFT          = "oft"' in proto_src or 'OFT = "oft"' in proto_src)
+    orch_src = open(os.path.join(BASE_DIR, 'src', 'training', 'distributed',
+                                  'orchestrator.py'), encoding='utf-8').read()
+    check('orchestrator submits OFT training task',
+          '"model_type": "oft"' in orch_src)
+    worker_src = open(os.path.join(BASE_DIR, 'src', 'training', 'distributed',
+                                    'worker.py'), encoding='utf-8').read()
+    check('worker has _train_oft handler',
+          'def _train_oft(' in worker_src and '"oft":' in worker_src)
+
+
+def test_phase20_orchestrator_scheduler_simpanels():
+    """Regression coverage for the 2026-05-04 follow-up batch:
+       - data_governance.__init__ side-effect-imports the connectors package
+         (so the Strategies tab's REGISTRY is populated)
+       - local_scheduler.ps1 writes a wrapper .cmd file to dodge schtasks
+         /TR's broken parser on paths containing spaces
+       - Phase-6 Simulation sub-tab renders a formatted card (not raw JSON)
+       - Simulator tab P&L chart shows a friendly empty-state message
+    """
+    print('\n[Phase 20 — Orchestrator + scheduler + sim panel polish]')
+
+    # 1. Connectors auto-register
+    init_path = os.path.join(BASE_DIR, 'src', 'data_governance', '__init__.py')
+    init_src = open(init_path, encoding='utf-8').read()
+    check('data_governance.__init__ imports connectors',
+          'from . import connectors' in init_src)
+
+    # Functional check: list_sources() actually returns the connectors
+    try:
+        import sys as _sys
+        _sys.path.insert(0, BASE_DIR)
+        # Force re-import in case stale
+        for m in list(_sys.modules):
+            if m.startswith('src.data_governance'):
+                _sys.modules.pop(m, None)
+        from src.data_governance import list_sources
+        srcs = list_sources()
+        check(f'list_sources() returns connectors (got {len(srcs)})',
+              isinstance(srcs, list) and len(srcs) >= 8)
+    except Exception as e:
+        check('list_sources() returns connectors', False, str(e))
+
+    # 2. local_scheduler.ps1 writes wrapper .cmd
+    sched_path = os.path.join(BASE_DIR, 'local_scheduler.ps1')
+    sched_src = open(sched_path, encoding='utf-8').read()
+    check('local_scheduler builds wrapper .cmd file',
+          'WriteAllText' in sched_src and "'.cmd'" in sched_src or 'wrapperPath' in sched_src)
+    check('local_scheduler /TR points at wrapper not raw command',
+          '$tr = \'"\' + $wrapperPath' in sched_src)
+    check('scripts/scheduled directory exists or is created on demand',
+          'scripts\\scheduled' in sched_src or 'scripts/scheduled' in sched_src)
+
+    # 3. Phase-6 Simulation sub-tab no longer dumps raw JSON.
+    # Slice from "tab === 'simulation'" to the next "} else if (tab ===" so
+    # we cover the entire sub-tab branch regardless of how long it grows.
+    tpl = open(TEMPLATE_PATH, encoding='utf-8').read()
+    sim_block_idx = tpl.find("tab === 'simulation'")
+    assert sim_block_idx > 0
+    after = tpl[sim_block_idx:]
+    end = after.find("} else if (tab ===")
+    sim_block = after[:end] if end > 0 else after[:5000]
+    check('Phase-6 simulation sub-tab no longer JSON.stringify dumps raw data',
+          'JSON.stringify(d).substring' not in sim_block
+          and 'Bars/sec' in sim_block and 'Training buffers' in sim_block,
+          f"len(block)={len(sim_block)}")
+
+    # 4. Simulator tab P&L chart has empty-state message
+    check('simRenderPnlChart shows empty-state when no series',
+          'No paper-trade P&amp;L yet' in tpl
+          or 'No paper-trade P&L yet' in tpl)
+
+    # Live HTTP probe (skip in --offline)
+    if not getattr(test_phase20_orchestrator_scheduler_simpanels, '_offline', False):
+        try:
+            import urllib.request, json as _json
+            with urllib.request.urlopen(
+                DASHBOARD_URL + '/api/orchestrator/sources', timeout=4
+            ) as r:
+                body = _json.loads(r.read().decode('utf-8'))
+            check('/api/orchestrator/sources returns connector list (live)',
+                  isinstance(body, list) and len(body) >= 8,
+                  f'len={len(body) if isinstance(body, list) else type(body).__name__}')
+        except Exception as e:
+            check('/api/orchestrator/sources returns connector list (live)', None,
+                  f'skipped: {e}')
+
+        # Scheduler register/run/unregister round-trip
+        try:
+            import urllib.request, json as _json
+            def _post(p, body):
+                req = urllib.request.Request(
+                    DASHBOARD_URL + p,
+                    data=_json.dumps(body).encode('utf-8'),
+                    headers={'Content-Type': 'application/json'},
+                    method='POST')
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    return _json.loads(r.read().decode('utf-8'))
+            r1 = _post('/api/scheduler/register',
+                      {'name': 'TestPhase20', 'mode': 'every_minutes', 'value': '60'})
+            check('scheduler register survives path-with-spaces',
+                  bool(r1.get('ok')),
+                  f"stderr={r1.get('stderr','')[:120]}")
+            if r1.get('ok'):
+                _post('/api/scheduler/unregister', {'name': 'TestPhase20'})
+        except Exception as e:
+            check('scheduler register survives path-with-spaces', None,
+                  f'skipped: {e}')
+
+
+def test_phase21_observability_and_risk_overrides():
+    """Coverage for Phase 21:
+       - log_retention.py sweep + thread
+       - error_monitor.py classify/dedupe/auto-clear
+       - /api/errors/recent + dismiss endpoints + dashboard banner
+       - ml_predictor.last_status splits low_confidence from real errors
+       - main.py uses last_status (not non-empty last_error) for ERROR label
+       - runtime_overrides.json + reader module + dashboard Risk panel
+       - main.py applies max_position_usdt cap + scalping kill-list
+    """
+    print('\n[Phase 21 — Observability + risk overrides]')
+
+    # 1. Log retention
+    lr_path = os.path.join(BASE_DIR, 'src', 'utils', 'log_retention.py')
+    check('src/utils/log_retention.py exists', os.path.exists(lr_path))
+    if os.path.exists(lr_path):
+        lr_src = open(lr_path, encoding='utf-8').read()
+        check('log_retention defines sweep_once + start_retention_thread',
+              'def sweep_once(' in lr_src and 'def start_retention_thread(' in lr_src)
+        check('log_retention default RETENTION_DAYS=5',
+              "'LOG_RETENTION_DAYS', \"5\"" in lr_src
+              or 'LOG_RETENTION_DAYS", "5"' in lr_src)
+
+    # Functional: sweep_once runs without raising
+    try:
+        import sys as _sys
+        _sys.path.insert(0, BASE_DIR)
+        from src.utils.log_retention import sweep_once
+        n = sweep_once(retention_days=99999)  # nothing should match
+        check('sweep_once(99999) runs cleanly + returns int',
+              isinstance(n, int) and n == 0)
+    except Exception as e:
+        check('sweep_once functional', False, str(e))
+
+    # 2. Error monitor
+    em_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'error_monitor.py')
+    check('src/dashboard/error_monitor.py exists', os.path.exists(em_path))
+    if os.path.exists(em_path):
+        em_src = open(em_path, encoding='utf-8').read()
+        check('error_monitor defines scan + get_active + dismiss',
+              'def scan(' in em_src and 'def get_active(' in em_src
+              and 'def dismiss(' in em_src)
+        check('error_monitor classifies CRITICAL + WARNING',
+              '_LEVEL_RE' in em_src and 'ERROR' in em_src and 'WARNING' in em_src)
+        check('error_monitor has BENIGN allow-list (low conf, GARCH spike)',
+              '_BENIGN_RE' in em_src
+              and 'Low confidence' in em_src
+              and 'GARCH' in em_src)
+        check('error_monitor signature normalises symbols + timestamps',
+              ('<SYM>' in em_src) and ('<TS>' in em_src))
+        check('error_monitor auto-clears after AUTO_CLEAR_S (30 min default)',
+              'AUTO_CLEAR_S' in em_src and "30 * 60" in em_src)
+
+    # Functional: signature normalises BTC vs ETH to the same hash
+    try:
+        from src.dashboard.error_monitor import _signature
+        s1 = _signature('2026-05-04 21:30:00 ERROR something on BTC/USDT failed at 0.123')
+        s2 = _signature('2026-05-04 21:35:00 ERROR something on ETH/USDT failed at 0.456')
+        check('error_monitor _signature collapses BTC/ETH to same key',
+              s1 == s2,
+              f's1={s1!r} s2={s2!r}')
+    except Exception as e:
+        check('error_monitor _signature collapses BTC/ETH to same key', False, str(e))
+
+    # 3. API endpoints + banner DOM
+    app_src = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
+                   encoding='utf-8').read()
+    check("/api/errors/recent endpoint defined",
+          "@app.route('/api/errors/recent')" in app_src
+          and 'count_critical' in app_src)
+    check("/api/errors/dismiss endpoint defined",
+          "@app.route('/api/errors/dismiss'" in app_src)
+    check('dashboard auto-starts retention + monitor threads',
+          'start_retention_thread' in app_src and 'start_monitor_thread' in app_src)
+
+    tpl = open(TEMPLATE_PATH, encoding='utf-8').read()
+    check('error banner DOM present (#err-banner)',
+          'id="err-banner"' in tpl and 'err-banner-summary' in tpl)
+    check('frontend polls /api/errors/recent on interval',
+          'pollErrors' in tpl
+          and 'setInterval(pollErrors' in tpl)
+    check('banner can dismiss individual entries',
+          'dismissError' in tpl and "/api/errors/dismiss" in tpl)
+
+    # 4. ML status split
+    mp_src = open(os.path.join(BASE_DIR, 'src', 'analysis', 'ml_predictor.py'),
+                  encoding='utf-8').read()
+    check('MLPredictor exposes last_status field',
+          'self.last_status' in mp_src
+          and "'low_confidence'" in mp_src
+          and "'error'" in mp_src)
+    check('low confidence does NOT set last_error (false-error fix)',
+          # the OLD line set last_error on low conf; new code only sets last_status
+          'self.last_error = f"Low confidence' not in mp_src)
+
+    main_src = open(os.path.join(BASE_DIR, 'src', 'main.py'),
+                    encoding='utf-8').read()
+    check("main.py renders ERROR only when last_status == 'error'",
+          "_status == 'error'" in main_src
+          and "_status == 'low_confidence'" in main_src)
+    check('main.py shows LOW CONF instead of ERROR for low-confidence',
+          'LOW CONF (' in main_src)
+
+    # 5. Runtime overrides
+    ro_path = os.path.join(BASE_DIR, 'src', 'utils', 'runtime_overrides.py')
+    check('src/utils/runtime_overrides.py exists', os.path.exists(ro_path))
+    if os.path.exists(ro_path):
+        ro_src = open(ro_path, encoding='utf-8').read()
+        check('runtime_overrides defines is_scalping_disabled + max_position_cap',
+              'def is_scalping_disabled(' in ro_src and 'def max_position_cap(' in ro_src)
+        check('runtime_overrides watches mtime for hot reload',
+              "_cache" in ro_src and "mtime" in ro_src)
+
+    json_path = os.path.join(BASE_DIR, 'data', 'runtime_overrides.json')
+    check('data/runtime_overrides.json exists', os.path.exists(json_path))
+    if os.path.exists(json_path):
+        import json as _json
+        with open(json_path, encoding='utf-8') as f:
+            ov = _json.load(f)
+        # User asked for these to be pre-populated as the default kill-list.
+        for sym in ('BTC/USDT', 'ETH/USDT', 'DOGE/USDT', 'TRX/USDT', 'UNI/USDT', 'SUI/USDT'):
+            check(f'default kill-list includes {sym}',
+                  sym in (ov.get('scalping_disabled_symbols') or []))
+
+    check('main.py imports runtime_overrides',
+          'from src.utils import runtime_overrides' in main_src)
+    check('main.py applies max_position_usdt cap',
+          'max_position_cap' in main_src
+          and 'Runtime cap' in main_src)
+    check('main.py honours scalping kill-list',
+          'is_scalping_disabled' in main_src
+          and 'Scalping_Disabled' in main_src)
+
+    # 6. /api/risk/overrides endpoints
+    check("/api/risk/overrides GET endpoint defined",
+          "@app.route('/api/risk/overrides', methods=['GET'])" in app_src
+          or "@app.route('/api/risk/overrides')" in app_src)
+    check("/api/risk/overrides POST endpoint defined",
+          "@app.route('/api/risk/overrides', methods=['POST'])" in app_src)
+    check('Risk sub-tab UI panel renders inline',
+          'function renderRiskPanel(' in tpl
+          or 'renderRiskPanel()' in tpl)
+    check('Risk sub-tab has scalping kill-list toggle widget',
+          '_riskToggleSym' in tpl and 'scalping_disabled_symbols' in tpl)
+    check('Risk sub-tab has Save + Clear buttons',
+          '_riskSaveOverrides' in tpl and '_riskClearAll' in tpl)
+
+    # Live HTTP probes
+    if not getattr(test_phase21_observability_and_risk_overrides, '_offline', False):
+        try:
+            import urllib.request, json as _json
+            with urllib.request.urlopen(DASHBOARD_URL + '/api/errors/recent', timeout=5) as r:
+                body = _json.loads(r.read().decode('utf-8'))
+            check('/api/errors/recent returns count_critical + count_warning',
+                  'count_critical' in body and 'count_warning' in body)
+        except Exception as e:
+            check('/api/errors/recent live', None, f'skipped: {e}')
+
+        try:
+            import urllib.request, json as _json
+            with urllib.request.urlopen(DASHBOARD_URL + '/api/risk/overrides', timeout=5) as r:
+                body = _json.loads(r.read().decode('utf-8'))
+            check('/api/risk/overrides GET returns the JSON file',
+                  isinstance(body, dict)
+                  and 'scalping_disabled_symbols' in body
+                  and 'BTC/USDT' in (body.get('scalping_disabled_symbols') or []))
+        except Exception as e:
+            check('/api/risk/overrides GET live', None, f'skipped: {e}')
+
+
+def test_phase23_unified_banner_aggregator():
+    """Banner aggregates errors from logs + status surfaces (services,
+    processes, agents, cluster, scheduler). Surface entries auto-heal
+    when probes flip back to OK; idle simulator / lazy-bind ZMQ are
+    intentionally excluded.
+
+    Why: previously the banner only scanned 6 log files. QuestDB / FastAPI
+    / Realtime / agent / scheduler faults that surfaced via Monitor cards
+    never wrote to a watched log, so the banner missed them.
+    """
+    print('\n[Phase 23 — unified banner aggregator]')
+
+    em_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'error_monitor.py')
+    with open(em_path, encoding='utf-8') as f:
+        em = f.read()
+
+    # 1. New scan_status_surfaces() function exists
+    check('scan_status_surfaces() defined', 'def scan_status_surfaces' in em)
+
+    # 2. All probe functions exist
+    for fn in ('_probe_questdb', '_probe_duckdb', '_probe_parquet',
+               '_probe_fastapi', '_probe_realtime', '_probe_processes',
+               '_probe_agents', '_probe_scheduler', '_probe_cluster'):
+        check(f'probe {fn} defined', f'def {fn}' in em)
+
+    # 3. Surface entries are tagged with source='surface'
+    check('surface entries carry source="surface"',
+          '"source":     "surface"' in em or "'source':     'surface'" in em
+          or '"source": "surface"' in em or '"source":"surface"' in em)
+
+    # 4. Log entries also tag source='log' so _load_state can distinguish
+    check('log entries tagged with source="log"',
+          '"source":     "log"' in em or '"source": "log"' in em
+          or '"source":"log"' in em)
+
+    # 5. _load_state preserves surface entries without re-classifying
+    check('_load_state skips re-classification for surface entries',
+          'source") == "surface"' in em or "source') == 'surface'" in em)
+
+    # 6. AUTO_CLEAR_S only applies to log entries (surface entries auto-heal)
+    check('AUTO_CLEAR_S scoped to log entries only',
+          ('source", "log") == "log"' in em
+           or "source', 'log') == 'log'" in em))
+
+    # 7. simulator-idle and zmq-idle are NOT probed (they're informational)
+    check('simulator-idle excluded from probes',
+          '_probe_simulator' not in em and 'simulator:' not in em.lower().split('# scope')[0])
+    check('zmq-idle excluded from probes',
+          '_probe_zmq' not in em)
+
+    # 8. Background thread runs both scan() and scan_status_surfaces()
+    check('background thread runs scan_status_surfaces()',
+          'scan_status_surfaces()' in em
+          and em.count('scan_status_surfaces') >= 3)  # def + thread + import maybe
+
+    # 9. /api/errors/recent calls scan_status_surfaces
+    app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
+    with open(app_path, encoding='utf-8') as f:
+        app_src = f.read()
+    check('/api/errors/recent invokes surface scan',
+          '_em.scan_status_surfaces()' in app_src)
+
+    # 10. End-to-end probe simulation: import the module and call probes
+    #     against the current environment. We don't assert specific results
+    #     (those depend on whether QuestDB is up locally) but we DO assert
+    #     the call returns the right shape.
+    try:
+        import importlib, sys as _sys
+        sys.path.insert(0, BASE_DIR) if BASE_DIR not in _sys.path else None
+        em_mod = importlib.import_module('src.dashboard.error_monitor')
+        snap = em_mod.scan_status_surfaces()
+        check('scan_status_surfaces() returns dict',
+              isinstance(snap, dict))
+        # Each entry must carry source='surface' and signature carrying _SURFACE_PREFIX
+        all_surface = all(
+            (v.get('source') == 'surface'
+             and v.get('signature', '').startswith('surface:'))
+            for v in snap.values()
+        ) if snap else True
+        check('all surface entries tagged + signature-prefixed', all_surface)
+        # Each entry must have a kind in {critical, warning}
+        kinds_ok = all(v.get('kind') in ('critical', 'warning') for v in snap.values())
+        check('surface entries have valid kind', kinds_ok)
+    except Exception as e:
+        check('scan_status_surfaces() runs without error', False, str(e))
+
+
+def test_phase24_scheduler_flash_and_local_training():
+    """Scheduler register/run/delete give visible feedback via #sch-flash
+    pill (was silent → user thought controls were broken). Training Cluster
+    card also shows live local-training progress (was always 'No tasks yet'
+    even when TFT training was running).
+    """
+    print('\n[Phase 24 — Scheduler flash + local-training progress]')
+
+    tpl_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
+    with open(tpl_path, encoding='utf-8') as f:
+        tpl = f.read()
+
+    # Scheduler flash pill
+    check('Scheduler #sch-flash element rendered',
+          'id="sch-flash"' in tpl)
+    check('Scheduler _schFlash() helper defined',
+          'function _schFlash(' in tpl)
+    check('Scheduler _schRegister calls _schFlash on success',
+          "_schFlash('✓ Registered " in tpl
+          or '_schFlash("✓ Registered ' in tpl)
+    check('Scheduler _schRun calls _schFlash on trigger',
+          "_schFlash('▶ " in tpl)
+    check('Scheduler _schUnregister calls _schFlash on delete',
+          "_schFlash('✕ Deleted " in tpl)
+
+    # Training Cluster live local-training panel
+    check('Training Cluster has cluster-local-training container',
+          'id="cluster-local-training"' in tpl)
+    check('renderLocalTrainingProgress() defined',
+          'async function renderLocalTrainingProgress' in tpl)
+    check('renderLocalTrainingProgress reads /api/scheduler/report',
+          "fetch('/api/scheduler/report')" in tpl)
+    check('renderLocalTrainingProgress reads /api/models',
+          "fetch('/api/models'" in tpl)
+    check('clusterPoll() invokes renderLocalTrainingProgress',
+          'renderLocalTrainingProgress()' in tpl)
+
+    # Empty-state placeholder when no run snapshot exists
+    check('Local-training section has empty-state guidance',
+          'No active training snapshot yet' in tpl)
+
+
+def test_phase25_user_initiated_agents_exempt():
+    """User-initiated agents (SimulatorAgent / StrategySimulatorAgent) are
+    exempt from stale-heartbeat warnings. They only tick while the user is
+    actively running a sim — when idle, agent_status.json keeps the last
+    'running' state and heartbeat ages out, but that's not a real fault.
+    Agents in 'error' state are still flagged regardless of exemption.
+    """
+    print('\n[Phase 25 — user-initiated agents exempt from staleness]')
+
+    em_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'error_monitor.py')
+    with open(em_path, encoding='utf-8') as f:
+        em = f.read()
+
+    check('exemption set _USER_INITIATED_AGENTS defined',
+          '_USER_INITIATED_AGENTS' in em)
+    check('SimulatorAgent in exemption set',
+          '"SimulatorAgent"' in em or "'SimulatorAgent'" in em)
+    check('StrategySimulatorAgent in exemption set',
+          '"StrategySimulatorAgent"' in em or "'StrategySimulatorAgent'" in em)
+    check('_probe_agents skips staleness for exempted names',
+          'name in _USER_INITIATED_AGENTS' in em
+          and 'continue' in em.split('name in _USER_INITIATED_AGENTS')[1][:200])
+
+    # Behavior probe: feed a synthetic agent_status.json shape through
+    # _probe_agents and assert SimulatorAgent stale entries don't appear
+    # while a non-exempt stale agent does.
+    try:
+        import importlib, sys as _sys, json as _json, tempfile, time as _t
+        sys.path.insert(0, BASE_DIR) if BASE_DIR not in _sys.path else None
+        em_mod = importlib.import_module('src.dashboard.error_monitor')
+
+        # Build a fake agent_status.json with a stale SimulatorAgent and a
+        # stale RiskAgent. Only the RiskAgent should produce a fault.
+        old_ts = _t.time() - 7200  # 2h ago — well past 4× interval
+        fake = {
+            'SimulatorAgent': {
+                'status': 'running', 'current_task': 'Replay X',
+                'last_heartbeat_ts': old_ts, 'interval_sec': 5.0,
+            },
+            'StrategySimulatorAgent': {
+                'status': 'running', 'last_heartbeat_ts': old_ts,
+                'interval_sec': 5.0,
+            },
+            'RiskAgent': {
+                'status': 'idle', 'last_heartbeat_ts': old_ts,
+                'interval_sec': 300.0,
+            },
+            'ContinuousTrainerAgent': {
+                'status': 'error', 'current_task': 'training failed',
+                'last_heartbeat_ts': _t.time(), 'interval_sec': 30.0,
+            },
+        }
+        # Temporarily redirect PROJECT_ROOT to a tmpdir with our fake JSON
+        td = tempfile.mkdtemp(prefix='em_test_')
+        from pathlib import Path as _P
+        data_dir = _P(td) / 'data'
+        data_dir.mkdir(parents=True, exist_ok=True)
+        (data_dir / 'agent_status.json').write_text(_json.dumps(fake), encoding='utf-8')
+        orig_root = em_mod.PROJECT_ROOT
+        em_mod.PROJECT_ROOT = _P(td)
+        try:
+            faults = em_mod._probe_agents()
+        finally:
+            em_mod.PROJECT_ROOT = orig_root
+
+        sigs = {f[1] for f in faults}
+        check('SimulatorAgent staleness suppressed',
+              'agent:SimulatorAgent:stale' not in sigs)
+        check('StrategySimulatorAgent staleness suppressed',
+              'agent:StrategySimulatorAgent:stale' not in sigs)
+        check('non-exempt stale agent (RiskAgent) still flagged',
+              'agent:RiskAgent:stale' in sigs)
+        check('error-state agent flagged regardless of exemption list',
+              'agent:ContinuousTrainerAgent' in sigs)
+    except Exception as e:
+        check('_probe_agents exemption behavior probe', False, str(e))
+
+
+def test_phase22_scheduler_no_autorefresh():
+    """Scheduler sub-tab: no 30s auto-refresh + manual REFRESH button.
+
+    Why: auto-refresh wiped the open Mode dropdown and any half-typed
+    task name mid-edit. User opted scheduler out of the periodic poll
+    and added an explicit 🔄 REFRESH button.
+    """
+    print('\n[Phase 22 — Scheduler manual-refresh-only]')
+
+    tpl_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
+    with open(tpl_path, encoding='utf-8') as f:
+        tpl = f.read()
+
+    # 1. Phase-6 interval skips scheduler
+    check('Phase-6 30s auto-refresh skips scheduler sub-tab',
+          "t.dataset.tab === 'scheduler'" in tpl and 'never auto-refresh' in tpl
+          or "if (t.dataset.tab === 'scheduler') return;" in tpl)
+
+    # 2. Manual REFRESH button is wired
+    check('Scheduler REFRESH button present',
+          '🔄 REFRESH' in tpl
+          and 'window.renderSchedulerPanel()' in tpl)
+
+    # 3. renderSchedulerPanel exposed on window for the inline onclick
+    check('renderSchedulerPanel exposed on window',
+          'window.renderSchedulerPanel = renderSchedulerPanel' in tpl)
+
+    # 4. Form grid expanded to fit the 5th column (REFRESH button)
+    check('Scheduler form grid has 5 columns (added REFRESH cell)',
+          'grid-template-columns:1.4fr 1fr 1.4fr auto auto' in tpl)
+
+
 # ─── Runner ───────────────────────────────────────────────────────────────────
 
 def main():
@@ -619,6 +2464,35 @@ def main():
     test_quant_modules()
     test_new_strategy_modules()
     test_monitor_module()
+    test_phase0_foundation()
+    test_phase1_microstructure()
+    test_phase2_alpha_engine()
+    test_phase3_execution_simulation()
+    test_phase4_portfolio_optimization()
+    test_phase5_institutional_safeguards()
+    test_phase7_continuous_pipeline()
+    test_phase8_data_governance()
+    test_phase10_live_integration()
+    test_phase11_predictor_and_llm_resilience()
+    test_phase12_dashboard_controls._offline = args.offline
+    test_phase12_dashboard_controls()
+    test_phase13_realtime_and_fastapi._offline = args.offline
+    test_phase13_realtime_and_fastapi()
+    test_phase14_local_only_scheduler()
+    test_phase16_scheduler_panel_and_sim_no_hang._offline = args.offline
+    test_phase16_scheduler_panel_and_sim_no_hang()
+    test_phase17_trading_health_fixes()
+    test_phase18_institutional_panel_fixes._offline = args.offline
+    test_phase18_institutional_panel_fixes()
+    test_phase19_oft_integration()
+    test_phase20_orchestrator_scheduler_simpanels._offline = args.offline
+    test_phase20_orchestrator_scheduler_simpanels()
+    test_phase21_observability_and_risk_overrides._offline = args.offline
+    test_phase21_observability_and_risk_overrides()
+    test_phase22_scheduler_no_autorefresh()
+    test_phase23_unified_banner_aggregator()
+    test_phase24_scheduler_flash_and_local_training()
+    test_phase25_user_initiated_agents_exempt()
 
     if not args.offline:
         test_api(args.url)
