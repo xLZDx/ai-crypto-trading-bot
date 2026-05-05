@@ -34,6 +34,23 @@ NEWS_CACHE_TTL = 900           # Sentiment cache: 15 minutes
 DEFAULT_CANDLE_LIMIT = 1000
 WEBSOCKET_RECONNECT_DELAY = 5  # Seconds before WebSocket reconnect attempt
 
+# ── OFT (Order Flow Transformer) live integration ─────────────────────────────
+# Used by the OFT_Microstructure strategy in src/main.py. Both gates run in
+# series: first the entry filter blocks trades on weak signals, then the
+# confidence weight shrinks the surviving trade's notional.
+OFT_GATE_P_MOVE_MIN   = 0.50   # Block entry when p_move_calibrated below this
+OFT_GATE_LIQ_RISK_MAX = 0.70   # Block entry when liquidity_risk above this
+OFT_WEIGHT_FLOOR      = 0.25   # Minimum size multiplier even on weak signals
+OFT_WEIGHT_CEILING    = 1.00   # Maximum size multiplier (don't oversize)
+
+# ── Database (DuckDB + Parquet — replaces QuestDB, no daemon required) ───────
+# All time-series workloads land as partitioned Parquet on D:. DuckDB is
+# the query engine (in-process, file-based, no separate server). Writes
+# go through src.database.parquet_client (singleton, append-buffered).
+PARQUET_DB_DIR        = "data/db"   # relative to project root
+PARQUET_DB_FLUSH_S    = 30.0        # write buffer flush cadence
+PARQUET_DB_FLUSH_ROWS = 5000        # or flush sooner if the buffer fills
+
 # ── Dashboard ────────────────────────────────────────────────────────────────
 LOG_TAIL_BYTES = 51200         # 50 KB tail read for log endpoint
 LOG_MAX_LINES = 500

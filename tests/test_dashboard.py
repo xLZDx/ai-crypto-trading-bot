@@ -2331,6 +2331,85 @@ def test_phase24_scheduler_flash_and_local_training():
           'No active training snapshot yet' in tpl)
 
 
+def test_phase26_parquet_client_foundation():
+    """Phase 1 (Route B) of the QuestDB replacement migration. ParquetClient
+    is a drop-in for QuestDBClient backed by DuckDB + partitioned Parquet
+    files on D: — no daemon, no Docker, no port conflicts.
+    Asserts:
+      - module imports cleanly
+      - is_available() reports True (DuckDB present + data dir writable)
+      - QuestDBClient public surface is mirrored (every write_/get_ method)
+      - round-trip: write → flush → query returns the row
+      - missing-table query returns [] (no raise)
+      - partition-key string columns get sanitised so BTC/USDT writes are
+        queryable as BTC_USDT (DuckDB hive_partitioning compatibility)
+    """
+    print('\n[Phase 26 — ParquetClient foundation (Route B)]')
+
+    pc_path = os.path.join(BASE_DIR, 'src', 'database', 'parquet_client.py')
+    check('parquet_client.py exists', os.path.exists(pc_path))
+    with open(pc_path, encoding='utf-8') as f:
+        pc = f.read()
+
+    # ── Static surface mirror ──────────────────────────────────────────────
+    for method in ('is_available', 'query', 'query_df', 'exec_ddl',
+                   'insert_rows', 'flush_all', 'close',
+                   'write_ilp',
+                   'write_market_candle', 'write_market_candles_bulk',
+                   'write_trade', 'write_signal', 'write_training_event',
+                   'write_strategy_stats', 'write_news_sentiment',
+                   'write_training_run', 'write_wf_fold',
+                   'write_testnet_trade', 'write_testnet_session_stats',
+                   'get_latest_candle_ts', 'get_strategy_history',
+                   'get_training_history'):
+        check(f'method {method}() defined', f'def {method}(' in pc)
+
+    # ── Live behavior ──────────────────────────────────────────────────────
+    try:
+        import importlib, tempfile, shutil
+        from pathlib import Path as _P
+        sys.path.insert(0, BASE_DIR) if BASE_DIR not in sys.path else None
+        pc_mod = importlib.import_module('src.database.parquet_client')
+
+        td = tempfile.mkdtemp(prefix='pq_phase26_')
+        try:
+            client = pc_mod.ParquetClient(base_dir=td, flush_s=0.0, flush_rows=1)
+            check('ParquetClient.is_available() True', client.is_available() is True)
+
+            # Round-trip: market_data
+            client.write_market_candle('BTC/USDT', '1h', {
+                'timestamp': '2026-05-04T12:00:00',
+                'open': 1, 'high': 2, 'low': 0.5, 'close': 1.5, 'volume': 100,
+            })
+            client.flush_all()
+            rows = client.query("SELECT symbol, close FROM market_data "
+                                "WHERE symbol = 'BTC_USDT'")
+            check('market_data round-trip (sanitised symbol)',
+                  len(rows) == 1 and rows[0].get('close') == 1.5)
+
+            # Round-trip: trade_events (no string partition keys)
+            client.write_trade({'symbol': 'BTC/USDT', 'strategy': 'rsi',
+                                'pnl_usd': 7.5, 'is_live': False})
+            client.flush_all()
+            trows = client.query("SELECT symbol, pnl_usd FROM trade_events")
+            check('trade_events round-trip',
+                  len(trows) == 1 and trows[0].get('pnl_usd') == 7.5)
+
+            # Missing-table query is graceful (returns [], no raise)
+            empty = client.query("SELECT * FROM csv_ingestion_log")
+            check('missing-table query returns []', empty == [])
+
+            # exec_ddl is a no-op that returns True (compatibility shim)
+            check('exec_ddl returns True (no-op)',
+                  client.exec_ddl('CREATE TABLE foo (x INT)') is True)
+
+            client.close()
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
+    except Exception as e:
+        check('ParquetClient live round-trip', False, str(e))
+
+
 def test_phase25_user_initiated_agents_exempt():
     """User-initiated agents (SimulatorAgent / StrategySimulatorAgent) are
     exempt from stale-heartbeat warnings. They only tick while the user is
@@ -2493,6 +2572,7 @@ def main():
     test_phase23_unified_banner_aggregator()
     test_phase24_scheduler_flash_and_local_training()
     test_phase25_user_initiated_agents_exempt()
+    test_phase26_parquet_client_foundation()
 
     if not args.offline:
         test_api(args.url)

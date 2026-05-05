@@ -34,4 +34,18 @@ yfinance
 duckdb>=0.10.0
 
 # Time-series database
-questdb>=1.2.0        # QuestDB Python client (ILP + REST)
+questdb>=1.2.0        # QuestDB Python client (ILP + REST) — being phased out
+
+# Phase 0 — Institutional upgrade: data store + transport
+pyarrow>=15.0.0       # Parquet I/O for partitioned tick store
+pyzmq>=25.0.0         # ZeroMQ data-plane (PUB/SUB orderflow, PUSH/PULL training batches)
+fastapi>=0.110.0      # Control plane for parquet/training/cluster ops on port 8100
+uvicorn[standard]>=0.27.0
+msgpack>=1.0.7        # Compact wire format for ZeroMQ payloads
+
+# Phase 1 — Microstructure data layer
+pykalman>=0.10.1      # Kalman filter for price noise cleaning (arch plan §3)
+# Binance L2 order book uses native `websockets` (already listed above) — no ccxt.pro needed.
+
+# Phase 4 — Portfolio optimization
+cvxpy>=1.4.0          # CVaR portfolio optimizer (arch plan §13)
