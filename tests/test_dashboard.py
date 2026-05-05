@@ -2384,6 +2384,86 @@ def test_phase28_dashboard_read_path_cutover():
           'pip install duckdb pyarrow' in tpl)
 
 
+def test_phase30_futures_close_reduce_only_guard():
+    """When Binance returns -2022 (ReduceOnly Order is rejected), the bot
+    must NOT cascade through 3 retry attempts — it should detect the
+    'no exchange position' state and force-close internally on the
+    first try. Also: ContinuousTrainerAgent is a user-initiated agent
+    (only ticks during a sim run) and must be exempt from stale-heartbeat
+    warnings, same as Simulator/StrategySimulator.
+    """
+    print('\n[Phase 30 — futures reduceOnly guard + trainer exemption]')
+
+    om_path = os.path.join(BASE_DIR, 'src', 'engine', 'order_manager.py')
+    om = open(om_path, encoding='utf-8').read()
+
+    # 1. New helper queries exchange-side position size
+    check('OrderManager.get_futures_position_amount() defined',
+          'def get_futures_position_amount(' in om)
+    check('helper calls fetch_position()',
+          'fetch_position(' in om)
+    check('helper returns 0.0 on error (silent fallback)',
+          'return 0.0' in om and 'logging.debug' in om)
+
+    # 2. execute_futures_order detects -2022 specifically
+    check('execute_futures_order catches -2022 / ReduceOnly Order rejected',
+          "'-2022' in err_str" in om
+          or "'-2022' in str(e)" in om
+          or '"-2022"' in om)
+    check('execute_futures_order returns reduce_only_rejected sentinel',
+          "'reduce_only_rejected': True" in om)
+
+    # 3. main.py FUTURES close branch pre-checks + handles sentinel
+    main_path = os.path.join(BASE_DIR, 'src', 'main.py')
+    m = open(main_path, encoding='utf-8').read()
+    check('main close-path pre-checks exchange position size',
+          'get_futures_position_amount(' in m
+          and "'already closed'" in m or 'already closed' in m)
+    check('main close-path handles reduce_only_rejected sentinel',
+          "order.get('reduce_only_rejected')" in m)
+    check('sentinel handling triggers _force_close_internally without retry',
+          ("reduce_only_rejected')" in m
+           and '_force_close_internally(' in m.split("reduce_only_rejected')")[1][:600]))
+
+    # 4. ContinuousTrainerAgent now exempt from staleness check
+    em_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'error_monitor.py')
+    em = open(em_path, encoding='utf-8').read()
+    check('ContinuousTrainerAgent in _USER_INITIATED_AGENTS exemption set',
+          '"ContinuousTrainerAgent"' in em or "'ContinuousTrainerAgent'" in em)
+
+    # 5. Behavior probe: feed a synthetic agent_status.json with stale
+    #    ContinuousTrainerAgent and assert no fault is emitted.
+    try:
+        import importlib, tempfile, json as _json, time as _t
+        from pathlib import Path as _P
+        sys.path.insert(0, BASE_DIR) if BASE_DIR not in sys.path else None
+        em_mod = importlib.import_module('src.dashboard.error_monitor')
+        importlib.reload(em_mod)  # pick up the new exemption set
+
+        old_ts = _t.time() - 21365  # match the user-reported staleness
+        fake = {
+            'ContinuousTrainerAgent': {
+                'status': 'running', 'current_task': 'Executing cycle',
+                'last_heartbeat_ts': old_ts, 'interval_sec': 30.0,
+            },
+        }
+        td = tempfile.mkdtemp(prefix='em_phase30_')
+        data_dir = _P(td) / 'data'
+        data_dir.mkdir(parents=True, exist_ok=True)
+        (data_dir / 'agent_status.json').write_text(_json.dumps(fake), encoding='utf-8')
+        orig_root = em_mod.PROJECT_ROOT
+        em_mod.PROJECT_ROOT = _P(td)
+        try:
+            faults = em_mod._probe_agents()
+        finally:
+            em_mod.PROJECT_ROOT = orig_root
+        sigs = {f[1] for f in faults}
+        check('ContinuousTrainerAgent staleness suppressed (real-world fixture)',
+              'agent:ContinuousTrainerAgent:stale' not in sigs)
+    except Exception as e:
+        check('exemption behaves at runtime', False, str(e))
+
+
 def test_phase29_cleanup_questdb_artifacts():
     """Phase 5 of the QuestDB → ParquetClient migration: launch scripts,
     schema module, restart_all/stop_all references, CLAUDE.md, and the
@@ -2735,6 +2815,7 @@ def main():
     test_phase27_ingest_path_cutover()
     test_phase28_dashboard_read_path_cutover()
     test_phase29_cleanup_questdb_artifacts()
+    test_phase30_futures_close_reduce_only_guard()
 
     if not args.offline:
         test_api(args.url)

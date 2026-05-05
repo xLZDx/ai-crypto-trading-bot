@@ -30,6 +30,11 @@ try:
     from src.analysis.momentum import CrossSectionalMomentum
     from src.analysis.telegram_monitor import TelegramMonitor
     from src.utils.safe_json import read_json, write_json
+    # Phase 9 — institutional gate wraps Phases 1-5 (§11-18 of arch plan)
+    from src.engine.institutional_gate import InstitutionalGate
+    from src.engine import dual_balance
+    # Phase 10 — Parquet-first data, replaces CSV.gz reads (with fallback)
+    from src.analysis import feature_reader as _feature_reader
     import numpy as np
     from src.utils.config import (
         MIN_TRADE_USDT, SCALPING_TRADE_FRACTION, MTF_SMA200_REFRESH,
@@ -37,8 +42,11 @@ try:
         RSI_OVERBOUGHT, RSI_OVERSOLD, SCALPING_RSI_OVERBOUGHT, SCALPING_RSI_OVERSOLD,
         FUNDING_SQUEEZE_THRESHOLD, VOLATILITY_BREAKOUT_VOLUME_MULT,
         WAVE_DEVIATION_DEFAULT, WAVE_DEVIATION_MIN, WAVE_DEVIATION_STEP,
-        WEBSOCKET_RECONNECT_DELAY
+        WEBSOCKET_RECONNECT_DELAY,
+        OFT_GATE_P_MOVE_MIN, OFT_GATE_LIQ_RISK_MAX,
+        OFT_WEIGHT_FLOOR, OFT_WEIGHT_CEILING,
     )
+    from src.utils import runtime_overrides as _runtime_overrides
     import pandas as pd
     import ccxt
     try:
@@ -153,7 +161,110 @@ class MultiAssetTrader:
                 "SCALPING": { sym: self.get_default_market_state() for sym in symbols },
             }
         }
+
+        # Phase 9 — institutional gate (§11-18 of arch plan).
+        # Fail-OPEN: if any module is unavailable, the legacy logic still runs.
+        try:
+            self.gate = InstitutionalGate(
+                self.engine,
+                peak_equity=10_000.0,
+                max_daily_drawdown_pct=0.05,
+                max_api_latency_ms=500.0,
+                max_data_staleness_sec=120.0,
+                decay_rate=0.10,
+                decay_exit_threshold=0.20,
+            )
+            logger.info("[gate] InstitutionalGate ready (§11-18 wired).")
+        except Exception as e:
+            self.gate = None
+            logger.warning("[gate] could not initialise InstitutionalGate: %s", e)
+
+        # Phase 9 — keep dual-balance state files fresh.
+        try:
+            dual_balance.refresh_real_from_binance(self.engine)
+        except Exception:
+            pass
+
+        # Phase 10E — attach β-history so §17 beta-neutrality is actually live.
+        try:
+            self._attach_beta_history()
+        except Exception as e:
+            logger.debug("[gate] beta history attach skipped: %s", e)
+
+        # Phase 10D — cache for dynamic-threshold lookups (per symbol)
+        self._dyn_thresholds = {sym: 0.01 for sym in symbols}
+        self._dyn_threshold_last_refresh = 0.0
+
+        # Phase 10B — track signal_strength + entry time per open trade so
+        # alpha-decay can close stale positions.
+        self._signal_strength_at_entry: dict = {}      # trade_id -> float
+        self._signal_entry_ts:         dict = {}       # trade_id -> unix ts
+
         self._update_state()
+
+    def _attach_beta_history(self) -> None:
+        """Build a simple per-symbol returns DataFrame from Parquet and pass
+        it to the institutional gate so the β-neutrality filter is non-noop.
+        """
+        if self.gate is None:
+            return
+        try:
+            import pandas as pd
+            from src.database.parquet_store import get_store
+            from datetime import datetime, timedelta, timezone as _tz
+            store = get_store()
+            end = datetime.now(_tz.utc)
+            start = end - timedelta(days=180)
+            cols = {}
+            for sym in self.symbols:
+                df = store.query(sym, start=start, end=end, timeframe="1d")
+                if df is None or df.empty or "close" not in df.columns:
+                    continue
+                ser = pd.to_numeric(df["close"], errors="coerce").pct_change().dropna()
+                cols[sym] = ser.reset_index(drop=True)
+            if not cols:
+                return
+            history = pd.DataFrame(cols).dropna()
+            if "BTC/USDT" not in history.columns or len(history) < 100:
+                return
+            self.gate.attach_beta_filter(history, factor="BTC/USDT",
+                                          max_beta_exposure=1.5)
+        except Exception as e:
+            logger.debug("[gate] _attach_beta_history failed: %s", e)
+
+    def _refresh_dynamic_thresholds(self) -> None:
+        """Phase 10D — every ~1h refit the entry threshold per symbol from
+        recent (probs, returns) history. Cheap; runs on a timer from
+        process_kline. No-op if the institutional gate is missing.
+        """
+        if self.gate is None:
+            return
+        now = time.time()
+        if now - self._dyn_threshold_last_refresh < 3600:
+            return
+        self._dyn_threshold_last_refresh = now
+        try:
+            import pandas as pd
+            from src.database.parquet_store import get_store
+            from datetime import datetime, timedelta, timezone as _tz
+            store = get_store()
+            end = datetime.now(_tz.utc)
+            start = end - timedelta(days=14)
+            for sym in self.symbols:
+                df = store.query(sym, start=start, end=end, timeframe="1h")
+                if df is None or df.empty:
+                    continue
+                close = pd.to_numeric(df["close"], errors="coerce").bfill()
+                ret = close.pct_change().fillna(0).to_numpy()
+                # Synthetic probs ∈ [0,1] from normalized return — placeholder
+                # until the OFT is trained (then we use OFT.p_move directly).
+                probs = (ret - ret.min()) / max(ret.max() - ret.min(), 1e-9)
+                thr = self.gate.best_threshold(probs, ret)
+                if 0.0 < thr < 1.0:
+                    self._dyn_thresholds[sym] = float(thr)
+            logger.debug("[gate] dynamic thresholds refreshed: %s", self._dyn_thresholds)
+        except Exception as e:
+            logger.debug("[gate] dyn-threshold refresh failed: %s", e)
 
     def _strategy_enabled(self, name: str, scope: str = "live") -> bool:
         """Hot-reloads strategy_config.json if it changed, then checks the flag."""
@@ -509,7 +620,11 @@ class MultiAssetTrader:
             try:
                 if self.meta_labeler.is_loaded:
                     sig_num = 1.0 if signal == "BUY" else -1.0
-                    result = self.meta_labeler.filter_signal(sig_num, df.to_dict('records'))
+                    last_row = df.iloc[-1].to_dict()
+                    last_row.setdefault('prob_base', 0.5)
+                    last_row.setdefault('prob_trend', 0.5)
+                    last_row.setdefault('regime', 0)
+                    result = self.meta_labeler.filter(sig_num, last_row)
                     if result[0] == "BLOCK":
                         signal, reason = "HOLD", f"[Meta-Labeler blocked] {reason}"
                         strategy_used = "MetaLabeler_Filter"
@@ -522,7 +637,13 @@ class MultiAssetTrader:
         """Analyzes 1-minute data for scalping."""
         if not self.scalping_predictor.is_loaded:
             return "HOLD", "Scalping model not loaded", "Scalping_Model_Missing"
-        
+
+        # Runtime kill-list — set via dashboard Risk sub-tab. Lets the user
+        # halt the 1m scalp path on specific symbols without restarting the
+        # bot. The 1h macro path on these symbols continues normally.
+        if _runtime_overrides.is_scalping_disabled(symbol):
+            return "HOLD", f"Scalping disabled for {symbol} via runtime override", "Scalping_Disabled"
+
         if not data_1m or len(data_1m) < 20:
             return "HOLD", "Not enough 1m data for scalping", "Data_Collection"
 
@@ -611,7 +732,32 @@ class MultiAssetTrader:
 
         elif market in ['FUTURES', 'SCALPING']:
             close_side = 'SELL' if side == 'LONG' else 'BUY'
+
+            # Pre-check: does Binance actually hold an open futures position?
+            # If exchange-side size is 0 (closed externally / liquidated /
+            # SL hit on exchange), reduceOnly will deterministic-fail with
+            # -2022. Force-close internally instead of cascading through 3
+            # retry attempts × ~7 min apart.
+            try:
+                exch_pos = self.engine.get_futures_position_amount(symbol)
+            except Exception:
+                exch_pos = None  # treat as unknown → proceed with close attempt
+            if exch_pos is not None and exch_pos < 1e-8:
+                return self._force_close_internally(
+                    trade, current_price,
+                    "exchange has 0 contracts (already closed)"
+                )
+
             order = self.engine.execute_futures_order(symbol, close_side, amount_coin, reduce_only=True)
+
+            # Sentinel: order_manager returned the -2022 marker because the
+            # exchange position vanished between the pre-check and the
+            # market order. Same outcome: no retry, force-close locally.
+            if isinstance(order, dict) and order.get('reduce_only_rejected'):
+                return self._force_close_internally(
+                    trade, current_price,
+                    "Binance reduceOnly rejected (-2022) — position no longer open"
+                )
 
         if order:
             real_price = order.get('average') or order.get('price') or current_price
@@ -644,6 +790,10 @@ class MultiAssetTrader:
     async def process_kline(self, symbol, current_price):
         logger.info(f"[{symbol}] WebSocket tick processed - Price: {current_price}")
         self.current_state["prices"][symbol] = current_price
+        # Phase 9 — gate is informed of fresh data so the staleness breaker
+        # (§18) doesn't fire spuriously on the next pre-trade check.
+        if getattr(self, "gate", None) is not None:
+            self.gate.mark_data_tick()
 
         # Cross-sectional momentum: update whenever any price arrives
         live_prices = {s: p for s, p in self.current_state["prices"].items() if p > 0}
@@ -660,18 +810,44 @@ class MultiAssetTrader:
             logger.info(f"[{symbol}] 🛡️ TRAILING STOP TRIGGERED for ID {t['id']} ({t['market']}). Executing on Binance...")
             self._execute_close(t, current_price)
 
+        # Phase 10B — alpha-decay exit: close trades whose signal has decayed
+        # below threshold. `signal_strength` is recorded at entry by
+        # _execute_close's counterpart (_record_entry); falls back to 1.0 for
+        # legacy trades that pre-date the tracking dict.
+        if self.gate is not None:
+            try:
+                open_trades = [
+                    tr for tr in self.tracker.list_open()
+                    if tr.get("symbol") == symbol
+                ] if hasattr(self.tracker, "list_open") else []
+                for tr in open_trades:
+                    tid = tr.get("id")
+                    s0 = float(self._signal_strength_at_entry.get(tid, 1.0))
+                    t0 = float(self._signal_entry_ts.get(tid, time.time()))
+                    bars_open = max(0.0, (time.time() - t0) / 3600.0)   # 1h-bar units
+                    if self.gate.should_exit_decay(s0, bars_open):
+                        logger.info(f"[{symbol}] ⏳ alpha-decay exit for {tid}")
+                        self._execute_close(tr, current_price)
+            except Exception as e:
+                logger.debug(f"[{symbol}] alpha-decay check skipped: {e}")
+
         sentiment = self.sentiment_analyzer.get_average_sentiment()
         
         # --- MACRO ANALYSIS (1h timeframe for Spot & Futures) ---
         logger.info(f"[{symbol}][1h] Starting macro analysis...")
-        data_filepath = f"data/raw/{symbol.replace('/', '_')}_{self.timeframe}.csv.gz"
-        data = self.analyzers[symbol].load_data(data_filepath)
-        
+        # Phase 10 — Parquet-first read (falls back to CSV.gz if no parquet yet).
+        data = _feature_reader.load_recent_bars(symbol, self.timeframe, tail_n=1000)
+        if not data:
+            data_filepath = f"data/raw/{symbol.replace('/', '_')}_{self.timeframe}.csv.gz"
+            data = self.analyzers[symbol].load_data(data_filepath)
+
         # If the file is empty or data is insufficient (corrupted file), force download again
         if not data or len(data) < 50:
             logger.info(f"[{symbol}] Insufficient data, forcing history download...")
             download_history(symbol=symbol, timeframe=self.timeframe, limit=1000)
-            data = self.analyzers[symbol].load_data(data_filepath)
+            data = (_feature_reader.load_recent_bars(symbol, self.timeframe, tail_n=1000)
+                    or self.analyzers[symbol].load_data(
+                        f"data/raw/{symbol.replace('/', '_')}_{self.timeframe}.csv.gz"))
             
         if not data:
             self._update_state(status=f"Data error {symbol}", reason="Unable to load candle history")
@@ -745,28 +921,133 @@ class MultiAssetTrader:
 
         # Regime-aware TFT threshold: RANGING markets are noisy → raise threshold to reduce false signals
         _tft_threshold = {0: 0.02, 1: 0.01, 2: 0.03}.get(_regime, 0.01)  # RANGING=2%, TRENDING=1%, VOLATILE=3%
+        # Phase 10D — overlay the data-driven threshold from gate.best_threshold()
+        # when the dynamic refresh has produced a value for this symbol.
+        try:
+            self._refresh_dynamic_thresholds()
+            if symbol in self._dyn_thresholds:
+                _dyn = float(self._dyn_thresholds[symbol])
+                # Blend: keep regime base, but lift floor toward learned threshold.
+                _tft_threshold = max(_tft_threshold, min(_dyn / 100.0, 0.05))
+        except Exception:
+            pass
 
         tft_pred = self.inference_engine.get_latest_prediction(symbol)
         expected_return = tft_pred["expected_return"] if tft_pred else 0.0
+        oft_pred = (tft_pred or {}).get("oft") or {}
+
+        # ── OFT_Microstructure: filter + confidence-weight ────────────────────
+        # Filter — block entries when the OFT model is unsure or the order
+        #          book looks fragile.
+        # Weight — when the trade survives the filter, scale notional by the
+        #          calibrated p_move so stronger signals get bigger size.
+        oft_block = False
+        oft_block_reason = ""
+        oft_weight = 1.0
+        oft_active = (
+            oft_pred
+            and self._strategy_enabled("OFT_Microstructure")
+        )
+        if oft_active:
+            p_move = float(oft_pred.get("p_move_calibrated",
+                                        oft_pred.get("p_move", 0.5)))
+            liq_risk = float(oft_pred.get("liquidity_risk", 0.0))
+            if p_move < OFT_GATE_P_MOVE_MIN:
+                oft_block = True
+                oft_block_reason = f"OFT p_move {p_move:.2f} < {OFT_GATE_P_MOVE_MIN:.2f}"
+            elif liq_risk > OFT_GATE_LIQ_RISK_MAX:
+                oft_block = True
+                oft_block_reason = f"OFT liquidity_risk {liq_risk:.2f} > {OFT_GATE_LIQ_RISK_MAX:.2f}"
+            else:
+                # Linear map p_move ∈ [GATE_MIN, 1.0] → weight ∈ [FLOOR, CEILING]
+                span_p = max(1e-6, 1.0 - OFT_GATE_P_MOVE_MIN)
+                norm   = max(0.0, min(1.0, (p_move - OFT_GATE_P_MOVE_MIN) / span_p))
+                oft_weight = OFT_WEIGHT_FLOOR + norm * (OFT_WEIGHT_CEILING - OFT_WEIGHT_FLOOR)
+            if oft_block:
+                logger.info(f"[{symbol}] 🚫 OFT BLOCK: {oft_block_reason}")
+            else:
+                trade_amount = float(trade_amount) * oft_weight
+
+        # Runtime risk override — hard cap on position notional. Set via
+        # the dashboard's Risk sub-tab (data/runtime_overrides.json).
+        # `None` means no cap. Applies AFTER Kelly + GARCH + OFT weight.
+        _cap = _runtime_overrides.max_position_cap()
+        if _cap is not None and float(trade_amount) > float(_cap):
+            logger.info(f"[{symbol}] 🛑 Runtime cap: trimming {trade_amount:.2f} → {_cap:.2f} USDT")
+            trade_amount = float(_cap)
+
+        # Min-notional floor — Binance rejects orders smaller than ~$50 with
+        # `code:-4164 Order's notional must be no smaller than 50`. Kelly +
+        # GARCH halving + OFT weight can stack down to ~$13–25, so enforce
+        # MIN_TRADE_USDT ($55) as a hard floor here. If the *intended* size
+        # is below the floor we skip the trade entirely instead of submitting
+        # a doomed order. The earlier MIN_TRADE_USDT check at signal time
+        # only guards the BASE trade size — multipliers can shrink below it.
+        _intended = float(trade_amount or 0)
+        if 0 < _intended < MIN_TRADE_USDT:
+            logger.info(
+                f"[{symbol}] ⏭ Trade skipped — intended size {_intended:.2f} USDT "
+                f"below Binance min-notional floor (MIN_TRADE_USDT={MIN_TRADE_USDT})"
+            )
+            return  # bail out of this evaluate_market call before order submission
 
         base_asset = symbol.split('/')[0]
         inventory_q = self.get_real_or_sim_balance(base_asset)
         mm_quotes = self.market_makers[symbol].calculate_quotes(current_price, inventory_q, volatility)
 
+        # Phase 9 — pre-trade gate (§17 beta neutrality, §18 circuit breakers).
+        # Returns ok=True when no Phase-1-5 module objects to the trade.
+        def _gate_ok(side: str) -> bool:
+            if self.gate is None:
+                return True
+            usdt_eq = float(self.get_real_or_sim_balance('USDT') or 0)
+            self.gate.update_peak_equity(usdt_eq)
+            res = self.gate.pre_trade_check(
+                symbol=symbol, side=side, notional=float(trade_amount),
+                current_equity=usdt_eq,
+                api_latency_ms=float(getattr(self.engine, "last_api_latency_ms", 0) or 0),
+            )
+            if not res["ok"]:
+                logger.warning(f"[{symbol}] 🛑 gate blocked {side}: {res['reasons']}")
+            return res["ok"]
+
         if expected_return <= -_tft_threshold:
             logger.warning(f"[{symbol}] 📉 TFT predicts DROP ({expected_return*100:.1f}%) [{_regime_name}]. Shifting to SHORT.")
-            try:
-                self.engine.cancel_all_orders(symbol)
-                self.engine.execute_limit_futures_order(symbol, "SELL", trade_amount / current_price, mm_quotes["optimal_ask"])
-            except Exception as e:
-                logger.error(f"MM Execution Error: {e}")
+            if oft_block:
+                logger.info(f"[{symbol}] 🚫 OFT vetoed SHORT entry: {oft_block_reason}")
+            elif _gate_ok("sell"):
+                try:
+                    self.engine.cancel_all_orders(symbol)
+                    # §16 slippage-aware limit price (small adjustment)
+                    ask = float(mm_quotes.get("optimal_ask", current_price))
+                    if self.gate:
+                        ask = self.gate.executed_price(
+                            ask, "sell", float(trade_amount / current_price),
+                            book_volume=max(float(trade_amount / current_price) * 5, 1.0),
+                        )
+                    self.engine.execute_limit_futures_order(symbol, "SELL", trade_amount / current_price, ask)
+                    if self.gate:
+                        self.gate.update_position(symbol, "short", float(trade_amount))
+                except Exception as e:
+                    logger.error(f"MM Execution Error: {e}")
         elif expected_return >= _tft_threshold:
             logger.info(f"[{symbol}] 🚀 TFT predicts PUMP ({expected_return*100:.1f}%) [{_regime_name}]. Shifting to LONG.")
-            try:
-                self.engine.cancel_all_orders(symbol)
-                self.engine.execute_limit_futures_order(symbol, "BUY", trade_amount / current_price, mm_quotes["optimal_bid"])
-            except Exception as e:
-                logger.error(f"MM Execution Error: {e}")
+            if oft_block:
+                logger.info(f"[{symbol}] 🚫 OFT vetoed LONG entry: {oft_block_reason}")
+            elif _gate_ok("buy"):
+                try:
+                    self.engine.cancel_all_orders(symbol)
+                    bid = float(mm_quotes.get("optimal_bid", current_price))
+                    if self.gate:
+                        bid = self.gate.executed_price(
+                            bid, "buy", float(trade_amount / current_price),
+                            book_volume=max(float(trade_amount / current_price) * 5, 1.0),
+                        )
+                    self.engine.execute_limit_futures_order(symbol, "BUY", trade_amount / current_price, bid)
+                    if self.gate:
+                        self.gate.update_position(symbol, "long", float(trade_amount))
+                except Exception as e:
+                    logger.error(f"MM Execution Error: {e}")
 
         # --- 📊 Push quant metrics to dashboard state (read by /api/state) ---
         _ou_r = self.ou_results.get(symbol, {})
@@ -783,6 +1064,12 @@ class MultiAssetTrader:
             "garch_status":   garch_result.get("status", "pending"),
             "tft_return":     round(expected_return * 100, 2),
             "tft_threshold":  round(_tft_threshold * 100, 1),
+            "oft_active":     bool(oft_active),
+            "oft_p_move":     round(float(oft_pred.get("p_move_calibrated",
+                                                        oft_pred.get("p_move", 0))), 4) if oft_pred else None,
+            "oft_liq_risk":   round(float(oft_pred.get("liquidity_risk", 0)), 4) if oft_pred else None,
+            "oft_weight":     round(oft_weight, 3),
+            "oft_blocked":    bool(oft_block),
             "regime":         _regime_name,
             "size_mult":      round(_size_mult, 2),
             "as_bid":         round(float(mm_quotes.get("optimal_bid", 0.0)), 2),
@@ -795,9 +1082,19 @@ class MultiAssetTrader:
         if not self.ml_predictor.is_loaded:
             ml_text = "MODEL NOT FOUND"
         elif ml_pred is None:
-            if hasattr(self.ml_predictor, 'last_error') and self.ml_predictor.last_error:
+            # last_status is the authoritative categorization. Only show
+            # "ERROR" when something actually broke; "low_confidence" /
+            # "no_data" / "not_loaded" each get their own user-visible label.
+            _status = getattr(self.ml_predictor, 'last_status', '')
+            if _status == 'error':
                 ml_text = "ERROR"
-                reason += f" | {self.ml_predictor.last_error}"
+                if self.ml_predictor.last_error:
+                    reason += f" | {self.ml_predictor.last_error}"
+            elif _status == 'low_confidence':
+                _conf = getattr(self.ml_predictor, '_last_confidence', 0.5)
+                ml_text = f"LOW CONF ({_conf:.2f})"
+            elif _status == 'not_loaded':
+                ml_text = "MODEL NOT FOUND"
             else:
                 ml_text = "DATA COLLECTION"
         elif ml_pred == 1:
@@ -835,7 +1132,14 @@ class MultiAssetTrader:
         if not self.futures_predictor.is_loaded:
             fut_ml_text = "MODEL NOT FOUND"
         elif fut_pred is None:
-            fut_ml_text = "ERROR" if self.futures_predictor.last_error else "DATA COLLECTION"
+            _fs = getattr(self.futures_predictor, 'last_status', '')
+            if _fs == 'error':
+                fut_ml_text = "ERROR"
+            elif _fs == 'low_confidence':
+                _fc = getattr(self.futures_predictor, '_last_confidence', 0.5)
+                fut_ml_text = f"LOW CONF ({_fc:.2f})"
+            else:
+                fut_ml_text = "DATA COLLECTION"
         elif fut_pred == 1:
             fut_ml_text = "DOWN 🔽 (Short)"
         else:
@@ -851,8 +1155,10 @@ class MultiAssetTrader:
 
         # --- SCALPING ANALYSIS (1m timeframe) ---
         logger.info(f"[{symbol}][SCALPING] Starting 1m analysis...")
-        scalping_data_filepath = f"data/raw/{symbol.replace('/', '_')}_1m.csv.gz"
-        data_1m = self.analyzers[symbol].load_data(scalping_data_filepath, tail_n=500)
+        # Phase 10 — Parquet-first
+        data_1m = (_feature_reader.load_recent_bars(symbol, "1m", tail_n=500)
+                   or self.analyzers[symbol].load_data(
+                       f"data/raw/{symbol.replace('/', '_')}_1m.csv.gz", tail_n=500))
         if data_1m:
             # Add current candle to history
             data_1m.append({'timestamp': time.strftime("%Y-%m-%d %H:%M:%S"), 'open': current_price, 'high': current_price, 'low': current_price, 'close': current_price, 'volume': 0})
@@ -987,14 +1293,25 @@ class MultiAssetTrader:
         logger.info(f"Connecting to Binance WebSocket: {url}")
         
         was_running = True
+        # Reconnect with exponential backoff. The default keepalive raised
+        # `sent 1011 keepalive ping timeout` under network jitter — explicit
+        # ping_interval/ping_timeout/close_timeout makes recovery tighter.
+        backoff = WEBSOCKET_RECONNECT_DELAY
         while True:
             try:
-                async with websockets.connect(url) as ws:
+                async with websockets.connect(
+                    url,
+                    ping_interval=20,
+                    ping_timeout=20,
+                    close_timeout=10,
+                    max_size=2**22,  # 4 MiB — combined kline streams stay well under this
+                ) as ws:
+                    backoff = WEBSOCKET_RECONNECT_DELAY  # reset on successful connect
                     while True:
                         is_running = True
                         ctrl = read_json('data/control.json', default={})
                         is_running = ctrl.get('running', True)
-                                
+
                         if not is_running:
                             self._update_state(status="Stopped (Paused)")
                             was_running = False
@@ -1003,7 +1320,7 @@ class MultiAssetTrader:
                         elif not was_running:
                             self._update_state(status="Resuming (waiting for tick)...")
                             was_running = True
-                        
+
                         msg = await ws.recv()
                         raw_data = json.loads(msg)
                         
@@ -1027,8 +1344,9 @@ class MultiAssetTrader:
                                 await self.process_kline(symbol, current_price)
                                 
             except Exception as e:
-                logger.error(f"WebSocket disconnected or error: {e}. Reconnecting in {WEBSOCKET_RECONNECT_DELAY}s...")
-                await asyncio.sleep(WEBSOCKET_RECONNECT_DELAY)
+                logger.error(f"WebSocket disconnected or error: {e}. Reconnecting in {backoff}s...")
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 60)  # cap at 60 s
 
     def run(self):
         logger.info("Checking Binance REST API connection...")

@@ -427,8 +427,11 @@ _USER_INITIATED_AGENTS = frozenset({
     # These agents only tick while the user is actively running something
     # from the corresponding tab. When idle, they leave a stale "running"
     # heartbeat in agent_status.json — that's expected, not a fault.
+    # All three are constructed in _do_sim_init() but only START when the
+    # user clicks Start in the Simulator tab (_apply_sim_start in app.py).
     "SimulatorAgent",
     "StrategySimulatorAgent",
+    "ContinuousTrainerAgent",
 })
 
 
