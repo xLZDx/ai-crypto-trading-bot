@@ -1,19 +1,25 @@
 """
-DatabaseAgent — subscribes to the agent bus and persists ALL bot data to QuestDB.
+DatabaseAgent — subscribes to the agent bus and persists ALL bot data to
+the file-based ParquetClient store (DuckDB + partitioned Parquet on D:).
 
 Subscribes to:
-  candle         → market_data table
-  signal         → model_signals table
-  order / trade  → trade_events table
-  strategy_pnl   → strategy_performance table
-  training_event → training_telemetry table
-  news           → news_sentiment table
-  heartbeat      → agent_heartbeats table
+  candle         → hot.market_data
+  signal         → hot.model_signals
+  order / trade  → cold.trade_events
+  strategy_pnl   → cold.strategy_performance
+  training_event → hot.training_telemetry
+  news           → hot.news_sentiment
+  heartbeat      → hot.agent_heartbeats
 
 Also persists agent heartbeats every HEARTBEAT_SEC and strategy stats every STATS_SEC.
 
 Runs as a background BaseAgent — add to agent bus alongside other agents.
-Falls back silently when QuestDB is unavailable (no data loss in main pipeline).
+Falls back silently when ParquetClient is unavailable (no data loss in main pipeline).
+
+Originally targeted QuestDB; cut over in commits 43db156…b64b733. The ILP-format
+emission stays — ParquetClient.write_ilp() parses it via its compat shim. The
+three helpers (_to_ns / _tag / _now_ns) are inlined at module scope so this file
+no longer depends on the (retired) src/database/questdb_client.py shim.
 """
 from __future__ import annotations
 
@@ -32,6 +38,46 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 HEARTBEAT_SEC = 30     # write agent heartbeats every N seconds
 STATS_SEC     = 60     # write strategy stats every N seconds
 BUFFER_LIMIT  = 2000   # max queued rows before dropping (back-pressure)
+
+
+# Inlined ILP-format helpers (formerly in questdb_client.py — that file is
+# being retired in this commit). ParquetClient.write_ilp() parses the lines
+# emitted using these helpers via its built-in compatibility shim.
+def _to_ns(ts) -> int | None:
+    if ts is None:
+        return None
+    if isinstance(ts, datetime):
+        return int(ts.timestamp() * 1e9)
+    if isinstance(ts, (int, float)):
+        if ts < 1e12:
+            return int(ts * 1e9)
+        elif ts < 1e15:
+            return int(ts * 1e6)
+        return int(ts)
+    if isinstance(ts, str):
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S",
+                    "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S.%f",
+                    "%Y-%m-%dT%H:%M:%S.%f+00:00"):
+            try:
+                dt = datetime.strptime(ts.replace("+00:00", ""),
+                                       fmt.replace("+00:00", ""))
+                return int(dt.replace(tzinfo=timezone.utc).timestamp() * 1e9)
+            except ValueError:
+                continue
+    if hasattr(ts, "timestamp"):
+        return int(ts.timestamp() * 1e9)
+    return None
+
+
+def _tag(v: Any) -> str:
+    return (str(v).replace(" ", "_")
+                  .replace(",", "_")
+                  .replace("=", "_")
+                  .replace("/", "_"))
+
+
+def _now_ns() -> int:
+    return int(time.time() * 1e9)
 
 
 class DatabaseAgent:
@@ -140,7 +186,6 @@ class DatabaseAgent:
             while self._candle_buf:
                 batch.append(self._candle_buf.popleft())
             if batch:
-                from src.database.questdb_client import _to_ns, _tag
                 lines = []
                 for sym, tf, bar in batch:
                     ts_ns = _to_ns(bar.get("timestamp") or bar.get("ts"))
@@ -174,7 +219,6 @@ class DatabaseAgent:
             batch = []
             while self._trade_buf:
                 batch.append(self._trade_buf.popleft())
-            from src.database.questdb_client import _to_ns, _tag, _now_ns
             lines = []
             for t in batch:
                 ts_ns = _to_ns(t.get("timestamp")) or _now_ns()
@@ -234,7 +278,6 @@ class DatabaseAgent:
             if not status_file.exists():
                 return
             data = _j.loads(status_file.read_text(encoding="utf-8"))
-            from src.database.questdb_client import _now_ns, _tag
             lines = []
             ts_ns = _now_ns()
             for agent_name, info in data.items():
@@ -255,7 +298,7 @@ class DatabaseAgent:
     def _client_safe(self):
         if self._client is None:
             try:
-                from src.database.questdb_client import get_client
+                from src.database.parquet_client import get_client
                 self._client = get_client()
             except Exception:
                 return None

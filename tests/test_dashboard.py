@@ -1734,18 +1734,14 @@ def test_phase17_trading_health_fixes():
           'self.meta_labeler.filter(' in main_src and
           'self.meta_labeler.filter_signal(' not in main_src)
 
-    # 5. questdb_client.py is now a back-compat shim re-exporting from
-    #    parquet_client. The HTTP-probe assertion that lived here was for
-    #    the QuestDB-era client; with Route B the probe is in-process
-    #    (DuckDB import + writable data dir), no HTTP at all.
+    # 5. questdb_client.py was a back-compat shim during Phase 2-4 of the
+    #    migration; deleted in the post-Phase-5 shim-drop. All callers now
+    #    import directly from parquet_client. The HTTP-probe assertion that
+    #    once lived here was for the QuestDB-era client; with Route B the
+    #    probe is in-process (no HTTP at all).
     qc_path = os.path.join(BASE_DIR, 'src', 'database', 'questdb_client.py')
-    qc_src = open(qc_path, encoding='utf-8').read()
-    check('questdb_client is now a back-compat shim for ParquetClient',
-          'from src.database.parquet_client import' in qc_src
-          and 'QuestDBClient = _ParquetClient' in qc_src)
-    check('shim still exports legacy ILP helpers (_to_ns, _tag, _now_ns)',
-          'def _to_ns' in qc_src and 'def _tag' in qc_src
-          and 'def _now_ns' in qc_src)
+    check('questdb_client.py shim deleted (no longer present)',
+          not os.path.exists(qc_path))
 
     # 6. Dashboard backend
     app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
@@ -2718,26 +2714,38 @@ def test_phase27_ingest_path_cutover():
     check('ingest_pipeline has inlined _to_ns / _tag / _now_ns helpers',
           'def _to_ns' in ip and 'def _tag' in ip and 'def _now_ns' in ip)
 
-    # 3. The shim continues to satisfy the OTHER 9 importers we haven't
-    #    rewritten yet — assert it loads and returns a ParquetClient.
-    try:
-        import importlib
-        sys.path.insert(0, BASE_DIR) if BASE_DIR not in sys.path else None
-        shim = importlib.import_module('src.database.questdb_client')
-        client = shim.get_client()
-        # Imported alias should still pass type checks against the new client.
-        from src.database.parquet_client import ParquetClient as _PC
-        check('shim get_client() returns ParquetClient',
-              isinstance(client, _PC))
-        check('shim QuestDBClient class is ParquetClient',
-              shim.QuestDBClient is _PC)
-        # Pure ILP helpers preserved (callers like db_agent still use them).
-        check('shim _tag("BTC/USDT") = BTC_USDT (slash → underscore)',
-              shim._tag("BTC/USDT") == "BTC_USDT")
-        check('shim _now_ns() returns positive integer',
-              isinstance(shim._now_ns(), int) and shim._now_ns() > 0)
-    except Exception as e:
-        check('shim loads + returns ParquetClient', False, str(e))
+    # 3. Post-Phase-5 cleanup: the shim has been deleted and every
+    #    importer now references parquet_client directly. db_agent.py
+    #    inlines the ILP helpers (_to_ns / _tag / _now_ns) since it
+    #    still emits ILP strings into ParquetClient.write_ilp().
+    qc_path = os.path.join(BASE_DIR, 'src', 'database', 'questdb_client.py')
+    check('questdb_client.py shim deleted (post-shim-drop)',
+          not os.path.exists(qc_path))
+
+    db_agent_path = os.path.join(BASE_DIR, 'src', 'database', 'db_agent.py')
+    db_agent_src = open(db_agent_path, encoding='utf-8').read()
+    check('db_agent inlines _to_ns / _tag / _now_ns helpers',
+          'def _to_ns' in db_agent_src
+          and 'def _tag' in db_agent_src
+          and 'def _now_ns' in db_agent_src)
+    check('db_agent has no questdb_client imports',
+          'from src.database.questdb_client' not in db_agent_src)
+
+    # 4. Spot-check the 7 other former importers all switched to parquet_client
+    for fp in (
+        os.path.join(BASE_DIR, 'src', 'analytics', 'data_lens.py'),
+        os.path.join(BASE_DIR, 'src', 'data_ingestion', 'binance_sync.py'),
+        os.path.join(BASE_DIR, 'src', 'data_ingestion', 'startup_recovery.py'),
+        os.path.join(BASE_DIR, 'src', 'data_ingestion', 'watchlist_downloader.py'),
+        os.path.join(BASE_DIR, 'src', 'data_ingestion', 'telegram_persistor.py'),
+        os.path.join(BASE_DIR, 'src', 'engine', 'train_tft_model.py'),
+        os.path.join(BASE_DIR, 'src', 'data_governance', 'base.py'),
+    ):
+        with open(fp, encoding='utf-8') as f:
+            txt = f.read()
+        rel = os.path.relpath(fp, BASE_DIR).replace('\\', '/')
+        check(f'{rel} no longer imports questdb_client',
+              'from src.database.questdb_client' not in txt)
 
 
 def test_phase26_parquet_client_foundation():

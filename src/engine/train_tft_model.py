@@ -120,9 +120,9 @@ def build_series_bundle(df: pd.DataFrame, freq: str):
 
 
 def load_frame_from_db(symbol: str, timeframe: str) -> pd.DataFrame | None:
-    """Load OHLCV from QuestDB. Returns None if DB unavailable or data insufficient."""
+    """Load OHLCV from ParquetClient. Returns None if DB unavailable or data insufficient."""
     try:
-        from src.database.questdb_client import get_client
+        from src.database.parquet_client import get_client
         db = get_client()
         if not db.is_available():
             return None

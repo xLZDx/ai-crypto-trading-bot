@@ -127,9 +127,9 @@ _CSV_HEADER = ["timestamp", "open", "high", "low", "close", "volume",
 
 
 def _write_to_db(symbol: str, timeframe: str, raw_rows: list) -> None:
-    """Write raw Binance kline rows to QuestDB (best-effort, non-blocking)."""
+    """Write raw Binance kline rows to ParquetClient (best-effort, non-blocking)."""
     try:
-        from src.database.questdb_client import get_client
+        from src.database.parquet_client import get_client
         db = get_client()
         if not db.is_available():
             return

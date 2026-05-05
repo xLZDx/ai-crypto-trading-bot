@@ -33,6 +33,17 @@ sys.path.insert(0, str(BASE_DIR))
 
 # ─── QuestDB Client ───────────────────────────────────────────────────────────
 
+# questdb_client.py module retired in the Phase 5 → shim-drop migration.
+# Tests that imported from it now skip cleanly.
+try:
+    from src.database import questdb_client as _qdb_client_mod  # noqa: F401
+    _HAS_QDB_CLIENT_MODULE = True
+except ImportError:
+    _HAS_QDB_CLIENT_MODULE = False
+
+
+@unittest.skipUnless(_HAS_QDB_CLIENT_MODULE,
+                     "questdb_client.py shim retired (post-Phase-5 cleanup)")
 class TestQuestDBClient(unittest.TestCase):
 
     def test_module_importable(self):
