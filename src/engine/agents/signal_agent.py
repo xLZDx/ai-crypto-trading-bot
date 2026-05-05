@@ -192,8 +192,16 @@ class SignalAgent(BaseAgent):
                 confidence = 0.5
                 meta_pass = True
                 if self._meta_labeler and self._meta_labeler.is_loaded:
+                    feats = df.iloc[-1].to_dict()
+                    # Surface what we already know so the meta-labeler can
+                    # score against real regime context instead of neutral
+                    # priors. prob_base/prob_trend remain 0.5 unless an
+                    # upstream model has populated them in the dataframe.
+                    feats.setdefault('regime', regime)
+                    feats.setdefault('prob_base', feats.get('prob_base', 0.5))
+                    feats.setdefault('prob_trend', feats.get('prob_trend', 0.5))
                     decision, confidence = self._meta_labeler.filter(
-                        raw_signal, df.iloc[-1].to_dict()
+                        raw_signal, feats
                     )
                     meta_pass = decision == "PASS"
 

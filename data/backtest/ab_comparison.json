@@ -1,22 +1,22 @@
 {
   "sharpe":{
-    "A_Original":0.141025,
-    "B_New":0.0532785714
+    "A_Original":-0.0597125,
+    "B_New":-0.0611543478
   },
   "sortino":{
-    "A_Original":0.0485125,
-    "B_New":0.0209928571
+    "A_Original":-0.026,
+    "B_New":-0.0220891304
   },
   "win_rate_pct":{
-    "A_Original":47.2425,
-    "B_New":33.7542857143
+    "A_Original":48.6875,
+    "B_New":36.2702173913
   },
   "max_drawdown_pct":{
-    "A_Original":-14.027875,
-    "B_New":-13.2866904762
+    "A_Original":-17.399875,
+    "B_New":-15.6568913043
   },
   "n_trades":{
-    "A_Original":1769.1625,
-    "B_New":993.5452380952
+    "A_Original":1793.1375,
+    "B_New":1215.5456521739
   }
 }

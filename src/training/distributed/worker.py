@@ -130,6 +130,28 @@ def _execute_task(task: dict) -> dict:
     data_path  = task.get("data_path", "")
     output_path = task.get("output_path", str(PROJECT_ROOT / "models"))
 
+    # ── VRAM capacity guard ───────────────────────────────────────────────────
+    # TFT needs ≥6 GB free VRAM. Workers below this threshold return a reroute
+    # signal so the orchestrator can reassign the task to PC2/PC3.
+    if model_type == "tft":
+        try:
+            import torch
+            if torch.cuda.is_available():
+                vram_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
+                if vram_gb < 6.0:
+                    logger.warning(
+                        "[Worker] Rejecting TFT task — VRAM %.1f GB < 6 GB minimum. "
+                        "Orchestrator should reroute to a larger GPU worker.",
+                        vram_gb,
+                    )
+                    return {
+                        "error": f"insufficient_vram:{vram_gb:.1f}GB",
+                        "status": "failed",
+                        "reroute": True,
+                    }
+        except Exception:
+            pass  # no torch → proceed, training will fail gracefully
+
     logger.info("[Worker] Running task: %s / %s / %s", model_type, symbol, timeframe)
 
     # Map model_type → training function
@@ -141,6 +163,7 @@ def _execute_task(task: dict) -> dict:
         "futures_short": _train_sklearn_model,
         "regime":        _train_sklearn_model,
         "tft":           _train_tft,
+        "oft":           _train_oft,
         "garch":         _train_garch,
     }
     handler = handlers.get(model_type, _train_sklearn_model)
@@ -248,6 +271,26 @@ def _train_tft(task: dict) -> dict:
         return {"error": str(exc), "status": "failed"}
 
 
+def _train_oft(task: dict) -> dict:
+    """OFT (Order Flow Transformer) — Phase 2 microstructure model.
+
+    Defers to `src.training.joint_oft_rl.train_oft` which writes the
+    checkpoint to models/oft_model.pt. SAC stage is skipped because the
+    distributed cluster only handles the supervised half today."""
+    try:
+        import sys
+        sys.path.insert(0, str(PROJECT_ROOT))
+        from src.training.joint_oft_rl import train_oft as _tof
+        symbol    = task.get("symbol", "BTC/USDT")
+        timeframe = task.get("timeframe", "1m")
+        cfg       = task.get("config", {}) or {}
+        epochs    = int(cfg.get("epochs", 5))
+        result = _tof(symbol=symbol, timeframe=timeframe, n_epochs=epochs)
+        return {**(result or {}), "status": "done"}
+    except Exception as exc:
+        return {"error": str(exc), "status": "failed"}
+
+
 def _train_garch(task: dict) -> dict:
     """GARCH volatility model."""
     import numpy as np
@@ -289,6 +332,7 @@ class TrainingWorker:
                 "name": self.name,
                 "status": "busy" if self._current_task else "idle",
                 "hw": self.hw,
+                "transport": self._transport_info(),
             })
 
         @app.route("/task", methods=["POST"])
@@ -322,6 +366,19 @@ class TrainingWorker:
         finally:
             with self._lock:
                 self._current_task = None
+
+    def _transport_info(self) -> dict:
+        """Phase 0: surface ZMQ data-bus availability for dashboard visibility.
+
+        Importing data_bus does not bind sockets — sockets open lazily on
+        first publish/subscribe. Workers will use this in Phase 3 (joint
+        OFT+RL training) to pull mini-batches from the master.
+        """
+        try:
+            from src.transport.data_bus import get_data_bus
+            return {"zmq_available": True, **get_data_bus().stats()}
+        except Exception as exc:
+            return {"zmq_available": False, "error": str(exc)}
 
     def _notify_master(self, status: str, task_id: str, result: dict | None = None, error: str = "") -> None:
         import requests as req

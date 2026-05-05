@@ -10,7 +10,7 @@ Write-Host "`nUninstalling CPU-only torch..." -ForegroundColor Yellow
 & $pip uninstall torch torchvision torchaudio -y 2>&1
 
 Write-Host "`nInstalling torch with CUDA 12.4 support..." -ForegroundColor Yellow
-Write-Host "(Downloading ~2.5 GB — this will take a few minutes)`n" -ForegroundColor Gray
+Write-Host "(Downloading ~2.5 GB - this will take a few minutes)`n" -ForegroundColor Gray
 & $pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 
 Write-Host "`nVerifying CUDA availability..." -ForegroundColor Yellow

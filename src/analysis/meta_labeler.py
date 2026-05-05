@@ -100,22 +100,31 @@ class MetaLabeler:
             return 'BLOCK', 0.0  # no signal to filter
 
         try:
-            # This is complex in live mode. We need to run primary models first.
-            # The `main.py` orchestrator should provide these probabilities.
-            # For now, we assume `features` dict contains `prob_base`, `prob_trend`, etc.
-            if not all(f in features for f in ['prob_base', 'prob_trend', 'regime']):
-                logger.warning("Meta-labeler missing required probability/regime features. Passing signal.")
-                return 'PASS', 0.5
-
-            # Ensure all features are present
-            feature_row = {}
+            # Normalize input to a flat dict regardless of caller form.
+            feature_row: dict = {}
             if isinstance(features, pd.Series):
                 feature_row = features.to_dict()
             elif isinstance(features, list) and len(features) > 0 and isinstance(features[-1], dict):
-                # Handle list of dicts from data loader
                 feature_row = features[-1]
             elif isinstance(features, dict):
-                feature_row = features
+                feature_row = dict(features)
+
+            # `prob_base`, `prob_trend`, `regime` come from upstream primary
+            # models. When the caller hasn't run them, fail open with neutral
+            # priors so the meta-labeler still scores the technical features
+            # (rsi/macd/bb/ofi/…) instead of bypassing the gate entirely.
+            missing = [f for f in ('prob_base', 'prob_trend', 'regime') if f not in feature_row]
+            if missing:
+                if not getattr(self, '_warned_missing_probs', False):
+                    logger.info(
+                        "Meta-labeler scoring with neutral priors for %s — "
+                        "callers can supply these for more accurate filtering.",
+                        ', '.join(missing),
+                    )
+                    self._warned_missing_probs = True
+                feature_row.setdefault('prob_base', 0.5)
+                feature_row.setdefault('prob_trend', 0.5)
+                feature_row.setdefault('regime', 0)
 
             for f in META_FEATURES:
                 if f not in feature_row:

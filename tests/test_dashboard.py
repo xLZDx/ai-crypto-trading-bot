@@ -2384,6 +2384,96 @@ def test_phase28_dashboard_read_path_cutover():
           'pip install duckdb pyarrow' in tpl)
 
 
+def test_phase32_dedup_market_data():
+    """Per-partition dedup of ParquetClient market_data table. Replaces
+    an earlier DuckDB-COPY+rebucket attempt that silently dropped rows
+    when ts had any NaN values (pandas groupby drops NaN groups by default).
+
+    The new approach: for each yyyymm partition dir, concat all parquet
+    files, drop rows with NaN ts, drop_duplicates(['ts'], keep='first'),
+    write atomic temp file, swap. Idempotent — re-runs are no-ops on
+    single-file partitions.
+    """
+    print('\n[Phase 32 — per-partition dedup_market_data]')
+
+    sc_path = os.path.join(BASE_DIR, 'scripts', 'dedup_market_data.py')
+    sc = open(sc_path, encoding='utf-8').read()
+
+    # Static checks
+    check('dedup script exists', os.path.exists(sc_path))
+    check('dedup_partition() defined',
+          'def dedup_partition(' in sc)
+    check('_walk_partitions() yields leaf dirs only',
+          'def _walk_partitions(' in sc and 'has_subdirs' in sc)
+    check('script no longer warns EXPERIMENTAL',
+          'EXPERIMENTAL' not in sc.upper())
+    check('script defends against NaN ts (the bug from previous attempt)',
+          'dropna(subset=keys)' in sc)
+    check('script writes atomic _dedup_tmp + verify before swap',
+          '_dedup_tmp.parquet' in sc and 'verify mismatch' in sc)
+    check('script is idempotent (skips len(files)<=1 partitions)',
+          'len(files) <= 1' in sc)
+
+    # Behaviour probe: synthetic partition with 3 overlapping files.
+    try:
+        import importlib, tempfile, shutil
+        from pathlib import Path as _P
+        from datetime import datetime, timezone
+        sys.path.insert(0, BASE_DIR) if BASE_DIR not in sys.path else None
+        sm = importlib.import_module('scripts.dedup_market_data')
+
+        import pandas as pd
+        td = tempfile.mkdtemp(prefix='dedup_phase32_')
+        td_path = _P(td)
+        part = td_path / 'symbol=BTC_USDT' / 'timeframe=1h' / 'yyyymm=202601'
+        part.mkdir(parents=True)
+
+        # Build 3 files with overlapping ts ranges
+        ts1 = [datetime(2026, 1, 1, h, 0, tzinfo=timezone.utc) for h in range(5)]
+        ts2 = [datetime(2026, 1, 1, h, 0, tzinfo=timezone.utc) for h in range(3, 8)]   # overlap
+        ts3 = [datetime(2026, 1, 1, h, 0, tzinfo=timezone.utc) for h in range(7, 10)]
+        for i, ts in enumerate([ts1, ts2, ts3]):
+            pd.DataFrame({
+                'ts': ts,
+                'symbol':    ['BTC_USDT'] * len(ts),
+                'timeframe': ['1h'] * len(ts),
+                'open':  [42000.0 + i] * len(ts),
+                'close': [42100.0 + i] * len(ts),
+            }).to_parquet(part / f'data_{i:02d}.parquet')
+
+        before, after = sm.dedup_partition(part, keys=['ts'], dry_run=False)
+        check('dedup combines and dedupes 3 files',
+              before == 13 and after == 10)   # 5+5+3=13, unique hours 0..9 = 10
+
+        # Result is exactly one parquet file
+        files = list(part.glob('*.parquet'))
+        check('dedup leaves exactly one file', len(files) == 1)
+        check('result file is named data.parquet', files[0].name == 'data.parquet')
+
+        # Idempotent
+        b2, a2 = sm.dedup_partition(part, keys=['ts'], dry_run=False)
+        check('idempotent: second run is a no-op',
+              b2 == 0 and a2 == 0)
+
+        # NaN ts robustness
+        part2 = td_path / 'symbol=ETH_USDT' / 'timeframe=1h' / 'yyyymm=202601'
+        part2.mkdir(parents=True)
+        df_with_nan = pd.DataFrame({
+            'ts': [datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc), pd.NaT,
+                   datetime(2026, 1, 1, 1, 0, tzinfo=timezone.utc)],
+            'close': [1.0, 2.0, 3.0],
+        })
+        df_with_nan.to_parquet(part2 / 'a.parquet')
+        df_with_nan.to_parquet(part2 / 'b.parquet')
+        before2, after2 = sm.dedup_partition(part2, keys=['ts'], dry_run=False)
+        check('NaN ts rows dropped explicitly (not silently kept)',
+              before2 == 6 and after2 == 2)   # NaN dropped, 2 unique non-NaN ts
+
+        shutil.rmtree(td, ignore_errors=True)
+    except Exception as e:
+        check('dedup behaviour probe', False, str(e))
+
+
 def test_phase31_market_data_legacy_bridge():
     """Option 3 of the migration finalisation: ParquetClient.query() unions
     market_data writes from data/db/ with the legacy data/parquet/{SYM}/{TF}/
@@ -2903,6 +2993,7 @@ def main():
     test_phase29_cleanup_questdb_artifacts()
     test_phase30_futures_close_reduce_only_guard()
     test_phase31_market_data_legacy_bridge()
+    test_phase32_dedup_market_data()
 
     if not args.offline:
         test_api(args.url)

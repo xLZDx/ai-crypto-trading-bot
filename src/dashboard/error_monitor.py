@@ -105,8 +105,10 @@ _BENIGN_RE = re.compile(
         r"XGBoost.*module could not be imported",
         # Flask dev-server banner (we run dev mode in this environment)
         r"This is a development server\. Do not use",
-        # Transient external feed hiccups (news 502 / RSS 5xx)
+        # Transient external feed hiccups (news 502 / RSS 5xx / timeouts)
         r"Error loading news from .*HTTP Error 5\d\d",
+        r"Error loading news from .*read operation timed out",
+        r"Error loading news from .*timed out",
         r"HTTP Error 502: Bad Gateway",
         # Windows asyncio / FastAPI client-disconnect noise
         r"ConnectionResetError:.*WinError 10054",

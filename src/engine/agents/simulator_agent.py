@@ -301,8 +301,10 @@ class SimulatorAgent(BaseAgent):
         """Write current state to JSON for dashboard polling."""
         try:
             STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            with self._lock:
-                data = self.get_status()
+            # get_status() acquires self._lock internally — re-acquiring the
+            # non-reentrant lock here would deadlock the agent thread on
+            # every cycle, which then hung /api/simulator/status forever.
+            data = self.get_status()
             STATE_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
         except Exception:
             pass

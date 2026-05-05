@@ -1,11 +1,11 @@
 # ── setup_env.ps1 ─────────────────────────────────────────────────────────────
-# Shared environment bootstrap — dot-source this from every launch script:
+# Shared environment bootstrap - dot-source this from every launch script:
 #   . (Join-Path $root 'setup_env.ps1')
 #
 # Sets:
 #   1. All temp/cache dirs → D:\... (keeps C drive free)
-#   2. CPU multithreading  → all logical cores (20 on this machine)
-#   3. GPU optimization    → CUDA cache on D:, TF32 + cuDNN benchmark flags
+#   2. CPU multithreading  → bounded to $env:CPU_CORES (default 10)
+#   3. GPU policy          → 'single_100' (default) or 'dual_80' for cluster DDP
 # ─────────────────────────────────────────────────────────────────────────────
 
 if (-not $root) { $root = Split-Path -Parent $MyInvocation.MyCommand.Path }
@@ -27,53 +27,60 @@ New-Item -ItemType Directory -Force -Path (Join-Path $cacheDir 'matplotlib')   |
 New-Item -ItemType Directory -Force -Path (Join-Path $cacheDir 'darts')        | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $root   'darts_logs')     | Out-Null
 
-# Windows TEMP / TMP (used by joblib, sklearn parallelism, pip)
 $env:TMP  = Join-Path $cacheDir 'temp'
 $env:TEMP = Join-Path $cacheDir 'temp'
 
-# Python / ML tool caches
 $env:PIP_CACHE_DIR       = Join-Path $cacheDir 'pip'
 $env:TORCH_HOME          = Join-Path $cacheDir 'torch'
 $env:HF_HOME             = Join-Path $cacheDir 'huggingface'
 $env:TRANSFORMERS_CACHE  = Join-Path $cacheDir 'huggingface'
 $env:JOBLIB_TEMP_FOLDER  = Join-Path $cacheDir 'temp'
-
-# CUDA kernel cache (prevents C:\Users\...\AppData\Local\NVIDIA writes)
 $env:CUDA_CACHE_PATH     = Join-Path $cacheDir 'cuda'
-$env:CUDA_CACHE_DISABLE  = '0'          # keep caching, just on D:
-
-# Numba / llvmlite JIT cache
+$env:CUDA_CACHE_DISABLE  = '0'
 $env:NUMBA_CACHE_DIR     = Join-Path $cacheDir 'numba'
-
-# Matplotlib (font cache)
 $env:MPLCONFIGDIR        = Join-Path $cacheDir 'matplotlib'
-
-# Darts checkpoint dir (overridden in code too, but belt + suspenders)
 $env:DARTS_LOG_DIR       = Join-Path $root 'darts_logs'
 
-# ── 2. CPU multithreading ──────────────────────────────────────────────────────
-$cpuCount = (Get-CimInstance Win32_Processor | Measure-Object NumberOfLogicalProcessors -Sum).Sum
-if (-not $cpuCount -or $cpuCount -lt 1) { $cpuCount = 20 }
+# ── 2. CPU policy - bounded thread count (user request: 10 cores w/ MT) ──────
+# Override with `$env:CPU_CORES = '8'` before calling restart_all.ps1 if needed.
+if (-not $env:CPU_CORES) { $env:CPU_CORES = '10' }
+$cpuCount = [int]$env:CPU_CORES
+$totalLogical = (Get-CimInstance Win32_Processor | Measure-Object NumberOfLogicalProcessors -Sum).Sum
+if ($cpuCount -gt $totalLogical) { $cpuCount = $totalLogical }
+if ($cpuCount -lt 1) { $cpuCount = 1 }
 
-$env:OMP_NUM_THREADS     = "$cpuCount"   # OpenMP (sklearn, numpy, scipy internals)
-$env:MKL_NUM_THREADS     = "$cpuCount"   # Intel MKL (numpy on Windows often uses MKL)
-$env:OPENBLAS_NUM_THREADS = "$cpuCount"  # OpenBLAS fallback
-$env:NUMEXPR_NUM_THREADS  = "$cpuCount"  # numexpr (pandas speed-ups)
-$env:VECLIB_MAXIMUM_THREADS = "$cpuCount" # macOS vecLib (harmless on Windows)
+$env:OMP_NUM_THREADS         = "$cpuCount"
+$env:MKL_NUM_THREADS         = "$cpuCount"
+$env:OPENBLAS_NUM_THREADS    = "$cpuCount"
+$env:NUMEXPR_NUM_THREADS     = "$cpuCount"
+$env:VECLIB_MAXIMUM_THREADS  = "$cpuCount"
+$env:LOKY_MAX_CPU_COUNT      = "$cpuCount"
+# PyTorch CPU intra-op + inter-op parallelism
+$env:TORCH_NUM_THREADS       = "$cpuCount"
+$env:TORCH_NUM_INTEROP_THREADS = "2"
 
-# Tell sklearn/joblib the loky worker count
-$env:LOKY_MAX_CPU_COUNT  = "$cpuCount"
+Write-Host "  [ENV] CPU = $cpuCount of $totalLogical logical cores (multithreaded)" -ForegroundColor Cyan
 
-Write-Host "  [ENV] $cpuCount logical CPUs → OMP/MKL/LOKY all set" -ForegroundColor Cyan
+# ── 3. GPU policy ─────────────────────────────────────────────────────────────
+#   single_100 (default) - bind to GPU 0, allow up to 100% memory.
+#   dual_80              - both GPUs visible, cap each at 80% memory (DDP).
+if (-not $env:GPU_POLICY) { $env:GPU_POLICY = 'single_100' }
 
-# ── 3. GPU / CUDA optimizations ───────────────────────────────────────────────
-# These env vars tell PyTorch / cuDNN to use full RTX 3080 Ti capability:
-#   TF32 on Ampere: ~3x faster matmul with negligible accuracy loss
-#   cuDNN benchmark: picks fastest conv algorithm for the given input size
+if ($env:GPU_POLICY -eq 'dual_80') {
+    $env:CUDA_VISIBLE_DEVICES = '0,1'
+    $env:PYTORCH_CUDA_ALLOC_CONF = 'max_split_size_mb:512,garbage_collection_threshold:0.80'
+    Write-Host "  [ENV] GPU policy = dual_80 (both GPUs, 80% mem cap)" -ForegroundColor Cyan
+} else {
+    $env:CUDA_VISIBLE_DEVICES = '0'
+    $env:PYTORCH_CUDA_ALLOC_CONF = 'max_split_size_mb:1024,garbage_collection_threshold:0.95'
+    Write-Host "  [ENV] GPU policy = single_100 (GPU 0, full memory)" -ForegroundColor Cyan
+}
+
+# Ampere TF32 + cuDNN benchmark
 $env:TORCH_ALLOW_TF32_CUBLAS_OVERRIDE = '1'
-$env:NVIDIA_TF32_OVERRIDE             = '1'   # driver-level TF32 override
+$env:NVIDIA_TF32_OVERRIDE             = '1'
 $env:CUDNN_BENCHMARK                  = '1'
 
 Write-Host "  [ENV] CUDA cache → $($env:CUDA_CACHE_PATH)" -ForegroundColor Cyan
-Write-Host "  [ENV] TF32 + cuDNN benchmark enabled for RTX 3080 Ti" -ForegroundColor Cyan
+Write-Host "  [ENV] TF32 + cuDNN benchmark enabled" -ForegroundColor Cyan
 Write-Host "  [ENV] All caches → $cacheDir" -ForegroundColor Cyan

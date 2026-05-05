@@ -1,16 +1,14 @@
 @echo off
-echo Stopping AI Trading Assistance...
+title AI Trading Assistance — STOP
+cd /d "%~dp0"
 
-:: 1. Terminate the actual Python processes running main.py and app.py
-echo Stopping Python processes...
-wmic process where "name='python.exe' and (commandline like '%%src\\main.py%%' or commandline like '%%src\\dashboard\\app.py%%' or commandline like '%%server.py%%')" call terminate >nul 2>&1
-
-:: 2. Close the console windows
-echo Closing terminal windows...
-taskkill /FI "WINDOWTITLE eq AI Trading Bot*" /T /F >nul 2>&1
-taskkill /FI "WINDOWTITLE eq AI Trading Dashboard*" /T /F >nul 2>&1
-taskkill /FI "WINDOWTITLE eq AI Trading MCP Server*" /T /F >nul 2>&1
-
+echo ============================================================
+echo   AI TRADING ASSISTANCE — STOP ALL
+echo ============================================================
 echo.
-echo All processes have been stopped!
-pause
+echo Calling stop_all.ps1 (kills bot, dashboard, monitor, training,
+echo  realtime DB writer, data orchestrator, watchlist downloader).
+echo Progress is printed below in real time.
+echo.
+
+powershell.exe -NoExit -ExecutionPolicy Bypass -File "%~dp0stop_all.ps1"

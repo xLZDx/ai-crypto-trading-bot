@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import re
+import time
 from dotenv import load_dotenv
 from src.utils.safe_json import read_json
 
@@ -15,6 +16,24 @@ _TRANSIENT = [
     '503', 'unavailable', 'high demand', 'overloaded',
     '404', 'not found', 'invalid argument', 'unknown model',
 ]
+
+# Models that recently 429/503'd are skipped for COOLDOWN_S to stop the
+# log-spam cascade where every signal retries dead models in a row.
+# Two tiers:
+#   - Generic transient (503, server overload): short cooldown, recovery likely
+#   - Free-tier quota (429 + free_tier in error body): long cooldown, the model
+#     literally has limit:0 in our plan and won't recover until a billing change
+_MODEL_COOLDOWN_S        = 300.0   # 5 min for generic 429/503
+_FREE_TIER_COOLDOWN_S    = 3600.0  # 1 hour for free-tier=0 quota walls
+_model_cooldown_until: dict[str, float] = {}
+
+
+def _is_cooled_down(model_id: str) -> bool:
+    return _model_cooldown_until.get(model_id, 0.0) > time.time()
+
+
+def _mark_cooldown(model_id: str, seconds: float = _MODEL_COOLDOWN_S) -> None:
+    _model_cooldown_until[model_id] = time.time() + seconds
 
 # Paid / most capable models first for trade decisions; free tier as fallback.
 _ALL_MODELS = [
@@ -86,8 +105,14 @@ class AgenticLLM:
         elif selected_model:
             models_to_try = [selected_model] + [m for m in _ALL_MODELS if m != selected_model]
         else:
-            models_to_try = _ALL_MODELS
-        
+            models_to_try = list(_ALL_MODELS)
+
+        # Filter out models cooling down from a recent 429/503. If every
+        # candidate is cooled down (rare), retry the whole list anyway.
+        active = [m for m in models_to_try if not _is_cooled_down(m)]
+        if active:
+            models_to_try = active
+
         last_err = None
         for model_id in models_to_try:
             try:
@@ -110,8 +135,21 @@ class AgenticLLM:
                 return decision, reason
             except Exception as e:
                 last_err = e
-                if any(x in str(e).lower() for x in _TRANSIENT):
-                    logger.warning(f"Agentic LLM: {model_id} transient error, trying fallback...")
+                err_lower = str(e).lower()
+                if any(x in err_lower for x in _TRANSIENT):
+                    if any(x in err_lower for x in ('429', 'quota', '503', 'unavailable', 'overloaded')):
+                        # Free-tier quota walls are persistent (limit:0). Treat
+                        # them with a long cooldown so we don't keep retrying
+                        # ~3× per signal. Generic transient errors get the
+                        # shorter recovery window.
+                        is_free_tier = (
+                            'free_tier' in err_lower
+                            or 'free tier' in err_lower
+                            or 'limit: 0' in err_lower
+                        )
+                        cd = _FREE_TIER_COOLDOWN_S if is_free_tier else _MODEL_COOLDOWN_S
+                        _mark_cooldown(model_id, cd)
+                    logger.debug(f"Agentic LLM: {model_id} transient error, trying fallback...")
                     continue
                 break
 

@@ -8,6 +8,7 @@ This avoids hardcoding feature lists that drift out of sync with training script
 import os
 import sys
 import logging
+import traceback
 
 import joblib
 import numpy as np
@@ -30,11 +31,22 @@ class MLPredictor:
         self.long_accuracy = 0.0
         self.short_accuracy = 0.0
         self.last_error = ""
+        self.last_status = "init"          # 'ok'|'low_confidence'|'no_data'|'not_loaded'|'error'|'init'
         self._last_confidence = 0.5
+        self._embedded_features: list[str] | None = None
 
         if os.path.exists(self.model_path):
             try:
-                self.model = joblib.load(self.model_path)
+                loaded = joblib.load(self.model_path)
+                # train_model_v2.py wraps as {"model": estimator, "feature_cols": [...]};
+                # legacy trainers dump the estimator directly. Accept both.
+                if isinstance(loaded, dict) and "model" in loaded and hasattr(loaded["model"], "predict"):
+                    self.model = loaded["model"]
+                    cols = loaded.get("feature_cols") or loaded.get("features")
+                    if isinstance(cols, list) and cols:
+                        self._embedded_features = list(cols)
+                else:
+                    self.model = loaded
                 self.is_loaded = True
                 logger.info("ML Model loaded: %s", self.model_path)
                 meta_path = self.model_path.replace(".joblib", "_meta.json")
@@ -55,12 +67,26 @@ class MLPredictor:
         """
         Return 1 (bullish), 0 (bearish), or None (no signal / low confidence).
         Accepts a list of OHLCV dicts or a DataFrame.
+
+        Sets `self.last_status` to one of:
+            'ok'             — signal returned (1 or 0)
+            'low_confidence' — model is below 0.52 threshold (None returned)
+            'no_data'        — fewer than 30 candles available
+            'not_loaded'     — model file missing
+            'error'          — exception raised inside predict()
+        `self.last_error` is populated ONLY on real exceptions ('error') or
+        'not_loaded'. Callers that previously checked `last_error` to detect
+        problems should now check `last_status == 'error'` to avoid mis-
+        labelling normal low-confidence outcomes.
         """
         self.last_error = ""
+        self.last_status = "ok"
         if not self.is_loaded or self.model is None:
+            self.last_status = "not_loaded"
             self.last_error = "Model not loaded"
             return None
         if len(data) < 30:
+            self.last_status = "no_data"
             return None
 
         try:
@@ -88,19 +114,24 @@ class MLPredictor:
                 elif (1.0 - p_long) >= 0.52:
                     return 0
                 else:
-                    self.last_error = f"Low confidence ({p_long:.2f}) — no trade"
+                    # Low confidence is a normal, expected outcome — do NOT
+                    # set last_error (that's reserved for actual exceptions).
+                    self.last_status = "low_confidence"
                     return None
             else:
                 result = int(self.model.predict(last_row)[0])
                 self._last_confidence = 0.55
                 if result not in (0, 1):
+                    self.last_status = "error"
                     self.last_error = f"Unexpected prediction value: {result}"
                     return None
                 return result
 
         except Exception as exc:
+            self.last_status = "error"
             self.last_error = f"ML Prediction Error: {exc}"
             logger.error(self.last_error)
+            logger.debug("ML Prediction Error traceback:\n%s", traceback.format_exc())
             return None
 
     def predict_proba_long(self, data) -> float:
@@ -116,6 +147,11 @@ class MLPredictor:
         Falls back to type-specific hardcoded lists if not available.
         Tries multiple attribute paths for CalibratedClassifierCV wrappers.
         """
+        # 0. Trainers (e.g. train_model_v2) embed the feature list alongside
+        # the estimator inside the joblib payload — prefer that over guessing.
+        if self._embedded_features:
+            return self._embedded_features
+
         # 1. Try to read from meta JSON
         meta_path = self.model_path.replace(".joblib", "_meta.json")
         if os.path.exists(meta_path):

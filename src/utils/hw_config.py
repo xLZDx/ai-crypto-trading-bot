@@ -75,3 +75,53 @@ def configure(verbose: bool = True) -> dict:
 
     result['cpu_cores'] = n_cpu
     return result
+
+
+# ── VRAM brackets for TFT model sizing ───────────────────────────────────────
+# Razer Blade budget: 8 GB VRAM, 4 GB reserved for QuestDB Docker → ≤7 GB usable.
+# Offload heavier fold counts to PC2/PC3 workers (no Docker overhead there).
+_VRAM_BRACKETS = [
+    (24, {"batch_size": 128, "hidden_size": 128, "lstm_layers": 2}),
+    (16, {"batch_size":  64, "hidden_size":  64, "lstm_layers": 2}),
+    ( 8, {"batch_size":  32, "hidden_size":  64, "lstm_layers": 2}),  # Razer Blade
+    ( 4, {"batch_size":  16, "hidden_size":  32, "lstm_layers": 1}),
+    ( 0, {"batch_size":  16, "hidden_size":  32, "lstm_layers": 1}),  # CPU fallback
+]
+
+# Minimum free RAM (GB) to keep available for QuestDB Docker on the primary node.
+QUESTDB_DOCKER_RESERVE_GB = 4.0
+
+
+def get_tft_config(verbose: bool = False) -> dict:
+    """Return safe TFT hyperparameters for the available VRAM.
+
+    On the Razer Blade (8 GB VRAM, 4 GB Docker reservation) this returns
+    batch_size=32 / hidden_size=64 / lstm_layers=2 — enough capacity without
+    OOMing or starving QuestDB.  Workers with ≥16 GB VRAM receive larger configs
+    so the orchestrator can offload heavy fold training to PC2/PC3.
+    """
+    vram_gb = 0.0
+    device = "cpu"
+    try:
+        import torch
+        if torch.cuda.is_available():
+            vram_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
+            device = "gpu"
+    except Exception:
+        pass
+
+    cfg: dict = {"batch_size": 16, "hidden_size": 32, "lstm_layers": 1}
+    for threshold, params in _VRAM_BRACKETS:
+        if vram_gb >= threshold:
+            cfg = dict(params)
+            break
+
+    cfg["device"] = device
+    cfg["vram_gb"] = round(vram_gb, 1)
+
+    if verbose:
+        logger.info(
+            "[HW] TFT config: batch=%d hidden=%d lstm=%d  device=%s  VRAM=%.1f GB",
+            cfg["batch_size"], cfg["hidden_size"], cfg["lstm_layers"], device, vram_gb,
+        )
+    return cfg

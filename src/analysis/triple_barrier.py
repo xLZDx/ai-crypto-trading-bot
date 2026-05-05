@@ -106,3 +106,72 @@ def label_stats(labels: pd.Series) -> dict:
         "timeout_pct": round(counts.get(0, 0) / total * 100, 1),
         "total": total,
     }
+
+
+# ────────────────────────────────────────────────────────────────────────────
+#  Phase 1 — strict causal t1 audit
+#  Refer to updated_architecture_plan_en.md §4 — point 4 in the anti-leakage
+#  checklist: "t1 from Triple Barrier must not overlap with the test set".
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def causal_t1_audit(
+    t1_times: pd.Series,
+    train_end: pd.Timestamp | str,
+    test_start: pd.Timestamp | str | None = None,
+) -> dict:
+    """Verify no train-set label resolves *after* the train/test boundary.
+
+    The Triple Barrier resolves each label at `t1` (when TP/SL/timeout fires).
+    If a sample's `t1` lies after `train_end`, the model would be trained on
+    information from the test period — classic temporal leakage.
+
+    Args:
+        t1_times: Series of resolution timestamps (output of
+                  triple_barrier_labels_vectorized's second return value).
+        train_end: Last timestamp included in the training window (inclusive).
+        test_start: First timestamp of the test window. Defaults to
+                    `train_end + 1ns` (immediate adjacency). Pass a later
+                    value to enforce a purge gap (recommended ≥ 1 max_bars).
+
+    Returns:
+        {ok, n_violations, first_violation, recommended_purge_until}
+    """
+    t1 = pd.to_datetime(t1_times)
+    train_end = pd.to_datetime(train_end)
+    if test_start is None:
+        test_start = train_end + pd.Timedelta(nanoseconds=1)
+    else:
+        test_start = pd.to_datetime(test_start)
+
+    # Take only the train portion's t1 values
+    train_mask = t1.index[(pd.to_datetime(t1.index, errors="coerce") <= train_end)] \
+        if hasattr(t1.index, "to_series") else t1.index
+    train_t1 = t1.loc[train_mask] if len(train_mask) else t1
+
+    violations = train_t1[train_t1 >= test_start]
+    return {
+        "ok":              violations.empty,
+        "n_violations":    int(len(violations)),
+        "first_violation": str(violations.iloc[0]) if not violations.empty else None,
+        # If violations exist, drop everything that resolves into the gap.
+        "recommended_purge_until": str(train_t1.max()) if violations.empty else str(violations.max()),
+    }
+
+
+def purge_overlapping_train(
+    df: pd.DataFrame,
+    t1_times: pd.Series,
+    train_end: pd.Timestamp | str,
+    test_start: pd.Timestamp | str | None = None,
+) -> pd.DataFrame:
+    """Drop train rows whose label resolution overlaps the test window.
+
+    Returns a *copy* of `df` with the offending rows removed. Used in
+    PurgedKFold-style splits to guarantee strict causality.
+    """
+    audit = causal_t1_audit(t1_times, train_end=train_end, test_start=test_start)
+    if audit["ok"]:
+        return df
+    keep_mask = pd.to_datetime(t1_times) < pd.to_datetime(test_start or train_end)
+    return df.loc[keep_mask].copy()

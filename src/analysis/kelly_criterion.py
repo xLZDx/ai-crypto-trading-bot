@@ -151,3 +151,26 @@ class KellySizer:
     def circuit_breaker(self, consecutive_losses: int, threshold: int = 3) -> bool:
         """Return True if trading should be halted (too many consecutive losses)."""
         return consecutive_losses >= threshold
+
+
+# ─── Phase 4: prior weight for CVaR optimizer ───────────────────────────────
+
+def kelly_weight_prior(p_wins, win_loss_ratios=None, *, half_kelly: bool = True):
+    """Build a per-asset Kelly fraction vector to feed `CVaROptimizer.fit(...)`.
+
+    Per updated_architecture_plan_en.md §14, Kelly is no longer the final
+    sizer — it becomes the *prior* the CVaR optimizer takes as starting
+    point, then CVaR shrinks/rotates the weights to respect tail-risk and
+    correlation. Returns an array of fractions that sum (in absolute value)
+    ≤ MAX_KELLY_FRACTION × n_assets, suitable for normalising downstream.
+    """
+    import numpy as np
+    p_wins = np.asarray(p_wins, dtype=float)
+    if win_loss_ratios is None:
+        ratios = np.full_like(p_wins, 1.5)
+    else:
+        ratios = np.asarray(win_loss_ratios, dtype=float)
+    return np.array([
+        kelly_fraction(float(p), float(r), half_kelly=half_kelly)
+        for p, r in zip(p_wins, ratios)
+    ], dtype=float)

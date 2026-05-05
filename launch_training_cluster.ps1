@@ -1,5 +1,5 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# launch_training_cluster.ps1  —  Start the Training Orchestrator (master node)
+# launch_training_cluster.ps1  -  Start the Training Orchestrator (master node)
 #
 # Run this on the MASTER laptop (the one with training data).
 # Worker laptops run worker.py pointing to this machine's IP.
@@ -22,7 +22,7 @@ if (-not $LocalIP) {
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host " Training Orchestrator — Master Node" -ForegroundColor Green
+Write-Host " Training Orchestrator - Master Node" -ForegroundColor Green
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host " This machine IP: $LocalIP"
 Write-Host " Orchestrator:    http://${LocalIP}:7700"

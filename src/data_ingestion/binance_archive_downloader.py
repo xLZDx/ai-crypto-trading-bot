@@ -55,16 +55,36 @@ logging.basicConfig(
 logger = logging.getLogger("archive_dl")
 
 PROJECT_ROOT   = Path(__file__).resolve().parents[2]
-RAW_DIR        = PROJECT_ROOT / "data" / "raw" / "historical"   # pre-2026 archive lives here
+RAW_DIR        = PROJECT_ROOT / "data" / "raw"                  # 1m / 1h / 1d / 1mo live here
+HISTORICAL_DIR = PROJECT_ROOT / "data" / "raw" / "historical"   # 1s lives here
 WATCHLIST_FILE = PROJECT_ROOT / "data" / "watchlist.json"
+LISTING_CACHE  = PROJECT_ROOT / "data" / "binance_listing_dates.json"
 
-MAX_WORKERS = 3
+# Parallelism. Network-bound, so 8 is safe; user can go higher with env var.
+MAX_WORKERS = int(os.getenv("ARCHIVE_MAX_WORKERS", "8"))
 RETRY_LIMIT = 4
 BASE_URL    = "https://data.binance.vision/data/spot/monthly/klines"
 CSV_HEADER  = [
     "timestamp", "open", "high", "low", "close", "volume",
     "quote_volume", "trades_count", "taker_buy_base", "taker_buy_quote",
 ]
+
+# Binance archive supports these kline intervals.
+SUPPORTED_TF = ("1s", "1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h",
+                "6h", "8h", "12h", "1d", "3d", "1w", "1mo")
+
+
+def _output_dir_for(timeframe: str) -> Path:
+    """1s lives in data/raw/historical/; everything else in data/raw/."""
+    return HISTORICAL_DIR if timeframe == "1s" else RAW_DIR
+
+
+def _output_filename(symbol: str, timeframe: str) -> str:
+    """1s preserves legacy `_spot_1s.csv.gz`; others use `_{tf}.csv.gz`."""
+    safe = symbol.replace("/", "_")
+    if timeframe == "1s":
+        return f"{safe}_spot_1s.csv.gz"
+    return f"{safe}_{timeframe}.csv.gz"
 
 
 def _watchlist() -> list[str]:
@@ -78,8 +98,8 @@ def _archive_symbol(symbol: str) -> str:
     return symbol.replace("/", "")
 
 
-def _gz_path(symbol: str) -> Path:
-    return RAW_DIR / f"{symbol.replace('/', '_')}_spot_1s.csv.gz"
+def _gz_path(symbol: str, timeframe: str = "1s") -> Path:
+    return _output_dir_for(timeframe) / _output_filename(symbol, timeframe)
 
 
 def _last_timestamp(gz: Path) -> datetime | None:
@@ -143,9 +163,37 @@ def _months_to_download(last_ts: datetime | None) -> list[tuple[int, int]]:
     return months
 
 
-def _download_month_zip(sym_bin: str, year: int, month: int) -> bytes | None:
-    fname = f"{sym_bin}-1s-{year:04d}-{month:02d}.zip"
-    url   = f"{BASE_URL}/{sym_bin}/1s/{fname}"
+def _zip_url(sym_bin: str, year: int, month: int, timeframe: str) -> str:
+    fname = f"{sym_bin}-{timeframe}-{year:04d}-{month:02d}.zip"
+    return f"{BASE_URL}/{sym_bin}/{timeframe}/{fname}"
+
+
+def _zip_exists(sym_bin: str, year: int, month: int, timeframe: str = "1s") -> bool:
+    """Cheap existence probe via HEAD — avoids a full GET → 404 round-trip.
+
+    data.binance.vision answers HEAD with the same status code and
+    Content-Length headers it would for GET, so this is ~10× cheaper for
+    "not in archive" months (the dominant case for delisted coins).
+    """
+    url = _zip_url(sym_bin, year, month, timeframe)
+    try:
+        r = requests.head(url, timeout=15, allow_redirects=True)
+        return r.status_code == 200
+    except requests.RequestException:
+        return False  # treat network errors as "doesn't exist" for this run
+
+
+def _download_month_zip(sym_bin: str, year: int, month: int, timeframe: str = "1s",
+                        skip_if_missing: bool = True) -> bytes | None:
+    """GET the zip if it exists. Returns None on 404 / persistent errors.
+
+    With `skip_if_missing=True` (default), we HEAD first to avoid a
+    body-transfer for missing months.
+    """
+    if skip_if_missing and not _zip_exists(sym_bin, year, month, timeframe):
+        return None
+
+    url = _zip_url(sym_bin, year, month, timeframe)
     delay = 2.0
     for attempt in range(RETRY_LIMIT):
         try:
@@ -159,6 +207,39 @@ def _download_month_zip(sym_bin: str, year: int, month: int) -> bytes | None:
             time.sleep(delay)
             delay = min(delay * 2, 60)
     return None
+
+
+# ─── Listing-date cache (skip months before a coin existed) ─────────────────
+
+def _load_listing_cache() -> dict[str, str]:
+    """Map symbol → first-known yyyy-mm. Updated lazily as we successfully download."""
+    if not LISTING_CACHE.exists():
+        return {}
+    try:
+        return json.loads(LISTING_CACHE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_listing_cache(cache: dict[str, str]) -> None:
+    try:
+        LISTING_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        LISTING_CACHE.write_text(json.dumps(cache, indent=2), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("could not save listing cache: %s", exc)
+
+
+def _filter_months_by_listing(symbol: str, months: list[tuple[int, int]],
+                              cache: dict[str, str]) -> list[tuple[int, int]]:
+    """Drop months strictly before the cached listing date for this symbol."""
+    listed = cache.get(symbol)
+    if not listed:
+        return months
+    try:
+        ly, lm = (int(p) for p in listed.split("-"))
+    except Exception:
+        return months
+    return [(y, m) for (y, m) in months if (y, m) >= (ly, lm)]
 
 
 def _convert_row(row: list) -> list | None:
@@ -175,7 +256,7 @@ def _convert_row(row: list) -> list | None:
 
 def _append_zip_to_gz(zip_bytes: bytes, gz_path: Path, after_ts: datetime | None) -> int:
     """Extract zip → convert → append to gz. Returns rows written."""
-    RAW_DIR.mkdir(parents=True, exist_ok=True)
+    gz_path.parent.mkdir(parents=True, exist_ok=True)
     mode    = "at" if gz_path.exists() else "wt"
     written = 0
 
@@ -208,77 +289,166 @@ def _append_zip_to_gz(zip_bytes: bytes, gz_path: Path, after_ts: datetime | None
     return written
 
 
-def download_symbol(symbol: str) -> dict:
-    gz       = _gz_path(symbol)
+def download_symbol(symbol: str, timeframe: str = "1s",
+                    listing_cache: dict[str, str] | None = None) -> dict:
+    gz       = _gz_path(symbol, timeframe)
     sym_bin  = _archive_symbol(symbol)
     last_ts  = _last_timestamp(gz)
     months   = _months_to_download(last_ts)
     first_ts = _first_timestamp(gz)
 
-    logger.info("[%s] File: %s | Stored: %s → %s | Months to fetch: %d",
-                symbol, gz.name,
+    if listing_cache is None:
+        listing_cache = _load_listing_cache()
+    pre_skip = len(months)
+    months = _filter_months_by_listing(symbol, months, listing_cache)
+    skipped_pre = pre_skip - len(months)
+
+    logger.info("[%s/%s] File: %s | Stored: %s → %s | Months to fetch: %d (skipped %d pre-listing)",
+                symbol, timeframe, gz.name,
                 first_ts.strftime("%Y-%m") if first_ts else "none",
                 last_ts.strftime("%Y-%m-%d") if last_ts else "none",
-                len(months))
+                len(months), skipped_pre)
 
     if not months:
-        logger.info("[%s] Already up-to-date.", symbol)
-        return {"symbol": symbol, "months_downloaded": 0, "rows_written": 0}
+        logger.info("[%s/%s] Already up-to-date.", symbol, timeframe)
+        return {"symbol": symbol, "timeframe": timeframe,
+                "months_downloaded": 0, "rows_written": 0,
+                "months_skipped_404": 0}
 
     total_rows = 0
     downloaded = 0
+    skipped_404 = 0
+    first_success: tuple[int, int] | None = None
 
     for year, month in months:
-        logger.info("[%s] Downloading %04d-%02d …", symbol, year, month)
-        zip_bytes = _download_month_zip(sym_bin, year, month)
+        zip_bytes = _download_month_zip(sym_bin, year, month, timeframe,
+                                        skip_if_missing=True)
         if zip_bytes is None:
-            logger.info("[%s] %04d-%02d not in archive — skipping.", symbol, year, month)
+            skipped_404 += 1
             continue
         rows = _append_zip_to_gz(zip_bytes, gz, after_ts=last_ts)
         total_rows += rows
         downloaded += 1
-        # Advance cutoff so next month doesn't re-write rows
+        if first_success is None:
+            first_success = (year, month)
         last_ts = datetime(year, month % 12 + 1 if month < 12 else 1,
                            1, tzinfo=timezone.utc) - timedelta(seconds=1)
         size_mb = round(gz.stat().st_size / 1024**2, 0)
-        logger.info("[%s] %04d-%02d +%d rows | file %.0f MB", symbol, year, month, rows, size_mb)
-        time.sleep(0.3)
+        logger.info("[%s/%s] %04d-%02d +%d rows | file %.0f MB",
+                    symbol, timeframe, year, month, rows, size_mb)
+        time.sleep(0.1)  # gentle on the archive CDN
+
+    # Cache first successful month so future runs skip pre-listing months.
+    if first_success and symbol not in listing_cache:
+        listing_cache[symbol] = f"{first_success[0]:04d}-{first_success[1]:02d}"
+        _save_listing_cache(listing_cache)
 
     size_gb = round(gz.stat().st_size / 1024**3, 2) if gz.exists() else 0
-    logger.info("[%s] DONE — %d months, %d rows, %.2f GB", symbol, downloaded, total_rows, size_gb)
-    return {"symbol": symbol, "months_downloaded": downloaded, "rows_written": total_rows}
+    logger.info("[%s/%s] DONE — %d months, %d rows, %d 404s, %.2f GB",
+                symbol, timeframe, downloaded, total_rows, skipped_404, size_gb)
+    return {"symbol": symbol, "timeframe": timeframe,
+            "months_downloaded": downloaded, "rows_written": total_rows,
+            "months_skipped_404": skipped_404}
 
 
-def download_all(symbols: list[str] | None = None) -> None:
+def download_all(symbols: list[str] | None = None, timeframe: str = "1s") -> None:
+    if timeframe not in SUPPORTED_TF:
+        raise ValueError(f"timeframe {timeframe!r} not in {SUPPORTED_TF}")
     if symbols is None:
         symbols = _watchlist()
 
     logger.info("=" * 60)
-    logger.info("Binance Archive 1s Downloader  —  %d symbols", len(symbols))
-    logger.info("Archive: %s", BASE_URL)
+    logger.info("Binance Archive Downloader  —  %d symbols  tf=%s  workers=%d",
+                len(symbols), timeframe, MAX_WORKERS)
+    logger.info("Archive: %s/{SYM}/%s/", BASE_URL, timeframe)
+    logger.info("Output: %s", _output_dir_for(timeframe))
     logger.info("=" * 60)
 
+    listing_cache = _load_listing_cache()
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-        futures = {pool.submit(download_symbol, s): s for s in symbols}
+        futures = {pool.submit(download_symbol, s, timeframe, listing_cache): s
+                   for s in symbols}
         for fut in as_completed(futures):
             sym = futures[fut]
             try:
                 r = fut.result()
-                logger.info("✅ [%s] %d months  %d rows", sym, r["months_downloaded"], r["rows_written"])
+                logger.info("DONE [%s/%s] %d months  %d rows  %d 404s",
+                            sym, timeframe,
+                            r["months_downloaded"], r["rows_written"],
+                            r.get("months_skipped_404", 0))
             except Exception as exc:
-                logger.error("❌ [%s] %s", sym, exc)
+                logger.error("FAIL [%s/%s] %s", sym, timeframe, exc)
 
     logger.info("=" * 60)
-    logger.info("ALL SYMBOLS COMPLETE")
+    logger.info("ALL SYMBOLS COMPLETE  (timeframe=%s)", timeframe)
+    logger.info("=" * 60)
+
+
+def download_all_timeframes_parallel(symbols: list[str] | None = None,
+                                     timeframes: list[str] | None = None) -> None:
+    """Cross-timeframe parallelism — schedules every (sym, tf) into one big pool.
+
+    Faster than sequentially calling download_all for each tf, because
+    the worker pool stays saturated even when one tf finishes faster than
+    others (e.g. 1mo has only ~80 months vs 1m has thousands).
+    """
+    if symbols is None:
+        symbols = _watchlist()
+    if timeframes is None:
+        timeframes = ["1m", "1d", "1mo"]
+    invalid = [tf for tf in timeframes if tf not in SUPPORTED_TF]
+    if invalid:
+        raise ValueError(f"timeframes {invalid} not in {SUPPORTED_TF}")
+
+    logger.info("=" * 60)
+    logger.info("Binance Archive Downloader (cross-TF) — %d sym × %d tf × workers=%d",
+                len(symbols), len(timeframes), MAX_WORKERS)
+    logger.info("=" * 60)
+
+    listing_cache = _load_listing_cache()
+    jobs = [(s, tf) for s in symbols for tf in timeframes]
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+        futures = {pool.submit(download_symbol, s, tf, listing_cache): (s, tf)
+                   for s, tf in jobs}
+        for fut in as_completed(futures):
+            s, tf = futures[fut]
+            try:
+                r = fut.result()
+                logger.info("DONE [%s/%s] %d months  %d rows  %d 404s",
+                            s, tf, r["months_downloaded"], r["rows_written"],
+                            r.get("months_skipped_404", 0))
+            except Exception as exc:
+                logger.error("FAIL [%s/%s] %s", s, tf, exc)
+
+    logger.info("=" * 60)
+    logger.info("ALL (symbol, tf) JOBS COMPLETE")
     logger.info("=" * 60)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Download Binance 1s archive data from data.binance.vision")
+    global MAX_WORKERS
+    parser = argparse.ArgumentParser(
+        description="Download Binance archive klines from data.binance.vision"
+    )
     parser.add_argument("--symbols", nargs="+", metavar="SYM",
                         help="e.g. BTC/USDT ETH/USDT  (default: all watchlist coins)")
+    parser.add_argument("--timeframe", default="1s", choices=SUPPORTED_TF,
+                        help="Kline interval (default 1s)")
+    parser.add_argument("--all-timeframes", nargs="+",
+                        help="Download multiple timeframes IN PARALLEL, e.g. "
+                             "--all-timeframes 1m 1d 1mo")
+    parser.add_argument("--workers", type=int, default=None,
+                        help="Override MAX_WORKERS (default 8)")
     args = parser.parse_args()
-    download_all(symbols=args.symbols)
+
+    if args.workers:
+        MAX_WORKERS = max(1, int(args.workers))
+
+    if args.all_timeframes:
+        download_all_timeframes_parallel(symbols=args.symbols,
+                                         timeframes=args.all_timeframes)
+    else:
+        download_all(symbols=args.symbols, timeframe=args.timeframe)
 
 
 if __name__ == "__main__":

@@ -62,7 +62,27 @@ class TelegramMonitor:
                 events.NewMessage(chats=self.channels)
             )
             logger.info(f"Telegram Monitor listening to channels: {self.channels}")
-            await client.run_until_disconnected()
+            self._write_status(connected=True)
+            try:
+                await client.run_until_disconnected()
+            finally:
+                self._write_status(connected=False)
+
+    def _write_status(self, connected: bool) -> None:
+        """Heartbeat file for the dashboard's component-health probe.
+        Bot embeds Telegram, so the dashboard can't detect it via process scan."""
+        try:
+            import json, time as _t
+            from pathlib import Path
+            project_root = Path(__file__).resolve().parents[2]
+            (project_root / 'data').mkdir(parents=True, exist_ok=True)
+            (project_root / 'data' / 'telegram_status.json').write_text(json.dumps({
+                'connected': bool(connected),
+                'channels': list(self.channels),
+                'last_update_ts': _t.time(),
+            }))
+        except Exception as e:
+            logger.debug("Telegram status write failed: %s", e)
 
     def _start_loop(self):
         loop = asyncio.new_event_loop()

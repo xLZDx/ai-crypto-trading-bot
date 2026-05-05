@@ -218,34 +218,71 @@ def train_tft_model(
 
     # Apply CPU/GPU optimisations (TF32, cuDNN benchmark, thread count)
     try:
-        from src.utils.hw_config import configure as _hw_cfg
+        from src.utils.hw_config import configure as _hw_cfg, get_tft_config
         _hw_cfg(verbose=True)
+        _hw = get_tft_config(verbose=True)
     except Exception:
-        pass
+        _hw = {"batch_size": 32, "hidden_size": 32, "lstm_layers": 1, "device": "cpu", "vram_gb": 0.0}
 
-    # Auto-detect GPU (RTX 3080 Ti will be ~20-50x faster than CPU)
+    # Auto-detect GPU
     try:
         import torch
         _use_gpu = torch.cuda.is_available()
         if _use_gpu:
-            gpu_count = torch.cuda.device_count()
-            logger.info("CUDA GPU detected: %d device(s) found. Primary: %s — training on all GPUs.", gpu_count, torch.cuda.get_device_name(0))
+            logger.info("CUDA GPU detected: %s  VRAM=%.1f GB", torch.cuda.get_device_name(0), _hw["vram_gb"])
             torch.cuda.empty_cache()
         else:
-            logger.warning("No CUDA GPU detected — training on CPU (slow). Run install_cuda_torch.ps1 to enable GPU.")
+            logger.warning("No CUDA GPU detected — training on CPU. Run install_cuda_torch.ps1 to enable GPU.")
     except Exception:
         _use_gpu = False
 
-    # EarlyStopping on val_loss — saves compute when training plateaus
+    # ── Phase 0 fix: filter val series that are too short to produce any validation
+    # window. A val series needs ≥ input_chunk_length + output_chunk_length bars for
+    # Darts to form even one validation batch; shorter ones silently produce NaN
+    # val_loss, which prevents EarlyStopping from ever firing.
+    MIN_VAL_BARS = input_chunk_length + output_chunk_length
+    valid_val_mask = [len(v) >= MIN_VAL_BARS for v in scaled_val_tgt]
+
+    if any(valid_val_mask):
+        _fit_val_tgt    = [v for v, ok in zip(scaled_val_tgt,    valid_val_mask) if ok]
+        _fit_val_past   = [v for v, ok in zip(scaled_val_past,   valid_val_mask) if ok]
+        _fit_val_future = [v for v, ok in zip(scaled_val_future, valid_val_mask) if ok]
+        _monitor_metric = "val_loss"
+        if not all(valid_val_mask):
+            logger.warning(
+                "[TFT] %d/%d val series long enough (≥%d bars) — using only valid ones.",
+                sum(valid_val_mask), len(valid_val_mask), MIN_VAL_BARS,
+            )
+    else:
+        # All val series are too short → skip validation and monitor train_loss instead
+        logger.warning(
+            "[TFT] All val series shorter than %d bars — EarlyStopping will monitor train_loss.",
+            MIN_VAL_BARS,
+        )
+        _fit_val_tgt = _fit_val_past = _fit_val_future = None
+        _monitor_metric = "train_loss"
+
+    # EarlyStopping: check_finite=True stops if metric is NaN (guards against empty
+    # val loops); strict=True raises if the metric key is never logged (catches
+    # Darts version skew where the key name differs).
     try:
         from pytorch_lightning.callbacks import EarlyStopping
-        _early_stop_cb = [EarlyStopping(monitor="val_loss", patience=5, mode="min", verbose=True)]
+        _early_stop_cb = [
+            EarlyStopping(
+                monitor=_monitor_metric,
+                patience=5,
+                mode="min",
+                check_finite=True,
+                min_delta=1e-6,
+                verbose=True,
+            )
+        ]
     except Exception:
         _early_stop_cb = []
 
     _trainer_kw: dict = {"enable_progress_bar": True}
     if _use_gpu:
-        _trainer_kw.update({"accelerator": "gpu", "devices": -1, "strategy": "auto"})
+        _trainer_kw.update({"accelerator": "gpu", "devices": 1, "strategy": "auto"})
     else:
         _trainer_kw["accelerator"] = "cpu"
     if _early_stop_cb:
@@ -254,11 +291,11 @@ def train_tft_model(
     model = TFTModel(
         input_chunk_length=input_chunk_length,
         output_chunk_length=output_chunk_length,
-        hidden_size=64 if _use_gpu else 32,
-        lstm_layers=2 if _use_gpu else 1,
+        hidden_size=_hw["hidden_size"],
+        lstm_layers=_hw["lstm_layers"],
         num_attention_heads=4,
         dropout=0.1,
-        batch_size=64 if _use_gpu else 32,
+        batch_size=_hw["batch_size"],
         n_epochs=n_epochs,
         random_state=42,
         force_reset=True,
@@ -267,21 +304,25 @@ def train_tft_model(
     )
 
     logger.info(
-        "Training TFT on %d series with input=%d output=%d epochs=%d device=%s val_split=%.0f%%",
+        "Training TFT on %d series  input=%d output=%d epochs=%d  "
+        "device=%s VRAM=%.1fGB  batch=%d hidden=%d  val_monitor=%s",
         len(scaled_train_tgt),
         input_chunk_length,
         output_chunk_length,
         n_epochs,
         "GPU" if _use_gpu else "CPU",
-        VAL_FRAC * 100,
+        _hw["vram_gb"],
+        _hw["batch_size"],
+        _hw["hidden_size"],
+        _monitor_metric,
     )
     model.fit(
         series=scaled_train_tgt,
         past_covariates=scaled_train_past,
         future_covariates=scaled_train_future,
-        val_series=scaled_val_tgt,
-        val_past_covariates=scaled_val_past,
-        val_future_covariates=scaled_val_future,
+        val_series=_fit_val_tgt,
+        val_past_covariates=_fit_val_past,
+        val_future_covariates=_fit_val_future,
         verbose=True,
     )
 

@@ -141,6 +141,22 @@ class BacktestResult:
         }
 
 
+def _market_impact_slippage(size_usdt: float, depth_usdt: float) -> float:
+    """Square-root market impact model (Kyle's lambda approximation).
+
+    Phase 4 slippage: instead of a flat percentage, slippage scales with
+    sqrt(order_size / book_depth), reflecting how a larger order eats deeper
+    into the L2 book.  Capped at 0.5% per side to prevent unrealistic fills.
+
+    Typical depth_usdt values:
+      BTC/USDT futures top-5 levels: ~500_000 USDT
+      SOL/USDT: ~100_000 USDT
+      ADA/USDT: ~50_000 USDT  (default)
+    """
+    ratio = max(size_usdt, 1.0) / max(depth_usdt, 1.0)
+    return min(0.005, 0.001 * np.sqrt(ratio))
+
+
 class Backtester:
     """
     Vectorized backtester. Feeds OHLCV + funding data through a signal function
@@ -150,12 +166,13 @@ class Backtester:
     def __init__(
         self,
         initial_capital: float = 10_000.0,
-        maker_fee: float = 0.0002,       # 0.02% Binance futures maker
-        taker_fee: float = 0.0004,       # 0.04% Binance futures taker
-        slippage_pct: float = 0.0005,    # 0.05% slippage/spread per side
-        fee_preset: str | None = None,   # override both fees from FEE_PRESETS
-        position_size_pct: float = 0.10, # 10% of capital per trade
-        max_hold_bars: int = 48,         # max hours to hold a position
+        maker_fee: float = 0.0002,          # 0.02% Binance futures maker
+        taker_fee: float = 0.0004,          # 0.04% Binance futures taker
+        slippage_pct: float | None = None,  # legacy override; None → depth model
+        book_depth_usdt: float = 50_000.0,  # Phase 4: avg L2 depth for slippage model
+        fee_preset: str | None = None,      # override both fees from FEE_PRESETS
+        position_size_pct: float = 0.10,    # 10% of capital per trade
+        max_hold_bars: int = 48,            # max hours to hold a position
     ):
         self.initial_capital = initial_capital
         if fee_preset and fee_preset in FEE_PRESETS:
@@ -164,11 +181,18 @@ class Backtester:
         else:
             self.maker_fee = maker_fee
             self.taker_fee = taker_fee
-        self.slippage_pct = slippage_pct
+        self.slippage_pct = slippage_pct        # None = use depth model
+        self.book_depth_usdt = book_depth_usdt
         # backward-compat alias
         self.fee_rate = self.taker_fee
         self.position_size_pct = position_size_pct
         self.max_hold_bars = max_hold_bars
+
+    def _slip(self, size_usdt: float) -> float:
+        """Return slippage fraction for a given order size."""
+        if self.slippage_pct is not None:
+            return self.slippage_pct
+        return _market_impact_slippage(size_usdt, self.book_depth_usdt)
 
     def run(
         self,
@@ -223,8 +247,8 @@ class Backtester:
 
             if should_close and position is not None:
                 # --- SLIPPAGE on EXIT ---
-                # Sell at a slightly worse price (lower for long, higher for short)
-                exit_price = price * (1 - self.slippage_pct) if position["direction"] == 1 else price * (1 + self.slippage_pct)
+                slip = self._slip(position["size_usdt"])
+                exit_price = price * (1 - slip) if position["direction"] == 1 else price * (1 + slip)
                 fee = position["size_usdt"] * self.maker_fee  # exit via limit order
                 trade = TradeRecord(
                     symbol=symbol,
@@ -255,8 +279,8 @@ class Backtester:
                         continue
                 direction = 1 if signal > 0 else -1
                 # --- SLIPPAGE on ENTRY ---
-                # Buy at a slightly worse price (higher for long, lower for short)
-                entry_price = price * (1 + self.slippage_pct) if direction == 1 else price * (1 - self.slippage_pct)
+                slip = self._slip(size)
+                entry_price = price * (1 + slip) if direction == 1 else price * (1 - slip)
                 entry_fee = size * self.taker_fee  # entry via market order
                 position = {
                     "direction": direction,
@@ -274,7 +298,8 @@ class Backtester:
         # Close any open position at end
         if position is not None and len(df) > 0:
             last = df.iloc[-1]
-            exit_price = last["close"] * (1 - self.slippage_pct) if position["direction"] == 1 else last["close"] * (1 + self.slippage_pct)
+            slip = self._slip(position["size_usdt"])
+            exit_price = last["close"] * (1 - slip) if position["direction"] == 1 else last["close"] * (1 + slip)
             fee = position["size_usdt"] * self.taker_fee  # forced market exit at end
             trade = TradeRecord(
                 symbol=symbol,

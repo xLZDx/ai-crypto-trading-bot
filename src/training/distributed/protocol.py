@@ -30,6 +30,7 @@ class ModelType(str, Enum):
     META_LABELER = "meta_labeler"
     FUTURES_SHORT = "futures_short"
     TFT          = "tft"
+    OFT          = "oft"
     REGIME       = "regime"
     GARCH        = "garch"
     CUSTOM       = "custom"

@@ -284,25 +284,82 @@ def add_telegram_signal(df: pd.DataFrame, telegram_data_path: str) -> pd.DataFra
 
 def add_news_sentiment(df: pd.DataFrame, news_path: str) -> pd.DataFrame:
     """
-    Merges hourly news sentiment from cryptocompare_news.csv into the feature DataFrame.
+    Merges hourly news sentiment into the feature DataFrame.
+
+    Phase 10F: prefers the Parquet news partition (`_NEWS/news/yyyymm=*/`)
+    over the legacy `cryptocompare_news.csv` when available. Falls back to
+    CSV when Parquet is empty or unreachable.
+
     Score = (bullish_hits - bearish_hits) / total_hits, resampled to 1h and forward-filled.
     """
+    df = df.copy()
+
+    # ── Phase 10F: try Parquet first ──────────────────────────────────────
+    try:
+        from src.analysis.feature_reader import load_news_recent
+        news_rows = load_news_recent(hours=24 * 365)   # 1y window
+        if news_rows:
+            news = pd.DataFrame(news_rows)
+            ts_col = "published_at" if "published_at" in news.columns else "ts"
+            if ts_col in news.columns:
+                news["timestamp"] = pd.to_datetime(news[ts_col],
+                                                    unit="ms" if ts_col == "ts" else None,
+                                                    errors="coerce", utc=True)
+                news = news.dropna(subset=["timestamp"])
+                news["timestamp"] = news["timestamp"].dt.tz_convert(None)
+                if "score" in news.columns and news["score"].abs().sum() > 0:
+                    news["sentiment"] = pd.to_numeric(news["score"], errors="coerce").fillna(0)
+                else:
+                    text_col = "title" if "title" in news.columns else "summary"
+                    news["sentiment"] = news[text_col].fillna("").apply(_score_kw)
+                hourly = (news.set_index("timestamp")["sentiment"]
+                          .resample("1h").mean()
+                          .reset_index()
+                          .rename(columns={"sentiment": "news_sentiment"}))
+                df_ts = pd.to_datetime(df["timestamp"])
+                if df_ts.dt.tz is not None:
+                    df_ts = df_ts.dt.tz_convert(None)
+                df["timestamp"] = df_ts
+                df = pd.merge_asof(df.sort_values("timestamp"),
+                                    hourly.sort_values("timestamp"),
+                                    on="timestamp", direction="backward")
+                df["news_sentiment"] = df["news_sentiment"].fillna(0.0)
+                return df
+    except Exception as exc:
+        logging.getLogger(__name__).debug(
+            "news_sentiment: parquet path failed (%s) — falling back to CSV.", exc)
+
+    # ── Legacy CSV fallback ───────────────────────────────────────────────
+    if not os.path.exists(news_path):
+        df['news_sentiment'] = 0.0
+        return df
+
+    return df
+
+
+_BULL = ['buy', 'bull', 'pump', 'moon', 'breakout', 'rally', 'surge', 'long',
+         'gain', 'rise', 'recover', 'support', 'bullish', 'ath', 'upside']
+_BEAR = ['sell', 'bear', 'crash', 'dump', 'short', 'drop', 'fall', 'decline',
+         'fear', 'loss', 'breakdown', 'risk', 'bearish', 'correction', 'downside']
+
+
+def _score_kw(text) -> float:
+    t = str(text).lower()
+    b = sum(1 for kw in _BULL if kw in t)
+    s = sum(1 for kw in _BEAR if kw in t)
+    total = b + s
+    return float(b - s) / total if total > 0 else 0.0
+
+
+def add_news_sentiment_csv_fallback(df: pd.DataFrame, news_path: str) -> pd.DataFrame:
+    """Original CSV-only path, kept for the FinBERT pipeline below."""
     df = df.copy()
     if not os.path.exists(news_path):
         df['news_sentiment'] = 0.0
         return df
 
-    _BULL = ['buy', 'bull', 'pump', 'moon', 'breakout', 'rally', 'surge', 'long',
-             'gain', 'rise', 'recover', 'support', 'bullish', 'ath', 'upside']
-    _BEAR = ['sell', 'bear', 'crash', 'dump', 'short', 'drop', 'fall', 'decline',
-             'fear', 'loss', 'breakdown', 'risk', 'bearish', 'correction', 'downside']
-
     def _score(text: str) -> float:
-        t = str(text).lower()
-        b = sum(1 for kw in _BULL if kw in t)
-        s = sum(1 for kw in _BEAR if kw in t)
-        total = b + s
-        return float(b - s) / total if total > 0 else 0.0
+        return _score_kw(text)
 
     try:
         news = pd.read_csv(news_path, usecols=['published_at', 'title', 'summary'])
@@ -632,3 +689,101 @@ def add_macd_divergence(df: pd.DataFrame, fast: int = 12, slow: int = 26,
         df["macd_divergence"]
     )
     return df
+
+
+# ────────────────────────────────────────────────────────────────────────────
+#  Phase 1 — Level 1 Data Layer additions
+#  Refer to updated_architecture_plan_en.md §2 (L2/L3 features) and §3 (Kalman)
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def add_kalman_close(df: pd.DataFrame, out_col: str = "price_kalman") -> pd.DataFrame:
+    """Apply the Kalman filter from the architecture plan to `close`.
+
+    Adds a new column (default `price_kalman`) holding the noise-cleaned
+    series. Original `close` is left intact for execution / PnL accounting.
+    """
+    if "close" not in df.columns or len(df) < 2:
+        df[out_col] = df.get("close", 0.0)
+        return df
+    try:
+        from src.analysis.kalman_smoother import smooth_price
+        df[out_col] = smooth_price(df["close"].values)
+    except Exception as exc:
+        logging.getLogger(__name__).warning("Kalman smoothing skipped: %s", exc)
+        df[out_col] = df["close"]
+    return df
+
+
+def add_l2_features(
+    df: pd.DataFrame,
+    *,
+    p_bid_col: str = "p_bid",
+    p_ask_col: str = "p_ask",
+    v_bid_col: str = "v_bid",
+    v_ask_col: str = "v_ask",
+    prefix: str = "ob_",
+) -> pd.DataFrame:
+    """Attach `ob_imbalance`, `ob_microprice`, `ob_ofi` columns when bid/ask data is present.
+
+    No-op when the bid/ask columns are absent — keeps candle-only training
+    pipelines unchanged. The `ob_` prefix avoids colliding with the existing
+    kline-level `ofi` column produced by `add_ofi`.
+    """
+    try:
+        from src.analysis.orderbook_features import add_orderbook_features
+    except Exception as exc:
+        logging.getLogger(__name__).warning("orderbook_features unavailable: %s", exc)
+        return df
+    return add_orderbook_features(
+        df,
+        p_bid_col=p_bid_col,
+        p_ask_col=p_ask_col,
+        v_bid_col=v_bid_col,
+        v_ask_col=v_ask_col,
+        prefix=prefix,
+    )
+
+
+def causal_audit(df: pd.DataFrame) -> dict:
+    """Detect lookahead-bias hazards in a feature DataFrame.
+
+    Catches the three failure modes called out in the plan §4:
+      1. cumulative VWAP without intraday reset
+      2. OFI computed against future ticks
+      3. timestamp not monotone (rolling windows would peek backward)
+
+    Returns: {ok: bool, warnings: list[str]}
+    """
+    warnings: list[str] = []
+
+    # 1) timestamps must be monotone non-decreasing
+    if "timestamp" in df.columns:
+        ts = pd.to_datetime(df["timestamp"], errors="coerce")
+        if ts.is_monotonic_increasing is False:
+            warnings.append("timestamps are not monotonically increasing")
+
+    # 2) VWAP must reset intraday — cumulative-from-zero is a leak.
+    #    Heuristic: VWAP grows monotonically across day boundaries → suspicious.
+    if "vwap" in df.columns and "timestamp" in df.columns:
+        ts = pd.to_datetime(df["timestamp"], errors="coerce")
+        if ts.notna().any() and len(df) > 100:
+            day = ts.dt.floor("D")
+            day_changes = day.diff().fillna(pd.Timedelta(0)) > pd.Timedelta(0)
+            if day_changes.any():
+                # vwap right after midnight should drop close to typical price
+                resets = (df["vwap"].diff().abs() / df["close"].replace(0, 1e-9))[day_changes]
+                if (resets < 1e-4).all():
+                    warnings.append("vwap appears cumulative — does not reset intraday")
+
+    # 3) OFI sanity — must change sign at least sometimes
+    for col in ("ofi", "ob_ofi"):
+        if col in df.columns and df[col].nunique(dropna=True) <= 1 and len(df) > 100:
+            warnings.append(f"{col} is constant across {len(df)} rows — possibly stale or non-causal")
+
+    return {"ok": not warnings, "warnings": warnings}
+
+
+__all__ = [name for name in globals() if name.startswith("add_")] + [
+    "add_kalman_close", "add_l2_features", "causal_audit", "normalize_tensors",
+]

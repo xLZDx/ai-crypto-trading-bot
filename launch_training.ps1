@@ -7,4 +7,5 @@ Set-Location $root
 
 . (Join-Path $root 'setup_env.ps1')
 
-& $python -u (Join-Path $root 'src\engine\train_all_models.py') 2>&1 | Out-String -Stream | Tee-Object -FilePath (Join-Path $logDir 'training.log') -Append
+# Pass any arguments from this script directly to the python script
+& $python -u (Join-Path $root 'src\engine\train_all_models.py') $args 2>&1 | Out-String -Stream | Tee-Object -FilePath (Join-Path $root 'logs\training.log') -Append

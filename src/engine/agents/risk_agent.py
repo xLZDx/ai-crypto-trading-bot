@@ -7,14 +7,17 @@ Responsibilities:
   - Monitors drawdown in real-time (circuit breaker on 3 consecutive losses)
   - Runs LLM macro/news veto (existing AgenticLLM)
   - Detects liquidity sweep risk — blocks entries near large stop clusters
+  - Phase 5: dynamic beta-neutrality gate — blocks new same-side trades when
+    aggregate factor-β exposure would breach the cap (arch plan §17)
   - Publishes approved trade orders to ExecutionAgent
 
 Decision chain for each signal:
   1. Circuit breaker check (consecutive losses)
   2. Drawdown limit check (max drawdown guard)
   3. Liquidity sweep check (don't enter when price near liq cluster)
-  4. LLM macro veto (news/sentiment)
-  5. Kelly sizing → publish order
+  4. Beta-neutrality check (Phase 5)
+  5. LLM macro veto (news/sentiment)
+  6. Kelly sizing → publish order
 """
 from __future__ import annotations
 
@@ -28,10 +31,13 @@ from src.analysis.kelly_criterion import KellySizer
 
 logger = logging.getLogger(__name__)
 
-MAX_DRAWDOWN_PCT = 10.0       # halt trading if account drawdown > 10%
-MAX_CONSECUTIVE_LOSSES = 3    # circuit breaker
-LIQ_PROXIMITY_BLOCK = 0.85   # block if liq_proximity > this (too close to stop cluster)
-BASE_POSITION_PCT = 0.10      # base position size (10% of capital)
+MAX_DRAWDOWN_PCT = 10.0        # halt if cumulative account drawdown > 10%
+MAX_DAILY_LOSS_PCT = 5.0       # hard stop if single-day loss > 5%
+MAX_CONSECUTIVE_LOSSES = 3     # circuit breaker: consecutive losing trades
+LIQ_PROXIMITY_BLOCK = 0.85    # block if too close to liquidity stop cluster
+BASE_POSITION_PCT = 0.10       # base position size (10% of capital)
+DATA_STALE_SEC = 300           # bar older than this (5 min) = data feed problem
+API_LATENCY_LIMIT_MS = 500     # halt new entries if exchange RTT exceeds this
 
 
 class RiskAgent(BaseAgent):
@@ -46,7 +52,21 @@ class RiskAgent(BaseAgent):
         self._kelly = KellySizer(window=50, half_kelly=True)
         self._circuit_open = False
 
-        # Lazy-load LLM veto
+        # Phase 4 — daily drawdown breaker
+        self._daily_start_capital = initial_capital
+        self._daily_start_date = datetime.now(timezone.utc).date()
+
+        # Phase 4 — data staleness breaker
+        self._last_bar_ts: datetime | None = None   # updated by update_bar_timestamp()
+
+        # Phase 4 — API latency breaker (updated externally by execution agent)
+        self.last_api_latency_ms: float = 0.0
+
+        # Phase 5 — dynamic beta-neutrality filter (lazy init; needs history)
+        self._beta_filter = None  # set via attach_beta_filter(returns_history)
+
+        # Lazy-load LLM veto (must stay inside __init__ — was unreachable
+        # before due to a Phase 9 misplaced-method bug).
         self._llm = None
         try:
             from src.engine.agentic_llm import AgenticLLM
@@ -54,9 +74,74 @@ class RiskAgent(BaseAgent):
         except Exception as e:
             logger.warning("[RiskAgent] AgenticLLM unavailable: %s", e)
 
+    def attach_beta_filter(self, history_returns, *, factor: str = "BTC/USDT",
+                           max_beta_exposure: float = 1.0) -> None:
+        """Activate the Phase 5 beta-neutrality pre-trade gate.
+
+        Call once after enough historical returns are loaded (≥100 rows).
+        After this, `check_beta_neutrality(symbol, side, notional)` will
+        block new orders whose addition would push aggregate |β| past the cap.
+        """
+        try:
+            from src.analysis.beta_neutrality import BetaNeutralityFilter
+            self._beta_filter = BetaNeutralityFilter(
+                history_returns, factor=factor, max_beta_exposure=max_beta_exposure,
+            )
+            logger.info("BetaNeutralityFilter attached. factor=%s cap=%.2f",
+                        factor, max_beta_exposure)
+        except Exception as exc:
+            logger.warning("Could not attach BetaNeutralityFilter: %s", exc)
+            self._beta_filter = None
+
+    def check_beta_neutrality(self, symbol: str, side: str, notional: float) -> bool:
+        """Return True if trade is allowed by the β-neutrality gate.
+
+        When no filter is attached (e.g., insufficient history), pass-through
+        allows the trade. Logs blocks for the dashboard to surface.
+        """
+        if self._beta_filter is None:
+            return True
+        try:
+            blocked = self._beta_filter.would_breach(symbol, side, notional)
+            if blocked:
+                snap = self._beta_filter.snapshot()
+                logger.warning(
+                    "[β-Neutrality] blocked %s %s %.0f — would push |β|>%.2f (current %+.2f)",
+                    side, symbol, notional, self._beta_filter.max_beta_exposure,
+                    snap.aggregate_beta,
+                )
+            return not blocked
+        except Exception as exc:
+            logger.debug("β-neutrality check failed: %s", exc)
+            return True
+
     def _setup_subscriptions(self):
         self.bus.subscribe("signal", self._on_signal)
         self.bus.subscribe("order", self._on_order_filled)
+        self.bus.subscribe("bar", self._on_bar)  # track data freshness
+
+    def update_bar_timestamp(self, ts: datetime) -> None:
+        """Call this whenever a fresh market bar arrives (WebSocket handler)."""
+        self._last_bar_ts = ts
+
+    def _on_bar(self, msg) -> None:
+        payload = msg.payload or {}
+        ts_raw = payload.get("timestamp")
+        if ts_raw:
+            try:
+                self._last_bar_ts = datetime.fromisoformat(str(ts_raw)).replace(tzinfo=timezone.utc)
+            except Exception:
+                pass
+
+    def _hard_kill(self, reason: str) -> None:
+        """Publish flatten-all event and open the circuit breaker permanently."""
+        self._circuit_open = True
+        logger.critical("[RiskAgent] HARD KILL SWITCH ACTIVATED — reason: %s", reason)
+        self.publish("risk_kill_switch", {
+            "action": "flatten_all",
+            "reason": reason,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
 
     def _on_order_filled(self, msg) -> None:
         payload = msg.payload or {}
@@ -74,11 +159,15 @@ class RiskAgent(BaseAgent):
 
         drawdown_pct = (self.peak_capital - self.capital) / self.peak_capital * 100
         if drawdown_pct > MAX_DRAWDOWN_PCT:
-            self._circuit_open = True
-            logger.warning("[RiskAgent] Max drawdown %.1f%% exceeded — circuit OPEN.", drawdown_pct)
+            self._hard_kill(f"cumulative_drawdown_{drawdown_pct:.1f}pct")
         elif self._circuit_open and drawdown_pct < MAX_DRAWDOWN_PCT * 0.5:
             self._circuit_open = False
             logger.info("[RiskAgent] Drawdown recovered to %.1f%% — circuit CLOSED.", drawdown_pct)
+
+        # Daily drawdown limit — hard stop if single-day loss exceeds threshold
+        daily_loss_pct = (self._daily_start_capital - self.capital) / max(self._daily_start_capital, 1) * 100
+        if daily_loss_pct > MAX_DAILY_LOSS_PCT:
+            self._hard_kill(f"daily_loss_{daily_loss_pct:.1f}pct")
 
     def _on_signal(self, msg) -> None:
         payload = msg.payload or {}
@@ -92,6 +181,23 @@ class RiskAgent(BaseAgent):
         liq_proximity = float(payload.get("raw_signals", {}).get("liq_proximity", 0))
 
         if direction == 0:
+            return
+
+        # ── 0a. Data feed staleness ───────────────────────────────────────
+        if self._last_bar_ts is not None:
+            age_sec = (datetime.now(timezone.utc) - self._last_bar_ts).total_seconds()
+            if age_sec > DATA_STALE_SEC:
+                logger.warning(
+                    "[RiskAgent] %s BLOCKED — data feed stale (last bar %.0fs ago).", sym, age_sec
+                )
+                return
+
+        # ── 0b. API latency spike ─────────────────────────────────────────
+        if self.last_api_latency_ms > API_LATENCY_LIMIT_MS:
+            logger.warning(
+                "[RiskAgent] %s BLOCKED — API latency spike %.0f ms > %d ms limit.",
+                sym, self.last_api_latency_ms, API_LATENCY_LIMIT_MS,
+            )
             return
 
         # ── 1. Circuit breaker ────────────────────────────────────────────
@@ -146,9 +252,20 @@ class RiskAgent(BaseAgent):
                     sym, direction, position_usdt, confidence)
 
     def _run_cycle(self) -> None:
+        # Daily drawdown counter reset at UTC midnight
+        today = datetime.now(timezone.utc).date()
+        if today != self._daily_start_date:
+            self._daily_start_date = today
+            self._daily_start_capital = self.capital
+            logger.info("[RiskAgent] Daily P&L counter reset for %s  capital=%.2f", today, self.capital)
+
         # Periodic health log
         drawdown_pct = (self.peak_capital - self.capital) / self.peak_capital * 100
-        logger.debug("[RiskAgent] Capital=%.2f | Drawdown=%.1f%% | "
-                     "ConsecLosses=%d | WR=%.1f%% | W/L=%.2f",
-                     self.capital, drawdown_pct, self._consecutive_losses,
-                     self._kelly.win_rate * 100, self._kelly.win_loss_ratio)
+        daily_loss_pct = (self._daily_start_capital - self.capital) / max(self._daily_start_capital, 1) * 100
+        logger.debug(
+            "[RiskAgent] Capital=%.2f | DD=%.1f%% | DailyLoss=%.1f%% | "
+            "ConsecLosses=%d | WR=%.1f%% | W/L=%.2f | Latency=%.0fms",
+            self.capital, drawdown_pct, daily_loss_pct, self._consecutive_losses,
+            self._kelly.win_rate * 100, self._kelly.win_loss_ratio,
+            self.last_api_latency_ms,
+        )

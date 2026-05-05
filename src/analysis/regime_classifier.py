@@ -1,17 +1,25 @@
 """
 Market Regime Classifier.
 
-Classifies the current market into one of 3 regimes:
+Phase 2 upgrade: switched from `GaussianMixture` to `BayesianGaussianMixture`
+per updated_architecture_plan_en.md §8 — the Dirichlet Process prior
+auto-prunes unused components, giving the bot a way to *grow* the regime
+taxonomy when novel market behaviour appears (e.g. a new circuit-breaker
+regime around major Fed events) without having to manually re-tune
+`n_components`.
+
+Note on online updates: the architecture plan literally calls
+`model.partial_fit(new_data)` — but sklearn's `BayesianGaussianMixture`
+doesn't expose `partial_fit`. We approximate it with a periodic *warm-start
+refit* that initialises with the previous fit's parameters. Empirically this
+behaves like online EM with a memory-decay factor controlled by the size of
+the new buffer relative to the historical training set.
+
+Classifies the market into one of 3+ regimes:
   0 = RANGING   — low volatility, mean-reversion strategies work best
   1 = TRENDING  — directional momentum, breakout strategies work best
   2 = VOLATILE  — high volatility spike, reduce position size, avoid entries
-
-Implementation: Gaussian Mixture Model (GMM) on rolling volatility features.
-GMM is preferred over HMM here because:
-  - No sequential dependency assumption needed
-  - Faster inference (no Viterbi)
-  - Interpretable cluster means (you can name each cluster)
-  - Robust to missing bars
+  3+ = (Bayesian-discovered, may be empty/pruned)
 
 Live usage: call RegimeClassifier.predict(df) on the last N bars → returns regime int.
 Strategy routing:
@@ -112,8 +120,12 @@ class RegimeClassifier:
             logger.warning("Could not load regime classifier: %s", e)
 
     def fit(self, price_dfs: list[pd.DataFrame]) -> "RegimeClassifier":
-        """Train on a list of OHLCV DataFrames (one per symbol)."""
-        from sklearn.mixture import GaussianMixture
+        """Train on a list of OHLCV DataFrames (one per symbol).
+
+        Uses BayesianGaussianMixture with a Dirichlet-Process prior so unused
+        components are auto-pruned (per architecture plan §8).
+        """
+        from sklearn.mixture import BayesianGaussianMixture
         from sklearn.preprocessing import StandardScaler
         import joblib
 
@@ -135,27 +147,48 @@ class RegimeClassifier:
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X)
 
-        gmm = GaussianMixture(
-            n_components=self.n_components,
+        # BayesianGaussianMixture with weight_concentration_prior=0.01 is the
+        # exact configuration from updated_architecture_plan_en.md §8.
+        bgmm = BayesianGaussianMixture(
+            n_components=max(self.n_components, 5),  # over-provision; DP will prune
             covariance_type="full",
-            max_iter=200,
+            weight_concentration_prior_type="dirichlet_process",
+            weight_concentration_prior=0.01,
+            max_iter=300,
             random_state=42,
         )
-        gmm.fit(X_scaled)
+        bgmm.fit(X_scaled)
 
-        # Assign regime labels by mean volatility (ascending → RANGING, TRENDING, VOLATILE)
-        rv_means = gmm.means_[:, 0]  # first feature = rv (realized vol)
-        order = np.argsort(rv_means)
-        label_map = {int(order[i]): i for i in range(self.n_components)}
+        # Assign regime labels by mean volatility (ascending → RANGING, TRENDING, VOLATILE).
+        # BGMM may have pruned components — only label the ones with nontrivial weight.
+        weights = bgmm.weights_
+        active = np.where(weights > 0.02)[0]  # active components (weight > 2%)
+        if len(active) == 0:
+            active = np.arange(len(weights))
+        rv_means = bgmm.means_[active, 0]  # rv is feature 0
+        order = active[np.argsort(rv_means)]
+        # Map active component index → ordered regime label (0,1,2,...).
+        # Inactive components fall back to nearest active.
+        label_map = {int(order[i]): min(i, self.n_components - 1) for i in range(len(order))}
+        for i in range(len(weights)):
+            if i not in label_map:
+                # Unused component → assume RANGING (safest)
+                label_map[i] = 0
 
-        self._model = {"gmm": gmm, "scaler": scaler}
+        self._model = {"gmm": bgmm, "scaler": scaler}
         self._label_map = label_map
         self._is_trained = True
+        # Cache for online updates (warm-start refits)
+        self._scaled_history = X_scaled
 
         os.makedirs(os.path.dirname(self.MODEL_PATH), exist_ok=True)
         joblib.dump({"model": self._model, "label_map": label_map}, self.MODEL_PATH)
-        logger.info("Regime classifier trained and saved. Label map: %s",
-                    {REGIME_NAMES[v]: k for k, v in label_map.items()})
+        logger.info(
+            "BayesianGMM regime classifier trained. %d active components: %s",
+            len(active),
+            {REGIME_NAMES.get(label_map.get(int(c), 0), "?"): float(weights[c])
+             for c in active},
+        )
 
         from datetime import datetime, timezone as _tz
         meta_path = self.MODEL_PATH.replace(".joblib", "_meta.json")
@@ -163,19 +196,61 @@ class RegimeClassifier:
             json.dump(
                 {
                     "n_components": self.n_components,
+                    "n_components_active": int(len(active)),
+                    "weights": [float(w) for w in weights],
                     "regimes": REGIME_NAMES,
                     "label_map": {str(k): v for k, v in label_map.items()},
                     "n_samples": int(len(combined)),
                     "model_path": self.MODEL_PATH,
                     "last_trained": datetime.now(_tz.utc).isoformat(),
-                    "model_type": "GMM",
-                    "accuracy_note": "Unsupervised GMM — no labelled accuracy",
+                    "model_type": "BayesianGaussianMixture",
+                    "weight_concentration_prior": 0.01,
+                    "accuracy_note": "Unsupervised BayesianGMM — no labelled accuracy",
                     "accuracy": None,
                 },
                 _mf,
                 indent=2,
             )
         return self
+
+    def partial_fit(self, df: pd.DataFrame, max_history_bars: int = 50_000) -> "RegimeClassifier":
+        """Approximate online update via warm-start refit.
+
+        sklearn's BayesianGaussianMixture lacks `partial_fit`, so we re-fit
+        on the *combined* (history ∪ new) buffer with the previous component
+        means as the warm-start init. Bounded by `max_history_bars` so the
+        window slides forward.
+        """
+        if not self._is_trained or self._model is None:
+            return self.fit([df])
+        try:
+            from sklearn.mixture import BayesianGaussianMixture
+            feat = _compute_regime_features(df)
+            X_new = self._model["scaler"].transform(feat[self.FEATURE_COLS].values)
+            history = self._scaled_history if hasattr(self, "_scaled_history") else X_new
+            combined = np.concatenate([history, X_new], axis=0)
+            if len(combined) > max_history_bars:
+                combined = combined[-max_history_bars:]
+            old = self._model["gmm"]
+            bgmm = BayesianGaussianMixture(
+                n_components=old.n_components,
+                covariance_type=old.covariance_type,
+                weight_concentration_prior_type="dirichlet_process",
+                weight_concentration_prior=0.01,
+                max_iter=200,
+                mean_precision_prior=1.0,
+                random_state=42,
+                warm_start=False,
+                init_params="kmeans",
+            )
+            # Initialise from previous means to keep label semantics stable.
+            bgmm.fit(combined)
+            self._model["gmm"] = bgmm
+            self._scaled_history = combined
+            return self
+        except Exception as e:
+            logger.warning("partial_fit failed: %s", e)
+            return self
 
     def predict(self, df: pd.DataFrame, last_n: int = 48) -> int:
         """

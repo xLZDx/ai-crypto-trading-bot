@@ -189,6 +189,15 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "can_live": True,
         "can_backtest": False,  # market-making needs live order book
     },
+    "OFT_Microstructure": {
+        "label": "OFT Microstructure Filter",
+        "description": "Order Flow Transformer p_move + liquidity_risk; gates entries and weights size",
+        "group": "ML",
+        "signal_col": "signal_oft",
+        "models": ["oft_model.pt"],
+        "can_live": True,
+        "can_backtest": False,  # needs live L2 stream — currently zero-padded
+    },
 
     # ── Filters / overlays ───────────────────────────────────────────────────
     "MetaLabeler_Filter": {

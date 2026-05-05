@@ -67,6 +67,10 @@
     "live": true,
     "backtest": false
   },
+  "OFT_Microstructure": {
+    "live": true,
+    "backtest": false
+  },
   "MetaLabeler_Filter": {
     "live": true,
     "backtest": true

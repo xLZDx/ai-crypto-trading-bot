@@ -129,3 +129,52 @@ class HullRiskManager:
     def record_trade_outcome(self, pnl: float) -> None:
         """Update Kelly sizer with trade outcome for dynamic win/loss ratio."""
         self._kelly.record_trade(pnl)
+
+    # ── Phase 4: CVaR-driven portfolio sizing ───────────────────────────────
+
+    def cvar_position_weights(
+        self,
+        symbols: list,
+        scenario_returns,                  # (n_scenarios, n_symbols)
+        p_wins: list,
+        *,
+        alpha: float = 0.05,
+        lam: float = 1.0,
+        leverage_cap: float = 1.0,
+        box_max: float = 0.4,
+    ) -> dict:
+        """Return CVaR-optimised position weights for a basket of assets.
+
+        Per updated_architecture_plan_en.md §13-14, Kelly+vol-scaling becomes
+        the *prior* for the CVaR optimizer. The optimizer then shrinks /
+        rotates the prior to respect tail-risk and realised correlation.
+
+        Args:
+            symbols:          List of symbol identifiers (used for output dict keys).
+            scenario_returns: Historical return matrix (rows = time, cols = assets).
+            p_wins:           Per-asset model P(win), aligned with `symbols`.
+
+        Returns: {symbol -> weight} (signed; sum |w| ≤ leverage_cap).
+        """
+        from src.analysis.cvar_optimizer import CVaROptimizer, risk_parity_weights
+        from src.analysis.kelly_criterion import kelly_weight_prior
+        import numpy as np
+        import pandas as pd
+
+        if len(symbols) != len(p_wins):
+            raise ValueError("symbols and p_wins length mismatch")
+
+        scenario_returns = np.asarray(scenario_returns, dtype=float)
+        # Build the risk-parity / Kelly prior. Vol per asset comes from
+        # historical scenarios; correlation penalty from the same.
+        asset_vol = scenario_returns.std(axis=0) + 1e-9
+        corr = pd.DataFrame(scenario_returns).corr().to_numpy()
+        prior = risk_parity_weights(np.asarray(p_wins, dtype=float),
+                                    asset_vol, corr)
+        kelly = kelly_weight_prior(p_wins)
+        prior = (prior + kelly * np.sign(prior)) / 2.0  # blend
+
+        opt = CVaROptimizer(alpha=alpha, lam=lam,
+                            leverage_cap=leverage_cap, box_max=box_max)
+        result = opt.fit(scenario_returns, prior_weights=prior)
+        return {sym: float(w) for sym, w in zip(symbols, result.weights)}

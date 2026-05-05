@@ -279,6 +279,10 @@ class Orchestrator:
             {"model_type": "meta_labeler",   "timeframe": "1m", "config": {}},
             {"model_type": "futures_short",  "timeframe": "1m", "config": {}},
             {"model_type": "regime",         "timeframe": "1h", "config": {}},
+            # OFT (Order Flow Transformer) — single-symbol single-machine in
+            # current implementation, but listed so the cluster scheduler
+            # picks it up once joint_oft_rl supports multi-worker sharding.
+            {"model_type": "oft",            "timeframe": "1m", "config": {"epochs": 5, "skip_sac": True}},
         ]
         task_ids = []
         for sym in symbols:
@@ -320,6 +324,23 @@ def _build_standalone_app(orch: Orchestrator):
     @app.route("/api/cluster/status")
     def status():
         return jsonify(orch.get_status())
+
+    # ── Phase 0 institutional upgrade: parquet store + ZMQ databus ────────
+    @app.route("/api/parquet/status")
+    def parquet_status():
+        try:
+            from src.database.parquet_store import get_store
+            return jsonify(get_store().status())
+        except Exception as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 500
+
+    @app.route("/api/databus/stats")
+    def databus_stats():
+        try:
+            from src.transport.data_bus import get_data_bus
+            return jsonify(get_data_bus().stats())
+        except Exception as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 500
 
     @app.route("/api/cluster/workers")
     def workers():
