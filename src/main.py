@@ -1380,9 +1380,21 @@ class MultiAssetTrader:
         logger.info("Starting TFT Inference Engine thread...")
         self.inference_engine.start(self.symbols)
 
-        # Start Telegram Monitor in background
-        logger.info("Starting Telegram Monitor thread...")
-        self.telegram_monitor.start()
+        # Telegram Monitor is gated behind TELEGRAM_MONITOR_ENABLED (default off).
+        # Telethon v1.43.2 has a known bug where the headless reconnect loop
+        # crashes after the initial session restore fails — symptoms are 15+
+        # CRITICAL banner entries (Event loop closed, Task destroyed, Future
+        # exception never retrieved). Until we either upgrade Telethon or do
+        # an interactive re-login to refresh trading_session.session, we keep
+        # this off so the bot doesn't crashloop noise into the dashboard.
+        # Re-enable with: $env:TELEGRAM_MONITOR_ENABLED='true' before launch.
+        import os as _os
+        _tg_enabled = _os.environ.get('TELEGRAM_MONITOR_ENABLED', 'false').lower() == 'true'
+        if _tg_enabled:
+            logger.info("Starting Telegram Monitor thread...")
+            self.telegram_monitor.start()
+        else:
+            logger.info("Telegram Monitor disabled (set TELEGRAM_MONITOR_ENABLED=true to enable).")
 
         asyncio.run(self.binance_websocket())
 

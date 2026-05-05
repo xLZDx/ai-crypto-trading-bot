@@ -2380,6 +2380,32 @@ def test_phase28_dashboard_read_path_cutover():
           'pip install duckdb pyarrow' in tpl)
 
 
+def test_phase34_telegram_monitor_gate():
+    """Telegram Monitor must be gated behind TELEGRAM_MONITOR_ENABLED env var
+    (default OFF). Telethon v1.43.2 has a headless-reconnect bug that
+    cascades into 15+ CRITICAL banner entries on every bot start; until
+    we resolve that (Telethon upgrade or session re-login), the monitor
+    must not auto-start.
+    """
+    print('\n[Phase 34 — Telegram Monitor gate (default-disabled)]')
+
+    main_path = os.path.join(BASE_DIR, 'src', 'main.py')
+    main_src = open(main_path, encoding='utf-8').read()
+
+    check('main.py reads TELEGRAM_MONITOR_ENABLED env var',
+          "TELEGRAM_MONITOR_ENABLED" in main_src)
+    check('default is "false" (off) — must opt in',
+          ".environ.get('TELEGRAM_MONITOR_ENABLED', 'false')" in main_src
+          or '.environ.get("TELEGRAM_MONITOR_ENABLED", "false")' in main_src)
+    check('start() only fires inside the gate',
+          # Find the gate block; ensure self.telegram_monitor.start() is
+          # inside an if-true branch checking _tg_enabled.
+          'if _tg_enabled:' in main_src
+          and 'self.telegram_monitor.start()' in main_src.split('if _tg_enabled:')[1][:300])
+    check('disabled-path logs an explanation (not silent)',
+          'Telegram Monitor disabled' in main_src)
+
+
 def test_phase32_dedup_market_data():
     """Per-partition dedup of ParquetClient market_data table. Replaces
     an earlier DuckDB-COPY+rebucket attempt that silently dropped rows
@@ -3067,6 +3093,7 @@ def main():
     test_phase31_market_data_legacy_bridge()
     test_phase32_dedup_market_data()
     test_phase33_zombie_watchdog()
+    test_phase34_telegram_monitor_gate()
 
     if not args.offline:
         test_api(args.url)
