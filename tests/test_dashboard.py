@@ -2384,6 +2384,65 @@ def test_phase28_dashboard_read_path_cutover():
           'pip install duckdb pyarrow' in tpl)
 
 
+def test_phase29_cleanup_questdb_artifacts():
+    """Phase 5 of the QuestDB → ParquetClient migration: launch scripts,
+    schema module, restart_all/stop_all references, CLAUDE.md, and the
+    package __init__.py all reflect the new file-based stack. The legacy
+    QuestDB-specific files live under _archive/questdb_migration/.
+    """
+    print('\n[Phase 29 — cleanup of QuestDB artifacts]')
+
+    # 1. Files moved to _archive/questdb_migration
+    archive_dir = os.path.join(BASE_DIR, '_archive', 'questdb_migration')
+    check('_archive/questdb_migration/ exists',
+          os.path.isdir(archive_dir))
+    for fname in ('launch_questdb.ps1', 'schema_questdb.py',
+                  '_archived_questdb_client_legacy.py.bak'):
+        check(f'archived: {fname}',
+              os.path.exists(os.path.join(archive_dir, fname)))
+
+    # 2. Top-level launchers no longer present at project root
+    check('launch_questdb.ps1 removed from project root',
+          not os.path.exists(os.path.join(BASE_DIR, 'launch_questdb.ps1')))
+    check('src/database/schema.py removed',
+          not os.path.exists(os.path.join(BASE_DIR, 'src', 'database', 'schema.py')))
+
+    # 3. restart_all.ps1 references the Parquet store, not QuestDB
+    rs = open(os.path.join(BASE_DIR, 'restart_all.ps1'), encoding='utf-8').read()
+    check('restart_all.ps1 verifies Parquet store, not QuestDB',
+          'Parquet store' in rs
+          and 'launch_questdb.ps1' not in rs
+          and 'docker run -d --name trading_questdb' not in rs)
+    check('restart_all.ps1 no longer probes :9000/exec',
+          'localhost:9000/exec' not in rs and 'localhost:9000/health' not in rs)
+
+    # 4. stop_all.ps1 dropped the QuestDB-Docker advisory
+    sa = open(os.path.join(BASE_DIR, 'stop_all.ps1'), encoding='utf-8').read()
+    check('stop_all.ps1 no longer mentions trading_questdb container',
+          'trading_questdb' not in sa)
+
+    # 5. CLAUDE.md describes the new DB stack
+    cm = open(os.path.join(BASE_DIR, 'CLAUDE.md'), encoding='utf-8').read()
+    check('CLAUDE.md DB line points at ParquetClient',
+          'ParquetClient' in cm
+          and 'data/db/' in cm)
+    check('CLAUDE.md commit-before-implementations rule documented',
+          'commit of the current state' in cm.lower()
+          or 'commit before' in cm.lower())
+
+    # 6. requirements.txt no longer ships the questdb client
+    rq = open(os.path.join(BASE_DIR, 'requirements.txt'), encoding='utf-8').read()
+    check('requirements.txt drops questdb>=1.2.0 dependency',
+          'questdb>=1.2.0' not in rq.split('#')[0])  # ignore comment lines
+
+    # 7. src/database/__init__.py exports ParquetClient + legacy alias
+    init_src = open(os.path.join(BASE_DIR, 'src', 'database', '__init__.py'),
+                    encoding='utf-8').read()
+    check('database __init__ exports ParquetClient + legacy QuestDBClient alias',
+          'ParquetClient' in init_src
+          and 'QuestDBClient = ParquetClient' in init_src)
+
+
 def test_phase27_ingest_path_cutover():
     """Phase 2 of QuestDB → ParquetClient migration: every QuestDB-era
     importer in the bot's ingest layer now resolves to ParquetClient,
@@ -2675,6 +2734,7 @@ def main():
     test_phase26_parquet_client_foundation()
     test_phase27_ingest_path_cutover()
     test_phase28_dashboard_read_path_cutover()
+    test_phase29_cleanup_questdb_artifacts()
 
     if not args.offline:
         test_api(args.url)

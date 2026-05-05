@@ -167,7 +167,21 @@ class TestQuestDBClient(unittest.TestCase):
 
 
 # ─── Database Schema ──────────────────────────────────────────────────────────
+#
+# The QuestDB DDL module (src/database/schema.py) was retired in Phase 5
+# of the QuestDB → ParquetClient migration. The Parquet store schema is
+# implicit in the directory layout; these QuestDB-specific assertions
+# no longer apply. Skipping the whole class keeps this file runnable.
 
+try:
+    from src.database import schema as _qdb_schema  # noqa: F401
+    _HAS_QDB_SCHEMA_MODULE = True
+except ImportError:
+    _HAS_QDB_SCHEMA_MODULE = False
+
+
+@unittest.skipUnless(_HAS_QDB_SCHEMA_MODULE,
+                     "QuestDB schema module retired (Phase 5 migration)")
 class TestDatabaseSchema(unittest.TestCase):
 
     def test_module_importable(self):

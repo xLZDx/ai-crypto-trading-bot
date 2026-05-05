@@ -34,7 +34,8 @@ yfinance
 duckdb>=0.10.0
 
 # Time-series database
-questdb>=1.2.0        # QuestDB Python client (ILP + REST) — being phased out
+# QuestDB Python client retired — see commits 43db156…b64b733 (DB migration to DuckDB+Parquet).
+# duckdb / pyarrow already pulled in by other entries.
 
 # Phase 0 — Institutional upgrade: data store + transport
 pyarrow>=15.0.0       # Parquet I/O for partitioned tick store
