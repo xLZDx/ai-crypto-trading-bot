@@ -2631,19 +2631,30 @@ def api_debug_deaths():
     supervisor itself caps storage at 200. Each record has:
         role, pid, died_at, age_s, rss_mb, cpu_pct, exit_clue,
         last_log_line, log_tail (last 20 lines).
+    `running` reflects whether the supervisor itself is alive (probed
+    via process_ids.json). `present` reflects whether deaths.json exists
+    (i.e. at least one death has been captured ever).
     """
     try:
         import json as _json
-        path = _PROJECT_ROOT / 'data' / 'process_deaths.json'
-        if not path.exists():
-            return jsonify({'deaths': [], 'present': False,
-                            'hint': 'debug_supervisor.py not yet started; '
-                                    'restart_all.ps1 launches it as part of [6/6]'})
-        deaths = _json.loads(path.read_text(encoding='utf-8') or '[]')
+        deaths_path = _PROJECT_ROOT / 'data' / 'process_deaths.json'
+        pids = read_json('data/process_ids.json', default={})
+        sup_pid = pids.get('debug')
+        sup_running = bool(sup_pid) and _pid_alive(sup_pid)
+        deaths = []
+        present = deaths_path.exists()
+        if present:
+            try:
+                deaths = _json.loads(deaths_path.read_text(encoding='utf-8') or '[]')
+            except Exception:
+                deaths = []
         return jsonify({
-            'deaths': deaths[:50],
-            'count':  len(deaths),
-            'present': True,
+            'deaths':  deaths[:50],
+            'count':   len(deaths),
+            'present': present,
+            'running': sup_running,
+            'hint':   None if sup_running
+                      else 'debug_supervisor not running — re-run restart_all.ps1',
         })
     except Exception as exc:
         return jsonify({'deaths': [], 'error': str(exc)}), 500
