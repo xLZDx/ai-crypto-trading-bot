@@ -179,8 +179,11 @@ def test_template():
           's.live_enabled === true' in html)
     check('simulator action wrapper _simAction defined',
           'async function _simAction(' in html)
-    check('QuestDB offline banner mentions native install option',
-          'questdb.io/download' in html)
+    # Phase 3 of QuestDB → ParquetClient migration: the QuestDB-specific
+    # offline banner was retired (no daemon, no native install). Assert
+    # the new DuckDB-based offline guidance instead.
+    check('Parquet Store offline banner mentions DuckDB install',
+          'pip install duckdb pyarrow' in html)
 
 
 # ─── Static: trades.json field names ─────────────────────────────────────────
@@ -272,8 +275,10 @@ def test_app_py():
     # Phase 12 — service health + ML accuracy normalization
     check('/api/monitor/services endpoint defined',
           "'/api/monitor/services'" in src or '"/api/monitor/services"' in src)
-    check('monitor_services probes QuestDB',
-          'questdb' in src.lower() and ':9000' in src)
+    # Phase 3 of QuestDB → ParquetClient migration: QuestDB HTTP probe
+    # replaced with the in-process ParquetClient probe (no port).
+    check('monitor_services probes the parquet store',
+          "out['parquet_store']" in src)
     check('monitor_services probes DuckDB',
           'duckdb' in src and 'PRAGMA temp_directory' in src)
     check('monitor_services probes ZeroMQ data plane',
@@ -2221,7 +2226,7 @@ def test_phase23_unified_banner_aggregator():
     check('scan_status_surfaces() defined', 'def scan_status_surfaces' in em)
 
     # 2. All probe functions exist
-    for fn in ('_probe_questdb', '_probe_duckdb', '_probe_parquet',
+    for fn in ('_probe_parquet_store', '_probe_duckdb', '_probe_parquet',
                '_probe_fastapi', '_probe_realtime', '_probe_processes',
                '_probe_agents', '_probe_scheduler', '_probe_cluster'):
         check(f'probe {fn} defined', f'def {fn}' in em)
@@ -2328,6 +2333,55 @@ def test_phase24_scheduler_flash_and_local_training():
     # Empty-state placeholder when no run snapshot exists
     check('Local-training section has empty-state guidance',
           'No active training snapshot yet' in tpl)
+
+
+def test_phase28_dashboard_read_path_cutover():
+    """Phase 3 of QuestDB → ParquetClient migration: dashboard probes,
+    health cards, and /api/db/* endpoints all surface the new file-based
+    backend. The QuestDB-specific HTTP probe and 'docker-compose up -d
+    questdb' hint are replaced with ParquetClient/DuckDB equivalents.
+    """
+    print('\n[Phase 28 — dashboard read path cutover (Route B)]')
+
+    # Banner monitor probe renamed
+    em_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'error_monitor.py')
+    em = open(em_path, encoding='utf-8').read()
+    check('error_monitor exposes _probe_parquet_store',
+          'def _probe_parquet_store' in em)
+    check('error_monitor no longer defines _probe_questdb',
+          'def _probe_questdb' not in em)
+    check('_ALL_PROBES references parquet_store (not questdb)',
+          '"parquet_store"' in em
+          and '("questdb",   _probe_questdb)' not in em)
+
+    # /api/monitor/services — QuestDB block replaced with parquet_store
+    app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
+    app_src = open(app_path, encoding='utf-8').read()
+    check("/api/monitor/services exposes parquet_store card",
+          "out['parquet_store']" in app_src)
+    check("/api/monitor/services no longer probes 127.0.0.1:9000/exec (QuestDB HTTP)",
+          'http://127.0.0.1:9000/exec?query=SELECT%201' not in app_src)
+
+    # /api/db/status reports the new backend
+    check("/api/db/status reports backend='duckdb+parquet'",
+          "'backend': 'duckdb+parquet'" in app_src)
+    check("/api/db/status returns data_dir for the file-based store",
+          "'data_dir':" in app_src)
+
+    # All /api/db/* routes import parquet_client now
+    n_pq = app_src.count('from src.database.parquet_client import get_client')
+    check('app.py imports parquet_client.get_client at every db_* callsite',
+          n_pq >= 5)
+
+    # Dashboard JS panel: Parquet Store label + DuckDB hint, no docker hint
+    tpl_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
+    tpl = open(tpl_path, encoding='utf-8').read()
+    check('Monitor panel header renamed "Parquet Store (DuckDB)"',
+          'Parquet Store (DuckDB)' in tpl)
+    check('dbPollStatus offline-message no longer suggests docker-compose',
+          'docker-compose up -d questdb' not in tpl)
+    check('dbPollStatus offline-message points at duckdb / pyarrow',
+          'pip install duckdb pyarrow' in tpl)
 
 
 def test_phase27_ingest_path_cutover():
@@ -2620,6 +2674,7 @@ def main():
     test_phase25_user_initiated_agents_exempt()
     test_phase26_parquet_client_foundation()
     test_phase27_ingest_path_cutover()
+    test_phase28_dashboard_read_path_cutover()
 
     if not args.offline:
         test_api(args.url)

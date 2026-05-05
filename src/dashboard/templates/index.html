@@ -1991,11 +1991,11 @@ select.field option{background:#0d1628;color:#e2e8f0}
         </div>
       </div>
 
-      <!-- ── QuestDB Database ─────────────────────────────────────── -->
+      <!-- ── Parquet Store (Phase 3 of QuestDB → ParquetClient migration) ── -->
       <div class="ms-section" id="db-section" style="margin-top:12px">
         <div class="ms-section-hdr" onclick="(()=>{ const b=document.getElementById('db-section-body'),s=document.getElementById('db-section'); if(!b)return; const o=s.classList.toggle('ms-open'); b.classList.toggle('ms-collapsed',!o); })()">
           <div style="display:flex;align-items:center;gap:10px">
-            <span style="font-size:.72rem;font-weight:700;color:#e2e8f0;text-transform:uppercase;letter-spacing:.06em">QuestDB Time-Series Store</span>
+            <span style="font-size:.72rem;font-weight:700;color:#e2e8f0;text-transform:uppercase;letter-spacing:.06em">Parquet Store (DuckDB)</span>
             <span class="chip" id="db-status-chip" style="font-size:.58rem;color:#64748b">Loading…</span>
           </div>
           <span class="ms-chevron-main">▼</span>
@@ -4352,7 +4352,7 @@ function logToggleSection() {
   body.classList.toggle('ms-collapsed', !open);
 }
 
-// ── QuestDB status ───────────────────────────────────────────────────────────
+// ── Parquet Store status (was QuestDB pre-Phase-3) ───────────────────────────
 async function dbPollStatus() {
   try {
     const r = await fetch('/api/db/status', { headers: hdrs() });
@@ -4362,7 +4362,7 @@ async function dbPollStatus() {
     const body = document.getElementById('db-status-body');
     if (!chip) return;
     if (d.available) {
-      chip.textContent = '● Connected';
+      chip.textContent = '● Online';
       chip.style.color = '#34d399';
     } else {
       chip.textContent = '○ Offline';
@@ -4370,11 +4370,9 @@ async function dbPollStatus() {
     }
     if (body) {
       if (!d.available) {
-        body.innerHTML = `<div style="color:#fb7185;font-size:.72rem;line-height:1.5">QuestDB not running.<br>
-          <span style="color:#94a3b8">Cold-path Parquet store still works; QuestDB is only required for high-frequency tick streaming.</span><br>
-          <span style="color:#94a3b8">Start options:</span><br>
-          • Docker: <code style="background:rgba(0,0,0,.3);padding:2px 6px;border-radius:4px">docker-compose up -d questdb</code><br>
-          • Native: download from <a href="https://questdb.io/download/" target="_blank" style="color:#60a5fa">questdb.io/download</a></div>`;
+        body.innerHTML = `<div style="color:#fb7185;font-size:.72rem;line-height:1.5">Parquet store unavailable.<br>
+          <span style="color:#94a3b8">DuckDB import failed or D:/data/db is not writable.</span><br>
+          <span style="color:#94a3b8">Fix:</span> <code style="background:rgba(0,0,0,.3);padding:2px 6px;border-radius:4px">pip install duckdb pyarrow</code></div>`;
         return;
       }
       const rows = Object.entries(d.tables || {}).map(([t, n]) =>
@@ -4383,11 +4381,12 @@ async function dbPollStatus() {
           <span style="font-size:.7rem;color:#e2e8f0;font-weight:700">${Number(n).toLocaleString()}</span>
         </div>`
       ).join('');
+      const backend = d.backend || 'duckdb+parquet';
+      const where = d.data_dir || d.host || 'in-process';
       body.innerHTML = `<div style="margin-bottom:8px;font-size:.62rem;color:#64748b">
-        ${d.host}:${d.http_port} &nbsp;·&nbsp; ILP :${d.ilp_port}</div>${rows}
+        backend: <span style="color:#cbd5e1">${backend}</span> &nbsp;·&nbsp; <span style="color:#cbd5e1">${where}</span></div>${rows}
         <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
-          <button onclick="dbIngest()" class="btn btn-blue btn-sm">⬆ Ingest CSV.gz → QuestDB</button>
-          <a href="http://${d.host}:${d.http_port}" target="_blank" class="btn btn-ghost btn-sm">🌐 Open Console</a>
+          <button onclick="dbIngest()" class="btn btn-blue btn-sm">⬆ Ingest CSV.gz → Parquet</button>
         </div>`;
     }
   } catch {}

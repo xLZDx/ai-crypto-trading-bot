@@ -692,20 +692,30 @@ def monitor_services():
 
     out: dict[str, dict] = {}
 
-    # ── QuestDB (HTTP REST on :9000) ────────────────────────────────────────
+    # ── ParquetClient store (replaces QuestDB) ─────────────────────────────
+    # File-based, no daemon. Healthy iff DuckDB imports + data/db is writable.
     try:
-        req = urllib.request.Request('http://127.0.0.1:9000/exec?query=SELECT%201')
-        with urllib.request.urlopen(req, timeout=0.8) as resp:
-            up = resp.status == 200
-            out['questdb'] = {
-                'label': 'QuestDB (hot tick store)', 'up': up,
-                'detail': 'localhost:9000 · ILP :9009',
-            }
+        from src.database.parquet_client import get_client as _get_pq
+        pq = _get_pq()
+        up = pq.is_available(force=True)
+        # Count tables that have at least one parquet file (rough freshness signal).
+        try:
+            from src.database.parquet_client import _TABLES as _PQ_TABLES
+            populated = sum(1 for t in _PQ_TABLES if pq._has_any_files(t))
+        except Exception:
+            populated = 0
+        out['parquet_store'] = {
+            'label': 'Parquet Store (DuckDB)',
+            'up': up,
+            'detail': f'{pq.base_dir.relative_to(_PROJECT_ROOT)} · '
+                      f'{populated} populated tables · in-process query',
+            'hint': None if up else 'install duckdb / ensure D:/data/db is writable',
+        }
     except Exception as e:
-        out['questdb'] = {
-            'label': 'QuestDB (hot tick store)', 'up': False,
+        out['parquet_store'] = {
+            'label': 'Parquet Store (DuckDB)', 'up': False,
             'error': type(e).__name__,
-            'hint': 'docker-compose up -d questdb  ·or·  install native binary',
+            'hint': 'pip install duckdb pyarrow clickhouse-connect',
         }
 
     # ── DuckDB (in-process; check both library + temp dir writable) ─────────
@@ -2049,13 +2059,18 @@ def monitor_migrate_to_historical():
     return jsonify({'moved': moved, 'deleted': deleted, 'skipped': skipped})
 
 
-# ─── QuestDB / Database endpoints ────────────────────────────────────────────
+# ─── Parquet Store / Database endpoints (was QuestDB pre-Phase-3) ────────────
 
 @app.route('/api/db/status')
 def db_status():
-    """QuestDB connection status + table row counts."""
+    """ParquetClient store status + table row counts.
+
+    Backwards-compatible response shape — older dashboard JS that reads
+    `host`, `http_port`, `ilp_port` keeps working (`http_port` reports as
+    'in-process'; `ilp_port` is null since there's no network ingest).
+    """
     try:
-        from src.database.questdb_client import get_client
+        from src.database.parquet_client import get_client
         c = get_client()
         available = c.is_available(force=True)
         tables = {}
@@ -2067,9 +2082,11 @@ def db_status():
                 tables[tbl] = rows[0]['n'] if rows else 0
         return jsonify({
             'available': available,
-            'host': c.host,
-            'http_port': c.http_port,
-            'ilp_port': c.ilp_port,
+            'backend': 'duckdb+parquet',
+            'host': 'in-process',
+            'http_port': None,
+            'ilp_port': None,
+            'data_dir': str(c.base_dir),
             'tables': tables,
         })
     except Exception as e:
@@ -2087,7 +2104,7 @@ def db_query():
     if not sql.upper().lstrip().startswith('SELECT'):
         return jsonify({'error': 'Only SELECT queries allowed'}), 403
     try:
-        from src.database.questdb_client import get_client
+        from src.database.parquet_client import get_client
         c = get_client()
         rows = c.query(sql)
         return jsonify({'rows': rows, 'count': len(rows)})
@@ -2103,7 +2120,7 @@ def db_strategy_history():
     if not strategy:
         return jsonify({'error': 'strategy required'}), 400
     try:
-        from src.database.questdb_client import get_client
+        from src.database.parquet_client import get_client
         rows = get_client().get_strategy_history(strategy, days)
         return jsonify({'rows': rows, 'strategy': strategy, 'days': days})
     except Exception as e:
@@ -2118,7 +2135,7 @@ def db_training_history():
     if not model:
         return jsonify({'error': 'model required'}), 400
     try:
-        from src.database.questdb_client import get_client
+        from src.database.parquet_client import get_client
         rows = get_client().get_training_history(model, runs)
         return jsonify({'rows': rows, 'model': model})
     except Exception as e:
@@ -2129,7 +2146,7 @@ def db_training_history():
 def db_market_stats():
     """Return stored market data summary per symbol/timeframe."""
     try:
-        from src.database.questdb_client import get_client
+        from src.database.parquet_client import get_client
         c = get_client()
         if not c.is_available():
             return jsonify({'available': False, 'rows': []})

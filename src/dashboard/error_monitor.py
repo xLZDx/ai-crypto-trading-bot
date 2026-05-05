@@ -307,19 +307,21 @@ def scan() -> dict[str, dict[str, Any]]:
 # Flask routes use. This avoids the dashboard talking to itself.
 
 
-def _probe_questdb() -> tuple[str, str, str] | None:
-    import urllib.request
+def _probe_parquet_store() -> tuple[str, str, str] | None:
+    """Probe the ParquetClient store — replaces the QuestDB HTTP probe.
+    The store is healthy iff DuckDB imports + the data dir is writable +
+    the singleton client reports available. No network port involved."""
     try:
-        req = urllib.request.Request("http://127.0.0.1:9000/exec?query=SELECT%201")
-        with urllib.request.urlopen(req, timeout=0.8) as resp:
-            if resp.status == 200:
-                return None
-            return ("critical", "service:questdb",
-                    f"QuestDB probe HTTP {resp.status} — hot tick store unreachable")
+        from src.database.parquet_client import get_client
+        c = get_client()
+        if c.is_available(force=True):
+            return None
+        return ("critical", "service:parquet_store",
+                "ParquetClient store unavailable — DuckDB missing or "
+                "data/db/ not writable")
     except Exception as exc:
-        return ("critical", "service:questdb",
-                f"QuestDB DOWN — {type(exc).__name__}: "
-                "docker-compose up -d questdb  ·or·  install native binary")
+        return ("critical", "service:parquet_store",
+                f"ParquetClient init failed — {type(exc).__name__}: {exc}")
 
 
 def _probe_duckdb() -> tuple[str, str, str] | None:
@@ -507,7 +509,7 @@ def _probe_cluster() -> list[tuple[str, str, str]]:
 
 
 _ALL_PROBES = [
-    ("questdb",   _probe_questdb),
+    ("parquet_store", _probe_parquet_store),
     ("duckdb",    _probe_duckdb),
     ("parquet",   _probe_parquet),
     ("fastapi",   _probe_fastapi),
