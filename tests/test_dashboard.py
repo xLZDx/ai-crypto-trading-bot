@@ -2470,6 +2470,70 @@ def test_phase32_dedup_market_data():
         check('dedup behaviour probe', False, str(e))
 
 
+def test_phase33_zombie_watchdog():
+    """Zombie watchdog runs every 10 min, kills duplicate project python
+    processes (group by command line, keep newest), and orphaned joblib
+    resource_tracker workers. Strictly project-scoped — never touches
+    Claude Code, VSCode, Chrome, the Android emulator, etc.
+    """
+    print('\n[Phase 33 — zombie watchdog]')
+
+    wd_path = os.path.join(BASE_DIR, 'scripts', 'zombie_watchdog.ps1')
+    inst_path = os.path.join(BASE_DIR, 'scripts', 'install_zombie_watchdog.ps1')
+    uninst_path = os.path.join(BASE_DIR, 'scripts', 'uninstall_zombie_watchdog.ps1')
+
+    check('zombie_watchdog.ps1 exists', os.path.exists(wd_path))
+    check('install_zombie_watchdog.ps1 exists', os.path.exists(inst_path))
+    check('uninstall_zombie_watchdog.ps1 exists', os.path.exists(uninst_path))
+
+    if not os.path.exists(wd_path):
+        return
+    wd = open(wd_path, encoding='utf-8').read()
+
+    # Watchdog must be project-scoped (never touches non-project python).
+    check('watchdog filters by project root path',
+          r'D:\test 2\AI trading assistance' in wd and '*$projectRoot*' in wd)
+    # Dedup by command line, keep newest.
+    check('watchdog groups by CommandLine and sorts CreationDate descending',
+          'Group-Object CommandLine' in wd and 'CreationDate -Descending' in wd)
+    # Grace period to avoid races with restart_all.ps1.
+    check('watchdog has grace period for young processes',
+          'graceSeconds' in wd and 'skip-young' in wd)
+    # Orphan detection for joblib resource_tracker.
+    check('watchdog handles orphaned joblib resource_tracker',
+          'resource_tracker' in wd and 'killed-orphan' in wd)
+    # Logging.
+    check('watchdog writes to logs/zombie_watchdog.log',
+          'zombie_watchdog.log' in wd)
+    # Always exit 0 so scheduler doesn't flag failures.
+    check('watchdog ends with exit 0',
+          wd.rstrip().endswith('exit 0'))
+
+    if os.path.exists(inst_path):
+        inst = open(inst_path, encoding='utf-8').read()
+        check('install script uses task name AITradingZombieWatchdog',
+              'AITradingZombieWatchdog' in inst)
+        check('install script schedules every 10 minutes',
+              '-Minutes 10' in inst)
+        check('install script is idempotent (Unregister before Register)',
+              'Unregister-ScheduledTask' in inst and 'Register-ScheduledTask' in inst)
+
+    # On Windows: assert the scheduled task is actually registered.
+    if sys.platform == 'win32':
+        try:
+            import subprocess
+            r = subprocess.run(
+                ['schtasks.exe', '/Query', '/TN', 'AITradingZombieWatchdog'],
+                capture_output=True, text=True, timeout=10,
+            )
+            check('AITradingZombieWatchdog task registered with Task Scheduler',
+                  r.returncode == 0,
+                  detail=r.stderr.strip() or 'task not found')
+        except Exception as e:
+            check('schtasks query', None, str(e))
+
+
+
 def test_phase31_market_data_legacy_bridge():
     """Option 3 of the migration finalisation: ParquetClient.query() unions
     market_data writes from data/db/ with the legacy data/parquet/{SYM}/{TF}/
@@ -3002,6 +3066,7 @@ def main():
     test_phase30_futures_close_reduce_only_guard()
     test_phase31_market_data_legacy_bridge()
     test_phase32_dedup_market_data()
+    test_phase33_zombie_watchdog()
 
     if not args.offline:
         test_api(args.url)
