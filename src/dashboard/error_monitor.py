@@ -513,8 +513,42 @@ def _probe_cluster() -> list[tuple[str, str, str]]:
     return faults
 
 
+def _probe_recent_deaths() -> tuple[str, str, str] | None:
+    """Surface fresh process deaths recorded by debug_supervisor.py.
+    A death within the last 10 minutes becomes a CRITICAL banner entry
+    so the user sees the role + exit clue immediately, not 30 seconds
+    after the next dashboard reload.
+    """
+    try:
+        path = PROJECT_ROOT / "data" / "process_deaths.json"
+        if not path.exists():
+            return None
+        deaths = json.loads(path.read_text(encoding="utf-8") or "[]")
+        if not deaths:
+            return None
+        latest = deaths[0]
+        # Parse died_at to seconds-ago
+        died_at = latest.get("died_at", "")
+        try:
+            from datetime import datetime as _dt
+            dt = _dt.fromisoformat(died_at.replace("Z", "+00:00"))
+            age_s = (_dt.now(tz=dt.tzinfo) - dt).total_seconds()
+        except Exception:
+            return None
+        if age_s > 600:                # only fresh deaths (< 10 min)
+            return None
+        role = latest.get("role", "?")
+        clue = latest.get("exit_clue") or latest.get("last_log_line") or "(no log line)"
+        return ("critical", f"death:{role}",
+                f"{role} died {int(age_s)}s ago — {clue[:160]}")
+    except Exception as exc:
+        logger.debug("[error_monitor] _probe_recent_deaths: %s", exc)
+        return None
+
+
 _ALL_PROBES = [
     ("parquet_store", _probe_parquet_store),
+    ("recent_deaths", _probe_recent_deaths),
     ("duckdb",    _probe_duckdb),
     ("parquet",   _probe_parquet),
     ("fastapi",   _probe_fastapi),

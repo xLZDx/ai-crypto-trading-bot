@@ -262,6 +262,19 @@ if ($env:OB_COLLECTOR_DISABLED -eq '1') {
 }
 Write-Host "[5.9/6] Orderbook Collector ready." -ForegroundColor Green
 
+# Step 5.95: Debug Supervisor (fine-grained crash detector)
+# Polls data/process_ids.json every 5s; on death, captures log tail +
+# RSS/CPU snapshot to data/process_deaths.json. Surfaces fresh deaths
+# in the banner via _probe_recent_deaths so the user sees crashes
+# within seconds. Independent of bot/dashboard so it survives THEIR
+# crashes - that's the whole point.
+Write-Host ""
+Write-Host "[5.95/6] Starting Debug Supervisor (process crash detector)..." -ForegroundColor Yellow
+$dbgArgStr = "-NoProfile -ExecutionPolicy Bypass -Command `"& '$venvPython' -m scripts.debug_supervisor 2>&1 | Tee-Object -FilePath '$root\logs\debug_supervisor.log' -Append`""
+$procDebug = Start-Process powershell -ArgumentList $dbgArgStr -WindowStyle Hidden -PassThru
+Write-Host "  Debug Supervisor started (PID $($procDebug.Id))"
+Write-Host "[5.95/6] Debug Supervisor ready." -ForegroundColor Green
+
 # Step 6: Save PIDs
 Write-Host ""
 Write-Host "[6/6] Saving process IDs..." -ForegroundColor Yellow
@@ -274,9 +287,10 @@ $realtimeId  = if ($procRealtime)  { $procRealtime.Id  } else { 0 }
 $orchId      = if ($procOrch)      { $procOrch.Id      } else { 0 }
 $fastapiId   = if ($procFastapi)   { $procFastapi.Id   } else { 0 }
 $obId        = if ($procOrderbook) { $procOrderbook.Id } else { 0 }
-$pidData = @{ bot = $botId; dash = $dashId; monitor = $monId; watchlist = $watchlistId; training = $trainingId; realtime = $realtimeId; orch = $orchId; fastapi = $fastapiId; orderbook = $obId; mcp = 0 }
+$debugId     = if ($procDebug)     { $procDebug.Id     } else { 0 }
+$pidData = @{ bot = $botId; dash = $dashId; monitor = $monId; watchlist = $watchlistId; training = $trainingId; realtime = $realtimeId; orch = $orchId; fastapi = $fastapiId; orderbook = $obId; debug = $debugId; mcp = 0 }
 $pidData | ConvertTo-Json | Set-Content (Join-Path $root 'data\process_ids.json')
-Write-Host "[6/6] PIDs saved: monitor=$monId  dash=$dashId  bot=$botId  watchlist=$watchlistId  training=$trainingId  realtime=$realtimeId  orch=$orchId  fastapi=$fastapiId  orderbook=$obId" -ForegroundColor Green
+Write-Host "[6/6] PIDs saved: monitor=$monId  dash=$dashId  bot=$botId  debug=$debugId  watchlist=$watchlistId  training=$trainingId  realtime=$realtimeId  orch=$orchId  fastapi=$fastapiId  orderbook=$obId" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "==========================================" -ForegroundColor Green

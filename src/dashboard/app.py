@@ -2623,6 +2623,32 @@ def api_errors_dismiss_all():
         return jsonify({'ok': False, 'error': str(exc)}), 500
 
 
+@app.route('/api/debug/deaths')
+def api_debug_deaths():
+    """Recent process deaths captured by scripts/debug_supervisor.py.
+
+    Returns the newest-first list (capped at 50 in the response). The
+    supervisor itself caps storage at 200. Each record has:
+        role, pid, died_at, age_s, rss_mb, cpu_pct, exit_clue,
+        last_log_line, log_tail (last 20 lines).
+    """
+    try:
+        import json as _json
+        path = _PROJECT_ROOT / 'data' / 'process_deaths.json'
+        if not path.exists():
+            return jsonify({'deaths': [], 'present': False,
+                            'hint': 'debug_supervisor.py not yet started; '
+                                    'restart_all.ps1 launches it as part of [6/6]'})
+        deaths = _json.loads(path.read_text(encoding='utf-8') or '[]')
+        return jsonify({
+            'deaths': deaths[:50],
+            'count':  len(deaths),
+            'present': True,
+        })
+    except Exception as exc:
+        return jsonify({'deaths': [], 'error': str(exc)}), 500
+
+
 # ─── Runtime risk overrides ────────────────────────────────────────────────────
 _RUNTIME_OVERRIDES_PATH = _PROJECT_ROOT / 'data' / 'runtime_overrides.json'
 

@@ -2380,6 +2380,73 @@ def test_phase28_dashboard_read_path_cutover():
           'pip install duckdb pyarrow' in tpl)
 
 
+def test_phase36_debug_supervisor():
+    """Debug supervisor — captures crash diagnostics for project python
+    processes. Polls data/process_ids.json every 5s; on death writes to
+    data/process_deaths.json with log tail + RSS/CPU snapshot. Surfaces
+    fresh deaths in the banner via _probe_recent_deaths.
+    """
+    print('\n[Phase 36 — debug_supervisor]')
+
+    sup_path = os.path.join(BASE_DIR, 'scripts', 'debug_supervisor.py')
+    check('scripts/debug_supervisor.py exists', os.path.exists(sup_path))
+    sup = open(sup_path, encoding='utf-8').read()
+
+    check('supervisor reads data/process_ids.json',
+          'process_ids.json' in sup)
+    check('supervisor writes data/process_deaths.json',
+          'process_deaths.json' in sup)
+    check('supervisor captures log tail per role',
+          'def _tail_log(' in sup and '_ROLE_LOG_FILES' in sup)
+    check('supervisor extracts an exit_clue from log',
+          "'error', 'traceback'" in sup
+          or "'error', 'traceback', 'exception'" in sup
+          or '"error", "traceback"' in sup)
+    check('supervisor caps deaths at 200',
+          'MAX_DEATHS' in sup)
+    check('supervisor records RSS / CPU snapshot',
+          'rss_mb' in sup and 'cpu_pct' in sup)
+
+    # Banner-aggregator probe
+    em_src = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'error_monitor.py'),
+                  encoding='utf-8').read()
+    check('error_monitor exposes _probe_recent_deaths',
+          'def _probe_recent_deaths' in em_src)
+    check('_probe_recent_deaths only flags deaths < 10 min old',
+          'age_s > 600' in em_src or '> 600' in em_src)
+    check('_ALL_PROBES includes recent_deaths',
+          '"recent_deaths"' in em_src)
+
+    # /api/debug/deaths endpoint
+    app_src = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
+                   encoding='utf-8').read()
+    check('/api/debug/deaths endpoint defined',
+          "@app.route('/api/debug/deaths')" in app_src)
+    check('endpoint reads process_deaths.json',
+          'process_deaths.json' in app_src)
+
+    # restart_all.ps1 launches the supervisor
+    rs = open(os.path.join(BASE_DIR, 'restart_all.ps1'), encoding='utf-8').read()
+    check('restart_all.ps1 launches debug_supervisor',
+          'debug_supervisor' in rs and 'Start-Process powershell' in rs)
+    check('restart_all.ps1 saves debug PID in process_ids.json',
+          'debug = $debugId' in rs)
+
+    # Behaviour smoke: a single tick with no deaths should not crash.
+    try:
+        import importlib, tempfile, os as _os
+        sys.path.insert(0, BASE_DIR) if BASE_DIR not in sys.path else None
+        sup_mod = importlib.import_module('scripts.debug_supervisor')
+        # Test pid-map reader against the real file (read-only).
+        pids = sup_mod._read_pid_map()
+        check('supervisor _read_pid_map returns dict',
+              isinstance(pids, dict))
+        check('supervisor _is_alive(1) is bool',
+              isinstance(sup_mod._is_alive(1), bool))
+    except Exception as e:
+        check('supervisor smoke test', False, str(e))
+
+
 def test_phase35_scheduler_no_post_action_refresh():
     """Scheduler register/run/delete must NOT call renderSchedulerPanel()
     after success — the previous behavior wiped the #sch-flash status pill
@@ -3148,6 +3215,7 @@ def main():
     test_phase33_zombie_watchdog()
     test_phase34_telegram_monitor_gate()
     test_phase35_scheduler_no_post_action_refresh()
+    test_phase36_debug_supervisor()
 
     if not args.offline:
         test_api(args.url)
