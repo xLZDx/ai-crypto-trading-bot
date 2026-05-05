@@ -315,11 +315,18 @@ class ParquetClient:
     def __init__(self,
                  base_dir: str | Path | None = None,
                  flush_s: float | None = None,
-                 flush_rows: int | None = None) -> None:
+                 flush_rows: int | None = None,
+                 legacy_parquet_dir: str | Path | None = None) -> None:
         base = Path(base_dir) if base_dir else (PROJECT_ROOT / _CFG_DB_DIR)
         self.base_dir = base.resolve()
         self.flush_s = float(flush_s) if flush_s is not None else float(_CFG_FLUSH_S)
         self.flush_rows = int(flush_rows) if flush_rows is not None else int(_CFG_FLUSH_ROWS)
+        # Legacy parquet_store layout (long-history OHLCV). Overridable for
+        # tests that want to feed a synthetic legacy dir.
+        self._LEGACY_PARQUET_DIR = (
+            Path(legacy_parquet_dir).resolve() if legacy_parquet_dir
+            else (PROJECT_ROOT / "data" / "parquet").resolve()
+        )
 
         self._buf_lock = threading.Lock()
         self._buffers: dict[str, list[dict]] = {t: [] for t in _TABLES}
@@ -551,23 +558,92 @@ class ParquetClient:
         Treat as a no-op for QuestDBClient compatibility."""
         return True
 
+    def _has_legacy_parquet(self) -> bool:
+        try:
+            return (self._LEGACY_PARQUET_DIR.exists()
+                    and any(self._LEGACY_PARQUET_DIR.rglob("*.parquet")))
+        except Exception:
+            return False
+
+    def _market_data_legacy_subquery(self) -> str:
+        """SELECT subquery exposing the legacy data/parquet/{SYM}/{TF}/yyyymm=*/
+        layout with the SAME column shape as the new market_data schema:
+        ts, symbol, timeframe, open, high, low, close, volume, funding_rate.
+
+        Notes:
+        - legacy column is `timestamp` (TIMESTAMP, no tz) — renamed to `ts`
+        - symbol and timeframe come from the path, not the file (the legacy
+          layout pre-dates hive_partitioning). DuckDB's `filename=true`
+          option exposes __filename. We normalize backslashes to forward
+          slashes (Windows path separators trip RE2's backslash escaping)
+          and then use a simple `/`-separated regex.
+        - legacy files lack funding_rate; we fill NULL.
+        - extra legacy columns (quote_volume, trades_count, taker_buy_*)
+          are dropped here so the UNION schemas match.
+        """
+        glob = (self._LEGACY_PARQUET_DIR / "*" / "*" / "yyyymm=*" / "*.parquet").as_posix()
+        # chr(92) = backslash, used to keep the SQL string itself
+        # backslash-free (DuckDB's RE2 inside string literals + Python
+        # escape semantics make the obvious `[/\\]` regex unreliable).
+        normalized_path = "replace(filename, chr(92), '/')"
+        return (
+            "SELECT "
+            "  CAST(timestamp AS TIMESTAMP) AS ts, "
+            f"  regexp_extract({normalized_path}, "
+            "    'parquet/([^/]+)/([^/]+)/yyyymm=', 1) "
+            "    AS symbol, "
+            f"  regexp_extract({normalized_path}, "
+            "    'parquet/([^/]+)/([^/]+)/yyyymm=', 2) "
+            "    AS timeframe, "
+            "  open, high, low, close, volume, "
+            "  CAST(NULL AS DOUBLE) AS funding_rate "
+            f"FROM read_parquet('{glob}', filename=true, union_by_name=true)"
+        )
+
     def _rewrite_table_refs(self, sql: str) -> tuple[str, str | None]:
         """Replace bare table names with read_parquet() globs. Returns
-        (rewritten_sql, first_missing_table_name | None)."""
+        (rewritten_sql, first_missing_table_name | None).
+
+        Special case: market_data queries get UNION'd with the legacy
+        data/parquet/ store so backtest-history reads + new live writes
+        appear under one table name."""
         import re
         out = sql
         for table in _TABLES:
             # word-boundary match so "market_data" doesn't match "model_market_data"
             pattern = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(table) + r"(?![A-Za-z0-9_])")
-            if pattern.search(out):
-                if not self._has_any_files(table):
-                    return out, table
+            if not pattern.search(out):
+                continue
+
+            new_has = self._has_any_files(table)
+            legacy_has = (table == "market_data" and self._has_legacy_parquet())
+
+            if not new_has and not legacy_has:
+                return out, table
+
+            new_subquery = ""
+            if new_has:
                 glob = self._glob(table)
                 # DuckDB needs single-quoted glob, hive_partitioning=1 surfaces
                 # the partition columns as real columns.
-                replacement = (f"read_parquet('{glob}', "
-                               f"hive_partitioning=1, union_by_name=true)")
-                out = pattern.sub(replacement, out)
+                new_subquery = (f"read_parquet('{glob}', "
+                                f"hive_partitioning=1, union_by_name=true)")
+
+            if legacy_has:
+                legacy_sub = self._market_data_legacy_subquery()
+                if new_subquery:
+                    # New rows + legacy long-history under the same table name.
+                    replacement = (
+                        "(SELECT ts, symbol, timeframe, open, high, low, close, "
+                        "volume, funding_rate FROM " + new_subquery + " "
+                        "UNION ALL " + legacy_sub + ")"
+                    )
+                else:
+                    replacement = "(" + legacy_sub + ")"
+            else:
+                replacement = new_subquery
+
+            out = pattern.sub(replacement, out)
         return out, None
 
     # ── Compatibility shim: write_ilp ─────────────────────────────────────

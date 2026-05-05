@@ -2384,6 +2384,86 @@ def test_phase28_dashboard_read_path_cutover():
           'pip install duckdb pyarrow' in tpl)
 
 
+def test_phase31_market_data_legacy_bridge():
+    """Option 3 of the migration finalisation: ParquetClient.query() unions
+    market_data writes from data/db/ with the legacy data/parquet/{SYM}/{TF}/
+    layout. Backtests that need long history get the 9 years of legacy
+    Binance OHLCV alongside the new live writes — under one table name.
+    """
+    print('\n[Phase 31 — market_data legacy-store bridge]')
+
+    pc_path = os.path.join(BASE_DIR, 'src', 'database', 'parquet_client.py')
+    pc = open(pc_path, encoding='utf-8').read()
+
+    # Static checks
+    check('ParquetClient defines _LEGACY_PARQUET_DIR',
+          '_LEGACY_PARQUET_DIR' in pc)
+    check('ParquetClient defines _has_legacy_parquet helper',
+          'def _has_legacy_parquet(' in pc)
+    check('ParquetClient defines _market_data_legacy_subquery',
+          'def _market_data_legacy_subquery(' in pc)
+    check('legacy subquery renames timestamp -> ts',
+          'CAST(timestamp AS TIMESTAMP) AS ts' in pc)
+    check('legacy subquery normalises backslash separators',
+          'chr(92)' in pc)
+    check('legacy subquery exposes filename for path-regex extraction',
+          "filename=true" in pc)
+    check('legacy subquery fills funding_rate as NULL',
+          'CAST(NULL AS DOUBLE) AS funding_rate' in pc)
+    check('_rewrite_table_refs UNIONs new + legacy for market_data',
+          'UNION ALL' in pc and 'legacy_has' in pc)
+
+    # Behavioural check: a synthetic legacy file under a temp PROJECT_ROOT
+    # should be queryable through the bridge.
+    try:
+        import importlib, tempfile, shutil
+        from pathlib import Path as _P
+        from datetime import datetime, timezone
+        sys.path.insert(0, BASE_DIR) if BASE_DIR not in sys.path else None
+        pc_mod = importlib.import_module('src.database.parquet_client')
+
+        # Need pyarrow to fabricate a parquet file
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        td = tempfile.mkdtemp(prefix='pc_bridge_')
+        td_path = _P(td)
+
+        # Build a fake legacy file at td/parquet/BTC_USDT/1h/yyyymm=2024-01/data_0.parquet
+        legacy_dir = td_path / 'parquet' / 'BTC_USDT' / '1h' / 'yyyymm=2024-01'
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+        legacy_table = pa.table({
+            'timestamp': [datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)],
+            'open': [42000.0], 'high': [42100.0], 'low': [41900.0],
+            'close': [42050.0], 'volume': [12.3],
+        })
+        pq.write_table(legacy_table, (legacy_dir / 'data_0.parquet').as_posix())
+
+        # Construct a ParquetClient with base_dir=td/db (empty) and tell
+        # it the legacy dir lives at td/parquet
+        client = pc_mod.ParquetClient(
+            base_dir=td_path / 'db',
+            legacy_parquet_dir=td_path / 'parquet',
+            flush_s=0, flush_rows=1,
+        )
+
+        check('legacy store discovered',
+              client._has_legacy_parquet() is True)
+
+        rows = client.query("SELECT symbol, timeframe, close FROM market_data")
+        check('bridge surfaces legacy bar (BTC_USDT 1h close=42050)',
+              any(r.get('symbol') == 'BTC_USDT'
+                  and r.get('timeframe') == '1h'
+                  and abs(float(r.get('close') or 0) - 42050.0) < 0.001
+                  for r in rows))
+
+        # Cleanup
+        client.close()
+        shutil.rmtree(td, ignore_errors=True)
+    except Exception as e:
+        check('bridge runtime smoke test', False, str(e))
+
+
 def test_phase30_futures_close_reduce_only_guard():
     """When Binance returns -2022 (ReduceOnly Order is rejected), the bot
     must NOT cascade through 3 retry attempts — it should detect the
@@ -2612,7 +2692,13 @@ def test_phase26_parquet_client_foundation():
 
         td = tempfile.mkdtemp(prefix='pq_phase26_')
         try:
-            client = pc_mod.ParquetClient(base_dir=td, flush_s=0.0, flush_rows=1)
+            # Pass a non-existent legacy dir so the bridge stays inert in
+            # isolation; otherwise the test would also try to UNION in the
+            # real data/parquet/ from PROJECT_ROOT.
+            client = pc_mod.ParquetClient(
+                base_dir=td, flush_s=0.0, flush_rows=1,
+                legacy_parquet_dir=os.path.join(td, '_no_legacy'),
+            )
             check('ParquetClient.is_available() True', client.is_available() is True)
 
             # Round-trip: market_data
@@ -2816,6 +2902,7 @@ def main():
     test_phase28_dashboard_read_path_cutover()
     test_phase29_cleanup_questdb_artifacts()
     test_phase30_futures_close_reduce_only_guard()
+    test_phase31_market_data_legacy_bridge()
 
     if not args.offline:
         test_api(args.url)
