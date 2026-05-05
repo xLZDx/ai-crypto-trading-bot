@@ -1729,19 +1729,18 @@ def test_phase17_trading_health_fixes():
           'self.meta_labeler.filter(' in main_src and
           'self.meta_labeler.filter_signal(' not in main_src)
 
-    # 5. QuestDB probe consistency: the actual requests.get URL must hit /exec
+    # 5. questdb_client.py is now a back-compat shim re-exporting from
+    #    parquet_client. The HTTP-probe assertion that lived here was for
+    #    the QuestDB-era client; with Route B the probe is in-process
+    #    (DuckDB import + writable data dir), no HTTP at all.
     qc_path = os.path.join(BASE_DIR, 'src', 'database', 'questdb_client.py')
     qc_src = open(qc_path, encoding='utf-8').read()
-    is_avail_body = qc_src.split('def is_available')[1].split('def ')[0]
-    # Strip Python comments (# …) before scanning for the live URL — the
-    # explanatory comment still references /health.
-    code_only = '\n'.join(
-        ln.split('#', 1)[0] for ln in is_avail_body.splitlines()
-    )
-    check('questdb_client probes /exec (not /health)',
-          'requests.get' in code_only
-          and '/exec' in code_only
-          and '/health' not in code_only)
+    check('questdb_client is now a back-compat shim for ParquetClient',
+          'from src.database.parquet_client import' in qc_src
+          and 'QuestDBClient = _ParquetClient' in qc_src)
+    check('shim still exports legacy ILP helpers (_to_ns, _tag, _now_ns)',
+          'def _to_ns' in qc_src and 'def _tag' in qc_src
+          and 'def _now_ns' in qc_src)
 
     # 6. Dashboard backend
     app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
@@ -2331,6 +2330,53 @@ def test_phase24_scheduler_flash_and_local_training():
           'No active training snapshot yet' in tpl)
 
 
+def test_phase27_ingest_path_cutover():
+    """Phase 2 of QuestDB → ParquetClient migration: every QuestDB-era
+    importer in the bot's ingest layer now resolves to ParquetClient,
+    either by direct import swap or via the questdb_client.py shim.
+    """
+    print('\n[Phase 27 — ingest path cutover (Route B)]')
+
+    # 1. realtime_db_writer imports parquet_client directly (write fast path).
+    rw_path = os.path.join(BASE_DIR, 'src', 'data_ingestion', 'realtime_db_writer.py')
+    rw = open(rw_path, encoding='utf-8').read()
+    check('realtime_db_writer imports parquet_client.get_client',
+          'from src.database.parquet_client import get_client' in rw)
+    check('realtime_db_writer no longer imports questdb_client',
+          'from src.database.questdb_client import' not in rw)
+
+    # 2. ingest_pipeline switched to parquet_client + inlined ILP helpers.
+    ip_path = os.path.join(BASE_DIR, 'src', 'database', 'ingest_pipeline.py')
+    ip = open(ip_path, encoding='utf-8').read()
+    check('ingest_pipeline imports parquet_client.get_client',
+          'from src.database.parquet_client import get_client' in ip)
+    check('ingest_pipeline no longer imports from questdb_client',
+          'from src.database.questdb_client import' not in ip)
+    check('ingest_pipeline has inlined _to_ns / _tag / _now_ns helpers',
+          'def _to_ns' in ip and 'def _tag' in ip and 'def _now_ns' in ip)
+
+    # 3. The shim continues to satisfy the OTHER 9 importers we haven't
+    #    rewritten yet — assert it loads and returns a ParquetClient.
+    try:
+        import importlib
+        sys.path.insert(0, BASE_DIR) if BASE_DIR not in sys.path else None
+        shim = importlib.import_module('src.database.questdb_client')
+        client = shim.get_client()
+        # Imported alias should still pass type checks against the new client.
+        from src.database.parquet_client import ParquetClient as _PC
+        check('shim get_client() returns ParquetClient',
+              isinstance(client, _PC))
+        check('shim QuestDBClient class is ParquetClient',
+              shim.QuestDBClient is _PC)
+        # Pure ILP helpers preserved (callers like db_agent still use them).
+        check('shim _tag("BTC/USDT") = BTC_USDT (slash → underscore)',
+              shim._tag("BTC/USDT") == "BTC_USDT")
+        check('shim _now_ns() returns positive integer',
+              isinstance(shim._now_ns(), int) and shim._now_ns() > 0)
+    except Exception as e:
+        check('shim loads + returns ParquetClient', False, str(e))
+
+
 def test_phase26_parquet_client_foundation():
     """Phase 1 (Route B) of the QuestDB replacement migration. ParquetClient
     is a drop-in for QuestDBClient backed by DuckDB + partitioned Parquet
@@ -2573,6 +2619,7 @@ def main():
     test_phase24_scheduler_flash_and_local_training()
     test_phase25_user_initiated_agents_exempt()
     test_phase26_parquet_client_foundation()
+    test_phase27_ingest_path_cutover()
 
     if not args.offline:
         test_api(args.url)

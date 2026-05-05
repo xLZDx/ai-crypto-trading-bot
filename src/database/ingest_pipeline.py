@@ -33,6 +33,45 @@ if str(PROJECT_ROOT) not in sys.path:
 
 RAW_DIR  = PROJECT_ROOT / "data" / "raw"
 HIST_DIR = RAW_DIR / "historical"
+
+
+# Local copies of the QuestDB-era ILP helpers. The ingest pipeline still
+# emits ILP-format strings; ParquetClient.write_ilp() parses them via its
+# compatibility shim, so the core ingest loop stays unchanged. These were
+# imported from questdb_client; inlining lets us drop that module in
+# Phase 5 cleanup without touching this file.
+def _to_ns(ts) -> int | None:
+    if ts is None:
+        return None
+    if isinstance(ts, datetime):
+        return int(ts.timestamp() * 1e9)
+    if isinstance(ts, (int, float)):
+        if ts < 1e12:
+            return int(ts * 1e9)
+        elif ts < 1e15:
+            return int(ts * 1e6)
+        return int(ts)
+    if isinstance(ts, str):
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S",
+                    "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S.%f",
+                    "%Y-%m-%dT%H:%M:%S.%f+00:00"):
+            try:
+                dt = datetime.strptime(ts.replace("+00:00", ""),
+                                       fmt.replace("+00:00", ""))
+                return int(dt.replace(tzinfo=timezone.utc).timestamp() * 1e9)
+            except ValueError:
+                continue
+    if hasattr(ts, "timestamp"):
+        return int(ts.timestamp() * 1e9)
+    return None
+
+
+def _tag(v: str) -> str:
+    return str(v).replace(" ", "_").replace(",", "_").replace("=", "_").replace("/", "_")
+
+
+def _now_ns() -> int:
+    return int(time.time() * 1e9)
 WATCHLIST_FILE = PROJECT_ROOT / "data" / "watchlist.json"
 
 BATCH_SIZE = 10_000   # rows per ILP write call
@@ -75,7 +114,6 @@ def _log_ingestion(client, path: Path, symbol: str, timeframe: str,
                    rows_written: int, first_ts: datetime | None, last_ts: datetime | None) -> None:
     """Record a completed file ingestion to csv_ingestion_log."""
     try:
-        from src.database.questdb_client import _to_ns, _tag, _now_ns
         file_size = path.stat().st_size if path.exists() else 0
         now_ns    = _now_ns()
         fts = _to_ns(first_ts) or now_ns
@@ -120,8 +158,6 @@ def ingest_file(path: Path, symbol: str, timeframe: str, client,
     """
     if not path.exists():
         return 0
-
-    from src.database.questdb_client import _to_ns, _tag
 
     file_size = path.stat().st_size
 
@@ -233,7 +269,7 @@ def check_ingestion_status(symbols: list[str] | None = None,
     Return per-file ingestion status without writing anything.
     Each row: {filename, symbol, timeframe, exists, file_size_mb, ingested, rows_written, up_to_date}
     """
-    from src.database.questdb_client import get_client
+    from src.database.parquet_client import get_client
     client = get_client()
     available = client.is_available()
 
@@ -278,16 +314,16 @@ def run(
     since: datetime | None = None,
     force: bool = False,
 ) -> None:
-    from src.database.questdb_client import get_client
-    from src.database.schema import create_all
+    from src.database.parquet_client import get_client
 
     client = get_client()
     if not client.is_available():
-        logger.error("QuestDB is not running. Start it with: docker-compose up -d questdb")
+        logger.error("ParquetClient unavailable — DuckDB missing or data dir not writable")
         return
 
-    logger.info("Ensuring tables exist…")
-    create_all(client)
+    # Schema is implicit (directory layout) for the file-based store —
+    # no DDL to run. Kept for caller-message parity.
+    logger.info("Parquet store ready at %s", client.base_dir)
 
     if symbols is None:
         symbols = _watchlist()
