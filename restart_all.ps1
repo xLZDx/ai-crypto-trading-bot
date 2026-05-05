@@ -31,6 +31,21 @@ $env:PYTHONIOENCODING = 'utf-8'
 & $venvPy -m src.data_ingestion.startup_recovery --archive-only 2>&1 |
     Out-File -Append -FilePath (Join-Path $root 'logs\startup_recovery.log')
 Write-Host "  Startup recovery complete." -ForegroundColor Green
+
+# Housekeeping: clear DuckDB spill from previous sessions. parquet_store.py
+# uses data/cache/duckdb_temp; DuckDB doesn't reliably clean it up on
+# Python exit, so it grew to ~14 GB on this machine. Clearing on each
+# restart keeps the cache from snowballing again.
+$duckTmp = Join-Path $root 'data\cache\duckdb_temp'
+if (Test-Path $duckTmp) {
+    $duckSize = (Get-ChildItem $duckTmp -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+    if ($duckSize -gt 100MB) {
+        Write-Host ("  Clearing DuckDB temp spill ({0:N1} GB)..." -f ($duckSize / 1GB)) -ForegroundColor DarkCyan
+        Get-ChildItem $duckTmp -Recurse -Force -ErrorAction SilentlyContinue |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 Write-Host "[0/6] Parquet store ready." -ForegroundColor Green
 
 # Step 1: Kill ONLY known managed processes (bot, dashboard, monitor, training).
