@@ -761,7 +761,7 @@ select.field option{background:#0d1628;color:#e2e8f0}
 
       var rows = tasks.length
         ? tasks.map(function(t){
-            return `<tr style="border-bottom:1px solid rgba(148,163,184,.08)">
+            return `<tr data-sch-name="${esc(t.name)}" style="border-bottom:1px solid rgba(148,163,184,.08)">
               <td style="padding:8px 10px"><b style="color:#fff">${esc(t.name)}</b></td>
               <td style="padding:8px 10px;color:#94a3b8">${esc(t.next_run)}</td>
               <td style="padding:8px 10px"><span style="background:${t.status==='Ready'?'rgba(52,211,153,.15)':'rgba(251,191,36,.15)'};color:${t.status==='Ready'?'#34d399':'#fbbf24'};padding:2px 8px;border-radius:10px;font-size:10px">${esc(t.status)}</span></td>
@@ -851,11 +851,19 @@ select.field option{background:#0d1628;color:#e2e8f0}
     el.style.border = '1px solid ' + br;
     el.textContent = msg;
     if (window._schFlashTimer) clearTimeout(window._schFlashTimer);
+    // 12s — the post-action messages now ask the user to click 🔄 REFRESH,
+    // so the flash needs to stay readable long enough to make sense of.
     window._schFlashTimer = setTimeout(function(){
       var e2 = document.getElementById('sch-flash');
       if (e2) e2.style.display = 'none';
-    }, 5000);
+    }, 12000);
   }
+  // Action handlers DO NOT auto-refresh the panel. The previous behavior
+  // called renderSchedulerPanel() after each success, which rewrote the
+  // entire form's innerHTML and wiped #sch-flash before the user could
+  // read the success message — making clicks look like nothing happened.
+  // Now: only the 🔄 REFRESH button (manual) or re-opening the tab triggers
+  // a re-render. Each action gives feedback via the flash pill only.
   window._schRegister = async function(){
     var name = document.getElementById('sch-name').value.trim();
     var mode = document.getElementById('sch-mode').value;
@@ -864,22 +872,22 @@ select.field option{background:#0d1628;color:#e2e8f0}
     _schFlash('Registering ' + name + '…', 'warn');
     var d = await _schPost('/api/scheduler/register', { name:name, mode:mode, value:value });
     if (!d.ok) { _schFlash('Register failed: ' + (d.error || d.stderr || 'unknown'), 'err'); return; }
-    _schFlash('✓ Registered ' + (d.name || name) + ' (' + mode + ' · ' + value + ')', 'ok');
-    renderSchedulerPanel();
+    _schFlash('✓ Registered ' + (d.name || name) + ' (' + mode + ' · ' + value + ') — click 🔄 REFRESH to see it in the list', 'ok');
   };
   window._schRun = async function(name){
     _schFlash('Triggering ' + name + '…', 'warn');
     var d = await _schPost('/api/scheduler/run', { name:name });
     if (!d.ok) { _schFlash('Run failed: ' + (d.stderr || 'unknown'), 'err'); return; }
-    _schFlash('▶ ' + name + ' started — refreshing in 1.5s', 'ok');
-    setTimeout(renderSchedulerPanel, 1500);
+    _schFlash('▶ ' + name + ' started — click 🔄 REFRESH in a few seconds to see the updated report', 'ok');
   };
   window._schUnregister = async function(name){
     if (!confirm('Delete task ' + name + '?')) return;
     var d = await _schPost('/api/scheduler/unregister', { name:name });
     if (!d.ok) { _schFlash('Delete failed: ' + (d.stderr || 'unknown'), 'err'); return; }
-    _schFlash('✕ Deleted ' + name, 'ok');
-    renderSchedulerPanel();
+    _schFlash('✕ Deleted ' + name + ' — click 🔄 REFRESH to update the list', 'ok');
+    // In-place row removal so the user sees the change without a full panel re-render.
+    var row = document.querySelector('tr[data-sch-name="' + name + '"]');
+    if (row) row.remove();
   };
   // Lazy init — switchTab('institutional') calls window._initPhase6() when
   // the user opens the tab. Avoids preloading 8 panes' worth of fetches at boot.

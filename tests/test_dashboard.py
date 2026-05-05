@@ -2380,6 +2380,59 @@ def test_phase28_dashboard_read_path_cutover():
           'pip install duckdb pyarrow' in tpl)
 
 
+def test_phase35_scheduler_no_post_action_refresh():
+    """Scheduler register/run/delete must NOT call renderSchedulerPanel()
+    after success — the previous behavior wiped the #sch-flash status pill
+    via innerHTML rewrite, making clicks look like nothing happened. The
+    panel should now refresh ONLY on tab open or manual 🔄 REFRESH click.
+    """
+    print('\n[Phase 35 — scheduler no auto-refresh on action]')
+
+    tpl = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html'),
+               encoding='utf-8').read()
+
+    # Find the action-handlers block; assert it contains NO calls to
+    # renderSchedulerPanel() inside _schRegister / _schRun / _schUnregister.
+    # The 🔄 REFRESH button onclick still calls window.renderSchedulerPanel —
+    # that's the legitimate manual entry point we want to keep.
+    for handler in ('_schRegister = async', '_schRun = async', '_schUnregister = async'):
+        idx = tpl.find(handler)
+        # Body extends from the handler signature to the next 'window._sch'
+        # or the closing of the IIFE — close enough using a fixed window.
+        body = tpl[idx:idx + 1500]
+        # Cut off at the next handler / function so we don't bleed into siblings.
+        for stop in ('window._sch', 'window._initPhase6'):
+            cut = body.find(stop, 100)  # skip the current signature itself
+            if cut > 0:
+                body = body[:cut]
+                break
+        check(f'{handler.split(" =")[0]} body has NO renderSchedulerPanel() call',
+              'renderSchedulerPanel(' not in body)
+
+    # The 🔄 REFRESH button still calls renderSchedulerPanel — that's the
+    # only path that should re-render now.
+    check('🔄 REFRESH button still wired to renderSchedulerPanel',
+          'onclick="window.renderSchedulerPanel()"' in tpl)
+
+    # In-place delete row removal (so deleted task vanishes without full re-render)
+    check('delete handler removes row in-place via data-sch-name',
+          'tr[data-sch-name=' in tpl and 'row.remove()' in tpl)
+    check('rendered rows carry data-sch-name attribute',
+          'data-sch-name="${esc(t.name)}"' in tpl)
+
+    # Flash pill stays visible long enough to read the post-action message
+    check('flash auto-hide bumped to 12s (was 5s)',
+          '}, 12000)' in tpl)
+
+    # Post-action messages explicitly tell the user to click 🔄 REFRESH
+    check('register success message references 🔄 REFRESH',
+          'click 🔄 REFRESH to see it in the list' in tpl)
+    check('run success message references 🔄 REFRESH',
+          'click 🔄 REFRESH in a few seconds' in tpl)
+    check('delete success message references 🔄 REFRESH',
+          'click 🔄 REFRESH to update the list' in tpl)
+
+
 def test_phase34_telegram_monitor_gate():
     """Telegram Monitor must be gated behind TELEGRAM_MONITOR_ENABLED env var
     (default OFF). Telethon v1.43.2 has a headless-reconnect bug that
@@ -3094,6 +3147,7 @@ def main():
     test_phase32_dedup_market_data()
     test_phase33_zombie_watchdog()
     test_phase34_telegram_monitor_gate()
+    test_phase35_scheduler_no_post_action_refresh()
 
     if not args.offline:
         test_api(args.url)
