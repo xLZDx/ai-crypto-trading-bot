@@ -57,6 +57,12 @@ AUTO_CLEAR_S      = 30 * 60        # 30 min — nothing seen → entry drops off
 ACTIVE_WINDOW_S   = 30 * 60        # banner shows entries with last_seen ≤ this
 REFRESH_S         = 30.0           # background refresh cadence
 MAX_ENTRIES       = 50             # state cap
+# Cool-off period after CLEAR / dismiss(key). While the deadline for a key
+# is in the future, scan() / scan_status_surfaces() will not re-create it.
+# Without this, "Clear All" was a visual no-op against any still-firing
+# issue: the very next /api/errors/recent poll re-ran scan(), re-matched
+# the same log lines (which are <30 min old), and re-added the entries.
+DISMISS_SUPPRESS_S = 5 * 60        # 5 min cool-off after CLEAR / dismiss
 
 # Patterns. We classify on the LOG LEVEL — the all-caps token between
 # timestamp and message body in the standard logging format
@@ -163,8 +169,23 @@ _NORMALIZERS = [
 
 _state_lock = threading.Lock()
 _state: dict[str, dict[str, Any]] = {}
+# Suppression map: key -> epoch timestamp until which scans should skip
+# re-creating this key. Lives alongside _state and is persisted with it.
+_dismissed_until: dict[str, float] = {}
 _thread: threading.Thread | None = None
 _thread_lock = threading.Lock()
+
+
+def _is_suppressed(key: str, now: float) -> bool:
+    """Return True iff this key is still under a dismiss cool-off. Expired
+    deadlines are removed in-place so the map can't grow unbounded."""
+    deadline = _dismissed_until.get(key)
+    if deadline is None:
+        return False
+    if deadline > now:
+        return True
+    _dismissed_until.pop(key, None)
+    return False
 
 
 def _signature(line: str) -> str:
@@ -204,7 +225,7 @@ def _load_state() -> None:
     CURRENT classifier. Lines that used to be flagged but are now BENIGN
     (because the classifier has been updated) get dropped here so the UI
     doesn't keep showing stale alarms after a code update."""
-    global _state
+    global _state, _dismissed_until
     if not STATE_FILE.exists():
         return
     try:
@@ -212,9 +233,23 @@ def _load_state() -> None:
             raw = json.load(f) or {}
     except Exception:
         _state = {}
+        _dismissed_until = {}
         return
+    # Backwards-compat: older state files were a flat {key: entry} map.
+    # New files wrap it as {"entries": {...}, "dismissed_until": {...}}.
+    if isinstance(raw, dict) and "entries" in raw and isinstance(raw["entries"], dict):
+        entries_raw = raw.get("entries") or {}
+        dismissed_raw = raw.get("dismissed_until") or {}
+    else:
+        entries_raw = raw
+        dismissed_raw = {}
+    now = time.time()
+    _dismissed_until = {
+        k: float(v) for k, v in (dismissed_raw or {}).items()
+        if isinstance(v, (int, float)) and float(v) > now
+    }
     cleaned: dict[str, dict[str, Any]] = {}
-    for key, entry in (raw or {}).items():
+    for key, entry in (entries_raw or {}).items():
         if not isinstance(entry, dict):
             continue
         # Surface entries are not log lines — _classify would always
@@ -243,8 +278,13 @@ def _load_state() -> None:
 def _save_state() -> None:
     try:
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        # Drop any expired suppressions before persisting so the file
+        # doesn't accumulate dead keys forever.
+        now = time.time()
+        live_dismissed = {k: v for k, v in _dismissed_until.items() if v > now}
+        payload = {"entries": _state, "dismissed_until": live_dismissed}
         with open(STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(_state, f, indent=2)
+            json.dump(payload, f, indent=2)
     except Exception as exc:
         logger.debug("[error_monitor] save state: %s", exc)
 
@@ -314,6 +354,13 @@ def scan() -> dict[str, dict[str, Any]]:
                     continue
                 sig = _signature(line)
                 key = f"{kind}::{fname}::{sig}"
+                # CLEAR ALL / dismiss-key cool-off: while a key is under
+                # suppression, scan() must not re-create or update it. The
+                # underlying log line is still in the tail, so without this
+                # the next poll resurrects the entry and the user sees no
+                # effect from clicking CLEAR ALL.
+                if _is_suppressed(key, now):
+                    continue
                 e = _state.get(key)
                 if e is None:
                     if len(_state) >= MAX_ENTRIES:
@@ -668,6 +715,12 @@ def scan_status_surfaces() -> dict[str, dict[str, Any]]:
                     _state.pop(other_key, None)
 
             key = f"{kind}::{surface_file}::{sig}"
+            # Same CLEAR ALL cool-off semantics as scan() — surface probes
+            # would otherwise re-add the just-dismissed entry on the very
+            # next poll because the underlying status surface is still
+            # reporting the same fault.
+            if _is_suppressed(key, now):
+                continue
             bad_keys.add(key)
             e = _state.get(key)
             if e is None:
@@ -730,21 +783,28 @@ def get_active(severity: str | None = None,
 
 
 def dismiss(key: str) -> bool:
-    """Manual dismiss from the UI — drops one entry by key."""
+    """Manual dismiss from the UI — drops one entry by key and suppresses
+    re-creation for DISMISS_SUPPRESS_S so the next scan doesn't resurrect
+    the entry from the still-fresh underlying log line / status probe."""
+    now = time.time()
     with _state_lock:
-        if key in _state:
-            _state.pop(key, None)
-            _save_state()
-            return True
-    return False
+        existed = key in _state
+        _state.pop(key, None)
+        _dismissed_until[key] = now + DISMISS_SUPPRESS_S
+        _save_state()
+    return existed
 
 
 def dismiss_all() -> int:
-    """Drop every entry. Returns count cleared. Used for the banner's
-    'CLEAR ALL' button so the user can wipe a stale-state backlog without
-    waiting for individual entries to auto-clear."""
+    """Drop every entry AND start a cool-off so the next scan doesn't
+    immediately resurrect them. Returns count cleared. The cool-off lasts
+    DISMISS_SUPPRESS_S; after that, fresh occurrences re-flag normally."""
+    now = time.time()
     with _state_lock:
         n = len(_state)
+        deadline = now + DISMISS_SUPPRESS_S
+        for k in list(_state.keys()):
+            _dismissed_until[k] = deadline
         _state.clear()
         _save_state()
     return n

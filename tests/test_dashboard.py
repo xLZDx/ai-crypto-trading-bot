@@ -2447,6 +2447,88 @@ def test_phase36_debug_supervisor():
         check('supervisor smoke test', False, str(e))
 
 
+def test_phase38_clear_all_suppression():
+    """Phase 38 — banner CLEAR ALL was a visual no-op against still-firing
+    issues because /api/errors/recent re-runs scan() + scan_status_surfaces()
+    on every poll, and those passes re-added the just-cleared entries from
+    the unchanged log tail / unchanged status probes. error_monitor now
+    keeps a per-key suppression deadline (DISMISS_SUPPRESS_S = 5 min) and
+    both scan paths skip keys whose deadline is still in the future."""
+    print('\n[Phase 38 — CLEAR ALL suppression cool-off]')
+
+    em_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'error_monitor.py')
+    em_src  = open(em_path, encoding='utf-8').read()
+
+    # 1. Constant + state map present
+    check('DISMISS_SUPPRESS_S constant defined',
+          'DISMISS_SUPPRESS_S' in em_src and '5 * 60' in em_src)
+    check('_dismissed_until map declared',
+          '_dismissed_until: dict[str, float]' in em_src)
+    check('_is_suppressed helper expires entries in-place',
+          'def _is_suppressed(' in em_src
+          and '_dismissed_until.pop(key, None)' in em_src)
+
+    # 2. dismiss + dismiss_all set deadlines
+    check('dismiss(key) sets _dismissed_until deadline',
+          '_dismissed_until[key] = now + DISMISS_SUPPRESS_S' in em_src)
+    check('dismiss_all() seeds deadline for every active key',
+          '_dismissed_until[k] = deadline' in em_src)
+
+    # 3. Both scan paths consult suppression
+    check('scan() skips suppressed keys before create/update',
+          em_src.count('if _is_suppressed(key, now):') >= 2)
+
+    # 4. Persistence wraps state in {entries, dismissed_until}
+    check('save_state persists wrapped {entries, dismissed_until}',
+          '"entries": _state' in em_src
+          and '"dismissed_until": live_dismissed' in em_src)
+    check('load_state honours the wrapped envelope (with backwards-compat fallback)',
+          '"entries" in raw' in em_src
+          and 'dismissed_raw = raw.get("dismissed_until")' in em_src)
+
+    # 5. UI confirm message updated to advertise the 5-minute window
+    tpl = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html'),
+               encoding='utf-8').read()
+    check('CLEAR ALL confirm dialog mentions 5-minute suppression',
+          'suppressed for 5 minutes' in tpl)
+
+    # 6. Functional smoke: importing the module + dismiss_all clears + suppresses
+    try:
+        import importlib, sys as _sys
+        if BASE_DIR not in _sys.path:
+            _sys.path.insert(0, BASE_DIR)
+        # Reload to ensure we pick up the edited source.
+        if 'src.dashboard.error_monitor' in _sys.modules:
+            em = importlib.reload(_sys.modules['src.dashboard.error_monitor'])
+        else:
+            em = importlib.import_module('src.dashboard.error_monitor')
+        # Inject a fake entry, dismiss_all, then assert the same key would
+        # be skipped on a subsequent scan attempt.
+        with em._state_lock:
+            em._state.clear()
+            em._dismissed_until.clear()
+            em._state['critical::bot.log::fake'] = {
+                'kind':'critical','file':'bot.log','signature':'fake',
+                'sample':'x','source':'log','first_seen':0,'last_seen':0,'count':1,
+            }
+        cleared = em.dismiss_all()
+        check('dismiss_all returns count of cleared entries',
+              cleared == 1, f'cleared={cleared}')
+        check('_state empty after dismiss_all',
+              len(em._state) == 0)
+        check('_dismissed_until populated after dismiss_all',
+              'critical::bot.log::fake' in em._dismissed_until)
+        check('_is_suppressed honours fresh deadline',
+              em._is_suppressed('critical::bot.log::fake',
+                                em._dismissed_until['critical::bot.log::fake'] - 1) is True)
+        check('_is_suppressed expires past deadlines',
+              em._is_suppressed('critical::bot.log::fake',
+                                em._dismissed_until.get('critical::bot.log::fake',
+                                                        0) + 1) is False)
+    except Exception as exc:
+        check('error_monitor suppression smoke test', False, str(exc))
+
+
 def test_phase37_training_table_and_bt_tooltips():
     """Phase 37 — Strategy/ML tab gets a sortable Model Training card with
     quick filters + 'what good looks like' guide, and the Backtest Comparison
@@ -3295,6 +3377,7 @@ def main():
     test_phase35_scheduler_no_post_action_refresh()
     test_phase36_debug_supervisor()
     test_phase37_training_table_and_bt_tooltips()
+    test_phase38_clear_all_suppression()
 
     if not args.offline:
         test_api(args.url)

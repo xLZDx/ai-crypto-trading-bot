@@ -3980,7 +3980,7 @@ async function dismissError(key) {
 }
 
 async function dismissAllErrors() {
-  if (!confirm('Clear all active errors and warnings? They will reappear if they fire again.')) return;
+  if (!confirm('Clear all active errors and warnings?\n\nThey will be suppressed for 5 minutes; if the same issue is still firing after that, it will reappear.')) return;
   try {
     await fetch('/api/errors/dismiss_all', { method: 'POST', headers: hdrs() });
     pollErrors();
