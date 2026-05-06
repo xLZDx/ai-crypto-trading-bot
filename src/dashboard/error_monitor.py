@@ -124,6 +124,15 @@ _BENIGN_RE = re.compile(
         r"Error while finding module specification for 'src\.",
         r"No module named 'src'",
         r"'D:\\test' is not recognized as an internal or external command",
+        # PowerShell error frames left over from the launch_*.ps1 Out-File
+        # race bug (now fixed in commit 76d521b — but historical lines
+        # sit in dashboard.log/fastapi.log/bot.log tails for a while).
+        # These error frames have no embedded timestamp, so the
+        # timestamp-skip in scan() can't drop them. BENIGN them.
+        r"^\s*\+ CategoryInfo\s+:\s*OpenError",
+        r"^\s*\+ FullyQualifiedErrorId\s*:\s*FileOpenFailure",
+        r"Out-File : The process cannot access the file .* because it is being",
+        r"\$_; \"\$_\" \| Out-File -FilePath",
         # Windows asyncio / FastAPI client-disconnect noise
         r"ConnectionResetError:.*WinError 10054",
         r"Exception in callback _ProactorBasePipeTransport",

@@ -266,7 +266,7 @@ if ($fapiRunning) {
     Write-Host "  FastAPI already running (PID $($fapiRunning.ProcessId)) - skipping." -ForegroundColor DarkCyan
     $procFastapi = Get-Process -Id $fapiRunning.ProcessId -ErrorAction SilentlyContinue
 } else {
-    $procFastapi = Start-Window -Label 'FastAPI' -ScriptFile (Join-Path $root 'launch_fastapi.ps1')
+    $procFastapi = Start-Window -Label 'FastAPI' -ScriptFile (Join-Path $root 'launch_fastapi.ps1') -LogName 'fastapi.log'
     Start-Sleep -Seconds 2
 }
 Write-Host "[5.6/6] FastAPI Control Plane ready." -ForegroundColor Green
