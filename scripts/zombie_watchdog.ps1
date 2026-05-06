@@ -59,10 +59,34 @@ if (-not $projectProcs) {
 $killed = 0
 
 # 1) Command-line dedup. Keep newest, kill older.
+#
+# CRITICAL: skip parent↔child pairs. Windows venv python.exe is a thin
+# launcher that exec's the real interpreter — both processes have IDENTICAL
+# CommandLine in WMI but ONE IS THE PARENT OF THE OTHER. Killing the parent
+# breaks the child's stdin/stdout pipe → BrokenPipeError → silent death.
+# That bug masqueraded as "dashboard keeps crashing silently" all session.
+# Only flag as duplicates when neither member is an ancestor of the other.
 $groups = $projectProcs | Group-Object CommandLine
 foreach ($g in $groups) {
     if ($g.Count -le 1) { continue }
     $sorted     = $g.Group | Sort-Object CreationDate -Descending
+
+    # Check parent/child relationships. If any process in the group is a
+    # parent of another in the same group, this is a venv launcher pair —
+    # NOT a duplicate restart. Skip the whole group.
+    $pids = $sorted | ForEach-Object { $_.ProcessId }
+    $isLauncherPair = $false
+    foreach ($p in $sorted) {
+        if ($pids -contains $p.ParentProcessId) {
+            $isLauncherPair = $true
+            break
+        }
+    }
+    if ($isLauncherPair) {
+        Write-Log "skip-launcher-pair count=$($g.Count) cmd=$(Truncate $g.Name)"
+        continue
+    }
+
     $keeper     = $sorted[0]
     $duplicates = $sorted | Select-Object -Skip 1
     foreach ($p in $duplicates) {
