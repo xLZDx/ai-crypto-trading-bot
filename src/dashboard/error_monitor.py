@@ -29,6 +29,7 @@ import json
 import logging
 import os
 import re
+from datetime import datetime
 import threading
 import time
 from pathlib import Path
@@ -110,6 +111,19 @@ _BENIGN_RE = re.compile(
         r"Error loading news from .*read operation timed out",
         r"Error loading news from .*timed out",
         r"HTTP Error 502: Bad Gateway",
+        # Fix A success path: bot detects exchange-side position is already
+        # closed (0 contracts) and force-closes locally on the first tick
+        # instead of cascading through 3 retry attempts. This is the
+        # DESIRED behavior, not a fault.
+        r"Force-closed SCALPING position .* exchange has 0 contracts \(already closed\)",
+        r"Force-closed SCALPING position .* Binance reduceOnly rejected",
+        # Stale launch-attempt errors: the launcher tried to spawn a python
+        # module before the working directory was set correctly, leaving
+        # a one-line ModuleNotFoundError in the log. The current process
+        # is fine; we just want this one stale tail-line to stop pinging.
+        r"Error while finding module specification for 'src\.",
+        r"No module named 'src'",
+        r"'D:\\test' is not recognized as an internal or external command",
         # Windows asyncio / FastAPI client-disconnect noise
         r"ConnectionResetError:.*WinError 10054",
         r"Exception in callback _ProactorBasePipeTransport",
@@ -226,6 +240,31 @@ def _save_state() -> None:
         logger.debug("[error_monitor] save state: %s", exc)
 
 
+# Parse the line's own log timestamp (e.g. "2026-05-06 12:28:01,834") so we
+# can skip lines whose own clock says they're older than the active window.
+# Otherwise the same stale ERROR line in the file's tail keeps refreshing
+# its last_seen on every scan and never auto-clears.
+_LOG_TS_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})(?:[,.]\d+)?"
+)
+
+
+def _line_age_s(line: str) -> float | None:
+    """Return seconds since the line's embedded timestamp, or None if no
+    parseable timestamp is present at the line start."""
+    m = _LOG_TS_RE.match(line.strip())
+    if not m:
+        return None
+    try:
+        # Use space form for fromisoformat compatibility
+        ts_str = m.group(1).replace("T", " ")
+        dt = datetime.fromisoformat(ts_str)
+        # Logs are in local time; compare against local-naive now()
+        return (datetime.now() - dt).total_seconds()
+    except Exception:
+        return None
+
+
 def _classify(line: str) -> str | None:
     if _BENIGN_RE.search(line):
         return None
@@ -253,6 +292,16 @@ def scan() -> dict[str, dict[str, Any]]:
             for line in _tail(path):
                 kind = _classify(line)
                 if kind is None:
+                    continue
+                # Skip lines whose own timestamp says they're older than the
+                # active window. Otherwise a stale ERROR sitting in the
+                # tail keeps refreshing its last_seen on every scan and never
+                # ages out — which is exactly what happened after the
+                # restart_all detach iterations: old failed-launch errors
+                # stuck in the log tail were re-flagged each scan despite
+                # the underlying processes being healthy.
+                age = _line_age_s(line)
+                if age is not None and age > ACTIVE_WINDOW_S:
                     continue
                 sig = _signature(line)
                 key = f"{kind}::{fname}::{sig}"
