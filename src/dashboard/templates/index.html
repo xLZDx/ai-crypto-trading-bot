@@ -1572,6 +1572,51 @@ select.field option{background:#0d1628;color:#e2e8f0}
         </div>
       </div>
 
+      <!-- ── Section: Stability Heatmap (per-TF backtest) ───────────── -->
+      <style>
+        .stab-grid{display:grid;gap:2px}
+        .stab-cell{padding:4px 6px;text-align:right;font-size:.55rem;font-weight:700;
+          border-radius:3px;border:1px solid rgba(148,163,184,.08);min-width:62px}
+        .stab-hdr{font-size:.55rem;font-weight:700;color:#94a3b8;text-align:center;padding:4px 6px}
+        .stab-strat{font-size:.6rem;font-weight:700;color:#cbd5e1;padding:4px 6px;text-align:left;white-space:nowrap}
+        .stab-strat .best-badge{display:inline-block;font-size:.46rem;background:rgba(52,211,153,.18);color:#34d399;
+          border:1px solid rgba(52,211,153,.3);border-radius:999px;padding:0 5px;margin-left:5px;font-weight:700}
+        .stab-cell.empty{color:#475569;background:rgba(5,8,22,.35)}
+        .stab-cell.bad{background:rgba(251,113,133,.13);color:#fb7185;border-color:rgba(251,113,133,.25)}
+        .stab-cell.warn{background:rgba(251,191,36,.10);color:#fbbf24;border-color:rgba(251,191,36,.22)}
+        .stab-cell.ok{background:rgba(52,211,153,.10);color:#34d399;border-color:rgba(52,211,153,.22)}
+        .stab-cell.gold{background:rgba(52,211,153,.22);color:#10b981;border-color:rgba(52,211,153,.4);font-weight:800}
+      </style>
+      <div class="card collapsible-section" id="st-sec-stab" style="margin-bottom:10px">
+        <div class="st-sec-hdr card-header collapsible-hdr" onclick="toggleSection(this)">
+          <span class="st-sec-title">Stability Heatmap (TF × Strategy)</span>
+          <span class="chip" id="chip-stab" style="font-size:.56rem">—</span>
+          <span class="st-chevron">▼</span>
+        </div>
+        <div class="st-sec-body">
+          <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+            <button onclick="loadStabilityHeatmap()" style="font-size:.58rem;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(99,102,241,.2);color:#818cf8;border:1px solid rgba(99,102,241,.3);font-weight:700">↻ Refresh</button>
+            <span style="font-size:.55rem;color:#64748b">Metric:</span>
+            <button class="bt-sort-btn active" data-stab-metric="wf_sharpe_avg"      onclick="stabSetMetric('wf_sharpe_avg')">WF Sharpe</button>
+            <button class="bt-sort-btn"        data-stab-metric="wf_consistency_avg" onclick="stabSetMetric('wf_consistency_avg')">WF Consist.</button>
+            <button class="bt-sort-btn"        data-stab-metric="sharpe_avg"         onclick="stabSetMetric('sharpe_avg')">Sharpe (IS)</button>
+            <button class="bt-sort-btn"        data-stab-metric="win_rate_avg"       onclick="stabSetMetric('win_rate_avg')">Win%</button>
+            <button class="bt-sort-btn"        data-stab-metric="maxdd_avg"          onclick="stabSetMetric('maxdd_avg')">MaxDD</button>
+            <button class="bt-sort-btn"        data-stab-metric="profit_factor_avg"  onclick="stabSetMetric('profit_factor_avg')">PF</button>
+            <span style="margin-left:auto;font-size:.55rem;color:#64748b">★ = best TF for that strategy</span>
+          </div>
+          <div id="stab-status" style="font-size:.56rem;color:#fbbf24;margin-bottom:6px;display:none"></div>
+          <div style="overflow-x:auto">
+            <div id="stab-grid" class="stab-grid">
+              <div style="grid-column:1/-1;text-align:center;color:#475569;padding:14px;font-size:.62rem">Loading…</div>
+            </div>
+          </div>
+          <div style="margin-top:8px;font-size:.55rem;color:#475569;line-height:1.55">
+            Sourced from <code>data/backtest/latest_comparison.json</code> (in-sample) + <code>wf_results.json</code> (out-of-sample). Multi-TF results require running <code>run_full_backtest(timeframes=('5m','1h','4h','1d','1w'))</code> after PR 1's resample lands all TF files. Until then this shows a single-TF column.
+          </div>
+        </div>
+      </div>
+
       <!-- ── Section: ML Models ─────────────────────────────────────── -->
       <div class="st-sec open" id="st-sec-ml">
         <div class="st-sec-hdr" onclick="stToggle('st-sec-ml')">
@@ -3191,9 +3236,10 @@ function renderStrategyTab(state) {
   _renderTrainingTable();
   _renderStratCards(_stratFull);
   _renderBtSummary(_stratFull);
-  loadBucketCompare();   // refresh aggregate panel alongside strategies
-  loadDataCoverage();    // refresh data inventory matrix
-  pollResampleJobs();    // surface any in-flight resample
+  loadBucketCompare();      // pure-vs-ML aggregate
+  loadStabilityHeatmap();   // TF × Strategy heatmap
+  loadDataCoverage();       // data inventory matrix
+  pollResampleJobs();       // surface any in-flight resample
 }
 
 // ── ML Model Cards ────────────────────────────────────────────────────────────
@@ -3566,6 +3612,101 @@ async function pollResampleJobs() {
       }
     }
   } catch(e) { /* silent */ }
+}
+
+// ── Stability Heatmap (TF × Strategy) ────────────────────────────────────────
+let _stabMetric = 'wf_sharpe_avg';
+let _stabData = null;
+
+function stabSetMetric(metric) {
+  _stabMetric = metric;
+  document.querySelectorAll('[data-stab-metric]').forEach(b => b.classList.toggle('active', b.dataset.stabMetric === metric));
+  _renderStabilityHeatmap();
+}
+
+async function loadStabilityHeatmap() {
+  const grid = $('stab-grid');
+  const chip = $('chip-stab');
+  const stat = $('stab-status');
+  if (chip) chip.textContent = 'Loading…';
+  try {
+    const r = await fetch('/api/strategy/stability');
+    _stabData = await r.json();
+    const ts = _stabData.timeframes || [];
+    const ss = _stabData.strategies || [];
+    if (chip) chip.textContent = `${ss.length} strategies × ${ts.length} TF`;
+    if (stat) {
+      if (!_stabData.has_multi_tf) {
+        stat.style.display = '';
+        stat.innerHTML = `Showing single-TF results — run <code>run_full_backtest(timeframes=('5m','1h','4h','1d','1w'))</code> after the resample finishes to populate the heatmap.`;
+      } else {
+        stat.style.display = 'none';
+      }
+    }
+    _renderStabilityHeatmap();
+  } catch(e) {
+    if (grid) grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;color:#fb7185;padding:14px">Error: ${e.message||e}</div>`;
+    if (chip) chip.textContent = 'Error';
+  }
+}
+
+function _renderStabilityHeatmap() {
+  const grid = $('stab-grid');
+  if (!grid || !_stabData) return;
+  const ts = (_stabData.timeframes || []).slice();
+  const ss = (_stabData.strategies || []).slice();
+  const cells = _stabData.cells || {};
+  const best = _stabData.best_tf || {};
+  // Stable column order (5m, 15m, 1h, 4h, 1d, 1w, 1mo) when present.
+  const TF_ORDER = ['1m','5m','15m','1h','4h','1d','1w','1mo'];
+  ts.sort((a, b) => (TF_ORDER.indexOf(a)||0) - (TF_ORDER.indexOf(b)||0));
+  // Sort strategies by best-TF metric desc.
+  ss.sort((a, b) => {
+    const av = (cells[a]?.[best[a]]?.[_stabMetric]) ?? -Infinity;
+    const bv = (cells[b]?.[best[b]]?.[_stabMetric]) ?? -Infinity;
+    return bv - av;
+  });
+
+  // Color thresholds by metric — a few crypto-tuned bands.
+  function classify(metric, v) {
+    if (v == null) return 'empty';
+    if (metric === 'wf_sharpe_avg' || metric === 'sharpe_avg')
+      return v >= 1 ? 'gold' : v >= 0.3 ? 'ok' : v >= 0 ? 'warn' : 'bad';
+    if (metric === 'wf_consistency_avg')
+      return v >= 0.7 ? 'gold' : v >= 0.5 ? 'ok' : v >= 0.3 ? 'warn' : 'bad';
+    if (metric === 'win_rate_avg')
+      return v >= 55 ? 'gold' : v >= 50 ? 'ok' : v >= 45 ? 'warn' : 'bad';
+    if (metric === 'maxdd_avg')   // negative %
+      return v >= -10 ? 'gold' : v >= -20 ? 'ok' : v >= -35 ? 'warn' : 'bad';
+    if (metric === 'profit_factor_avg')
+      return v >= 1.5 ? 'gold' : v >= 1.1 ? 'ok' : v >= 0.9 ? 'warn' : 'bad';
+    return 'empty';
+  }
+  function fmt(metric, v) {
+    if (v == null) return '—';
+    if (metric === 'wf_consistency_avg') return Math.round(v * 100) + '%';
+    if (metric === 'maxdd_avg' || metric === 'win_rate_avg') return v.toFixed(1) + '%';
+    return v.toFixed(2);
+  }
+
+  grid.style.gridTemplateColumns = `220px repeat(${ts.length||1}, 1fr)`;
+  const out = ['<div></div>'];
+  for (const tf of ts) out.push(`<div class="stab-hdr">${tf}</div>`);
+  for (const s of ss) {
+    const star = best[s] ? `<span class="best-badge">★ ${best[s]}</span>` : '';
+    out.push(`<div class="stab-strat">${esc(s)}${star}</div>`);
+    for (const tf of ts) {
+      const c = (cells[s] || {})[tf];
+      const v = c ? c[_stabMetric] : null;
+      const cls = classify(_stabMetric, v);
+      const isBest = best[s] === tf;
+      const tip = c
+        ? `Sharpe ${c.sharpe_avg ?? '—'} · WF Sharpe ${c.wf_sharpe_avg ?? '—'} · WF Consist ${c.wf_consistency_avg != null ? Math.round(c.wf_consistency_avg*100)+'%' : '—'} · Win% ${c.win_rate_avg ?? '—'} · MaxDD ${c.maxdd_avg ?? '—'} · trades ${c.n_trades_total||0}`
+        : `no data for ${s} @ ${tf}`;
+      out.push(`<div class="stab-cell ${cls}" title="${esc(tip)}" style="${isBest?'box-shadow:inset 0 0 0 2px #34d399':''}">${fmt(_stabMetric, v)}</div>`);
+    }
+  }
+  grid.innerHTML = out.join('');
 }
 
 // ── Pure Rule vs ML-Driven aggregate comparison ──────────────────────────────

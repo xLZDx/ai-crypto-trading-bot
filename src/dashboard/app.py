@@ -2297,6 +2297,134 @@ def db_strategy_history():
         return jsonify({'error': str(e)}), 500
 
 
+# ─── Stability comparison: per-strategy × per-timeframe heatmap data ─────────
+@app.route('/api/strategy/stability', methods=['GET'])
+def api_strategy_stability():
+    """Build a (strategy × timeframe) matrix from latest_comparison.json
+    and wf_results.json. Drives the Stability heatmap on the Strategy tab.
+
+    Each cell aggregates across symbols (mean Sharpe, mean WF Sharpe,
+    mean Win%, sum Trades). 'Best TF' per strategy is the TF with the
+    highest WF Sharpe (or Sharpe if WF is missing).
+
+    Returns:
+      {strategies: [...], timeframes: [...],
+       cells: {(strategy, tf): {sharpe_avg, wf_sharpe_avg, ...}},
+       best_tf: {strategy: tf}}
+
+    When the backtester hasn't yet been run with multi-TF, this returns
+    just the single-TF rows (defaulting to 1h) so the UI shows a usable
+    column even before PR 3's multi-TF run lands."""
+    import json as _j
+    from src.engine import strategy_registry as _sr
+
+    bt_path = _PROJECT_ROOT / 'data' / 'backtest' / 'latest_comparison.json'
+    wf_path = _PROJECT_ROOT / 'data' / 'backtest' / 'wf_results.json'
+    bt_rows = _j.loads(bt_path.read_text()) if bt_path.exists() else []
+    wf_rows = _j.loads(wf_path.read_text()) if wf_path.exists() else []
+
+    # label → registry name, so latest_comparison labels (which sometimes
+    # carry "A_" / "B_" prefixes) round-trip cleanly to the registry key
+    label_to_key: dict[str, str] = {}
+    for nm, info in _sr.REGISTRY.items():
+        label_to_key[info.get('label', nm)] = nm
+
+    timeframes_seen: set[str] = set()
+    strategies_seen: set[str] = set()
+    # cells[strategy][tf] = aggregator dict
+    cells: dict[str, dict[str, dict]] = {}
+
+    def _safe_float(v):
+        try: return float(v)
+        except (TypeError, ValueError): return None
+
+    for r in bt_rows:
+        raw  = (r.get('strategy') or '').strip()
+        clean = re.sub(r'^[AB]_', '', raw)
+        reg_key = label_to_key.get(clean, clean)
+        tf = (r.get('timeframe') or '1h').strip() or '1h'
+        timeframes_seen.add(tf)
+        strategies_seen.add(reg_key)
+        bucket = cells.setdefault(reg_key, {}).setdefault(tf, {
+            'n_symbols':       0, 'n_trades_total': 0, 'pnl_total': 0.0,
+            'win_rate_sum':    0.0, 'win_rate_n':    0,
+            'sharpe_sum':      0.0, 'sharpe_n':      0,
+            'maxdd_sum':       0.0, 'maxdd_n':       0,
+            'pf_sum':          0.0, 'pf_n':          0,
+            'wf_sharpe_sum':   0.0, 'wf_sharpe_n':   0,
+            'wf_consist_sum':  0.0, 'wf_consist_n':  0,
+        })
+        bucket['n_symbols'] += 1
+        bucket['n_trades_total'] += int(r.get('n_trades') or 0)
+        bucket['pnl_total']      += float(r.get('total_pnl_usdt') or 0.0)
+        for src_key, sum_key, n_key in (
+            ('win_rate_pct',     'win_rate_sum',  'win_rate_n'),
+            ('sharpe',           'sharpe_sum',    'sharpe_n'),
+            ('max_drawdown_pct', 'maxdd_sum',     'maxdd_n'),
+            ('profit_factor',    'pf_sum',        'pf_n'),
+        ):
+            v = _safe_float(r.get(src_key))
+            if v is not None:
+                bucket[sum_key] += v
+                bucket[n_key]   += 1
+
+    for r in wf_rows:
+        reg_key = (r.get('strategy') or '').strip()
+        tf = (r.get('timeframe') or '1h').strip() or '1h'
+        if reg_key not in cells:
+            continue
+        bucket = cells[reg_key].get(tf)
+        if not bucket:
+            continue
+        for src_key, sum_key, n_key in (
+            ('wf_mean_sharpe', 'wf_sharpe_sum',  'wf_sharpe_n'),
+            ('wf_consistency', 'wf_consist_sum', 'wf_consist_n'),
+        ):
+            v = _safe_float(r.get(src_key))
+            if v is not None:
+                bucket[sum_key] += v
+                bucket[n_key]   += 1
+
+    # Flatten to {strategy: {tf: avgs}} + compute best_tf per strategy
+    flat_cells: dict[str, dict[str, dict]] = {}
+    best_tf: dict[str, str] = {}
+    for strat, by_tf in cells.items():
+        flat_cells[strat] = {}
+        ranked: list[tuple[float, str]] = []
+        for tf, b in by_tf.items():
+            avg = lambda s, n: round(b[s] / b[n], 3) if b[n] else None
+            row = {
+                'tf':                  tf,
+                'n_symbols':           b['n_symbols'],
+                'n_trades_total':      b['n_trades_total'],
+                'pnl_total':           round(b['pnl_total'], 2),
+                'sharpe_avg':          avg('sharpe_sum',     'sharpe_n'),
+                'win_rate_avg':        avg('win_rate_sum',   'win_rate_n'),
+                'maxdd_avg':           avg('maxdd_sum',      'maxdd_n'),
+                'profit_factor_avg':   avg('pf_sum',         'pf_n'),
+                'wf_sharpe_avg':       avg('wf_sharpe_sum',  'wf_sharpe_n'),
+                'wf_consistency_avg':  avg('wf_consist_sum', 'wf_consist_n'),
+            }
+            flat_cells[strat][tf] = row
+            # Use WF Sharpe as the ranking signal; fall back to Sharpe
+            score = row['wf_sharpe_avg']
+            if score is None:
+                score = row['sharpe_avg']
+            if score is not None:
+                ranked.append((score, tf))
+        if ranked:
+            ranked.sort(reverse=True)
+            best_tf[strat] = ranked[0][1]
+
+    return jsonify({
+        'strategies':  sorted(strategies_seen),
+        'timeframes':  sorted(timeframes_seen),
+        'cells':       flat_cells,
+        'best_tf':     best_tf,
+        'has_multi_tf': len(timeframes_seen) > 1,
+    })
+
+
 # ─── Bucket aggregate comparison (Pure rule vs ML-driven vs Meta-filtered) ───
 @app.route('/api/strategy/bucket_compare', methods=['GET'])
 def api_strategy_bucket_compare():

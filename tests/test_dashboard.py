@@ -2447,6 +2447,58 @@ def test_phase36_debug_supervisor():
         check('supervisor smoke test', False, str(e))
 
 
+def test_phase43_pr4_stability_heatmap():
+    """Phase 43 — PR 4 Stability comparison view: GET /api/strategy/stability
+    builds a (strategy × tf) matrix; UI renders it as a colour-coded heatmap
+    with a best-TF badge per row."""
+    print('\n[Phase 43 — PR 4 stability heatmap]')
+
+    app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
+               encoding='utf-8').read()
+    tpl = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html'),
+               encoding='utf-8').read()
+
+    # 1. Backend endpoint
+    check('/api/strategy/stability endpoint defined',
+          "@app.route('/api/strategy/stability'" in app
+          and 'def api_strategy_stability(' in app)
+    check('stability endpoint pulls latest_comparison + wf_results',
+          'latest_comparison.json' in app
+          and 'wf_results.json' in app)
+    check('stability returns cells / best_tf / has_multi_tf',
+          "'cells':" in app
+          and "'best_tf':" in app
+          and "'has_multi_tf':" in app)
+    check('best_tf ranks by WF Sharpe with Sharpe fallback',
+          "score = row['wf_sharpe_avg']" in app
+          and "if score is None:" in app
+          and "score = row['sharpe_avg']" in app)
+
+    # 2. UI panel
+    check('Stability heatmap section present',
+          'id="st-sec-stab"' in tpl
+          and 'Stability Heatmap (TF × Strategy)' in tpl)
+    check('Metric switcher buttons (WF Sharpe / Consist / Sharpe / Win% / MaxDD / PF)',
+          'data-stab-metric="wf_sharpe_avg"' in tpl
+          and 'data-stab-metric="wf_consistency_avg"' in tpl
+          and 'data-stab-metric="sharpe_avg"' in tpl
+          and 'data-stab-metric="win_rate_avg"' in tpl
+          and 'data-stab-metric="maxdd_avg"' in tpl
+          and 'data-stab-metric="profit_factor_avg"' in tpl)
+    check('Heatmap cell color buckets (gold/ok/warn/bad/empty)',
+          ".stab-cell.gold" in tpl
+          and ".stab-cell.bad" in tpl
+          and ".stab-cell.empty" in tpl)
+    check('Best-TF badge ★ rendered on the row label',
+          'class="best-badge">★' in tpl
+          and 'best[s] ? `' in tpl)
+    check('renderStrategyTab calls loadStabilityHeatmap()',
+          'loadStabilityHeatmap();' in tpl)
+    check('Empty/single-TF state shows guidance message',
+          "_stabData.has_multi_tf" in tpl
+          and 'run <code>run_full_backtest' in tpl)
+
+
 def test_phase42_pr3_backtester_multi_tf():
     """Phase 42 — PR 3 strategy multi-timeframe support: backtester loops
     over a list of timeframes and tags each result row with its TF so the
@@ -3685,6 +3737,7 @@ def main():
     test_phase40_pr1_data_coverage_resample()
     test_phase41_pr2_trainer_multi_tf()
     test_phase42_pr3_backtester_multi_tf()
+    test_phase43_pr4_stability_heatmap()
 
     if not args.offline:
         test_api(args.url)
