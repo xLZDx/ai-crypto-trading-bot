@@ -52,11 +52,19 @@ _ROLE_LOG_FILES: dict[str, str] = {
     "dash":      "logs/dashboard.log",
     "realtime":  "logs/realtime_db.log",
     "orderbook": "logs/orderbook_collector.log",
-    "training":  "logs/training_supervisor.log",
+    "training":  "logs/training.log",
     "monitor":   "logs/monitor.log",
     "orch":      "logs/data_orchestrator.log",
     "fastapi":   "logs/fastapi.log",
 }
+
+# Roles that are EXPECTED to exit on their own — training runs once then
+# returns, scheduled tasks fire and exit, etc. Their "death" is a normal
+# completion, not an alert-worthy crash. The supervisor still tracks them
+# but does NOT record their exits as deaths.
+_TRANSIENT_ROLES: frozenset[str] = frozenset({
+    "training",   # one-shot via launch_training.ps1 → train_all_models.py
+})
 
 
 def _now_iso() -> str:
@@ -224,6 +232,11 @@ def main() -> int:
     # State: previous tick's PID map + per-pid stats for crash diagnostics.
     prev_pids: dict[str, int] = {}
     pid_stats: dict[int, dict[str, Any]] = {}
+    # Track (role, pid) pairs we've already recorded as dead. Prevents
+    # re-recording the same death every tick when the PID file hasn't been
+    # refreshed (e.g. training is a one-shot that exits, but its old PID
+    # stays in process_ids.json until restart_all writes a new value).
+    reported_deaths: set[tuple[str, int]] = set()
 
     _append_log(f"{_now_iso()} debug_supervisor STARTED (pid={os.getpid()}, poll={args.poll_seconds}s)")
 
@@ -239,18 +252,27 @@ def main() -> int:
                     if stats:
                         pid_stats[pid] = stats
 
-            # Death detection: was tracked last tick, gone now.
+            # Death detection — only fire ONCE per (role, pid) pair, and
+            # skip transient roles whose exit is expected.
             for role, prev_pid in prev_pids.items():
-                # Two ways a death is "real":
-                # (a) the PID is no longer in process_ids.json AND it's dead
-                # (b) the role still maps to the same PID but it's dead
                 cur_pid = current_pids.get(role)
-                if cur_pid != prev_pid and not _is_alive(prev_pid):
-                    _record_death(role, prev_pid, pid_stats.get(prev_pid, {}))
+                key = (role, prev_pid)
+                if (role, prev_pid) in reported_deaths:
+                    continue
+                # Death detected when the PID is no longer alive — whether or
+                # not the PID file has been refreshed.
+                if not _is_alive(prev_pid):
+                    if role not in _TRANSIENT_ROLES:
+                        _record_death(role, prev_pid, pid_stats.get(prev_pid, {}))
+                    reported_deaths.add(key)
                     pid_stats.pop(prev_pid, None)
-                elif cur_pid == prev_pid and not _is_alive(prev_pid):
-                    _record_death(role, prev_pid, pid_stats.get(prev_pid, {}))
-                    pid_stats.pop(prev_pid, None)
+
+            # Forget reported pairs that no longer match the current PID
+            # map — once restart_all writes a fresh PID for a role, we're
+            # ready to track its next death.
+            stale_keys = {(r, p) for (r, p) in reported_deaths
+                          if current_pids.get(r) != p}
+            reported_deaths -= stale_keys
 
             prev_pids = current_pids
 
