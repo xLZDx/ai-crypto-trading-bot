@@ -184,20 +184,28 @@ Write-Host "[3.5/6] Environment configured." -ForegroundColor Green
 # console group via Start-Detached / WMI. The script's own logging (Python's
 # logging module + the launcher's Tee-Object) keeps writing to logs/.
 function Start-Window {
-    param([string]$Label, [string]$ScriptFile)
+    param([string]$Label, [string]$ScriptFile, [string]$LogName = $null)
     Write-Host "  Launching $Label (detached) ..."
     if (-not (Test-Path $ScriptFile)) {
         Write-Host "  WARNING: $ScriptFile not found" -ForegroundColor Red
         return $null
     }
     $cmdLine = 'powershell -NoProfile -ExecutionPolicy Bypass -File "' + $ScriptFile + '"'
-    $newPid = Start-Detached -CommandLine $cmdLine
+    # If LogName given, redirect stdout/stderr at cmd level via Start-Detached.
+    # The launcher .ps1 should NOT have its own Out-File pipe — that races
+    # the cmd redirect and locks the file (caused the silent dashboard
+    # crashes Apr-May; see launch_dashboard.ps1 / launch_bot.ps1 comments).
+    if ($LogName) {
+        $logPath = Join-Path $root "logs\$LogName"
+        $newPid = Start-Detached -CommandLine $cmdLine -LogFile $logPath
+    } else {
+        $newPid = Start-Detached -CommandLine $cmdLine
+    }
     if (-not $newPid) {
         Write-Host "  $Label failed to start" -ForegroundColor Red
         return $null
     }
     Write-Host "  $Label started (PID $newPid)"
-    # Return a synthetic object exposing .Id so callers' `$proc.Id` keeps working.
     return [PSCustomObject]@{ Id = $newPid }
 }
 
@@ -229,9 +237,9 @@ Write-Host "[4/6] Training scheduled." -ForegroundColor Green
 # Step 5: Dashboard + Bot
 Write-Host ""
 Write-Host "[5/6] Launching Dashboard and Bot..." -ForegroundColor Yellow
-$procDash = Start-Window -Label 'Dashboard' -ScriptFile (Join-Path $root 'launch_dashboard.ps1')
+$procDash = Start-Window -Label 'Dashboard' -ScriptFile (Join-Path $root 'launch_dashboard.ps1') -LogName 'dashboard.log'
 Start-Sleep -Seconds 2
-$procBot  = Start-Window -Label 'Bot'       -ScriptFile (Join-Path $root 'launch_bot.ps1')
+$procBot  = Start-Window -Label 'Bot'       -ScriptFile (Join-Path $root 'launch_bot.ps1') -LogName 'bot.log'
 Start-Sleep -Seconds 2
 Write-Host "[5/6] Dashboard and Bot launched." -ForegroundColor Green
 

@@ -12,5 +12,10 @@ if (-not $env:DASHBOARD_BIND_HOST) { $env:DASHBOARD_BIND_HOST = '0.0.0.0' }
 if (-not $env:DASHBOARD_BIND_PORT) { $env:DASHBOARD_BIND_PORT = '5000' }
 Write-Host "[dashboard] BIND $($env:DASHBOARD_BIND_HOST):$($env:DASHBOARD_BIND_PORT)"
 
-& $python (Join-Path $root 'src\dashboard\app.py') 2>&1 |
-    ForEach-Object { $_; "$_" | Out-File -FilePath (Join-Path $logDir 'dashboard.log') -Append -Encoding utf8 }
+# Logging: just exec python and let stdout/stderr inherit. When this script
+# is launched via restart_all.ps1's Start-Detached helper, the cmd-level
+# `>> dashboard.log 2>&1` redirect captures everything. The previous
+# Out-File pipeline created a SECOND writer to dashboard.log, racing with
+# the cmd redirect — the resulting "file in use" errors crashed the
+# dashboard within seconds of every spawn.
+& $python (Join-Path $root 'src\dashboard\app.py')
