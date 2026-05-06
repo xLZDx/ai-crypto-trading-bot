@@ -1538,6 +1538,7 @@ select.field option{background:#0d1628;color:#e2e8f0}
           </div>
           <div style="margin-top:8px;font-size:.55rem;color:#475569;line-height:1.55">
             Resample is sourced from <code>data/raw/historical/&lt;sym&gt;_spot_1s.csv.gz</code> (or the smaller live <code>_1s</code> tail) and writes to <code>data/raw/&lt;sym&gt;_&lt;tf&gt;.csv.gz</code>. Idempotent — safe to re-run. <b>Stale</b> rows just need a fresh resample to catch up to current 1s data.
+            <span style="color:#94a3b8"><b>Auto-discovery:</b></span> drop a new <code>&lt;NEWSYM&gt;_spot_1s.csv.gz</code> into <code>data/raw/historical/</code> and it shows up here on the next refresh — no code change.
           </div>
         </div>
       </div>

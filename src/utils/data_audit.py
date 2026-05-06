@@ -32,13 +32,58 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR      = PROJECT_ROOT / "data" / "raw"
 PARQUET_NEWS = PROJECT_ROOT / "data" / "parquet" / "_NEWS" / "news"
 
-# Canonical watchlist for the audit grid. Mirrors the bot's training symbols.
-DEFAULT_SYMBOLS = (
+# Canonical watchlist for the audit grid. Used as a fallback when no 1s
+# archives are discoverable on disk (e.g. fresh checkout). The live default
+# is computed by discover_symbols() so dropping a new <SYM>_spot_1s.csv.gz
+# into data/raw/historical/ extends coverage with no code change.
+FALLBACK_SYMBOLS = (
     "BTC_USDT", "SOL_USDT", "ADA_USDT", "ETH_USDT", "BNB_USDT",
     "XRP_USDT", "DOGE_USDT", "TRX_USDT", "AVAX_USDT", "SHIB_USDT",
     "DOT_USDT", "LINK_USDT", "NEAR_USDT", "UNI_USDT", "LTC_USDT",
     "APT_USDT", "ATOM_USDT", "HBAR_USDT", "ICP_USDT", "SUI_USDT",
 )
+
+
+def discover_symbols(
+    historical_dir: Path | None = None,
+    raw_dir: Path | None = None,
+) -> tuple[str, ...]:
+    """Scan disk for any 1s archive and return the symbols sorted.
+    Looks for these patterns, in priority order:
+      data/raw/historical/<SYM>_spot_1s.csv.gz   (deepest history)
+      data/raw/historical/<SYM>_1s.csv.gz
+      data/raw/<SYM>_1s.csv.gz                   (live tail)
+    Returns the union — if a symbol has any 1s file we include it.
+    Falls back to FALLBACK_SYMBOLS if no archives are present (which is
+    really only the case on a fresh checkout)."""
+    hist = Path(historical_dir) if historical_dir else (PROJECT_ROOT / "data" / "raw" / "historical")
+    raw  = Path(raw_dir)        if raw_dir        else RAW_DIR
+    found: set[str] = set()
+    for d in (hist, raw):
+        if not d.exists():
+            continue
+        for p in d.iterdir():
+            if not p.is_file():
+                continue
+            n = p.name
+            if not n.endswith("_1s.csv.gz"):
+                continue
+            # Strip the suffix and any "_spot" infix to recover the symbol.
+            stem = n[:-len("_1s.csv.gz")]
+            if stem.endswith("_spot"):
+                stem = stem[:-len("_spot")]
+            # Only accept conventional <BASE>_<QUOTE> shapes — guards
+            # against accidentally matching "_funding" or other patterns.
+            if "_" in stem and len(stem.split("_")) == 2:
+                found.add(stem)
+    if not found:
+        return tuple(FALLBACK_SYMBOLS)
+    return tuple(sorted(found))
+
+
+# Live default — computed at import time. Callers who pass an explicit
+# symbols=[...] list bypass this and get exactly what they ask for.
+DEFAULT_SYMBOLS: tuple[str, ...] = discover_symbols()
 
 # Timeframes we want covered for the multi-TF training initiative.
 DEFAULT_TIMEFRAMES = ("1m", "5m", "15m", "1h", "4h", "1d", "1w", "1mo")

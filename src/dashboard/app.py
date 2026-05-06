@@ -2484,10 +2484,13 @@ def _record_resample_job(job_id: str, **fields) -> None:
 
 def _run_resample_blocking(job_id: str, symbols: list[str],
                            timeframes: list[str]) -> None:
-    """Worker body: stream resample for each symbol; progress callback writes
-    into the job record so the dashboard can poll /api/data/resample/jobs
-    and show a live status pill."""
-    from src.utils.resample_ohlcv import resample_symbol
+    """Worker body: spawn the resampler as a SUBPROCESS per symbol so a
+    pandas memory blowup or runaway can't take the Flask process down with
+    it (which it did the first time we ran this in-thread). The supervisor
+    thread here just polls the subprocess's stderr line-by-line — each
+    progress JSON line lands in the job record for the dashboard to read.
+    """
+    import json as _j
     total = len(symbols)
     _record_resample_job(job_id, status='running',
                          started_at=time.time(),
@@ -2497,16 +2500,44 @@ def _run_resample_blocking(job_id: str, symbols: list[str],
                          results={})
     results: dict = {}
     for i, sym in enumerate(symbols):
-        _record_resample_job(job_id,
-                             current_symbol=sym, done_symbols=i)
-        def _on_progress(ev: dict, _sym=sym, _job=job_id):
-            # Cheap update — just store the latest event so the UI can show
-            # "BTC_USDT stream chunk 24, rows_seen 6.0M".
-            _record_resample_job(_job, last_event=ev)
+        _record_resample_job(job_id, current_symbol=sym, done_symbols=i)
+        cmd = [
+            sys.executable, '-m', 'src.utils.resample_ohlcv',
+            '--symbol', sym,
+            '--timeframes', ','.join(timeframes),
+        ]
         try:
-            r = resample_symbol(sym, timeframes=tuple(timeframes),
-                                progress=_on_progress)
-            results[sym] = r
+            proc = subprocess.Popen(
+                cmd, cwd=project_root,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, bufsize=1,
+            )
+            # Drain stderr (where the resampler writes one JSON line per event)
+            # so the buffer never fills and the child can't deadlock on its
+            # own progress reporting. The last successful event is recorded
+            # to the job dict for the dashboard pill.
+            assert proc.stderr is not None
+            for line in proc.stderr:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = _j.loads(line)
+                    if isinstance(ev, dict) and ev.get('phase'):
+                        _record_resample_job(job_id, last_event=ev)
+                except Exception:
+                    # Non-JSON stderr (warnings, tracebacks) — ignore
+                    pass
+            stdout, _ = proc.communicate(timeout=60)
+            if proc.returncode == 0:
+                try:
+                    results[sym] = _j.loads(stdout) if stdout else {}
+                except Exception:
+                    results[sym] = {'_warning': 'no-stdout-json'}
+            else:
+                results[sym] = {'_error': f'exit={proc.returncode}'}
+        except subprocess.TimeoutExpired:
+            results[sym] = {'_error': 'timeout (>1h per symbol)'}
         except Exception as exc:
             results[sym] = {'_error': f'{type(exc).__name__}: {exc}'}
     _record_resample_job(job_id,
@@ -2520,19 +2551,30 @@ def _run_resample_blocking(job_id: str, symbols: list[str],
 @app.route('/api/data/coverage', methods=['GET'])
 def api_data_coverage():
     """Return the (symbol × timeframe) coverage matrix used by the Data
-    Coverage panel. Read-only; safe to call frequently."""
+    Coverage panel. Read-only; safe to call frequently. Symbols are
+    auto-discovered from data/raw/historical/<sym>_spot_1s.csv.gz so
+    dropping a new archive in extends coverage with no code change."""
     try:
         from src.utils.data_audit import (
             audit_coverage, audit_summary, audit_sentiment,
-            DEFAULT_SYMBOLS, DEFAULT_TIMEFRAMES,
+            discover_symbols, FALLBACK_SYMBOLS, DEFAULT_TIMEFRAMES,
         )
-        rows = audit_coverage()
+        # Re-discover on every call so newly-dropped archives appear
+        # without a server restart.
+        symbols = discover_symbols()
+        rows = audit_coverage(symbols=symbols)
         return jsonify({
-            'symbols':    list(DEFAULT_SYMBOLS),
+            'symbols':    list(symbols),
             'timeframes': list(DEFAULT_TIMEFRAMES),
             'rows':       rows,
             'summary':    audit_summary(rows),
             'sentiment':  audit_sentiment(),
+            'discovery': {
+                'discovered_count': len(symbols),
+                'fallback_count':   len(FALLBACK_SYMBOLS),
+                'using_fallback':   set(symbols) == set(FALLBACK_SYMBOLS)
+                                    and len(symbols) == len(FALLBACK_SYMBOLS),
+            },
         })
     except Exception as exc:
         return jsonify({'error': f'{type(exc).__name__}: {exc}'}), 500
@@ -2542,10 +2584,13 @@ def api_data_coverage():
 @require_api_key
 def api_data_resample():
     """Kick off a 1s→higher-TF resample. Body: {symbols: [...], timeframes: [...]}.
-    Symbols defaults to all 20; timeframes defaults to (5m,15m,4h,1w,1mo)."""
-    from src.utils.resample_ohlcv import DEFAULT_SYMBOLS, DEFAULT_TIMEFRAMES
+    Symbols default is auto-discovered from data/raw/historical/<sym>_spot_1s.csv.gz
+    (drop new archives there to extend coverage with no code change).
+    Timeframes default to (5m,15m,1h,4h,1d,1w,1mo)."""
+    from src.utils.data_audit import discover_symbols
+    from src.utils.resample_ohlcv import DEFAULT_TIMEFRAMES
     body = request.get_json(silent=True) or {}
-    symbols = body.get('symbols') or list(DEFAULT_SYMBOLS)
+    symbols = body.get('symbols') or list(discover_symbols())
     timeframes = body.get('timeframes') or list(DEFAULT_TIMEFRAMES)
     job_id = uuid.uuid4().hex[:12]
     _record_resample_job(job_id,

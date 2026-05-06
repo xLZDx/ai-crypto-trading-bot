@@ -38,13 +38,15 @@ RAW_DIR        = PROJECT_ROOT / "data" / "raw"
 RAW_HIST_DIR   = PROJECT_ROOT / "data" / "raw" / "historical"
 
 # Pandas resample rule per target timeframe. Anchored to the same right-edge
-# convention Binance uses (label = bar OPEN time, closed='left').
+# convention Binance uses (label = bar OPEN time, closed='left'). Pandas
+# 2.x deprecated 'H' and 'D' uppercase — use lowercase to silence the
+# FutureWarning that was flooding the dashboard log.
 _RESAMPLE_RULE = {
     "1m":  "1min",
     "5m":  "5min",
     "15m": "15min",
-    "1h":  "1H",
-    "4h":  "4H",
+    "1h":  "1h",
+    "4h":  "4h",
     "1d":  "1D",
     "1w":  "1W-MON",   # week starts Monday — matches Binance UI default
     "1mo": "MS",       # month-start (well-defined; Binance 1M has quirks)
@@ -70,13 +72,11 @@ DEFAULT_TIMEFRAMES = ("5m", "15m", "1h", "4h", "1d", "1w", "1mo")
 # 1m is excluded by default — we already have that on disk and re-deriving
 # from 1s would shadow whatever live tail the bot is appending.
 
-# 20-symbol watchlist (matches data_audit + trainers).
-DEFAULT_SYMBOLS = (
-    "BTC_USDT", "SOL_USDT", "ADA_USDT", "ETH_USDT", "BNB_USDT",
-    "XRP_USDT", "DOGE_USDT", "TRX_USDT", "AVAX_USDT", "SHIB_USDT",
-    "DOT_USDT", "LINK_USDT", "NEAR_USDT", "UNI_USDT", "LTC_USDT",
-    "APT_USDT", "ATOM_USDT", "HBAR_USDT", "ICP_USDT", "SUI_USDT",
-)
+# Auto-discover symbols from the 1s archives present on disk. Drop a new
+# <SYM>_spot_1s.csv.gz into data/raw/historical/ and DEFAULT_SYMBOLS picks
+# it up next time the module imports (no code change needed).
+from src.utils.data_audit import discover_symbols as _discover_symbols
+DEFAULT_SYMBOLS: tuple[str, ...] = _discover_symbols()
 
 
 def _candidate_source_paths(symbol: str) -> list[Path]:
