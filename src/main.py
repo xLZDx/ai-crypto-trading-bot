@@ -1351,26 +1351,65 @@ class MultiAssetTrader:
     def run(self):
         logger.info("Checking Binance REST API connection...")
         self._update_state(status="Checking Binance connection...", reason="Waiting for server response...")
-        try:
-            # Make one test request to the Binance server
-            server_time = self.engine.exchange.fetch_time()
-            logger.info(f"✅ Connection successful! Binance Server Time: {server_time}")
-            
-            # Check available balance
-            usdt_balance = self.get_real_or_sim_balance('USDT')
-            logger.info(f"✅ Available USDT balance: {usdt_balance} USDT")
-            
-            # TEST DOWNLOAD OF 1000 CANDLES (Check for IP ban)
-            logger.info("Testing download of 1000 candles (Checking for IP ban)...")
-            test_candles = self.engine.exchange.fetch_ohlcv('BTC/USDT', '1h', limit=1000)
-            logger.info(f"✅ Successfully downloaded {len(test_candles)} candles. IP is not blocked!")
-        except Exception as e:
-            logger.error(f"❌ Error connecting to Binance: {e}")
-            logger.error("Bot stopped. Check your internet, VPN, or API key settings.")
-            self._update_state(status="❌ ERROR: IP BAN OR NO NETWORK", reason=f"Details in logs: {str(e)[:80]}...")
-            # Keep the process active so the dashboard can read logs and show the red error
+
+        # Retry the startup connectivity check with exponential backoff before
+        # giving up. testnet.binance.vision regularly returns transient 502s
+        # that recover within a minute — a single-attempt check would lock
+        # the bot into "Bot stopped" for hours over a brief outage.
+        # Backoff: 5s, 10s, 20s, 40s, 80s → up to ~2.5 min total before
+        # accepting "really down" and entering the holding loop.
+        max_attempts = 5
+        last_exc: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                server_time = self.engine.exchange.fetch_time()
+                logger.info(f"✅ Connection successful! Binance Server Time: {server_time}")
+
+                usdt_balance = self.get_real_or_sim_balance('USDT')
+                logger.info(f"✅ Available USDT balance: {usdt_balance} USDT")
+
+                logger.info("Testing download of 1000 candles (Checking for IP ban)...")
+                test_candles = self.engine.exchange.fetch_ohlcv('BTC/USDT', '1h', limit=1000)
+                logger.info(f"✅ Successfully downloaded {len(test_candles)} candles. IP is not blocked!")
+                last_exc = None
+                break  # success
+            except Exception as e:
+                last_exc = e
+                if attempt < max_attempts:
+                    wait = 5 * (2 ** (attempt - 1))   # 5, 10, 20, 40, 80
+                    logger.warning(
+                        f"Binance connectivity attempt {attempt}/{max_attempts} failed: {str(e)[:120]}. "
+                        f"Retrying in {wait}s..."
+                    )
+                    self._update_state(
+                        status=f"Binance unreachable — retry {attempt}/{max_attempts}",
+                        reason=str(e)[:120],
+                    )
+                    time.sleep(wait)
+                # else: fall through to permanent-failure block below
+
+        if last_exc is not None:
+            logger.error(f"❌ All {max_attempts} connectivity attempts failed; last error: {last_exc}")
+            logger.error("Bot entering hold mode. Check internet/VPN/API key, then restart bot.")
+            self._update_state(
+                status="❌ ERROR: Binance unreachable after retries",
+                reason=f"Details in logs: {str(last_exc)[:80]}...",
+            )
+            # Keep the process alive so the dashboard can read logs and show
+            # the red error state. Periodically retry connectivity in the
+            # background so the bot self-heals when testnet comes back.
             while True:
-                time.sleep(10)
+                time.sleep(60)
+                try:
+                    self.engine.exchange.fetch_time()
+                    logger.info("Binance reachable again — exiting hold mode and restarting startup.")
+                    self._update_state(
+                        status="Binance reachable again — recovering...",
+                        reason="Connectivity restored after outage",
+                    )
+                    break  # exit the hold loop, fall through to agent startup
+                except Exception:
+                    pass  # still down, keep waiting
                 
         # Start all 8 core agents as daemon threads
         logger.info("Starting agent system...")
