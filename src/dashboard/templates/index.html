@@ -1694,6 +1694,42 @@ document.addEventListener('DOMContentLoaded', function() {
         </div>
       </div>
 
+      <!-- ── Section: Pipeline Orchestrator (train → multi-TF backtest) ── -->
+      <style>
+        .pipe-row{display:grid;grid-template-columns:90px 1fr auto;gap:8px;font-size:.6rem;padding:4px 0;border-bottom:1px solid rgba(148,163,184,.06);align-items:center}
+        .pipe-row .pipe-lbl{color:#94a3b8;font-weight:700}
+        .pipe-row .pipe-val{color:#cbd5e1;font-family:monospace;font-size:.58rem}
+        .pipe-row.ok .pipe-val{color:#34d399}
+        .pipe-row.err .pipe-val{color:#fb7185}
+        .pipe-row.run .pipe-val{color:#fbbf24}
+        .pipe-status-pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:.55rem;font-weight:700;letter-spacing:.04em}
+        .pipe-status-pill.idle{background:rgba(148,163,184,.12);color:#94a3b8}
+        .pipe-status-pill.running{background:rgba(251,191,36,.15);color:#fbbf24;border:1px solid rgba(251,191,36,.3)}
+        .pipe-status-pill.done{background:rgba(52,211,153,.16);color:#34d399;border:1px solid rgba(52,211,153,.3)}
+        .pipe-status-pill.error{background:rgba(251,113,133,.16);color:#fb7185;border:1px solid rgba(251,113,133,.3)}
+      </style>
+      <div class="card collapsible-section" id="st-sec-pipe" style="margin-bottom:10px">
+        <div class="st-sec-hdr card-header collapsible-hdr" onclick="toggleSection(this)">
+          <span class="st-sec-title">Pipeline Orchestrator (train → multi-TF backtest)</span>
+          <span class="pipe-status-pill idle" id="pipe-pill">idle</span>
+          <span class="st-chevron">▼</span>
+        </div>
+        <div class="st-sec-body">
+          <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+            <button onclick="pipelineRun()" id="pipe-run-btn" style="font-size:.58rem;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(244,114,182,.18);color:#f472b6;border:1px solid rgba(244,114,182,.35);font-weight:700">▶ Run Train + Multi-TF Backtest</button>
+            <button onclick="pipelineRefresh()" style="font-size:.58rem;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(99,102,241,.2);color:#818cf8;border:1px solid rgba(99,102,241,.3);font-weight:700">↻ Refresh</button>
+            <span style="font-size:.55rem;color:#64748b;font-style:italic">Sequential: full <code>train_all()</code> per-key multi-TF, then <code>run_full_backtest(timeframes=5m,1h,4h,1d,1w)</code> to populate Stability heatmap with real WF Sharpe.</span>
+          </div>
+          <div id="pipe-status-rows">
+            <div class="pipe-row"><span class="pipe-lbl">Started</span><span class="pipe-val" id="pipe-started">—</span><span></span></div>
+            <div class="pipe-row"><span class="pipe-lbl">Phase</span><span class="pipe-val" id="pipe-phase">—</span><span></span></div>
+            <div class="pipe-row"><span class="pipe-lbl">Train</span><span class="pipe-val" id="pipe-train">—</span><span></span></div>
+            <div class="pipe-row"><span class="pipe-lbl">Backtest</span><span class="pipe-val" id="pipe-backtest">—</span><span></span></div>
+            <div class="pipe-row"><span class="pipe-lbl">Last event</span><span class="pipe-val" id="pipe-last-event">—</span><span></span></div>
+          </div>
+        </div>
+      </div>
+
       <!-- ── Section: Pure vs ML Comparison ─────────────────────────── -->
       <style>
         .bcmp{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
@@ -3764,6 +3800,78 @@ async function pollResampleJobs() {
     }
   } catch(e) { /* silent */ }
 }
+
+// ── Pipeline Orchestrator (train → multi-TF backtest) ───────────────────────
+let _pipeTimer = null;
+
+function _pipeFmt(snap) {
+  if (!snap) return null;
+  const fmtPhase = (p) => {
+    if (!p) return '—';
+    if (p.skipped) return 'skipped';
+    if (p.ok) return `✓ done (${p.elapsed_s||'?'}s)`;
+    if (p.error) return `✗ ${String(p.error).slice(0,80)}`;
+    if (p.started_at) return `… running (since ${(p.started_at||'').slice(11,19)} UTC)`;
+    return '—';
+  };
+  return {
+    started: snap.started_at ? snap.started_at.slice(0,19).replace('T',' ') + ' UTC' : '—',
+    phase: snap.phase || (snap.status === 'done' ? '— (idle)' : '—'),
+    train: fmtPhase(snap.train),
+    backtest: fmtPhase(snap.backtest) +
+              (snap.backtest && snap.backtest.rows_written ? ` · ${snap.backtest.rows_written} rows` : ''),
+    last_event: snap.last_event
+      ? `${snap.last_event.phase}: ${snap.last_event.message}`
+      : '—',
+  };
+}
+
+async function pipelineRefresh() {
+  try {
+    const r = await fetch('/api/pipeline/status');
+    const snap = await r.json();
+    const pill = $('pipe-pill');
+    const status = snap.status || 'idle';
+    if (pill) {
+      pill.textContent = status;
+      pill.className = 'pipe-status-pill ' + (
+        status === 'running' ? 'running' :
+        status === 'done'    ? 'done'    :
+        status === 'error'   ? 'error'   : 'idle'
+      );
+    }
+    const f = _pipeFmt(snap);
+    if (f) {
+      if ($('pipe-started'))    $('pipe-started').textContent    = f.started;
+      if ($('pipe-phase'))      $('pipe-phase').textContent      = f.phase;
+      if ($('pipe-train'))      $('pipe-train').textContent      = f.train;
+      if ($('pipe-backtest'))   $('pipe-backtest').textContent   = f.backtest;
+      if ($('pipe-last-event')) $('pipe-last-event').textContent = f.last_event;
+    }
+    const btn = $('pipe-run-btn');
+    if (btn) btn.disabled = (status === 'running');
+    if (status === 'running' && !_pipeTimer) _pipeTimer = setInterval(pipelineRefresh, 8000);
+    if (status !== 'running' && _pipeTimer) { clearInterval(_pipeTimer); _pipeTimer = null; }
+  } catch (e) { /* silent */ }
+}
+
+async function pipelineRun() {
+  if (!confirm('Start full training (multi-TF: 1h / 4h / 1d) followed by multi-TF backtest (5m / 1h / 4h / 1d / 1w)?\n\nRuns as a background subprocess; safe to close the dashboard. Takes 30-90 min depending on hardware.')) return;
+  try {
+    const r = await fetch('/api/pipeline/run', {
+      method: 'POST', headers: hdrs(),
+      body: JSON.stringify({}),
+    });
+    const body = await r.json();
+    if (!body.ok) throw new Error(body.error || 'request failed');
+    pipelineRefresh();
+  } catch (e) {
+    alert('Pipeline run failed: ' + (e.message||e));
+  }
+}
+
+// Auto-refresh pipeline status whenever the Strategy/ML tab is opened.
+document.addEventListener('DOMContentLoaded', () => { try { pipelineRefresh(); } catch(_){} });
 
 // ── Stability Heatmap (TF × Strategy) ────────────────────────────────────────
 let _stabMetric = 'wf_sharpe_avg';

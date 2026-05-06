@@ -2837,6 +2837,117 @@ def api_data_resample_jobs():
     return jsonify({'jobs': rows[:limit], 'total': len(rows)})
 
 
+# ─── Pipeline orchestrator (train → multi-TF backtest) ──────────────────
+# The orchestrator runs as a subprocess so memory pressure during training
+# can't take Flask down. We track its PID and the on-disk status file so
+# the operator can see progress without an in-process supervisor.
+_pipeline_proc_pid: int | None = None
+_pipeline_proc_lock = threading.Lock()
+
+
+def _pipeline_status_path() -> str:
+    return os.path.join(project_root, 'data', 'pipeline_status.json')
+
+
+def _pipeline_proc_alive() -> bool:
+    """Return True if the orchestrator subprocess is still running. Reads
+    the in-process PID first, then falls back to the on-disk status file
+    (so a freshly-restarted dashboard still sees a running pipeline)."""
+    global _pipeline_proc_pid
+    pid = _pipeline_proc_pid
+    if pid is not None:
+        try:
+            import psutil
+            if psutil.pid_exists(pid):
+                p = psutil.Process(pid)
+                # Confirm it's actually our orchestrator (avoid PID-recycle
+                # false positives after the dashboard restarts).
+                try:
+                    cmd = ' '.join(p.cmdline())
+                    if 'pipeline_orchestrator' in cmd:
+                        return True
+                except (psutil.AccessDenied, psutil.NoSuchProcess):
+                    pass
+        except Exception:
+            return False
+        # PID stale — clear it.
+        with _pipeline_proc_lock:
+            _pipeline_proc_pid = None
+    return False
+
+
+@app.route('/api/pipeline/status', methods=['GET'])
+def api_pipeline_status():
+    """Return the orchestrator status snapshot. Combines the on-disk status
+    file (survives dashboard restarts) with the live subprocess-alive
+    check so the dashboard pill shows 'running' even if status writes lag."""
+    from src.utils.safe_json import read_json
+    snap = read_json(_pipeline_status_path(), default={}) or {}
+    snap['process_alive'] = _pipeline_proc_alive()
+    if snap.get('status') == 'running' and not snap['process_alive']:
+        # Orchestrator died without writing a final status — surface this
+        # so the operator can re-launch instead of waiting forever.
+        snap['status'] = 'error'
+        snap.setdefault('last_event', {})['message'] = 'orchestrator process exited without finalising'
+    return jsonify(snap)
+
+
+@app.route('/api/pipeline/run', methods=['POST'])
+@require_api_key
+def api_pipeline_run():
+    """Spawn the pipeline orchestrator as a subprocess.
+
+    Body (all optional):
+        {"skip_train": bool, "skip_backtest": bool,
+         "backtest_tfs": ["5m","1h","4h","1d","1w"]}
+
+    Idempotent — refuses to spawn a second orchestrator if one is already
+    running."""
+    global _pipeline_proc_pid
+    if _pipeline_proc_alive():
+        return jsonify({'ok': False,
+                        'error': 'orchestrator already running',
+                        'pid':   _pipeline_proc_pid}), 409
+
+    body = request.get_json(silent=True) or {}
+    cmd = [sys.executable, '-m', 'src.engine.pipeline_orchestrator']
+    if body.get('skip_train'):
+        cmd.append('--skip-train')
+    if body.get('skip_backtest'):
+        cmd.append('--skip-backtest')
+    tfs = body.get('backtest_tfs')
+    if isinstance(tfs, list) and tfs:
+        cmd += ['--backtest-tfs', ','.join(str(t) for t in tfs)]
+
+    log_dir = os.path.join(project_root, 'logs')
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, f"pipeline_{int(time.time())}.log")
+    try:
+        # Use DETACHED on Windows so the orchestrator survives Flask
+        # restarts. stdout+stderr both redirect to the same log file —
+        # progress JSON lines on stderr are interleaved with sub-trainer
+        # logs on stdout so the operator can `tail -f` one file.
+        log_fp = open(log_path, 'a', encoding='utf-8')
+        creationflags = 0
+        if os.name == 'nt':
+            creationflags = (subprocess.CREATE_NEW_PROCESS_GROUP |
+                             getattr(subprocess, 'DETACHED_PROCESS', 0x00000008))
+        proc = subprocess.Popen(
+            cmd, cwd=project_root,
+            stdout=log_fp, stderr=log_fp,
+            creationflags=creationflags,
+            close_fds=True,
+        )
+        with _pipeline_proc_lock:
+            _pipeline_proc_pid = proc.pid
+        return jsonify({'ok': True, 'pid': proc.pid,
+                        'log_path': log_path,
+                        'cmd': cmd})
+    except Exception as exc:
+        return jsonify({'ok': False,
+                        'error': f'{type(exc).__name__}: {exc}'}), 500
+
+
 @app.route('/api/db/training_history')
 def db_training_history():
     """Return training telemetry for one model."""

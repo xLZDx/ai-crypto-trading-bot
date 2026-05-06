@@ -2536,6 +2536,119 @@ def test_phase44_pr6_live_trading_toggle():
           and 'Add how much to virtual balance' in tpl)
 
 
+def test_phase45_pipeline_orchestrator():
+    """Phase 45 — Pipeline orchestrator (post-resample auto-runner):
+       - src/engine/pipeline_orchestrator.py drives train_all() then
+         run_full_backtest(timeframes=...) sequentially as a subprocess
+       - Status is persisted to data/pipeline_status.json (filelock + atomic)
+         so the dashboard pill survives restarts.
+       - GET /api/pipeline/status reads the file + alive-check.
+       - POST /api/pipeline/run spawns the orchestrator (idempotent — refuses
+         to start a second one if one is still alive).
+       - Strategy/ML tab gets a Pipeline Orchestrator section with status pill,
+         per-phase rows, and ▶ Run button.
+    """
+    print('\n[Phase 45 — Pipeline orchestrator]')
+
+    orch_path = os.path.join(BASE_DIR, 'src', 'engine', 'pipeline_orchestrator.py')
+    check('pipeline_orchestrator.py exists', os.path.exists(orch_path))
+    if not os.path.exists(orch_path):
+        return
+    orch = open(orch_path, encoding='utf-8').read()
+    app  = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
+                encoding='utf-8').read()
+    tpl  = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html'),
+                encoding='utf-8').read()
+
+    # 1. Orchestrator module surface
+    check('run_pipeline() top-level entry',
+          'def run_pipeline(' in orch
+          and 'skip_train' in orch
+          and 'skip_backtest' in orch
+          and 'backtest_tfs' in orch)
+    check('train phase calls train_all_models.train_all',
+          'from src.engine.train_all_models import train_all' in orch
+          and 'train_all()' in orch)
+    check('backtest phase calls run_full_backtest with timeframes kwarg',
+          'from src.engine.backtester import run_full_backtest' in orch
+          and 'run_full_backtest(timeframes=timeframes)' in orch)
+    check('multi-TF backtest default covers 5m/1h/4h/1d/1w',
+          'DEFAULT_BACKTEST_TFS' in orch
+          and '"5m"' in orch
+          and '"1h"' in orch
+          and '"4h"' in orch
+          and '"1d"' in orch
+          and '"1w"' in orch)
+    check('Status file path is data/pipeline_status.json',
+          'pipeline_status.json' in orch
+          and 'STATUS_PATH' in orch)
+    check('Status writer uses safe_json (filelock + atomic)',
+          'from src.utils.safe_json import write_json' in orch
+          and 'from src.utils.safe_json import read_json' in orch)
+    check('CLI emits JSON progress events on stderr (--phase/--message/--ts)',
+          '_emit_event(' in orch
+          and 'sys.stderr.write' in orch
+          and '"phase":' in orch
+          and '"ts":' in orch)
+    check('overall status writes done|error not just running',
+          '"status":      "done"' in orch
+          and '"error"' in orch)
+    check('main() is wired to argparse with --skip-train / --skip-backtest',
+          '--skip-train' in orch
+          and '--skip-backtest' in orch
+          and '--backtest-tfs' in orch)
+
+    # 2. Dashboard endpoints
+    check('GET /api/pipeline/status defined',
+          "@app.route('/api/pipeline/status'" in app
+          and 'def api_pipeline_status(' in app)
+    check('GET /api/pipeline/status reads pipeline_status.json + alive flag',
+          'pipeline_status.json' in app
+          and 'process_alive' in app)
+    check('POST /api/pipeline/run defined and gated by api_key',
+          "@app.route('/api/pipeline/run'" in app
+          and 'def api_pipeline_run(' in app
+          and '@require_api_key' in app)
+    check('POST /api/pipeline/run rejects double-start (409)',
+          '_pipeline_proc_alive()' in app
+          and "'orchestrator already running'" in app)
+    check('Subprocess spawn uses pipeline_orchestrator module',
+          "'src.engine.pipeline_orchestrator'" in app
+          and 'subprocess.Popen' in app)
+    check('Detached subprocess flags on Windows (survives Flask restart)',
+          'CREATE_NEW_PROCESS_GROUP' in app
+          and 'DETACHED_PROCESS' in app)
+    check('alive-check uses cmdline string match (resists PID recycle)',
+          "'pipeline_orchestrator' in cmd" in app)
+
+    # 3. UI panel
+    check('Pipeline Orchestrator section in template',
+          'id="st-sec-pipe"' in tpl
+          and 'Pipeline Orchestrator (train → multi-TF backtest)' in tpl)
+    check('Run + Refresh buttons + status pill',
+          'pipelineRun()' in tpl
+          and 'pipelineRefresh()' in tpl
+          and 'id="pipe-pill"' in tpl)
+    check('Per-phase rows (started / phase / train / backtest / last event)',
+          'id="pipe-started"'    in tpl
+          and 'id="pipe-phase"'  in tpl
+          and 'id="pipe-train"'  in tpl
+          and 'id="pipe-backtest"' in tpl
+          and 'id="pipe-last-event"' in tpl)
+    check('Status pill colour buckets (idle / running / done / error)',
+          '.pipe-status-pill.idle'    in tpl
+          and '.pipe-status-pill.running' in tpl
+          and '.pipe-status-pill.done' in tpl
+          and '.pipe-status-pill.error' in tpl)
+    check('Run button posts to /api/pipeline/run with hdrs()',
+          "fetch('/api/pipeline/run'" in tpl
+          and "method: 'POST'" in tpl
+          and 'headers: hdrs()' in tpl)
+    check('Refresh polls /api/pipeline/status with auto-interval',
+          "fetch('/api/pipeline/status')" in tpl
+          and 'setInterval(pipelineRefresh' in tpl)
+
+
 def test_phase43_pr4_stability_heatmap():
     """Phase 43 — PR 4 Stability comparison view: GET /api/strategy/stability
     builds a (strategy × tf) matrix; UI renders it as a colour-coded heatmap
@@ -3828,6 +3941,7 @@ def main():
     test_phase42_pr3_backtester_multi_tf()
     test_phase43_pr4_stability_heatmap()
     test_phase44_pr6_live_trading_toggle()
+    test_phase45_pipeline_orchestrator()
 
     if not args.offline:
         test_api(args.url)
