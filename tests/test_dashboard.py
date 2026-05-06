@@ -2447,6 +2447,35 @@ def test_phase36_debug_supervisor():
         check('supervisor smoke test', False, str(e))
 
 
+def test_phase42_pr3_backtester_multi_tf():
+    """Phase 42 — PR 3 strategy multi-timeframe support: backtester loops
+    over a list of timeframes and tags each result row with its TF so the
+    Stability comparison view can group by it.
+    """
+    print('\n[Phase 42 — PR 3 backtester multi-TF support]')
+
+    bt = open(os.path.join(BASE_DIR, 'src', 'engine', 'backtester.py'),
+              encoding='utf-8').read()
+
+    check('run_full_backtest accepts timeframes= tuple param',
+          'def run_full_backtest(' in bt
+          and 'timeframes: tuple[str, ...] = ("1h",)' in bt)
+    check('outer loop iterates timeframes',
+          'for tf in timeframes:' in bt)
+    check('per-symbol load uses <sym>_<tf>.csv.gz',
+          'f"{sym}_{tf}.csv.gz"' in bt
+          and 'f"{sym}_spot_{tf}.csv.gz"' in bt)
+    check('each BacktestResult tagged with timeframe attr',
+          'setattr(res, "timeframe", tf)' in bt)
+    check('comparison DataFrame carries timeframe column',
+          '"timeframe" not in comparison.columns:' in bt
+          and 'comparison["timeframe"]' in bt)
+    check('walk-forward rows tagged with timeframe',
+          'wf["timeframe"] = timeframes[-1]' in bt)
+    check('per-tf logging banner',
+          'logger.info("=== Backtesting timeframe: %s ===", tf)' in bt)
+
+
 def test_phase41_pr2_trainer_multi_tf():
     """Phase 41 — PR 2 trainer multi-timeframe refactor:
        - Each tabular trainer accepts timeframe= kwarg
@@ -3655,6 +3684,7 @@ def main():
     test_phase39_pr5_ui_bundle()
     test_phase40_pr1_data_coverage_resample()
     test_phase41_pr2_trainer_multi_tf()
+    test_phase42_pr3_backtester_multi_tf()
 
     if not args.offline:
         test_api(args.url)

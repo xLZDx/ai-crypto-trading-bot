@@ -673,10 +673,17 @@ def run_full_backtest(
     output_dir: str | None = None,
     initial_capital: float = 10_000.0,
     fee_preset: str = "futures",
+    timeframes: tuple[str, ...] = ("1h",),
 ) -> pd.DataFrame:
     """
-    Entry point: loads all watchlist data, runs all strategies (Group A + B),
-    saves A/B comparison report. Returns the combined comparison DataFrame.
+    Entry point: loads all watchlist data, runs all strategies (Group A + B)
+    at every timeframe in `timeframes`, saves A/B comparison report.
+
+    timeframes — iterable of bar TFs to backtest. Defaults to ('1h',) for
+    backwards compatibility. Pass ('5m','1h','4h','1d','1w') after PR 1's
+    multi-TF resample lands to compare strategy stability across TFs.
+    Each comparison row is tagged with its `timeframe` so the dashboard's
+    Stability view can group / rank by it.
     """
     import json as _json
 
@@ -698,68 +705,80 @@ def run_full_backtest(
     bt = Backtester(initial_capital=initial_capital, fee_preset=fee_preset)
     group_a_results: List[BacktestResult] = []
     group_b_results: List[BacktestResult] = []
+    last_df = None  # used for walk-forward sample at the end
 
-    for sym in symbols:
-        df = None
-        for fname in [f"{sym}_1h.csv.gz", f"{sym}_spot_1h.csv.gz"]:
-            fpath = os.path.join(raw_dir, fname)
-            if os.path.exists(fpath):
-                try:
-                    df = pd.read_csv(fpath)
-                    df["timestamp"] = pd.to_datetime(df["timestamp"])
-                    df = df.sort_values("timestamp").reset_index(drop=True)
-                    break
-                except Exception as e:
-                    logger.warning("Could not load %s: %s", fpath, e)
+    # ── Outer loop: per timeframe ─────────────────────────────────────────
+    for tf in timeframes:
+        logger.info("=== Backtesting timeframe: %s ===", tf)
+        for sym in symbols:
+            df = None
+            for fname in [f"{sym}_{tf}.csv.gz", f"{sym}_spot_{tf}.csv.gz"]:
+                fpath = os.path.join(raw_dir, fname)
+                if os.path.exists(fpath):
+                    try:
+                        df = pd.read_csv(fpath)
+                        df["timestamp"] = pd.to_datetime(df["timestamp"])
+                        df = df.sort_values("timestamp").reset_index(drop=True)
+                        break
+                    except Exception as e:
+                        logger.warning("Could not load %s: %s", fpath, e)
 
-        if df is None or len(df) < 500:
-            logger.warning("Skipping %s — insufficient data.", sym)
-            continue
-
-        df = merge_funding_into_ohlcv(df, sym.replace("_", "/"))
-
-        try:
-            df = _build_signals(df)
-        except Exception as e:
-            logger.error("Signal build failed for %s: %s", sym, e)
-            continue
-
-        # ── Run all registry-enabled backtest strategies ───────────────────
-        from src.engine.strategy_registry import enabled_backtest_signal_cols, is_enabled_backtest
-
-        _A_ORIG = {"RSI_MeanReversion", "MACD_Momentum", "BB_Reversion", "Ensemble_A"}
-        # Scalping uses short hold window (1h bars approximating 1m scalping)
-        _bt_scalping = Backtester(initial_capital=initial_capital,
-                                  fee_preset="scalping", max_hold_bars=6)
-        for reg_name, label, sig_col in enabled_backtest_signal_cols():
-            if sig_col not in df.columns:
+            if df is None or len(df) < 500:
+                logger.warning("Skipping %s @ %s — insufficient data.", sym, tf)
                 continue
-            try:
-                group_prefix = "A_" if reg_name in _A_ORIG else "B_"
-                _bt_run = _bt_scalping if reg_name == "Scalping_ML" else bt
-                res = _bt_run.run(df, sig_col, f"{group_prefix}{label}", sym)
-                (group_a_results if group_prefix == "A_" else group_b_results).append(res)
-            except Exception as e:
-                logger.error("Backtest failed for %s/%s: %s", sym, reg_name, e)
 
-        # ── Meta-filtered variants (when MetaLabeler is enabled) ──────────
-        if is_enabled_backtest("MetaLabeler_Filter"):
-            for strat, sig_col in [
-                ("RSI_MetaFiltered",      "signal_rsi"),
-                ("MACD_MetaFiltered",     "signal_macd"),
-                ("Ensemble_MetaFiltered", "signal_ensemble_b"),
-                ("Base_ML_MetaFiltered",  "signal_base_ml"),
-            ]:
+            df = merge_funding_into_ohlcv(df, sym.replace("_", "/"))
+
+            try:
+                df = _build_signals(df)
+            except Exception as e:
+                logger.error("Signal build failed for %s @ %s: %s", sym, tf, e)
+                continue
+
+            # ── Run all registry-enabled backtest strategies ───────────────
+            from src.engine.strategy_registry import enabled_backtest_signal_cols, is_enabled_backtest
+
+            _A_ORIG = {"RSI_MeanReversion", "MACD_Momentum", "BB_Reversion", "Ensemble_A"}
+            _bt_scalping = Backtester(initial_capital=initial_capital,
+                                      fee_preset="scalping", max_hold_bars=6)
+            for reg_name, label, sig_col in enabled_backtest_signal_cols():
                 if sig_col not in df.columns:
                     continue
                 try:
-                    filtered_signal = _apply_meta_filter(df, sig_col)
-                    tmp_col = f"_tmp_meta_{strat}"
-                    df[tmp_col] = filtered_signal
-                    res = bt.run(df, tmp_col, strat, sym)
-                    group_b_results.append(res)
+                    group_prefix = "A_" if reg_name in _A_ORIG else "B_"
+                    _bt_run = _bt_scalping if reg_name == "Scalping_ML" else bt
+                    res = _bt_run.run(df, sig_col, f"{group_prefix}{label}", sym)
+                    # Tag the result with the timeframe so downstream rows
+                    # carry it through (Stability comparison view groups
+                    # by this column).
+                    setattr(res, "timeframe", tf)
+                    (group_a_results if group_prefix == "A_" else group_b_results).append(res)
                 except Exception as e:
-                    logger.error("Meta-filtered backtest failed for %s/%s: %s", sym, strat, e)
+                    logger.error("Backtest failed for %s/%s @ %s: %s",
+                                 sym, reg_name, tf, e)
+
+            # ── Meta-filtered variants ────────────────────────────────────
+            if is_enabled_backtest("MetaLabeler_Filter"):
+                for strat, sig_col in [
+                    ("RSI_MetaFiltered",      "signal_rsi"),
+                    ("MACD_MetaFiltered",     "signal_macd"),
+                    ("Ensemble_MetaFiltered", "signal_ensemble_b"),
+                    ("Base_ML_MetaFiltered",  "signal_base_ml"),
+                ]:
+                    if sig_col not in df.columns:
+                        continue
+                    try:
+                        filtered_signal = _apply_meta_filter(df, sig_col)
+                        tmp_col = f"_tmp_meta_{strat}"
+                        df[tmp_col] = filtered_signal
+                        res = bt.run(df, tmp_col, strat, sym)
+                        setattr(res, "timeframe", tf)
+                        group_b_results.append(res)
+                    except Exception as e:
+                        logger.error("Meta-filtered backtest failed for %s/%s @ %s: %s",
+                                     sym, strat, tf, e)
+
+            last_df = df  # remember for the walk-forward sample below
 
     all_results = group_a_results + group_b_results
     comparison = bt.compare_strategies(all_results)
@@ -768,6 +787,12 @@ def run_full_backtest(
         comparison["group"] = comparison["strategy"].apply(
             lambda s: "A_Original" if s.startswith("A_") else "B_New"
         )
+        # Carry the per-result tf into the comparison frame. compare_strategies
+        # may have already extracted it as a column; if not, project from
+        # all_results in result-order (same length).
+        if "timeframe" not in comparison.columns:
+            comparison["timeframe"] = [getattr(r, "timeframe", "1h")
+                                       for r in all_results[:len(comparison)]]
 
     # ── A/B summary ───────────────────────────────────────────────────────
     if not comparison.empty and "group" in comparison.columns:
@@ -790,15 +815,18 @@ def run_full_backtest(
         ab.to_json(ab_path, indent=2)
 
     # ── Walk-forward analysis ─────────────────────────────────────────────
-    # Run WF on the last symbol's df (representative sample)
+    # Run WF on the last loaded df (representative sample). Tag with the
+    # final TF so multi-TF runs produce per-TF WF rows for Stability view.
     wf_rows: List[dict] = []
     try:
-        if df is not None and len(df) >= 200:
+        if last_df is not None and len(last_df) >= 200:
             for reg_name, label, sig_col in enabled_backtest_signal_cols():
-                if sig_col not in df.columns:
+                if sig_col not in last_df.columns:
                     continue
-                wf = bt.walk_forward(df, sig_col, reg_name, sym if sym else "BTC_USDT")
+                wf = bt.walk_forward(last_df, sig_col, reg_name,
+                                     sym if sym else "BTC_USDT")
                 if wf:
+                    wf["timeframe"] = timeframes[-1]
                     wf_rows.append(wf)
         if wf_rows:
             wf_path = os.path.join(output_dir, "wf_results.json")
