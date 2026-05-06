@@ -2447,6 +2447,84 @@ def test_phase36_debug_supervisor():
         check('supervisor smoke test', False, str(e))
 
 
+def test_phase37_training_table_and_bt_tooltips():
+    """Phase 37 — Strategy/ML tab gets a sortable Model Training card with
+    quick filters + 'what good looks like' guide, and the Backtest Comparison
+    table headers become sortable with hover tooltips."""
+    print('\n[Phase 37 — model training table + backtest tooltips]')
+
+    app_src = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
+                   encoding='utf-8').read()
+    tpl = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html'),
+               encoding='utf-8').read()
+
+    # 1. Backend payload extensions on /api/strategy/full ml_models entries
+    check("ml_models exposes 'runs_today'",
+          "'runs_today':" in app_src)
+    check("ml_models exposes 'total_runs_min' (≥ N lower-bound from archived metas)",
+          "'total_runs_min':" in app_src and 'archived_index' in app_src)
+    check("ml_models exposes 'age_s' for staleness sort",
+          "'age_s':" in app_src)
+    check("ml_models exposes 'auc_roc' (meta-labeler discrimination)",
+          "'auc_roc':" in app_src)
+    check("ml_models exposes 'win_precision'",
+          "'win_precision':" in app_src)
+    check("ml_models exposes 'symbols_count'",
+          "'symbols_count':" in app_src)
+    check("aggregate exposes 'models_trained_today'",
+          "'models_trained_today':" in app_src)
+
+    # 2. Backtest comparison: tooltipped + sortable headers
+    check("backtest table thead row has id 'bt-thead-row'",
+          "id=\"bt-thead-row\"" in tpl)
+    check("backtest TH cells have data-col + onclick btSort",
+          'class="bt-th"' in tpl
+          and 'data-col="sharpe"' in tpl
+          and 'onclick="btSort(\'sharpe\')"' in tpl)
+    check("backtest TH cells carry tooltip via title attribute",
+          ('title="Risk-adjusted return.' in tpl
+           or 'title="Risk-adjusted return' in tpl)
+          and 'title="Largest peak' in tpl)
+    check("backtest 'What good looks like' help panel present",
+          'id="bt-help-panel"' in tpl
+          and 'btToggleHelp' in tpl
+          and "What \"good\" looks like" in tpl)
+    check("btSort toggles direction on repeat click (_btSortDir state)",
+          '_btSortDir' in tpl
+          and "_btSortDir = (_btSortDir === 'desc') ? 'asc' : 'desc'" in tpl)
+
+    # 3. Model Training card structure
+    check("Model Training section has id 'st-sec-training'",
+          'id="st-sec-training"' in tpl)
+    check("Training table tbody has id 'training-tbody'",
+          'id="training-tbody"' in tpl)
+    check("Training quick-filter pills present (today / stale / wf52 / warning / market filters)",
+          'data-filt="today"' in tpl
+          and 'data-filt="stale"' in tpl
+          and 'data-filt="wf52"' in tpl
+          and 'data-filt="warning"' in tpl
+          and 'data-filt="spot"' in tpl
+          and 'data-filt="futures"' in tpl
+          and 'data-filt="scalping"' in tpl
+          and 'data-filt="neural"' in tpl)
+    check("Training search box wired (oninput=trSearch)",
+          'id="tr-search"' in tpl and 'oninput="trSearch' in tpl)
+    check("Training TH cells have data-col + tr-th class + chevron span",
+          'class="tr-th' in tpl
+          and 'data-col="age_s"' in tpl
+          and 'class="tr-chev"' in tpl)
+    check("Training help panel toggleable via trToggleHelp",
+          'id="tr-help-panel"' in tpl
+          and 'function trToggleHelp' in tpl)
+    check("trSort toggles direction + syncs chevron",
+          'function trSort(' in tpl
+          and "_trSortDir = (_trSortDir === 'desc') ? 'asc' : 'desc'" in tpl)
+    check("renderStrategyTab calls _renderTrainingTable()",
+          '_renderTrainingTable()' in tpl)
+    check("Training table chip shows 'X/Y trained · Z today'",
+          'trained · ' in tpl and 'today' in tpl)
+
+
 def test_phase35_scheduler_no_post_action_refresh():
     """Scheduler register/run/delete must NOT call renderSchedulerPanel()
     after success — the previous behavior wiped the #sch-flash status pill
@@ -3216,6 +3294,7 @@ def main():
     test_phase34_telegram_monitor_gate()
     test_phase35_scheduler_no_post_action_refresh()
     test_phase36_debug_supervisor()
+    test_phase37_training_table_and_bt_tooltips()
 
     if not args.offline:
         test_api(args.url)

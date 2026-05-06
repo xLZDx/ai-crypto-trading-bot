@@ -1106,6 +1106,30 @@ def strategy_full():
             return None
         return f * 100.0 if 0.0 <= f <= 1.0 else f
 
+    # Archived runs directory — used for "≥ N total runs" lower bound.
+    # Trainers don't yet emit training_runs Parquet rows, so we count
+    # archived metadata files matching the model key as historical runs.
+    archived_dir = models_dir / '_archived'
+    archived_index: dict[str, int] = {}
+    if archived_dir.exists():
+        try:
+            for f in archived_dir.iterdir():
+                if not f.is_file():
+                    continue
+                fname = f.name.lower()
+                # Match patterns like "btc_rf_model_meta_20260501.json" or
+                # "scalping_model_*.joblib" — bucket by leading model key.
+                for k, mf_, *_ in _ML:
+                    base = mf_.replace('_meta.json', '').lower()
+                    if fname.startswith(base + '_') or fname.startswith(base + '.'):
+                        archived_index[k] = archived_index.get(k, 0) + 1
+                        break
+        except Exception:
+            pass
+
+    import time as _time
+    _now_s = _time.time()
+
     ml_models = []
     for key, mf, label, model_file, icon, market in _ML:
         meta_path  = models_dir / mf
@@ -1118,6 +1142,10 @@ def strategy_full():
         long_pct = _to_pct(meta.get('long_accuracy', 0)) or 0.0
         shrt_pct = _to_pct(meta.get('short_accuracy', 0)) or 0.0
         wf_pct = _to_pct(meta.get('walk_forward_mean_acc'))
+        auc_roc = meta.get('auc_roc')
+        win_precision = _to_pct(meta.get('win_precision'))
+        win_rate_pct = _to_pct(meta.get('win_rate_pct'))
+        confidence_threshold = meta.get('confidence_threshold')
 
         # Derive missing display fields for models whose trainers don't write
         # the standard n_features/n_iterations keys (TFT, GMM regime).
@@ -1171,6 +1199,22 @@ def strategy_full():
                 ).strip()
                 if wf_pct is not None:
                     headline_acc = wf_pct
+        # Training-history derived fields. We don't yet have a training_runs
+        # table populated, so we derive a lower-bound from archived metas
+        # plus the current artifact mtime for "trained today / staleness".
+        meta_mtime = None
+        try:
+            if meta_path.exists():
+                meta_mtime = meta_path.stat().st_mtime
+            elif model_path.exists():
+                meta_mtime = model_path.stat().st_mtime
+        except Exception:
+            pass
+        age_s = (_now_s - meta_mtime) if meta_mtime else None
+        runs_today = 1 if (age_s is not None and age_s <= 86400) else 0
+        archived_n = archived_index.get(key, 0)
+        total_runs_min = archived_n + (1 if model_path.exists() else 0)
+
         ml_models.append({
             'key': key, 'label': label, 'icon': icon, 'market': market,
             'model_exists':   model_path.exists(),
@@ -1183,13 +1227,23 @@ def strategy_full():
             'accuracy_note':  meta.get('accuracy_note'),
             'model_type':     meta.get('model_type'),
             'directionless':  is_directionless,
+            'auc_roc':        round(float(auc_roc), 4) if auc_roc is not None else None,
+            'win_precision':  round(win_precision, 2) if win_precision is not None else None,
+            'win_rate_pct':   round(win_rate_pct, 2) if win_rate_pct is not None else None,
+            'confidence_threshold': confidence_threshold,
             'n_samples':      n_samp,
+            'n_train':        meta.get('n_train'),
+            'n_test':         meta.get('n_test'),
             'n_features':     n_feat,
             'n_iterations':   n_iter,
             'symbols':        meta.get('symbols', []),
+            'symbols_count':  len(meta.get('symbols', []) or []),
             'timeframe':      meta.get('timeframe', '--'),
             'last_trained':   meta.get('last_trained', ''),
             'target':         meta.get('target', ''),
+            'age_s':          int(age_s) if age_s is not None else None,
+            'runs_today':     runs_today,
+            'total_runs_min': total_runs_min,
         })
 
     # ── Strategy registry ──────────────────────────────────────────────────────
@@ -1305,6 +1359,7 @@ def strategy_full():
 
     # ── Aggregate ──────────────────────────────────────────────────────────────
     trained_count = sum(1 for m in ml_models if m['model_exists'])
+    today_count   = sum(1 for m in ml_models if m.get('runs_today'))
     live_count    = sum(1 for s in strategies if s.get('live_enabled'))
 
     return jsonify({
@@ -1315,10 +1370,11 @@ def strategy_full():
         'wf_stats':    wf_stats,
         'summary':     summary,
         'aggregate': {
-            'models_trained': trained_count,
-            'models_total':   len(ml_models),
-            'strategies_live': live_count,
-            'strategies_total': len(strategies),
+            'models_trained':       trained_count,
+            'models_trained_today': today_count,
+            'models_total':         len(ml_models),
+            'strategies_live':      live_count,
+            'strategies_total':     len(strategies),
         },
     })
 

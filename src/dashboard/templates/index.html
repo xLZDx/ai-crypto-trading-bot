@@ -1415,6 +1415,10 @@ select.field option{background:#0d1628;color:#e2e8f0}
         .bt-sort-btn.active{background:rgba(99,102,241,.2);color:#818cf8;border:1px solid rgba(99,102,241,.35)}
         #bt-compare-table tr:hover td{background:rgba(99,102,241,.05)}
         #bt-compare-table td{padding:4px 6px;border-bottom:1px solid rgba(148,163,184,.06);white-space:nowrap}
+        .bt-th{font-weight:700;letter-spacing:.02em;font-size:.6rem;transition:color .12s}
+        .bt-th:hover{color:#cbd5e1;background:rgba(99,102,241,.06)}
+        .bt-th.active{color:#818cf8}
+        .bt-th .bt-chev{display:inline-block;width:8px;color:#818cf8;font-size:.55rem;margin-left:2px}
       </style>
 
       <!-- ── Section: ML Models ─────────────────────────────────────── -->
@@ -1425,6 +1429,96 @@ select.field option{background:#0d1628;color:#e2e8f0}
           <span class="st-chevron">▼</span>
         </div>
         <div class="st-sec-body" id="body-ml-cards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px"></div>
+      </div>
+
+      <!-- ── Section: Model Training Table ───────────────────────────── -->
+      <style>
+        .tr-th{font-weight:700;letter-spacing:.02em;font-size:.6rem;color:#94a3b8;cursor:pointer;user-select:none;transition:color .12s}
+        .tr-th:hover{color:#cbd5e1;background:rgba(99,102,241,.06)}
+        .tr-th.active{color:#818cf8}
+        .tr-th .tr-chev{display:inline-block;width:8px;color:#818cf8;font-size:.55rem;margin-left:2px}
+        .tr-pill{font-size:.55rem;font-weight:700;padding:3px 9px;border-radius:999px;cursor:pointer;
+          background:rgba(148,163,184,.08);color:#64748b;border:1px solid rgba(148,163,184,.15);transition:.12s}
+        .tr-pill:hover{color:#cbd5e1;border-color:rgba(148,163,184,.25)}
+        .tr-pill.active{background:rgba(99,102,241,.2);color:#818cf8;border-color:rgba(99,102,241,.35)}
+        #training-table tr:hover td{background:rgba(99,102,241,.05)}
+        #training-table td{padding:5px 6px;border-bottom:1px solid rgba(148,163,184,.06);white-space:nowrap;font-size:.62rem}
+        .tr-badge-today{background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.3);
+          font-size:.5rem;font-weight:700;padding:1px 6px;border-radius:999px}
+        .tr-badge-stale{background:rgba(251,113,133,.12);color:#fb7185;border:1px solid rgba(251,113,133,.3);
+          font-size:.5rem;font-weight:700;padding:1px 6px;border-radius:999px}
+      </style>
+      <div class="card st-section collapsible-section" id="st-sec-training" style="margin-top:10px">
+        <div class="st-sec-hdr card-header collapsible-hdr" onclick="toggleSection(this)">
+          <span class="st-sec-title">Model Training</span>
+          <span class="chip" id="chip-training-count" style="font-size:.56rem">Loading…</span>
+          <button onclick="event.stopPropagation();trToggleHelp()" style="font-size:.58rem;padding:2px 9px;border-radius:5px;cursor:pointer;background:rgba(148,163,184,.12);color:#94a3b8;border:1px solid rgba(148,163,184,.2);margin-left:4px" title="Show 'what good looks like' for ML models">ⓘ Guide</button>
+          <button onclick="event.stopPropagation();loadStrategyFull()" style="font-size:.58rem;padding:2px 9px;border-radius:5px;cursor:pointer;background:rgba(99,102,241,.2);color:#818cf8;border:1px solid rgba(99,102,241,.3);margin-left:4px">↻ Refresh</button>
+          <span class="st-chevron">▼</span>
+        </div>
+        <div class="st-sec-body">
+          <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+            <span style="font-size:.6rem;color:#64748b">Quick filter:</span>
+            <button class="tr-pill active" data-filt="all"        onclick="trFilter('all')">All</button>
+            <button class="tr-pill"        data-filt="today"      onclick="trFilter('today')">Trained today</button>
+            <button class="tr-pill"        data-filt="stale"      onclick="trFilter('stale')">Stale (&gt;7d)</button>
+            <button class="tr-pill"        data-filt="wf52"       onclick="trFilter('wf52')">WF acc ≥ 52%</button>
+            <button class="tr-pill"        data-filt="warning"    onclick="trFilter('warning')">Has warning</button>
+            <button class="tr-pill"        data-filt="spot"       onclick="trFilter('spot')">Spot</button>
+            <button class="tr-pill"        data-filt="futures"    onclick="trFilter('futures')">Futures</button>
+            <button class="tr-pill"        data-filt="scalping"   onclick="trFilter('scalping')">Scalping/1m</button>
+            <button class="tr-pill"        data-filt="neural"     onclick="trFilter('neural')">Neural (TFT/OFT)</button>
+            <input id="tr-search" type="text" placeholder="Search name / target…"
+                   oninput="trSearch(this.value)"
+                   style="margin-left:auto;font-size:.6rem;padding:3px 8px;border-radius:5px;background:rgba(5,8,22,.6);
+                          color:#e2e8f0;border:1px solid rgba(148,163,184,.18);width:160px">
+          </div>
+          <div id="tr-help-panel" style="display:none;margin-bottom:8px;padding:8px 10px;background:rgba(5,8,22,.55);border:1px solid rgba(148,163,184,.12);border-radius:7px;font-size:.55rem;line-height:1.55;color:#94a3b8">
+            <div style="font-weight:700;color:#cbd5e1;margin-bottom:4px">What "good" looks like (ML model efficiency)</div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:4px 14px">
+              <div><b style="color:#cbd5e1">Acc Test</b> — accuracy on held-out test set. <span style="color:#34d399">≥ 53% baseline (50% = coin flip)</span>. In-sample only — see WF.</div>
+              <div><b style="color:#cbd5e1">WF Acc</b> — mean accuracy across walk-forward folds (most honest). <span style="color:#34d399">≥ 52% robust</span> · <span style="color:#fb7185">&lt; 50% reject</span></div>
+              <div><b style="color:#cbd5e1">Bull WR</b> — when model predicts long, % that win. <span style="color:#34d399">≥ 50% balanced</span></div>
+              <div><b style="color:#cbd5e1">Bear WR</b> — same for short. <span style="color:#fb7185">&lt; 10% with high spread = class-imbalance trap</span></div>
+              <div><b style="color:#cbd5e1">AUC</b> (meta-labeler) — discrimination power. <span style="color:#34d399">≥ 0.55 ok · ≥ 0.60 great</span> · 0.50 = random.</div>
+              <div><b style="color:#cbd5e1">Win Prec.</b> (meta-labeler) — when label=1, % actual wins. <span style="color:#34d399">≥ 50%</span></div>
+              <div><b style="color:#cbd5e1">Samples</b> — training rows. <span style="color:#34d399">≥ 100k for tabular · ≥ 1M for neural</span></div>
+              <div><b style="color:#cbd5e1">Features</b> — input dimensions. Too few = under-fit · too many vs samples = over-fit.</div>
+              <div><b style="color:#cbd5e1">Iter</b> — boosting rounds / epochs. Hit early-stopping is healthier than max.</div>
+              <div><b style="color:#cbd5e1">Today</b> — has the meta JSON been updated in last 24h. <span style="color:#fbbf24">Stale models drift with regime change.</span></div>
+              <div><b style="color:#cbd5e1">Total runs</b> — current artifact + archived metas. Marked <code>≥</code> until trainers emit training_runs to Parquet.</div>
+            </div>
+            <div style="margin-top:6px;color:#64748b">Reading order: <b>WF Acc → Bull/Bear WR balance → AUC (if available) → Today freshness</b>. The headline Acc column over-reports when classes are imbalanced.</div>
+          </div>
+          <div style="overflow-x:auto">
+            <table id="training-table" style="width:100%;border-collapse:collapse;font-size:.62rem">
+              <thead>
+                <tr id="tr-thead-row" style="border-bottom:1px solid rgba(148,163,184,.1)">
+                  <th class="tr-th" data-col="label"        onclick="trSort('label')"        style="text-align:left;padding:5px 6px;white-space:nowrap" title="Model name (click to sort A→Z)">Model <span class="tr-chev"></span></th>
+                  <th class="tr-th" data-col="market"       onclick="trSort('market')"       style="text-align:left;padding:5px 6px" title="Asset class / venue this model targets">Market <span class="tr-chev"></span></th>
+                  <th class="tr-th" data-col="timeframe"    onclick="trSort('timeframe')"    style="text-align:left;padding:5px 6px" title="Bar timeframe used for features and labels">TF <span class="tr-chev"></span></th>
+                  <th class="tr-th active" data-col="age_s" onclick="trSort('age_s')"        style="text-align:right;padding:5px 6px" title="Time since meta JSON was written. Smaller = fresher.">Last trained <span class="tr-chev">▲</span></th>
+                  <th class="tr-th" data-col="runs_today"   onclick="trSort('runs_today')"   style="text-align:right;padding:5px 6px" title="1 if meta updated within 24h, else 0">Today <span class="tr-chev"></span></th>
+                  <th class="tr-th" data-col="total_runs_min" onclick="trSort('total_runs_min')" style="text-align:right;padding:5px 6px" title="Lower bound: archived metas + current. Trainers don't yet write training_runs Parquet rows.">Total ≥ <span class="tr-chev"></span></th>
+                  <th class="tr-th" data-col="accuracy_test"        onclick="trSort('accuracy_test')"        style="text-align:right;padding:5px 6px" title="Held-out test set accuracy. In-sample. ≥53% baseline.">Acc Test% <span class="tr-chev"></span></th>
+                  <th class="tr-th" data-col="accuracy_walk_forward" onclick="trSort('accuracy_walk_forward')" style="text-align:right;padding:5px 6px" title="Mean accuracy across walk-forward OOS folds. Most honest. ≥52% robust.">WF Acc% <span class="tr-chev"></span></th>
+                  <th class="tr-th" data-col="long_accuracy"  onclick="trSort('long_accuracy')"  style="text-align:right;padding:5px 6px" title="Precision when model predicts long. Big spread vs Bear = class imbalance.">Bull WR% <span class="tr-chev"></span></th>
+                  <th class="tr-th" data-col="short_accuracy" onclick="trSort('short_accuracy')" style="text-align:right;padding:5px 6px" title="Precision when model predicts short.">Bear WR% <span class="tr-chev"></span></th>
+                  <th class="tr-th" data-col="auc_roc"        onclick="trSort('auc_roc')"        style="text-align:right;padding:5px 6px" title="ROC-AUC for binary classifiers (meta-labeler). ≥0.55 ok · ≥0.60 great · 0.50 random.">AUC <span class="tr-chev"></span></th>
+                  <th class="tr-th" data-col="win_precision"  onclick="trSort('win_precision')"  style="text-align:right;padding:5px 6px" title="Meta-labeler: when label=1, % actually wins. ≥50% useful.">Win Prec% <span class="tr-chev"></span></th>
+                  <th class="tr-th" data-col="n_samples"      onclick="trSort('n_samples')"      style="text-align:right;padding:5px 6px" title="Total training rows. ≥100k tabular · ≥1M neural.">Samples <span class="tr-chev"></span></th>
+                  <th class="tr-th" data-col="n_features"     onclick="trSort('n_features')"     style="text-align:right;padding:5px 6px" title="Input feature count. Watch features-to-samples ratio.">Feats <span class="tr-chev"></span></th>
+                  <th class="tr-th" data-col="n_iterations"   onclick="trSort('n_iterations')"   style="text-align:right;padding:5px 6px" title="Boosting rounds (RF/HGBT) or epochs (TFT/OFT). Early-stop is healthier than max.">Iter <span class="tr-chev"></span></th>
+                  <th class="tr-th" data-col="symbols_count"  onclick="trSort('symbols_count')"  style="text-align:right;padding:5px 6px" title="Number of distinct symbols this model was trained on.">Syms <span class="tr-chev"></span></th>
+                  <th class="tr-th" data-col="target"         onclick="trSort('target')"         style="text-align:left;padding:5px 6px" title="Label / target the model predicts.">Target <span class="tr-chev"></span></th>
+                </tr>
+              </thead>
+              <tbody id="training-tbody">
+                <tr><td colspan="17" style="text-align:center;color:#475569;padding:12px">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
 
       <!-- ── Section: Strategies ───────────────────────────────────── -->
@@ -1457,12 +1551,13 @@ select.field option{background:#0d1628;color:#e2e8f0}
         <div class="st-sec-hdr card-header collapsible-hdr" onclick="toggleSection(this)">
           <span class="st-sec-title">Backtest Comparison</span>
           <span class="chip" id="bt-compare-chip" style="font-size:.56rem">—</span>
+          <button onclick="event.stopPropagation();btToggleHelp()" style="font-size:.58rem;padding:2px 9px;border-radius:5px;cursor:pointer;background:rgba(148,163,184,.12);color:#94a3b8;border:1px solid rgba(148,163,184,.2);margin-left:4px" title="Show 'what good looks like' guide">ⓘ Guide</button>
           <button onclick="event.stopPropagation();loadBtComparison()" style="font-size:.58rem;padding:2px 9px;border-radius:5px;cursor:pointer;background:rgba(99,102,241,.2);color:#818cf8;border:1px solid rgba(99,102,241,.3);margin-left:4px">↻ Refresh</button>
           <span class="st-chevron">▼</span>
         </div>
         <div class="st-sec-body">
           <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
-            <span style="font-size:.6rem;color:#64748b">Sort by:</span>
+            <span style="font-size:.6rem;color:#64748b">Quick sort:</span>
             <button class="bt-sort-btn active" data-col="sharpe"     onclick="btSort('sharpe')">Sharpe</button>
             <button class="bt-sort-btn"        data-col="sortino"    onclick="btSort('sortino')">Sortino</button>
             <button class="bt-sort-btn"        data-col="total_pnl_usdt" onclick="btSort('total_pnl_usdt')">PnL</button>
@@ -1470,23 +1565,38 @@ select.field option{background:#0d1628;color:#e2e8f0}
             <button class="bt-sort-btn"        data-col="max_drawdown_pct" onclick="btSort('max_drawdown_pct')">MaxDD</button>
             <button class="bt-sort-btn"        data-col="calmar"     onclick="btSort('calmar')">Calmar</button>
             <button class="bt-sort-btn"        data-col="profit_factor" onclick="btSort('profit_factor')">PF</button>
+            <span style="font-size:.55rem;color:#475569;margin-left:4px">tip: click any column header to sort</span>
+          </div>
+          <div id="bt-help-panel" style="display:none;margin-bottom:8px;padding:8px 10px;background:rgba(5,8,22,.55);border:1px solid rgba(148,163,184,.12);border-radius:7px;font-size:.55rem;line-height:1.55;color:#94a3b8">
+            <div style="font-weight:700;color:#cbd5e1;margin-bottom:4px">What "good" looks like (crypto, intraday/swing)</div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:4px 14px">
+              <div><b style="color:#cbd5e1">Sharpe</b> — risk-adjusted return. <span style="color:#34d399">≥1 ok · ≥2 great</span> · <span style="color:#fb7185">&lt;0 lossy</span></div>
+              <div><b style="color:#cbd5e1">Sortino</b> — Sharpe but only counting downside vol. Usually 1.3–2× Sharpe.</div>
+              <div><b style="color:#cbd5e1">MaxDD</b> — largest peak→trough drop. <span style="color:#34d399">&gt; -15% ok</span> · <span style="color:#fb7185">&lt; -30% reject</span></div>
+              <div><b style="color:#cbd5e1">Calmar</b> — annual return / |MaxDD|. <span style="color:#34d399">≥0.5 ok · ≥1 great</span></div>
+              <div><b style="color:#cbd5e1">PF</b> — gross profit / gross loss. <span style="color:#34d399">≥1.3 ok · ≥2 great</span> · <span style="color:#fb7185">&lt;1 lossy</span></div>
+              <div><b style="color:#cbd5e1">WF Sharpe</b> — Sharpe across out-of-sample folds (most honest). <span style="color:#34d399">≥0.7 robust</span> · <span style="color:#fb7185">&lt;0 = curve-fit</span></div>
+              <div><b style="color:#cbd5e1">WF Consist.</b> — % of WF folds with positive PnL. <span style="color:#34d399">≥60% ok · ≥80% great</span></div>
+              <div><b style="color:#cbd5e1">Syms</b> — distinct symbols traded. Breadth matters — too few = fragile.</div>
+            </div>
+            <div style="margin-top:6px;color:#64748b">Reading order I use: <b>WF Consist. → WF Sharpe → MaxDD → PF</b>. In-sample columns (Sharpe/Sortino/PnL) are the least trustworthy.</div>
           </div>
           <div style="overflow-x:auto">
             <table id="bt-compare-table" style="width:100%;border-collapse:collapse;font-size:.62rem">
               <thead>
-                <tr style="color:#475569;border-bottom:1px solid rgba(148,163,184,.1)">
-                  <th style="text-align:left;padding:4px 6px;white-space:nowrap">Strategy</th>
-                  <th style="text-align:right;padding:4px 6px">Trades</th>
-                  <th style="text-align:right;padding:4px 6px">Win%</th>
-                  <th style="text-align:right;padding:4px 6px">Net PnL</th>
-                  <th style="text-align:right;padding:4px 6px">Sharpe</th>
-                  <th style="text-align:right;padding:4px 6px">Sortino</th>
-                  <th style="text-align:right;padding:4px 6px">MaxDD</th>
-                  <th style="text-align:right;padding:4px 6px">Calmar</th>
-                  <th style="text-align:right;padding:4px 6px">PF</th>
-                  <th style="text-align:right;padding:4px 6px">WF Sharpe</th>
-                  <th style="text-align:right;padding:4px 6px">WF Consist.</th>
-                  <th style="text-align:right;padding:4px 6px">Syms</th>
+                <tr id="bt-thead-row" style="color:#94a3b8;border-bottom:1px solid rgba(148,163,184,.1);user-select:none">
+                  <th class="bt-th"     data-col="strategy"          onclick="btSort('strategy')"          style="text-align:left;padding:4px 6px;white-space:nowrap;cursor:pointer" title="Strategy name (click to sort A→Z)">Strategy <span class="bt-chev"></span></th>
+                  <th class="bt-th num" data-col="n_trades"          onclick="btSort('n_trades')"          style="text-align:right;padding:4px 6px;cursor:pointer" title="Total trades over the backtest window. Too few (&lt;30) → noisy stats.">Trades <span class="bt-chev"></span></th>
+                  <th class="bt-th num" data-col="win_rate_pct"      onclick="btSort('win_rate_pct')"      style="text-align:right;padding:4px 6px;cursor:pointer" title="% of trades closed positive. 50% is meaningless without R:R; pair with PF.">Win% <span class="bt-chev"></span></th>
+                  <th class="bt-th num" data-col="total_pnl_usdt"    onclick="btSort('total_pnl_usdt')"    style="text-align:right;padding:4px 6px;cursor:pointer" title="Net PnL in USDT after fees + slippage. The headline number — but fragile to cherry-picked windows.">Net PnL <span class="bt-chev"></span></th>
+                  <th class="bt-th num active" data-col="sharpe"     onclick="btSort('sharpe')"            style="text-align:right;padding:4px 6px;cursor:pointer" title="Risk-adjusted return. ≥1 ok · ≥2 great · &lt;0 lossy. In-sample only — see WF Sharpe for honesty.">Sharpe <span class="bt-chev">▼</span></th>
+                  <th class="bt-th num" data-col="sortino"           onclick="btSort('sortino')"           style="text-align:right;padding:4px 6px;cursor:pointer" title="Sharpe but only counts downside volatility. Usually 1.3–2× Sharpe; if equal, returns are symmetric.">Sortino <span class="bt-chev"></span></th>
+                  <th class="bt-th num" data-col="max_drawdown_pct"  onclick="btSort('max_drawdown_pct')"  style="text-align:right;padding:4px 6px;cursor:pointer" title="Largest peak→trough equity drop. &gt;-15% ok · &lt;-30% reject. Pain you'd actually feel running it live.">MaxDD <span class="bt-chev"></span></th>
+                  <th class="bt-th num" data-col="calmar"            onclick="btSort('calmar')"            style="text-align:right;padding:4px 6px;cursor:pointer" title="Annual return / |MaxDD|. ≥0.5 ok · ≥1 great. Reward per unit of pain.">Calmar <span class="bt-chev"></span></th>
+                  <th class="bt-th num" data-col="profit_factor"     onclick="btSort('profit_factor')"     style="text-align:right;padding:4px 6px;cursor:pointer" title="Gross profit / gross loss. ≥1.3 ok · ≥2 great · &lt;1 lossy. Robust to win-rate vs R:R confusion.">PF <span class="bt-chev"></span></th>
+                  <th class="bt-th num" data-col="wf_mean_sharpe"    onclick="btSort('wf_mean_sharpe')"    style="text-align:right;padding:4px 6px;cursor:pointer" title="Average Sharpe across walk-forward out-of-sample folds — most honest robustness signal. ≥0.7 robust · &lt;0 = curve-fit.">WF Sharpe <span class="bt-chev"></span></th>
+                  <th class="bt-th num" data-col="wf_consistency"    onclick="btSort('wf_consistency')"    style="text-align:right;padding:4px 6px;cursor:pointer" title="% of WF folds with positive PnL. ≥60% ok · ≥80% great. The 'will it keep working' number.">WF Consist. <span class="bt-chev"></span></th>
+                  <th class="bt-th num" data-col="symbols_count"     onclick="btSort('symbols_count')"     style="text-align:right;padding:4px 6px;cursor:pointer" title="Distinct symbols traded. Breadth matters — too few (&lt;3) = fragile to one coin's regime.">Syms <span class="bt-chev"></span></th>
                 </tr>
               </thead>
               <tbody id="bt-compare-tbody">
@@ -2909,6 +3019,7 @@ async function loadStrategyFull() {
 function renderStrategyTab(state) {
   if (!_stratFull) { loadStrategyFull(); return; }
   _renderMLCards(_stratFull);
+  _renderTrainingTable();
   _renderStratCards(_stratFull);
   _renderBtSummary(_stratFull);
 }
@@ -2968,6 +3079,149 @@ function _renderMLCards(data) {
       </div>` : ''}
       ${m.accuracy_warning ? `<div style="margin-top:7px;padding:5px 8px;background:rgba(251,113,133,.08);border:1px solid rgba(251,113,133,.25);border-radius:6px;font-size:.55rem;color:#fbbf24;line-height:1.35">⚠ ${esc(m.accuracy_warning)}</div>` : ''}
     </div>`;
+  }).join('');
+}
+
+// ── Model Training Table ─────────────────────────────────────────────────────
+let _trSortCol = 'age_s';
+// 'asc' for age_s = freshest first (smallest age). 'desc' otherwise = bigger first.
+let _trSortDir = 'asc';
+let _trFilter  = 'all';
+let _trSearch  = '';
+
+function trToggleHelp() {
+  const p = $('tr-help-panel');
+  if (!p) return;
+  p.style.display = (p.style.display === 'none' || !p.style.display) ? 'block' : 'none';
+}
+
+function trSort(col) {
+  if (_trSortCol === col) {
+    _trSortDir = (_trSortDir === 'desc') ? 'asc' : 'desc';
+  } else {
+    _trSortCol = col;
+    // Strings + age default to ascending; numerics default to descending.
+    _trSortDir = (col === 'label' || col === 'market' || col === 'timeframe' ||
+                  col === 'target' || col === 'age_s') ? 'asc' : 'desc';
+  }
+  document.querySelectorAll('#tr-thead-row .tr-th').forEach(th => {
+    const isActive = th.dataset.col === col;
+    th.classList.toggle('active', isActive);
+    const chev = th.querySelector('.tr-chev');
+    if (chev) chev.textContent = isActive ? (_trSortDir === 'desc' ? '▼' : '▲') : '';
+  });
+  _renderTrainingTable();
+}
+
+function trFilter(filt) {
+  _trFilter = filt;
+  document.querySelectorAll('#st-sec-training .tr-pill').forEach(b => b.classList.toggle('active', b.dataset.filt === filt));
+  _renderTrainingTable();
+}
+
+function trSearch(q) { _trSearch = (q || '').trim().toLowerCase(); _renderTrainingTable(); }
+
+function _trRelTime(s) {
+  if (s == null) return '—';
+  if (s < 60)        return Math.round(s) + 's ago';
+  if (s < 3600)      return Math.round(s/60) + 'm ago';
+  if (s < 86400)     return Math.round(s/3600) + 'h ago';
+  if (s < 86400*30)  return Math.round(s/86400) + 'd ago';
+  return Math.round(s/86400/30) + 'mo ago';
+}
+
+function _renderTrainingTable() {
+  const tbody = $('training-tbody');
+  const chip  = $('chip-training-count');
+  if (!tbody) return;
+  const all = (_stratFull && _stratFull.ml_models) || [];
+  const agg = (_stratFull && _stratFull.aggregate) || {};
+
+  // Filter by quick pill + search.
+  const filtered = all.filter(m => {
+    if (_trSearch) {
+      const hay = ((m.label||'') + ' ' + (m.target||'') + ' ' + (m.market||'')).toLowerCase();
+      if (!hay.includes(_trSearch)) return false;
+    }
+    switch (_trFilter) {
+      case 'all':       return true;
+      case 'today':     return m.runs_today === 1;
+      case 'stale':     return (m.age_s != null) && m.age_s > 7*86400;
+      case 'wf52':      return (m.accuracy_walk_forward != null) && m.accuracy_walk_forward >= 52;
+      case 'warning':   return !!m.accuracy_warning;
+      case 'spot':      return m.market === 'SPOT';
+      case 'futures':   return m.market === 'FUTURES';
+      case 'scalping':  return m.market === 'SCALPING' || m.timeframe === '1m';
+      case 'neural':    return m.key === 'tft' || m.key === 'oft';
+    }
+    return true;
+  });
+
+  // Sort.
+  const col  = _trSortCol;
+  const sign = _trSortDir === 'desc' ? 1 : -1;
+  filtered.sort((a, b) => {
+    let av = a[col], bv = b[col];
+    if (col === 'label' || col === 'market' || col === 'timeframe' || col === 'target') {
+      av = (av || '').toString().toLowerCase();
+      bv = (bv || '').toString().toLowerCase();
+      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      return _trSortDir === 'desc' ? -cmp : cmp;
+    }
+    av = (av == null) ? -Infinity : Number(av);
+    bv = (bv == null) ? -Infinity : Number(bv);
+    return (bv - av) * sign;
+  });
+
+  if (chip) {
+    const today = agg.models_trained_today || 0;
+    const tot   = agg.models_total || all.length;
+    const trn   = agg.models_trained || all.filter(m => m.model_exists).length;
+    chip.textContent = `${trn}/${tot} trained · ${today} today` + (filtered.length !== all.length ? ` · ${filtered.length} shown` : '');
+  }
+
+  if (!filtered.length) {
+    tbody.innerHTML = `<tr><td colspan="17" style="text-align:center;color:#475569;padding:14px">No models match this filter.</td></tr>`;
+    return;
+  }
+
+  const numFmt = (v, dec=2, suf='') => v == null ? '—' : Number(v).toFixed(dec) + suf;
+  const accCol = v => v == null ? '#475569' : v >= 55 ? '#34d399' : v >= 50 ? '#fbbf24' : '#fb7185';
+  const aucCol = v => v == null ? '#475569' : v >= 0.6 ? '#34d399' : v >= 0.55 ? '#fbbf24' : '#fb7185';
+  const bigNum = v => v == null ? '—' : Number(v).toLocaleString();
+
+  tbody.innerHTML = filtered.map(m => {
+    const todayBadge = m.runs_today
+      ? `<span class="tr-badge-today">TODAY</span>`
+      : (m.age_s != null && m.age_s > 7*86400)
+          ? `<span class="tr-badge-stale">STALE</span>` : '';
+    const wfPct  = m.accuracy_walk_forward;
+    const accT   = m.accuracy_test;
+    const lng    = m.long_accuracy;
+    const shrt   = m.short_accuracy;
+    const auc    = m.auc_roc;
+    const wp     = m.win_precision;
+    const dirless = m.directionless;
+    const warnMark = m.accuracy_warning ? ' <span title="' + esc(m.accuracy_warning) + '" style="color:#fbbf24;cursor:help">⚠</span>' : '';
+    return `<tr>
+      <td style="color:#e2e8f0;font-weight:700">${m.icon||''} ${esc(m.label||m.key)}${warnMark}</td>
+      <td style="color:#94a3b8">${esc(m.market||'—')}</td>
+      <td style="color:#94a3b8">${esc(m.timeframe||'—')}</td>
+      <td style="text-align:right;color:${m.runs_today?'#34d399':(m.age_s>7*86400?'#fb7185':'#94a3b8')}">${_trRelTime(m.age_s)}</td>
+      <td style="text-align:right">${todayBadge}</td>
+      <td style="text-align:right;color:#94a3b8">≥ ${m.total_runs_min||0}</td>
+      <td style="text-align:right;color:${accCol(accT)};font-weight:700">${numFmt(accT,1,'%')}</td>
+      <td style="text-align:right;color:${accCol(wfPct)};font-weight:700">${numFmt(wfPct,1,'%')}</td>
+      <td style="text-align:right;color:${dirless?'#475569':'#34d399'}">${dirless?'n/a':numFmt(lng,1,'%')}</td>
+      <td style="text-align:right;color:${dirless?'#475569':'#fb7185'}">${dirless?'n/a':numFmt(shrt,1,'%')}</td>
+      <td style="text-align:right;color:${aucCol(auc)};font-weight:${auc?700:400}">${auc==null?'—':auc.toFixed(3)}</td>
+      <td style="text-align:right;color:${accCol(wp)}">${numFmt(wp,1,'%')}</td>
+      <td style="text-align:right;color:#94a3b8;font-family:'JetBrains Mono'">${bigNum(m.n_samples)}</td>
+      <td style="text-align:right;color:#94a3b8">${m.n_features||'—'}</td>
+      <td style="text-align:right;color:#94a3b8">${m.n_iterations||'—'}</td>
+      <td style="text-align:right;color:#94a3b8">${m.symbols_count||0}</td>
+      <td style="color:#64748b;font-size:.58rem">${esc(m.target||'—')}</td>
+    </tr>`;
   }).join('');
 }
 
@@ -3255,6 +3509,10 @@ async function pollQuantMatrix() {
 // ─── BACKTEST COMPARISON TABLE ───────────────────────────────────────────────
 let _btRows = [];
 let _btSortCol = 'sharpe';
+// 'desc' = bigger-is-better at top; 'asc' = smaller-is-better at top.
+// MaxDD is special: we sort by absolute magnitude (less negative is better),
+// so 'desc' for MaxDD means "least drawdown first".
+let _btSortDir = 'desc';
 
 async function loadBtComparison() {
   const chip = $('bt-compare-chip');
@@ -3271,9 +3529,29 @@ async function loadBtComparison() {
   }
 }
 
+function btToggleHelp() {
+  const p = $('bt-help-panel');
+  if (!p) return;
+  p.style.display = (p.style.display === 'none' || !p.style.display) ? 'block' : 'none';
+}
+
 function btSort(col) {
-  _btSortCol = col;
+  // Click same column → toggle direction. Click new column → reset to desc
+  // (best-first), except 'strategy' which defaults to ascending A→Z.
+  if (_btSortCol === col) {
+    _btSortDir = (_btSortDir === 'desc') ? 'asc' : 'desc';
+  } else {
+    _btSortCol = col;
+    _btSortDir = (col === 'strategy') ? 'asc' : 'desc';
+  }
+  // Sync pill buttons + TH active state.
   document.querySelectorAll('.bt-sort-btn').forEach(b => b.classList.toggle('active', b.dataset.col === col));
+  document.querySelectorAll('#bt-thead-row .bt-th').forEach(th => {
+    const isActive = th.dataset.col === col;
+    th.classList.toggle('active', isActive);
+    const chev = th.querySelector('.bt-chev');
+    if (chev) chev.textContent = isActive ? (_btSortDir === 'desc' ? '▼' : '▲') : '';
+  });
   _renderBtTable();
 }
 
@@ -3281,12 +3559,28 @@ function _renderBtTable() {
   const tbody = $('bt-compare-tbody');
   if (!tbody || !_btRows.length) return;
 
+  const col = _btSortCol;
+  // Sign convention: desc = best/biggest first, asc = smallest first.
+  // For MaxDD the values are negative, so "best" = least magnitude.
+  const sign = _btSortDir === 'desc' ? 1 : -1;
+
   const rows = [..._btRows].sort((a, b) => {
-    const av = a[_btSortCol] ?? -Infinity;
-    const bv = b[_btSortCol] ?? -Infinity;
-    // For max_drawdown: least negative = best, so sort ascending by abs
-    if (_btSortCol === 'max_drawdown_pct') return Math.abs(av) - Math.abs(bv);
-    return bv - av;
+    let av = a[col], bv = b[col];
+    if (col === 'strategy') {
+      av = (av || '').toString().toLowerCase();
+      bv = (bv || '').toString().toLowerCase();
+      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      return _btSortDir === 'desc' ? -cmp : cmp;
+    }
+    if (col === 'max_drawdown_pct') {
+      // desc = least drawdown first → ascending |dd|
+      av = Math.abs(av ?? Infinity);
+      bv = Math.abs(bv ?? Infinity);
+      return (av - bv) * sign;
+    }
+    av = av ?? -Infinity;
+    bv = bv ?? -Infinity;
+    return (bv - av) * sign;  // desc → bigger first
   });
 
   const fmt = (v, dec=2, suf='') => v != null ? (v>=0?'':'')+Number(v).toFixed(dec)+suf : '—';
