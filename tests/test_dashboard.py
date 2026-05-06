@@ -2447,6 +2447,95 @@ def test_phase36_debug_supervisor():
         check('supervisor smoke test', False, str(e))
 
 
+def test_phase44_pr6_live_trading_toggle():
+    """Phase 44 — PR 6 Live Trading toggle + manual paper accounting:
+       - data/control.json gains a `trade_mode` field (paper/testnet/mainnet)
+       - dual_balance.py gains add_deposit / add_paper_pnl / compute_summary
+       - paper_book.py routes paper trades to data/trades.json + virtual balance
+       - OrderManager gates execute_*_order on trade_mode
+       - GET/POST /api/control/trade_mode + POST /api/balance/virtual/deposit
+       - Overview tab gets the trade-mode switch + balance breakdown card
+    """
+    print('\n[Phase 44 — PR 6 live trading toggle + paper accounting]')
+
+    db = open(os.path.join(BASE_DIR, 'src', 'engine', 'dual_balance.py'),
+              encoding='utf-8').read()
+    pb = open(os.path.join(BASE_DIR, 'src', 'engine', 'paper_book.py'),
+              encoding='utf-8').read()
+    om = open(os.path.join(BASE_DIR, 'src', 'engine', 'order_manager.py'),
+              encoding='utf-8').read()
+    app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
+               encoding='utf-8').read()
+    tpl = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html'),
+               encoding='utf-8').read()
+
+    # 1. dual_balance schema extensions
+    check('dual_balance.add_deposit() defined',
+          'def add_deposit(' in db)
+    check('dual_balance.add_paper_pnl() defined',
+          'def add_paper_pnl(' in db)
+    check('dual_balance.compute_summary() decomposes equity / deposits / pnl',
+          'def compute_summary(' in db
+          and '"deposits_total":' in db
+          and '"pnl":' in db
+          and '"revenue_total":' in db)
+    check('reset_virtual seeds deposits[] with the initial cash',
+          '"deposits": [{' in db and 'note": "seed"' in db)
+
+    # 2. paper_book module
+    check('paper_book.book_market_order writes is_paper=True',
+          'def book_market_order(' in pb
+          and '"is_paper":    True' in pb)
+    check('paper_book.book_close credits virtual balance via add_paper_pnl',
+          'def book_close(' in pb
+          and 'add_paper_pnl(net)' in pb)
+    check('paper_book applies round-trip fee in PnL math',
+          'fee_bps' in pb
+          and 'entry_fee = entry_cost' in pb
+          and 'net = gross - entry_fee - exit_fee' in pb)
+
+    # 3. OrderManager gate
+    check('OrderManager._trade_mode reads control.json',
+          'def _trade_mode(' in om
+          and "ctrl.get('trade_mode') or 'testnet'" in om)
+    check('execute_spot_order routes to paper_book in paper mode',
+          "if self._trade_mode() == 'paper':" in om
+          and 'from src.engine.paper_book import book_market_order' in om)
+    check('execute_futures_order also gated on paper mode',
+          om.count("if self._trade_mode() == 'paper':") >= 2)
+
+    # 4. Backend endpoints
+    check('GET/POST /api/control/trade_mode defined',
+          "@app.route('/api/control/trade_mode'" in app
+          and 'methods=[\'GET\', \'POST\']' in app)
+    check('mainnet POST requires confirm=true',
+          "if mode == 'mainnet' and not body.get('confirm'):" in app)
+    check('POST /api/balance/virtual/deposit defined',
+          "@app.route('/api/balance/virtual/deposit'" in app
+          and 'def api_balance_virtual_deposit(' in app)
+    check('/api/balance/virtual returns summary block',
+          'compute_summary' in app and '"summary": summary' in app)
+
+    # 5. UI on Overview tab
+    check('Live Trading card present in Overview tab',
+          'class="card lt-card"' in tpl
+          and 'Live Trading' in tpl)
+    check('Three trade-mode buttons (paper/testnet/mainnet)',
+          'id="lt-btn-paper"'   in tpl
+          and 'id="lt-btn-testnet"' in tpl
+          and 'id="lt-btn-mainnet"' in tpl)
+    check('Balance breakdown shows equity / deposits / revenue / pnl',
+          'id="lt-equity"'   in tpl
+          and 'id="lt-deposits"' in tpl
+          and 'id="lt-revenue"'  in tpl
+          and 'id="lt-pnl"'      in tpl)
+    check('Mainnet switch confirms with explicit warning',
+          "Switch to MAINNET" in tpl and 'Real money will be at risk' in tpl)
+    check('+ Deposit button + ltDeposit() prompts for amount',
+          'ltDeposit()' in tpl
+          and 'Add how much to virtual balance' in tpl)
+
+
 def test_phase43_pr4_stability_heatmap():
     """Phase 43 — PR 4 Stability comparison view: GET /api/strategy/stability
     builds a (strategy × tf) matrix; UI renders it as a colour-coded heatmap
@@ -3738,6 +3827,7 @@ def main():
     test_phase41_pr2_trainer_multi_tf()
     test_phase42_pr3_backtester_multi_tf()
     test_phase43_pr4_stability_heatmap()
+    test_phase44_pr6_live_trading_toggle()
 
     if not args.offline:
         test_api(args.url)

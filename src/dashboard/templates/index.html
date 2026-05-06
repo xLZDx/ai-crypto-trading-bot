@@ -961,6 +961,100 @@ select.field option{background:#0d1628;color:#e2e8f0}
     setInterval(window.refreshModeBar, 15000);
   });
 })();
+
+// ─── Live Trading switch + paper accounting (Overview tab) ──────────────────
+async function ltLoadAll() {
+  await Promise.all([ltLoadMode(), ltLoadBalance()]);
+}
+
+async function ltLoadMode() {
+  try {
+    const r = await fetch('/api/control/trade_mode');
+    const d = await r.json();
+    const m = (d.trade_mode || 'testnet').toLowerCase();
+    for (const v of ['paper', 'testnet', 'mainnet']) {
+      const btn = document.getElementById('lt-btn-' + v);
+      if (btn) btn.classList.toggle('active', v === m);
+    }
+    const status = document.getElementById('lt-mode-status');
+    if (status) {
+      const txt = {paper: 'paper — internal-only booking, no real orders',
+                   testnet: 'testnet — Binance fake-money exchange',
+                   mainnet: '⚠ MAINNET — real money'}[m] || m;
+      status.textContent = txt;
+      status.style.color = m === 'mainnet' ? '#fb7185'
+                          : m === 'paper'  ? '#60a5fa'
+                          :                  '#fbbf24';
+    }
+  } catch(e) { console.error('ltLoadMode', e); }
+}
+
+async function ltLoadBalance() {
+  try {
+    const r = await fetch('/api/balance/virtual');
+    const d = await r.json();
+    const s = d.summary || {};
+    const fmt = v => v == null ? '—' : '$' + Number(v).toLocaleString(undefined, {maximumFractionDigits: 2, minimumFractionDigits: 2});
+    const fmtSign = v => v == null ? '—' : (v >= 0 ? '+' : '') + '$' + Number(v).toLocaleString(undefined, {maximumFractionDigits: 2, minimumFractionDigits: 2});
+    const set = (id, txt, col) => {
+      const el = document.getElementById(id);
+      if (el) { el.textContent = txt; if (col) el.style.color = col; }
+    };
+    set('lt-equity',   fmt(s.equity));
+    set('lt-cash',     fmt(s.cash));
+    set('lt-deposits', fmt(s.deposits_total));
+    set('lt-revenue',  fmtSign(s.revenue_total),
+                       s.revenue_total > 0 ? '#34d399' : s.revenue_total < 0 ? '#fb7185' : '#94a3b8');
+    set('lt-pnl',      fmtSign(s.pnl),
+                       s.pnl > 0 ? '#34d399' : s.pnl < 0 ? '#fb7185' : '#94a3b8');
+  } catch(e) { console.error('ltLoadBalance', e); }
+}
+
+async function ltSetMode(mode) {
+  if (mode === 'mainnet') {
+    if (!confirm('⚠ Switch to MAINNET?\n\nReal money will be at risk on every order. Make sure you have:\n  - reviewed strategy_config.json\n  - confirmed position sizing limits\n  - tested in TESTNET first\n\nProceed?')) return;
+  } else if (mode === 'testnet') {
+    if (!confirm('Switch to TESTNET?\n\nBot will send real orders to Binance testnet (fake money). Resamples + training continue unchanged.')) return;
+  } else if (mode === 'paper') {
+    if (!confirm('Switch to PAPER mode?\n\nBot will skip real orders entirely and book trades to the internal virtual balance only. Your testnet/mainnet positions stay where they are; new orders go to paper.')) return;
+  }
+  try {
+    const body = {mode}; if (mode === 'mainnet') body.confirm = true;
+    const r = await fetch('/api/control/trade_mode',
+      {method: 'POST', headers: hdrs(), body: JSON.stringify(body)});
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'request failed');
+    ltLoadMode();
+  } catch(e) {
+    alert('Trade-mode switch failed: ' + (e.message||e));
+  }
+}
+
+async function ltDeposit() {
+  const raw = prompt('Add how much to virtual balance? (USDT)\n\nThis records a deposit so the P&L calculation (= equity − deposits) stays honest. The amount is added to cash; closed paper trades will then accumulate revenue on top.', '10000');
+  if (raw == null) return;
+  const amount = parseFloat(raw);
+  if (!isFinite(amount) || amount === 0) { alert('Invalid amount.'); return; }
+  const note = prompt('Optional note (e.g. "seed funds 2026 Q2"):', '') || '';
+  try {
+    const r = await fetch('/api/balance/virtual/deposit',
+      {method: 'POST', headers: hdrs(), body: JSON.stringify({amount, note})});
+    const d = await r.json();
+    if (d.ok === false) throw new Error(d.error || 'deposit failed');
+    ltLoadBalance();
+  } catch(e) {
+    alert('Deposit failed: ' + (e.message||e));
+  }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  // First paint + 30s refresh while the tab is open.
+  ltLoadAll();
+  setInterval(() => {
+    const ov = document.getElementById('tab-overview');
+    if (ov && ov.classList.contains('active')) ltLoadAll();
+  }, 30000);
+});
 </script>
 
 <div id="shell">
@@ -1085,6 +1179,63 @@ select.field option{background:#0d1628;color:#e2e8f0}
 
     <!-- ══════════ TAB: OVERVIEW ══════════ -->
     <div id="tab-overview" class="tab-pane active">
+
+      <!-- ── Live Trading switch + Paper accounting ─────────────────── -->
+      <style>
+        .lt-card{background:linear-gradient(135deg,rgba(99,102,241,.10),rgba(244,114,182,.06));
+          border:1px solid rgba(148,163,184,.18);border-radius:11px;padding:13px 16px;margin-bottom:14px}
+        .lt-row{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+        .lt-mode-btn{font-size:.7rem;font-weight:800;padding:7px 16px;border-radius:7px;cursor:pointer;
+          background:rgba(5,8,22,.55);color:#94a3b8;border:1px solid rgba(148,163,184,.2);transition:.15s;letter-spacing:.04em}
+        .lt-mode-btn.active.paper{background:rgba(96,165,250,.22);color:#60a5fa;border-color:rgba(96,165,250,.45);box-shadow:0 0 0 1px rgba(96,165,250,.25)}
+        .lt-mode-btn.active.testnet{background:rgba(251,191,36,.22);color:#fbbf24;border-color:rgba(251,191,36,.45);box-shadow:0 0 0 1px rgba(251,191,36,.25)}
+        .lt-mode-btn.active.mainnet{background:rgba(251,113,133,.22);color:#fb7185;border-color:rgba(251,113,133,.5);box-shadow:0 0 0 1px rgba(251,113,133,.35)}
+        .lt-stat{background:rgba(5,8,22,.55);border:1px solid rgba(148,163,184,.12);border-radius:7px;
+          padding:7px 12px;min-width:130px}
+        .lt-stat-lbl{font-size:.5rem;color:#64748b;letter-spacing:.06em;text-transform:uppercase}
+        .lt-stat-val{font-size:1.05rem;font-weight:800;color:#e2e8f0;margin-top:2px;font-family:'JetBrains Mono', monospace}
+      </style>
+      <div class="card lt-card">
+        <div class="lt-row" style="margin-bottom:10px">
+          <div>
+            <div class="section-label">Live Trading</div>
+            <div class="card-title" style="font-size:.95rem">Trade Mode</div>
+          </div>
+          <button class="lt-mode-btn paper"   id="lt-btn-paper"   onclick="ltSetMode('paper')"   title="Bot consumes live Binance feed and generates signals, but books trades to internal virtual balance only. No real orders sent.">📄 PAPER</button>
+          <button class="lt-mode-btn testnet" id="lt-btn-testnet" onclick="ltSetMode('testnet')" title="Bot trades on Binance testnet (real orders, fake money).">🧪 TESTNET</button>
+          <button class="lt-mode-btn mainnet" id="lt-btn-mainnet" onclick="ltSetMode('mainnet')" title="Bot trades on Binance mainnet — real money will be at risk. Requires explicit confirm.">⚡ MAINNET</button>
+          <span id="lt-mode-status" style="font-size:.6rem;color:#64748b;margin-left:8px">loading…</span>
+        </div>
+        <div class="lt-row">
+          <div class="lt-stat">
+            <div class="lt-stat-lbl">Equity</div>
+            <div class="lt-stat-val" id="lt-equity">—</div>
+          </div>
+          <div class="lt-stat">
+            <div class="lt-stat-lbl">Cash</div>
+            <div class="lt-stat-val" id="lt-cash">—</div>
+          </div>
+          <div class="lt-stat">
+            <div class="lt-stat-lbl">Deposits Total</div>
+            <div class="lt-stat-val" id="lt-deposits" title="Sum of operator-added funds (manual)">—</div>
+          </div>
+          <div class="lt-stat">
+            <div class="lt-stat-lbl">Revenue (closed PnL)</div>
+            <div class="lt-stat-val" id="lt-revenue" title="Cumulative net PnL from closed paper trades">—</div>
+          </div>
+          <div class="lt-stat">
+            <div class="lt-stat-lbl">Total P&amp;L</div>
+            <div class="lt-stat-val" id="lt-pnl" title="Equity − sum(deposits). Equals revenue when no positions are open.">—</div>
+          </div>
+          <div style="margin-left:auto;display:flex;gap:6px">
+            <button onclick="ltDeposit()" style="font-size:.62rem;font-weight:700;padding:7px 14px;border-radius:7px;cursor:pointer;background:rgba(52,211,153,.18);color:#34d399;border:1px solid rgba(52,211,153,.35)" title="Manually add funds — increases cash + deposits[]">+ Deposit</button>
+            <button onclick="ltLoadAll()" style="font-size:.62rem;padding:7px 12px;border-radius:7px;cursor:pointer;background:rgba(99,102,241,.2);color:#818cf8;border:1px solid rgba(99,102,241,.3)">↻</button>
+          </div>
+        </div>
+        <div style="font-size:.55rem;color:#64748b;margin-top:8px;line-height:1.55">
+          <b style="color:#94a3b8">P&amp;L = Equity − Deposits</b>. The internal balance never auto-syncs from the exchange — the only way it grows is closed-trade revenue or manual deposits. In <b style="color:#60a5fa">PAPER</b> mode the bot books trades internally instead of hitting Binance.
+        </div>
+      </div>
 
       <!-- Performance Overview — single collapsible card -->
       <div class="card" style="margin-bottom:14px">

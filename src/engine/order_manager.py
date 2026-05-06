@@ -104,13 +104,48 @@ class OrderManager:
             logging.error(f"Error getting balance: {e}")
             return 0.0
 
+    @staticmethod
+    def _trade_mode() -> str:
+        """Read data/control.json's `trade_mode`. Three values:
+           paper   — orders never reach the exchange; routed to paper_book
+           testnet — current/legacy default; sends to Binance testnet
+           mainnet — real money on Binance live (requires explicit opt-in)
+        Defaults to 'testnet' if the field is missing so existing installs
+        keep their current behaviour without a config-file migration."""
+        try:
+            from src.utils.safe_json import read_json
+            ctrl = read_json('data/control.json', default={}) or {}
+            mode = (ctrl.get('trade_mode') or 'testnet').lower().strip()
+            return mode if mode in ('paper', 'testnet', 'mainnet') else 'testnet'
+        except Exception:
+            return 'testnet'
+
     def execute_spot_order(self, symbol, side, amount_coin):
-        """Sends a real market order to the Spot account"""
+        """Sends a market order to the Spot account.
+        In `paper` mode we skip the exchange call entirely and book
+        internally via src.engine.paper_book — same return shape so
+        callers don't need to branch."""
+        if self._trade_mode() == 'paper':
+            try:
+                from src.engine.paper_book import book_market_order
+                # Paper booker needs a price — peek at the latest ticker.
+                price = 0.0
+                try:
+                    self._sync_clocks()
+                    t = self.exchange.fetch_ticker(symbol)
+                    price = float(t.get('last') or t.get('close') or 0)
+                except Exception:
+                    pass
+                return book_market_order(symbol, side, amount_coin, price,
+                                         market="spot")
+            except Exception as exc:
+                logging.error(f"❌ paper SPOT {side} {symbol} failed: {exc}")
+                return None
         self._sync_clocks()
         try:
             self.exchange.load_markets()
             amount_coin = self.exchange.amount_to_precision(symbol, amount_coin)
-            
+
             if side.upper() == 'BUY':
                 order = self.exchange.create_market_buy_order(symbol, float(amount_coin))
             else:
@@ -172,7 +207,26 @@ class OrderManager:
             reduce. Callers MUST treat this as 'already closed' and stop
             retrying — repeating the same call is deterministic-fail.
           - None on any other error (worth retrying).
+
+        In `paper` mode the order is booked internally via paper_book
+        instead of hitting the exchange. The dashboard's Live Trading
+        switch toggles this via data/control.json's trade_mode field.
         """
+        if self._trade_mode() == 'paper':
+            try:
+                from src.engine.paper_book import book_market_order
+                price = 0.0
+                try:
+                    self._sync_clocks()
+                    t = self.futures_exchange.fetch_ticker(self.to_futures_symbol(symbol))
+                    price = float(t.get('last') or t.get('close') or 0)
+                except Exception:
+                    pass
+                return book_market_order(symbol, side, amount_coin, price,
+                                         market="futures")
+            except Exception as exc:
+                logging.error(f"❌ paper FUTURES {side} {symbol} failed: {exc}")
+                return None
         self._sync_clocks()
         try:
             self.futures_exchange.load_markets()

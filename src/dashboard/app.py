@@ -3158,7 +3158,7 @@ _VIRTUAL_DEFAULT_CASH = 100_000.0
 @app.route('/api/balance/test')  # legacy alias — frontend uses 'test' mode label
 def api_balance_virtual():
     try:
-        from src.engine.dual_balance import read_virtual, reset_virtual
+        from src.engine.dual_balance import read_virtual, reset_virtual, compute_summary
         snap = read_virtual()
         # Auto-heal: an early stub wrote $12345.67 to the virtual balance file.
         # Replace it once with a sensible $100k so the Portfolio panel doesn't
@@ -3167,9 +3167,72 @@ def api_balance_virtual():
                 and abs(float(snap.get('equity_usdt', 0)) - _VIRTUAL_STUB_VALUE) < 1e-3
                 and not snap.get('holdings')):
             snap = reset_virtual(_VIRTUAL_DEFAULT_CASH)
+        # Decompose into deposits / revenue / pnl for the Overview panel.
+        summary = compute_summary()
+        snap = {**snap, "summary": summary}
         return jsonify(snap)
     except Exception as exc:
         return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/api/balance/virtual/deposit', methods=['POST'])
+@require_api_key
+def api_balance_virtual_deposit():
+    """Operator manually adds funds to the virtual balance. The internal
+    paper account never auto-syncs from the exchange — every increase
+    is either a closed paper trade's PnL (auto) or an explicit deposit
+    here. Total P&L is then equity − sum(deposits)."""
+    try:
+        from src.engine.dual_balance import add_deposit
+        body = request.get_json(silent=True) or {}
+        amount = float(body.get('amount', 0))
+        if amount == 0:
+            return jsonify({'ok': False, 'error': 'amount required'}), 400
+        note = str(body.get('note', '') or '')[:120]
+        return jsonify(add_deposit(amount, note=note))
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 500
+
+
+@app.route('/api/control/trade_mode', methods=['GET', 'POST'])
+def api_control_trade_mode():
+    """Get / set the live-trading mode.
+
+    Three values:
+      paper   — orders never hit the exchange; routed to paper_book.
+                Bot still consumes live Binance feed + generates signals.
+      testnet — orders go to Binance testnet (legacy default).
+      mainnet — orders go to Binance mainnet (real money). POST to mainnet
+                requires confirm=true in the body to discourage misclicks.
+    """
+    if request.method == 'GET':
+        ctrl = read_json('data/control.json', default={}) or {}
+        return jsonify({
+            'trade_mode': (ctrl.get('trade_mode') or 'testnet').lower(),
+            'valid':      ['paper', 'testnet', 'mainnet'],
+        })
+    # POST — manually enforce auth (decorator can't gate a single method
+    # of a multi-method route).
+    if DASHBOARD_API_KEY and request.headers.get('X-API-Key', '') != DASHBOARD_API_KEY:
+        return jsonify({'ok': False, 'error': 'unauthorized'}), 401
+    body = request.get_json(silent=True) or {}
+    mode = (body.get('mode') or '').strip().lower()
+    if mode not in ('paper', 'testnet', 'mainnet'):
+        return jsonify({'ok': False,
+                        'error': f'invalid mode: {mode}',
+                        'valid': ['paper', 'testnet', 'mainnet']}), 400
+    if mode == 'mainnet' and not body.get('confirm'):
+        return jsonify({'ok': False,
+                        'error': 'mainnet requires confirm=true in body — '
+                                 'real money will be at risk'}), 400
+    ctrl = read_json('data/control.json', default={}) or {}
+    if not isinstance(ctrl, dict):
+        ctrl = {}
+    ctrl['trade_mode'] = mode
+    write_json('data/control.json', ctrl)
+    logger = __import__('logging').getLogger(__name__)
+    logger.warning("[control] trade_mode → %s (operator action)", mode)
+    return jsonify({'ok': True, 'trade_mode': mode})
 
 
 @app.route('/api/balance/virtual/reset', methods=['POST'])
