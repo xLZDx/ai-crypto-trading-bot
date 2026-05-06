@@ -415,19 +415,55 @@ def get_sync_report() -> dict:
 
 # ── Convenience helpers used by live bot and backtester ───────────────────────
 
+# Bucket classification — must match the logic in dashboard/app.py
+# (strategy_full endpoint). Three exclusive buckets:
+#   meta_filtered: name ends with _MetaFiltered
+#   ml_driven:     uses any model artifact OR group=='ML'
+#   pure_rule:     everything else
+def bucket_for(name: str) -> str:
+    info = REGISTRY.get(name) or {}
+    if name.endswith('_MetaFiltered'):
+        return 'meta_filtered'
+    if info.get('models') or info.get('group') == 'ML':
+        return 'ml_driven'
+    return 'pure_rule'
+
+
+def disabled_buckets() -> set[str]:
+    """Read the set of operator-disabled buckets from runtime_overrides.json.
+    Lazy-imports safe_json so the registry stays import-cheap for trainers
+    that don't pull in the dashboard utilities."""
+    try:
+        from src.utils.safe_json import read_json as _rj
+        ov = _rj('data/runtime_overrides.json', default={}) or {}
+        if isinstance(ov, dict):
+            return set(ov.get('disabled_buckets') or [])
+    except Exception:
+        pass
+    return set()
+
+
 def is_enabled_live(name: str) -> bool:
+    if bucket_for(name) in disabled_buckets():
+        return False
     return load_config().get(name, {}).get("live", False)
 
 
 def is_enabled_backtest(name: str) -> bool:
+    if bucket_for(name) in disabled_buckets():
+        return False
     return load_config().get(name, {}).get("backtest", False)
 
 
 def enabled_backtest_signal_cols() -> list[tuple[str, str, str]]:
-    """Return [(strategy_name, label, signal_col)] for all backtest-enabled strategies."""
+    """Return [(strategy_name, label, signal_col)] for all backtest-enabled strategies.
+    Bucket-disabled strategies are skipped here too."""
     cfg = load_config()
+    db = disabled_buckets()
     return [
         (name, info["label"], info["signal_col"])
         for name, info in REGISTRY.items()
-        if cfg.get(name, {}).get("backtest", False) and info["can_backtest"]
+        if cfg.get(name, {}).get("backtest", False)
+           and info["can_backtest"]
+           and bucket_for(name) not in db
     ]

@@ -2447,6 +2447,106 @@ def test_phase36_debug_supervisor():
         check('supervisor smoke test', False, str(e))
 
 
+def test_phase39_pr5_ui_bundle():
+    """Phase 39 — PR 5 UI bundle: collapse fix, manual training controls,
+    ML Health Notes panel, bucket classification, per-bucket disable toggle,
+    and Pure-vs-ML comparison panel."""
+    print('\n[Phase 39 — PR 5 UI bundle: collapse + training controls + buckets]')
+
+    tpl = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html'),
+               encoding='utf-8').read()
+    app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
+               encoding='utf-8').read()
+    sr  = open(os.path.join(BASE_DIR, 'src', 'engine', 'strategy_registry.py'),
+               encoding='utf-8').read()
+
+    # 1. Collapse fix
+    check('toggleSection() defined and toggles .is-collapsed',
+          'function toggleSection(' in tpl
+          and ".closest('.collapsible-section')" in tpl
+          and "classList.toggle('is-collapsed')" in tpl)
+    check('CSS hides body when .is-collapsed',
+          '.collapsible-section.is-collapsed > .st-sec-body{display:none}' in tpl)
+    check('Refresh + Guide moved out of header into body toolbar (no double-arrow)',
+          # Header should NOT contain a Refresh button anymore for these two cards
+          tpl.count('event.stopPropagation();loadBtComparison()') == 0
+          and tpl.count('event.stopPropagation();loadStrategyFull()') == 0)
+
+    # 2. Manual training endpoints
+    check('/api/training/run/<key> endpoint defined',
+          "@app.route('/api/training/run/<key>'" in app)
+    check('/api/training/run/all endpoint defined',
+          "@app.route('/api/training/run/all'" in app)
+    check('/api/training/jobs endpoint defined',
+          "@app.route('/api/training/jobs'" in app)
+    check('_TRAINER_DISPATCH covers all 8 model keys',
+          all(k in app for k in
+              ("'base':", "'trend':", "'futures':", "'scalping':",
+               "'tft':", "'oft':", "'meta':", "'regime':")))
+    check('_training_jobs cache + cap defined',
+          '_training_jobs' in app and '_TRAINING_JOBS_MAX' in app)
+    check('train endpoints gated by @require_api_key',
+          'def api_training_run_one(' in app
+          and 'def api_training_run_all(' in app
+          and app.split('def api_training_run_one(')[0].rstrip().endswith('@require_api_key'))
+
+    # 3. Manual training UI
+    check('Retrain ALL button wired',
+          'trRetrainAll' in tpl
+          and "'/api/training/run/all'" in tpl)
+    check('Per-row Train button + N selector wired',
+          'trRunOne(' in tpl
+          and 'id="tr-n-' in tpl
+          and 'value="3"' in tpl and 'value="5"' in tpl)
+    check('Training jobs poller updates status pill',
+          'pollTrainingJobs' in tpl
+          and "'/api/training/jobs?limit=" in tpl)
+
+    # 4. ML Health Notes panel
+    check('ML Health Notes section present',
+          'id="st-sec-mlnotes"' in tpl
+          and 'ML Health Notes' in tpl
+          and 'Levers to improve the numbers' in tpl)
+    check('Notes panel describes bucket model',
+          'Pure rule' in tpl and 'ML-driven' in tpl and 'Meta-filtered' in tpl)
+
+    # 5. Bucket classification (backend)
+    check("strategy_full tags each strategy with 'bucket' field",
+          "s['bucket'] = bucket" in app
+          and "'meta_filtered'" in app
+          and "'ml_driven'" in app
+          and "'pure_rule'" in app)
+    check('strategy_registry exposes bucket_for() helper',
+          'def bucket_for(name: str) -> str:' in sr)
+    check('strategy_registry exposes disabled_buckets() reader',
+          'def disabled_buckets()' in sr)
+    check('is_enabled_live / is_enabled_backtest honour disabled_buckets',
+          'if bucket_for(name) in disabled_buckets():' in sr)
+
+    # 6. Per-bucket toggle endpoint
+    check('/api/strategy/bucket POST endpoint exists',
+          "@app.route('/api/strategy/bucket'" in app
+          and 'disabled_buckets' in app
+          and "data/runtime_overrides.json" in app)
+    check('Bucket toggle UI button + handler',
+          'bucketToggle(' in tpl
+          and "fetch('/api/strategy/bucket'" in tpl
+          and 'DISABLE BUCKET' in tpl)
+
+    # 7. Pure-vs-ML comparison panel
+    check('/api/strategy/bucket_compare endpoint exists',
+          "@app.route('/api/strategy/bucket_compare'" in app)
+    check('bucket_compare aggregates WF Sharpe + WF Consistency',
+          "'wf_sharpe_avg':" in app
+          and "'wf_consistency_avg':" in app)
+    check('Pure vs ML panel renders 3 buckets',
+          'id="bcmp-grid"' in tpl
+          and 'function loadBucketCompare(' in tpl
+          and "'pure_rule','ml_driven','meta_filtered'" in tpl)
+    check('renderStrategyTab calls loadBucketCompare()',
+          'loadBucketCompare();' in tpl)
+
+
 def test_phase38_clear_all_suppression():
     """Phase 38 — banner CLEAR ALL was a visual no-op against still-firing
     issues because /api/errors/recent re-runs scan() + scan_status_surfaces()
@@ -3378,6 +3478,7 @@ def main():
     test_phase36_debug_supervisor()
     test_phase37_training_table_and_bt_tooltips()
     test_phase38_clear_all_suppression()
+    test_phase39_pr5_ui_bundle()
 
     if not args.offline:
         test_api(args.url)

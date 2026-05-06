@@ -1382,6 +1382,13 @@ select.field option{background:#0d1628;color:#e2e8f0}
         .st-sec-title{font-size:.72rem;font-weight:700;color:#e2e8f0;text-transform:uppercase;letter-spacing:.06em;flex:1}
         .st-chevron{font-size:.7rem;color:#64748b;transition:transform .22s;margin-left:auto}
         .st-sec.open .st-chevron{transform:rotate(180deg)}
+        /* Collapsible-section: a card whose header click-toggles its body
+           (used by Backtest Comparison + Model Training). The chevron is
+           the ONLY visual collapse cue — Refresh / Guide buttons live in
+           the body toolbar so the header stays clean. */
+        .collapsible-section .collapsible-hdr .st-chevron{transition:transform .22s}
+        .collapsible-section.is-collapsed .st-chevron{transform:rotate(-90deg)}
+        .collapsible-section.is-collapsed > .st-sec-body{display:none}
         .st-sec-body{padding:12px 14px}
         .st-sec-body.st-collapsed{display:none !important}
 
@@ -1421,6 +1428,107 @@ select.field option{background:#0d1628;color:#e2e8f0}
         .bt-th .bt-chev{display:inline-block;width:8px;color:#818cf8;font-size:.55rem;margin-left:2px}
       </style>
 
+      <!-- ── Section: ML Health Notes (static guidance) ─────────────── -->
+      <style>
+        .mlnotes{background:rgba(5,8,22,.45);border:1px solid rgba(148,163,184,.12);border-radius:10px;
+          padding:12px 14px;margin-bottom:10px;font-size:.62rem;line-height:1.6;color:#cbd5e1}
+        .mlnotes h4{margin:0 0 6px;font-size:.7rem;color:#e2e8f0;letter-spacing:.04em}
+        .mlnotes h5{margin:8px 0 4px;font-size:.62rem;color:#a5b4fc;letter-spacing:.04em;text-transform:uppercase}
+        .mlnotes ul{margin:4px 0 0 18px;padding:0}
+        .mlnotes li{margin:2px 0}
+        .mlnotes code{background:rgba(99,102,241,.15);color:#c7d2fe;padding:0 4px;border-radius:3px;font-size:.58rem}
+        .mlnotes .lever{display:inline-block;font-size:.5rem;font-weight:700;padding:1px 6px;border-radius:999px;
+          margin-right:6px;letter-spacing:.04em}
+        .mlnotes .l1{background:rgba(244,114,182,.15);color:#f472b6;border:1px solid rgba(244,114,182,.3)}
+        .mlnotes .l2{background:rgba(251,191,36,.15);color:#fbbf24;border:1px solid rgba(251,191,36,.3)}
+        .mlnotes .l3{background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.3)}
+        .mlnotes .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;margin-top:6px}
+        @media (max-width:960px){.mlnotes .grid2{grid-template-columns:1fr}}
+      </style>
+      <div class="card collapsible-section is-collapsed" id="st-sec-mlnotes" style="margin-bottom:10px">
+        <div class="st-sec-hdr card-header collapsible-hdr" onclick="toggleSection(this)">
+          <span class="st-sec-title">ML Health Notes</span>
+          <span class="chip" style="font-size:.56rem">Read me</span>
+          <span class="st-chevron">▼</span>
+        </div>
+        <div class="st-sec-body">
+          <div class="mlnotes">
+            <h4>How to read these tables (model vs strategy)</h4>
+            <div class="grid2">
+              <div>
+                <h5>Model = signal estimator</h5>
+                Inputs features → outputs <code>P(price moves ≥ X% in N bars)</code>. The model panel measures
+                <b>signal quality</b> (Acc Test, WF Acc, Bull/Bear WR, AUC). It does not know about fees or
+                position size.
+              </div>
+              <div>
+                <h5>Strategy = decision rule</h5>
+                Given a signal (model OR hand-coded indicator), enter, with these stops, this size,
+                this exit. The strategy panel measures <b>PnL truth net of costs</b> (WF Sharpe, WF Consist,
+                MaxDD, PF). Optimise this; the model panel is upstream.
+              </div>
+            </div>
+            <h5>Why model accuracy ≠ strategy win rate</h5>
+            A 53% directional model can yield a 62% Win% strategy or a 38% Win% strategy depending entirely on
+            entry selectivity, R:R, and fees. Scalping RF illustrates this perfectly: 88.8% test accuracy →
+            -1.17 Sharpe strategy, because 1m noise + fees eat thin edges. Always read the
+            <b>WF Acc</b> column on models and <b>WF Sharpe / WF Consist / MaxDD</b> on strategies.
+            <h5>Strategy buckets</h5>
+            <ul>
+              <li><b>Pure rule</b> — no model: SuperTrend, Donchian, Ichimoku, Bollinger, RSI Mean Reversion, MACD, GARCH Vol Sizing, OFI Momentum, Funding Rate Arb…</li>
+              <li><b>ML-driven</b> — 1:1 with a model: Base RF, Trend RF, Scalping RF, Futures Short RF.</li>
+              <li><b>Meta-filtered</b> — primary signal passed through the meta-labeler. Currently producing 0 trades for several variants → filter too tight.</li>
+            </ul>
+            <h5>Levers to improve the numbers (ROI-ranked)</h5>
+            <ul>
+              <li><span class="lever l1">L1 highest</span><b>Cost-aware labels</b> — triple-barrier thresholds must exceed round-trip fees + slippage. Today's labels likely train on noise that won't clear costs.</li>
+              <li><span class="lever l1">L1 highest</span><b>Purged + embargoed walk-forward</b> — already exists in <code>src/utils/purged_kfold.py</code>; not yet wired into all trainers. Standard k-fold leaks future via overlapping label horizons.</li>
+              <li><span class="lever l2">L2 high</span><b>Meta-labeler retrained on post-fee outcome + Kelly sizing on calibrated probs</b>. Current AUC 0.534 is barely above random.</li>
+              <li><span class="lever l2">L2 high</span><b>Regime gating</b> — only run trend strategies in trending regimes. Regime classifier exists; wire as hard <code>if regime in {trend} else skip</code>.</li>
+              <li><span class="lever l2">L2 high</span><b>Feature stationarity</b> — fractional differencing, returns instead of raw price. Avoids non-stationary breakdowns under regime shift.</li>
+              <li><span class="lever l3">L3 medium</span><b>Timeframe rejig for scalping</b> — 1m signal-to-noise is brutal. Resample to 5m or replace with OFT microstructure model.</li>
+              <li><span class="lever l3">L3 medium</span><b>Retire 0-trade <code>*_MetaFiltered</code> variants</b> — meta threshold is too tight. Either retune or remove.</li>
+              <li><span class="lever l3">L3 medium</span><b>Train on Sharpe − λ·turnover, not accuracy</b>. Direct objective alignment.</li>
+            </ul>
+            <h5>Levers that look like improvements but usually aren't</h5>
+            <ul>
+              <li><b>More training time / more iterations</b> — early-stopping already kicks in. More iters overfit further; WF Acc is the bound.</li>
+              <li><b>More recent same-regime data</b> — you have data back to 2017-08 (BTC). 2018 bear, 2020 crash, 2022 bottom are already covered. Adding 2026-Q1 data on top buys little.</li>
+              <li><b>Bigger neural net</b> — TFT and OFT are already complex relative to signal density.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Section: Pure vs ML Comparison ─────────────────────────── -->
+      <style>
+        .bcmp{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+        @media (max-width:960px){.bcmp{grid-template-columns:1fr}}
+        .bcmp-card{background:rgba(5,8,22,.55);border:1px solid rgba(148,163,184,.12);border-radius:9px;padding:11px 13px}
+        .bcmp-card.pure_rule{border-left:4px solid #60a5fa}
+        .bcmp-card.ml_driven{border-left:4px solid #a78bfa}
+        .bcmp-card.meta_filtered{border-left:4px solid #fbbf24}
+        .bcmp-row{display:flex;justify-content:space-between;font-size:.6rem;padding:3px 0;border-bottom:1px solid rgba(148,163,184,.06)}
+        .bcmp-row b{color:#cbd5e1;font-weight:700}
+        .bcmp-hdr{font-size:.78rem;font-weight:800;letter-spacing:.04em;margin-bottom:6px}
+      </style>
+      <div class="card collapsible-section" id="st-sec-bcmp" style="margin-bottom:10px">
+        <div class="st-sec-hdr card-header collapsible-hdr" onclick="toggleSection(this)">
+          <span class="st-sec-title">Pure Rule vs ML-Driven (Aggregate)</span>
+          <span class="chip" id="chip-bcmp" style="font-size:.56rem">—</span>
+          <span class="st-chevron">▼</span>
+        </div>
+        <div class="st-sec-body">
+          <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+            <button onclick="loadBucketCompare()" style="font-size:.58rem;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(99,102,241,.2);color:#818cf8;border:1px solid rgba(99,102,241,.3);font-weight:700">↻ Refresh</button>
+            <span style="font-size:.55rem;color:#64748b">Aggregates from <code>latest_comparison.json</code> (in-sample) + <code>wf_results.json</code> (OOS). The honest comparison is <b>WF Sharpe</b> and <b>WF Consist.</b> — in-sample Sharpe / Win% over-report.</span>
+          </div>
+          <div id="bcmp-grid" class="bcmp">
+            <div class="bcmp-card" style="text-align:center;color:#475569;grid-column:1/-1;padding:14px">Loading…</div>
+          </div>
+        </div>
+      </div>
+
       <!-- ── Section: ML Models ─────────────────────────────────────── -->
       <div class="st-sec open" id="st-sec-ml">
         <div class="st-sec-hdr" onclick="stToggle('st-sec-ml')">
@@ -1452,11 +1560,22 @@ select.field option{background:#0d1628;color:#e2e8f0}
         <div class="st-sec-hdr card-header collapsible-hdr" onclick="toggleSection(this)">
           <span class="st-sec-title">Model Training</span>
           <span class="chip" id="chip-training-count" style="font-size:.56rem">Loading…</span>
-          <button onclick="event.stopPropagation();trToggleHelp()" style="font-size:.58rem;padding:2px 9px;border-radius:5px;cursor:pointer;background:rgba(148,163,184,.12);color:#94a3b8;border:1px solid rgba(148,163,184,.2);margin-left:4px" title="Show 'what good looks like' for ML models">ⓘ Guide</button>
-          <button onclick="event.stopPropagation();loadStrategyFull()" style="font-size:.58rem;padding:2px 9px;border-radius:5px;cursor:pointer;background:rgba(99,102,241,.2);color:#818cf8;border:1px solid rgba(99,102,241,.3);margin-left:4px">↻ Refresh</button>
+          <span class="chip" id="chip-training-jobs" style="font-size:.56rem;display:none">idle</span>
           <span class="st-chevron">▼</span>
         </div>
         <div class="st-sec-body">
+          <!-- Action toolbar: Refresh / Guide / Retrain ALL. Lives in the
+               body so the header stays a single click target for collapse. -->
+          <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+            <button onclick="loadStrategyFull()" style="font-size:.58rem;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(99,102,241,.2);color:#818cf8;border:1px solid rgba(99,102,241,.3);font-weight:700">↻ Refresh</button>
+            <button onclick="trToggleHelp()" style="font-size:.58rem;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(148,163,184,.12);color:#94a3b8;border:1px solid rgba(148,163,184,.2)" title="Show 'what good looks like' for ML models">ⓘ Guide</button>
+            <button onclick="trRetrainAll()" style="font-size:.58rem;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(244,114,182,.18);color:#f472b6;border:1px solid rgba(244,114,182,.35);font-weight:700" title="Run train_all_models.py (all 7 trainers in sequence)">▶ Retrain ALL</button>
+            <span id="tr-jobs-status" style="font-size:.55rem;color:#64748b;font-style:italic">idle</span>
+            <input id="tr-search" type="text" placeholder="Search name / target…"
+                   oninput="trSearch(this.value)"
+                   style="margin-left:auto;font-size:.6rem;padding:3px 8px;border-radius:5px;background:rgba(5,8,22,.6);
+                          color:#e2e8f0;border:1px solid rgba(148,163,184,.18);width:160px">
+          </div>
           <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
             <span style="font-size:.6rem;color:#64748b">Quick filter:</span>
             <button class="tr-pill active" data-filt="all"        onclick="trFilter('all')">All</button>
@@ -1468,10 +1587,6 @@ select.field option{background:#0d1628;color:#e2e8f0}
             <button class="tr-pill"        data-filt="futures"    onclick="trFilter('futures')">Futures</button>
             <button class="tr-pill"        data-filt="scalping"   onclick="trFilter('scalping')">Scalping/1m</button>
             <button class="tr-pill"        data-filt="neural"     onclick="trFilter('neural')">Neural (TFT/OFT)</button>
-            <input id="tr-search" type="text" placeholder="Search name / target…"
-                   oninput="trSearch(this.value)"
-                   style="margin-left:auto;font-size:.6rem;padding:3px 8px;border-radius:5px;background:rgba(5,8,22,.6);
-                          color:#e2e8f0;border:1px solid rgba(148,163,184,.18);width:160px">
           </div>
           <div id="tr-help-panel" style="display:none;margin-bottom:8px;padding:8px 10px;background:rgba(5,8,22,.55);border:1px solid rgba(148,163,184,.12);border-radius:7px;font-size:.55rem;line-height:1.55;color:#94a3b8">
             <div style="font-weight:700;color:#cbd5e1;margin-bottom:4px">What "good" looks like (ML model efficiency)</div>
@@ -1511,10 +1626,11 @@ select.field option{background:#0d1628;color:#e2e8f0}
                   <th class="tr-th" data-col="n_iterations"   onclick="trSort('n_iterations')"   style="text-align:right;padding:5px 6px" title="Boosting rounds (RF/HGBT) or epochs (TFT/OFT). Early-stop is healthier than max.">Iter <span class="tr-chev"></span></th>
                   <th class="tr-th" data-col="symbols_count"  onclick="trSort('symbols_count')"  style="text-align:right;padding:5px 6px" title="Number of distinct symbols this model was trained on.">Syms <span class="tr-chev"></span></th>
                   <th class="tr-th" data-col="target"         onclick="trSort('target')"         style="text-align:left;padding:5px 6px" title="Label / target the model predicts.">Target <span class="tr-chev"></span></th>
+                  <th style="text-align:right;padding:5px 6px;color:#94a3b8;font-weight:700;letter-spacing:.02em;font-size:.6rem" title="Trigger this trainer N times. Runs in background.">Action</th>
                 </tr>
               </thead>
               <tbody id="training-tbody">
-                <tr><td colspan="17" style="text-align:center;color:#475569;padding:12px">Loading…</td></tr>
+                <tr><td colspan="18" style="text-align:center;color:#475569;padding:12px">Loading…</td></tr>
               </tbody>
             </table>
           </div>
@@ -1547,17 +1663,17 @@ select.field option{background:#0d1628;color:#e2e8f0}
       </div>
 
       <!-- ── Backtest Comparison Table ─────────────────────────────────── -->
-      <div class="card st-section collapsible-section" style="margin-top:10px">
+      <div class="card st-section collapsible-section" id="st-sec-backtest" style="margin-top:10px">
         <div class="st-sec-hdr card-header collapsible-hdr" onclick="toggleSection(this)">
           <span class="st-sec-title">Backtest Comparison</span>
           <span class="chip" id="bt-compare-chip" style="font-size:.56rem">—</span>
-          <button onclick="event.stopPropagation();btToggleHelp()" style="font-size:.58rem;padding:2px 9px;border-radius:5px;cursor:pointer;background:rgba(148,163,184,.12);color:#94a3b8;border:1px solid rgba(148,163,184,.2);margin-left:4px" title="Show 'what good looks like' guide">ⓘ Guide</button>
-          <button onclick="event.stopPropagation();loadBtComparison()" style="font-size:.58rem;padding:2px 9px;border-radius:5px;cursor:pointer;background:rgba(99,102,241,.2);color:#818cf8;border:1px solid rgba(99,102,241,.3);margin-left:4px">↻ Refresh</button>
           <span class="st-chevron">▼</span>
         </div>
         <div class="st-sec-body">
           <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
-            <span style="font-size:.6rem;color:#64748b">Quick sort:</span>
+            <button onclick="loadBtComparison()" style="font-size:.58rem;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(99,102,241,.2);color:#818cf8;border:1px solid rgba(99,102,241,.3);font-weight:700">↻ Refresh</button>
+            <button onclick="btToggleHelp()" style="font-size:.58rem;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(148,163,184,.12);color:#94a3b8;border:1px solid rgba(148,163,184,.2)" title="Show 'what good looks like' guide">ⓘ Guide</button>
+            <span style="margin-left:auto;font-size:.6rem;color:#64748b">Quick sort:</span>
             <button class="bt-sort-btn active" data-col="sharpe"     onclick="btSort('sharpe')">Sharpe</button>
             <button class="bt-sort-btn"        data-col="sortino"    onclick="btSort('sortino')">Sortino</button>
             <button class="bt-sort-btn"        data-col="total_pnl_usdt" onclick="btSort('total_pnl_usdt')">PnL</button>
@@ -3006,6 +3122,16 @@ function stToggle(id) {
   body.classList.toggle('st-collapsed');
 }
 
+// Click handler for cards built with .card.collapsible-section + an inner
+// .collapsible-hdr. Walks up to the section root and toggles .is-collapsed,
+// which the CSS hooks for both body display and chevron rotation. Used by
+// Backtest Comparison + Model Training.
+function toggleSection(hdrEl) {
+  if (!hdrEl) return;
+  const sec = hdrEl.closest('.collapsible-section');
+  if (sec) sec.classList.toggle('is-collapsed');
+}
+
 // ─── STRATEGY TAB DATA LOAD ───────────────────────────────────────────────────
 let _stratFull = null;
 
@@ -3022,6 +3148,7 @@ function renderStrategyTab(state) {
   _renderTrainingTable();
   _renderStratCards(_stratFull);
   _renderBtSummary(_stratFull);
+  loadBucketCompare();   // refresh aggregate panel alongside strategies
 }
 
 // ── ML Model Cards ────────────────────────────────────────────────────────────
@@ -3181,7 +3308,7 @@ function _renderTrainingTable() {
   }
 
   if (!filtered.length) {
-    tbody.innerHTML = `<tr><td colspan="17" style="text-align:center;color:#475569;padding:14px">No models match this filter.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="18" style="text-align:center;color:#475569;padding:14px">No models match this filter.</td></tr>`;
     return;
   }
 
@@ -3221,11 +3348,120 @@ function _renderTrainingTable() {
       <td style="text-align:right;color:#94a3b8">${m.n_iterations||'—'}</td>
       <td style="text-align:right;color:#94a3b8">${m.symbols_count||0}</td>
       <td style="color:#64748b;font-size:.58rem">${esc(m.target||'—')}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <select id="tr-n-${esc(m.key)}" style="font-size:.55rem;padding:1px 3px;border-radius:4px;background:rgba(5,8,22,.6);color:#e2e8f0;border:1px solid rgba(148,163,184,.18)" title="Repetitions">
+          <option value="1">×1</option><option value="3">×3</option><option value="5">×5</option><option value="10">×10</option>
+        </select>
+        <button onclick="trRunOne('${esc(m.key)}')" style="font-size:.55rem;padding:2px 7px;border-radius:4px;cursor:pointer;background:rgba(52,211,153,.18);color:#34d399;border:1px solid rgba(52,211,153,.35);font-weight:700;margin-left:3px" title="Train this model now">▶ Train</button>
+      </td>
     </tr>`;
   }).join('');
 }
 
-// ── Strategy Cards grouped by category ───────────────────────────────────────
+// ── Manual training triggers ─────────────────────────────────────────────────
+async function trRunOne(key) {
+  const sel = document.getElementById('tr-n-' + key);
+  const n = sel ? parseInt(sel.value, 10) || 1 : 1;
+  if (!confirm(`Train model "${key}" ${n} time${n>1?'s':''}? Each iteration runs the full trainer in a subprocess (can take 1–30 min depending on the model).`)) return;
+  try {
+    const r = await fetch(`/api/training/run/${encodeURIComponent(key)}`,
+      { method: 'POST', headers: hdrs(), body: JSON.stringify({n}) });
+    const body = await r.json();
+    if (!body.ok) throw new Error(body.error || 'request failed');
+    _trMarkPending(`${key} ×${n} queued`);
+    pollTrainingJobs();
+  } catch(e) {
+    alert('Training trigger failed: ' + (e.message||e));
+  }
+}
+
+async function trRetrainAll() {
+  if (!confirm('Run train_all_models.py now?\n\nThis runs every trainer (base, trend, futures, scalping, TFT, OFT, meta, regime) sequentially. Can take 1–3 hours depending on hardware. Existing models keep working until each new artifact lands.')) return;
+  try {
+    const r = await fetch('/api/training/run/all',
+      { method: 'POST', headers: hdrs() });
+    const body = await r.json();
+    if (!body.ok) throw new Error(body.error || 'request failed');
+    _trMarkPending('Retrain ALL queued');
+    pollTrainingJobs();
+  } catch(e) {
+    alert('Retrain ALL failed: ' + (e.message||e));
+  }
+}
+
+function _trMarkPending(msg) {
+  const pill = $('chip-training-jobs');
+  const inline = $('tr-jobs-status');
+  if (pill) { pill.style.display = ''; pill.textContent = msg; pill.style.color = '#fbbf24'; }
+  if (inline) { inline.textContent = msg; inline.style.color = '#fbbf24'; inline.style.fontStyle = 'italic'; }
+}
+
+let _trJobsTimer = null;
+async function pollTrainingJobs() {
+  try {
+    const r = await fetch('/api/training/jobs?limit=10');
+    const d = await r.json();
+    const jobs = d.jobs || [];
+    const active = jobs.filter(j => j.status === 'queued' || j.status === 'running');
+    const last = jobs[0];  // newest
+    const pill = $('chip-training-jobs');
+    const inline = $('tr-jobs-status');
+    if (active.length) {
+      const j = active[0];
+      const msg = `${j.model} ${j.status} (${j.progress||0}/${j.n||1})`;
+      if (pill) { pill.style.display = ''; pill.textContent = msg; pill.style.color = '#fbbf24'; }
+      if (inline) { inline.textContent = msg; inline.style.color = '#fbbf24'; }
+      if (!_trJobsTimer) _trJobsTimer = setInterval(pollTrainingJobs, 5000);
+    } else {
+      if (_trJobsTimer) { clearInterval(_trJobsTimer); _trJobsTimer = null; }
+      if (last && last.status === 'done')    { if (pill){pill.style.display='';pill.textContent=`${last.model} done`;pill.style.color='#34d399';} if (inline){inline.textContent=`${last.model} done`;inline.style.color='#34d399';} loadStrategyFull(); }
+      else if (last && last.status === 'partial') { if (pill){pill.textContent=`${last.model} partial`;pill.style.color='#fbbf24';} if (inline){inline.textContent=`${last.model} partial — ${last.successes||0}/${last.n||1} ok`;inline.style.color='#fbbf24';} loadStrategyFull(); }
+      else if (last && last.status === 'error')   { if (pill){pill.textContent=`${last.model} ERROR`;pill.style.color='#fb7185';} if (inline){inline.textContent=`${last.model} error: ${(last.errors||[''])[0]||'unknown'}`;inline.style.color='#fb7185';} }
+      else if (!last) { if (pill) pill.style.display='none'; if (inline){inline.textContent='idle';inline.style.color='#64748b';} }
+    }
+  } catch(e) { /* silent */ }
+}
+
+// ── Pure Rule vs ML-Driven aggregate comparison ──────────────────────────────
+async function loadBucketCompare() {
+  const grid = $('bcmp-grid');
+  const chip = $('chip-bcmp');
+  if (chip) chip.textContent = 'Loading…';
+  try {
+    const d = await apiFetch('/api/strategy/bucket_compare');
+    const buckets = d.buckets || [];
+    if (chip) chip.textContent = buckets.map(b => `${b.bucket.replace('_',' ')}=${b.n_strategies}`).join(' · ');
+    if (!grid) return;
+    const order = ['pure_rule','ml_driven','meta_filtered'];
+    const meta = (typeof _BUCKET_META !== 'undefined') ? _BUCKET_META : {};
+    grid.innerHTML = order.map(b => {
+      const x = buckets.find(r => r.bucket === b) || {bucket:b, n_strategies:0};
+      const m = meta[b] || {label:b, col:'#64748b'};
+      const fmt = (v, d=2, suf='') => v == null ? '—' : Number(v).toFixed(d) + suf;
+      const fmtPct = v => v == null ? '—' : (Number(v)*100).toFixed(0) + '%';
+      const sharpeCol = v => v == null ? '#94a3b8' : v >= 1 ? '#34d399' : v >= 0 ? '#fbbf24' : '#fb7185';
+      const ddCol     = v => v == null ? '#94a3b8' : v >= -15 ? '#34d399' : v >= -30 ? '#fbbf24' : '#fb7185';
+      const pnlCol    = v => v == null ? '#94a3b8' : v > 0 ? '#34d399' : v < 0 ? '#fb7185' : '#94a3b8';
+      return `<div class="bcmp-card ${b}">
+        <div class="bcmp-hdr" style="color:${m.col}">${m.label}</div>
+        <div class="bcmp-row"><span>Strategies</span><b>${x.n_strategies||0}</b></div>
+        <div class="bcmp-row"><span>Trades total</span><b>${(x.n_trades_total||0).toLocaleString()}</b></div>
+        <div class="bcmp-row"><span>PnL total</span><b style="color:${pnlCol(x.pnl_total)}">${fmt(x.pnl_total,0)}</b></div>
+        <div class="bcmp-row"><span>Win% avg</span><b>${fmt(x.win_rate_avg,1,'%')}</b></div>
+        <div class="bcmp-row"><span title="In-sample Sharpe — fragile">Sharpe avg <span style="color:#64748b">(IS)</span></span><b style="color:${sharpeCol(x.sharpe_avg)}">${fmt(x.sharpe_avg)}</b></div>
+        <div class="bcmp-row"><span>MaxDD avg</span><b style="color:${ddCol(x.maxdd_avg)}">${fmt(x.maxdd_avg,1,'%')}</b></div>
+        <div class="bcmp-row"><span>Profit Factor avg</span><b>${fmt(x.profit_factor_avg)}</b></div>
+        <div class="bcmp-row"><span title="Most honest robustness signal">WF Sharpe avg <span style="color:#34d399">★</span></span><b style="color:${sharpeCol(x.wf_sharpe_avg)}">${fmt(x.wf_sharpe_avg)}</b></div>
+        <div class="bcmp-row" style="border:none"><span>WF Consist. avg <span style="color:#34d399">★</span></span><b>${fmtPct(x.wf_consistency_avg)}</b></div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    if (grid) grid.innerHTML = `<div class="bcmp-card" style="text-align:center;color:#fb7185;grid-column:1/-1;padding:14px">Error: ${e.message||e}</div>`;
+    if (chip) chip.textContent = 'Error';
+  }
+}
+
+// ── Strategy Cards grouped by bucket → category ──────────────────────────────
 const _GROUP_META = {
   A_Original: {label:'Original Rule-Based',  col:'#60a5fa'},
   B_New:      {label:'New Indicators',        col:'#34d399'},
@@ -3233,6 +3469,39 @@ const _GROUP_META = {
   Filter:     {label:'Signal Filters',        col:'#fbbf24'},
   RiskFilter: {label:'Risk Filters',          col:'#f97316'},
 };
+
+// Bucket → display metadata. Order matters: pure_rule first (baseline),
+// ml_driven next (the comparison), meta_filtered last (often dead-row land).
+const _BUCKET_META = {
+  pure_rule: {
+    label: 'Pure Rule (no ML)',
+    col:   '#60a5fa',
+    desc:  'Hand-coded indicators. Baseline performance — measured against ML.',
+  },
+  ml_driven: {
+    label: 'ML-Driven',
+    col:   '#a78bfa',
+    desc:  'Signal comes from a trained model (Base / Trend / Scalping / Futures Short RF, etc).',
+  },
+  meta_filtered: {
+    label: 'Meta-Filtered',
+    col:   '#fbbf24',
+    desc:  'Primary signal passed through the meta-labeler. Currently 0-trade for several variants → filter too tight.',
+  },
+};
+
+async function bucketToggle(bucket, enabled) {
+  if (!confirm(`${enabled ? 'ENABLE' : 'DISABLE'} bucket "${_BUCKET_META[bucket]?.label || bucket}"?\n\nWhile disabled, every strategy in this bucket is skipped by both the live bot and the backtester. Persists to data/runtime_overrides.json.`)) return;
+  try {
+    const r = await fetch('/api/strategy/bucket',
+      { method: 'POST', headers: hdrs(), body: JSON.stringify({bucket, enabled}) });
+    const body = await r.json();
+    if (!body.ok) throw new Error(body.error || 'request failed');
+    loadStrategyFull();
+  } catch(e) {
+    alert('Bucket toggle failed: ' + (e.message||e));
+  }
+}
 
 function _renderStratCards(data) {
   const cont   = $('body-strat-cards');
@@ -3260,19 +3529,30 @@ function _renderStratCards(data) {
   if (chip) chip.textContent = `${agg.strategies_live||0} live / ${agg.strategies_total||0} total` +
     (hiddenCount ? ` · ${hiddenCount} hidden` : '');
 
-  const groups = {};
+  // Bucket → group → cards. Top-level partition by bucket so the operator
+  // can A/B Pure-rule vs ML-driven at a glance and toggle each bucket.
+  const buckets = {pure_rule:{}, ml_driven:{}, meta_filtered:{}};
   for (const s of strats) {
+    const b = buckets[s.bucket] ? s.bucket : 'pure_rule';
     const g = s.group || 'Other';
-    (groups[g] = groups[g] || []).push(s);
+    (buckets[b][g] = buckets[b][g] || []).push(s);
   }
-
+  const disabledSet = new Set((data.buckets && data.buckets.disabled_buckets) || []);
   const groupOrder = ['A_Original','B_New','ML','Filter','RiskFilter'];
-  const allGroups  = [...groupOrder, ...Object.keys(groups).filter(g => !groupOrder.includes(g))];
+  const bucketOrder = ['pure_rule','ml_driven','meta_filtered'];
 
-  cont.innerHTML = allGroups.filter(g => groups[g]).map(g => {
-    const gm      = _GROUP_META[g] || {label: g, col: '#64748b'};
-    const gStrats = groups[g];
-    const cards = gStrats.map(s => {
+  cont.innerHTML = bucketOrder.map(bucket => {
+    const groupsInBucket = buckets[bucket] || {};
+    const bucketStrats = Object.values(groupsInBucket).flat();
+    if (!bucketStrats.length) return '';
+    const bm = _BUCKET_META[bucket];
+    const liveCount = bucketStrats.filter(s => s.live_enabled).length;
+    const isDisabled = disabledSet.has(bucket);
+    const allGroups = [...groupOrder, ...Object.keys(groupsInBucket).filter(g => !groupOrder.includes(g))];
+    const groupBlocks = allGroups.filter(g => groupsInBucket[g]).map(g => {
+      const gm = _GROUP_META[g] || {label: g, col: '#64748b'};
+      const gStrats = groupsInBucket[g];
+      const cards = gStrats.map(s => {
       const ts  = tradeStats[s.name] || {};
       const ps  = paperStats[s.name] || {};
       const wf  = wfStats[s.name]    || {};
@@ -3370,11 +3650,20 @@ function _renderStratCards(data) {
           </button>
         </div>
       </div>`;
+      }).join('');
+      return `<div class="str-group-hdr" style="color:${gm.col};margin-top:8px;font-size:.6rem">${gm.label} (${gStrats.length})</div>
+        <div class="str-grid">${cards}</div>`;
     }).join('');
-
-    return `<div class="str-group-hdr" style="color:${gm.col}">${gm.label} (${gStrats.length})</div>
-      <div class="str-grid">${cards}</div>`;
-  }).join('');
+    return `<div class="bucket-section ${isDisabled?'is-disabled':''}" style="margin-bottom:14px;padding:10px 12px;border:1px solid rgba(148,163,184,.15);border-left:4px solid ${bm.col};border-radius:9px;background:rgba(5,8,22,.35)${isDisabled?';opacity:.55':''}">
+        <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:6px">
+          <span style="font-size:.78rem;font-weight:800;color:${bm.col};letter-spacing:.04em">${bm.label}</span>
+          <span class="chip" style="font-size:.55rem">${bucketStrats.length} strats · ${liveCount} live${isDisabled?' · DISABLED':''}</span>
+          <button onclick="bucketToggle('${bucket}', ${isDisabled})" style="font-size:.56rem;font-weight:700;padding:3px 10px;border-radius:5px;cursor:pointer;background:${isDisabled?'rgba(52,211,153,.18);color:#34d399;border:1px solid rgba(52,211,153,.35)':'rgba(251,113,133,.15);color:#fb7185;border:1px solid rgba(251,113,133,.3)'};margin-left:auto" title="${isDisabled?'Re-enable':'Stop using'} every strategy in this bucket">${isDisabled?'▶ ENABLE BUCKET':'⊘ DISABLE BUCKET'}</button>
+        </div>
+        <div style="font-size:.55rem;color:#64748b;margin-bottom:4px">${bm.desc}</div>
+        ${groupBlocks}
+      </div>`;
+  }).filter(Boolean).join('');
 }
 
 // ── Backtest summary banner (fee drag context) ────────────────────────────────

@@ -3,6 +3,8 @@ import sys
 import threading
 import subprocess
 import re
+import time
+import uuid
 from functools import wraps
 from flask import Flask, render_template, jsonify, request
 from dotenv import load_dotenv
@@ -1357,10 +1359,44 @@ def strategy_full():
         except Exception:
             pass
 
+    # ── Bucket classification for strategies ──────────────────────────────────
+    # Three exclusive buckets:
+    #   meta_filtered: name ends with _MetaFiltered (passes another signal
+    #                  through the meta-labeler — bucket-disable kills these
+    #                  even if the underlying primary is enabled).
+    #   ml_driven:     uses any model artifact (non-empty 'models' list, or
+    #                  the group is 'ML' which the registry already tags).
+    #   pure_rule:     everything else (RSI, MACD, BB, VWAP, Donchian, OFI…).
+    # Computed here so the registry doesn't need a new column and so any
+    # rename / addition automatically buckets correctly.
+    bucket_overrides = read_json('data/runtime_overrides.json',
+                                 default={}) or {}
+    disabled_buckets = set(bucket_overrides.get('disabled_buckets') or [])
+    for s in strategies:
+        nm = s.get('name', '') or ''
+        models_used = s.get('models') or []
+        group = s.get('group', '')
+        if nm.endswith('_MetaFiltered'):
+            bucket = 'meta_filtered'
+        elif models_used or group == 'ML':
+            bucket = 'ml_driven'
+        else:
+            bucket = 'pure_rule'
+        s['bucket'] = bucket
+        s['bucket_disabled'] = bucket in disabled_buckets
+
     # ── Aggregate ──────────────────────────────────────────────────────────────
     trained_count = sum(1 for m in ml_models if m['model_exists'])
     today_count   = sum(1 for m in ml_models if m.get('runs_today'))
-    live_count    = sum(1 for s in strategies if s.get('live_enabled'))
+    live_count    = sum(1 for s in strategies
+                       if s.get('live_enabled') and not s.get('bucket_disabled'))
+    bucket_counts: dict[str, int] = {}
+    bucket_live:   dict[str, int] = {}
+    for s in strategies:
+        b = s.get('bucket', 'pure_rule')
+        bucket_counts[b] = bucket_counts.get(b, 0) + 1
+        if s.get('live_enabled') and not s.get('bucket_disabled'):
+            bucket_live[b] = bucket_live.get(b, 0) + 1
 
     return jsonify({
         'ml_models':   ml_models,
@@ -1369,6 +1405,11 @@ def strategy_full():
         'paper_stats': paper_stats,
         'wf_stats':    wf_stats,
         'summary':     summary,
+        'buckets': {
+            'counts':           bucket_counts,
+            'live':             bucket_live,
+            'disabled_buckets': sorted(disabled_buckets),
+        },
         'aggregate': {
             'models_trained':       trained_count,
             'models_trained_today': today_count,
@@ -2181,6 +2222,243 @@ def db_strategy_history():
         return jsonify({'rows': rows, 'strategy': strategy, 'days': days})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# ─── Bucket aggregate comparison (Pure rule vs ML-driven vs Meta-filtered) ───
+@app.route('/api/strategy/bucket_compare', methods=['GET'])
+def api_strategy_bucket_compare():
+    """Aggregate WF Sharpe, WF consistency, Win%, MaxDD, total trades, total
+    PnL per bucket. Pulls from data/backtest/latest_comparison.json (in-sample)
+    and data/backtest/wf_results.json (out-of-sample). Drives the
+    'Pure vs ML' card on the Strategy tab."""
+    import json as _j
+    from src.engine import strategy_registry as _sr
+    bt_path = _PROJECT_ROOT / 'data' / 'backtest' / 'latest_comparison.json'
+    wf_path = _PROJECT_ROOT / 'data' / 'backtest' / 'wf_results.json'
+    bt_rows = _j.loads(bt_path.read_text()) if bt_path.exists() else []
+    wf_rows = _j.loads(wf_path.read_text()) if wf_path.exists() else []
+    # Build label → registry name map (latest_comparison uses labels)
+    label_to_key: dict[str, str] = {}
+    for nm, info in _sr.REGISTRY.items():
+        label_to_key[info.get('label', nm)] = nm
+
+    buckets: dict[str, dict] = {
+        b: {'bucket': b, 'n_strategies': 0, 'n_trades_total': 0, 'pnl_total': 0.0,
+            'win_rate_sum': 0.0, 'win_rate_n': 0,
+            'sharpe_sum': 0.0, 'sharpe_n': 0,
+            'maxdd_sum': 0.0, 'maxdd_n': 0,
+            'pf_sum': 0.0, 'pf_n': 0,
+            'wf_sharpe_sum': 0.0, 'wf_sharpe_n': 0,
+            'wf_consist_sum': 0.0, 'wf_consist_n': 0}
+        for b in ('pure_rule', 'ml_driven', 'meta_filtered')
+    }
+
+    def _add(b: str, key: str, val, count_key: str, sum_key: str):
+        if val is None: return
+        try: f = float(val)
+        except (TypeError, ValueError): return
+        buckets[b][sum_key] += f
+        buckets[b][count_key] += 1
+
+    for r in bt_rows:
+        raw = (r.get('strategy') or '').strip()
+        # latest_comparison rows look like "A_RSI_MeanReversion" with prefix
+        clean = re.sub(r'^[AB]_', '', raw)
+        reg_key = label_to_key.get(clean, clean)
+        bucket = _sr.bucket_for(reg_key)
+        if bucket not in buckets: continue
+        buckets[bucket]['n_strategies'] += 1
+        buckets[bucket]['n_trades_total'] += int(r.get('n_trades') or 0)
+        buckets[bucket]['pnl_total']     += float(r.get('total_pnl_usdt') or 0.0)
+        _add(bucket, reg_key, r.get('win_rate_pct'),       'win_rate_n',  'win_rate_sum')
+        _add(bucket, reg_key, r.get('sharpe'),             'sharpe_n',    'sharpe_sum')
+        _add(bucket, reg_key, r.get('max_drawdown_pct'),   'maxdd_n',     'maxdd_sum')
+        _add(bucket, reg_key, r.get('profit_factor'),      'pf_n',        'pf_sum')
+
+    for r in wf_rows:
+        reg_key = (r.get('strategy') or '').strip()
+        bucket = _sr.bucket_for(reg_key)
+        if bucket not in buckets: continue
+        _add(bucket, reg_key, r.get('wf_mean_sharpe'),  'wf_sharpe_n',  'wf_sharpe_sum')
+        _add(bucket, reg_key, r.get('wf_consistency'),  'wf_consist_n', 'wf_consist_sum')
+
+    out = []
+    for b, x in buckets.items():
+        avg = lambda s, n: round(x[s] / x[n], 3) if x[n] else None
+        out.append({
+            'bucket':           b,
+            'n_strategies':     x['n_strategies'],
+            'n_trades_total':   x['n_trades_total'],
+            'pnl_total':        round(x['pnl_total'], 2),
+            'win_rate_avg':     avg('win_rate_sum',  'win_rate_n'),
+            'sharpe_avg':       avg('sharpe_sum',    'sharpe_n'),
+            'maxdd_avg':        avg('maxdd_sum',     'maxdd_n'),
+            'profit_factor_avg':avg('pf_sum',        'pf_n'),
+            'wf_sharpe_avg':    avg('wf_sharpe_sum', 'wf_sharpe_n'),
+            'wf_consistency_avg': avg('wf_consist_sum', 'wf_consist_n'),
+        })
+    return jsonify({'buckets': out})
+
+
+# ─── Bucket disable toggle ───────────────────────────────────────────────────
+_VALID_BUCKETS = ('pure_rule', 'ml_driven', 'meta_filtered')
+
+
+@app.route('/api/strategy/bucket', methods=['POST'])
+@require_api_key
+def api_strategy_bucket_toggle():
+    """Enable / disable an entire strategy bucket. Persists to
+    data/runtime_overrides.json under the 'disabled_buckets' key. The bot
+    and backtester read this list before activating a strategy."""
+    body = request.get_json(silent=True) or {}
+    bucket = (body.get('bucket') or '').strip()
+    enabled = bool(body.get('enabled', True))
+    if bucket not in _VALID_BUCKETS:
+        return jsonify({'ok': False,
+                        'error': f'invalid bucket: {bucket}',
+                        'valid': list(_VALID_BUCKETS)}), 400
+    overrides = read_json('data/runtime_overrides.json', default={}) or {}
+    if not isinstance(overrides, dict):
+        overrides = {}
+    disabled = set(overrides.get('disabled_buckets') or [])
+    if enabled:
+        disabled.discard(bucket)
+    else:
+        disabled.add(bucket)
+    overrides['disabled_buckets'] = sorted(disabled)
+    write_json('data/runtime_overrides.json', overrides)
+    return jsonify({'ok': True, 'bucket': bucket, 'enabled': enabled,
+                    'disabled_buckets': overrides['disabled_buckets']})
+
+
+# ─── Manual training triggers ────────────────────────────────────────────────
+# Per-process job log. Capped at _TRAINING_JOBS_MAX so it can't grow forever
+# even if someone hammers the Train button. Keyed by job_id (uuid hex).
+_training_jobs: dict[str, dict] = {}
+_training_jobs_lock = threading.Lock()
+_TRAINING_JOBS_MAX = 50
+
+# Maps the model key shown in the UI to the (module, callable) the trainer
+# subprocess invokes. Each callable runs the full training pipeline and
+# writes the matching meta JSON + model artifact under models/.
+_TRAINER_DISPATCH = {
+    'base':     ('src.engine.train_model',          'train_model'),
+    'trend':    ('src.engine.train_trend_model',    'train_trend_model'),
+    'futures':  ('src.engine.train_futures_model',  'train_futures_model'),
+    'scalping': ('src.engine.train_scalping_model', 'train_scalping_model'),
+    'tft':      ('src.engine.train_tft_model',      'train_tft_model'),
+    # OFT lives in src/training/oft_trainer.py with main() entry point.
+    'oft':      ('src.training.oft_trainer',        'main'),
+    'meta':     ('src.engine.train_meta_labeler',   'train_meta_labeler'),
+    # Regime classifier currently retrains as part of train_all; no
+    # standalone callable. Falling back to train_all for that key.
+    'regime':   ('src.engine.train_all_models',     'train_all'),
+    'all':      ('src.engine.train_all_models',     'train_all'),
+}
+
+
+def _record_job(job_id: str, **fields) -> None:
+    with _training_jobs_lock:
+        e = _training_jobs.get(job_id) or {'job_id': job_id}
+        e.update(fields)
+        _training_jobs[job_id] = e
+        # Cap: drop the oldest by created_at if over.
+        if len(_training_jobs) > _TRAINING_JOBS_MAX:
+            oldest = min(_training_jobs.values(),
+                         key=lambda x: x.get('created_at', 0))
+            _training_jobs.pop(oldest['job_id'], None)
+
+
+def _run_trainer_blocking(job_id: str, key: str, n: int) -> None:
+    """Worker thread body: invoke the matching trainer N times sequentially."""
+    spec = _TRAINER_DISPATCH.get(key)
+    if not spec:
+        _record_job(job_id, status='error',
+                    error=f'unknown model key {key}',
+                    finished_at=time.time())
+        return
+    module_path, fn_name = spec
+    successes, errors = 0, []
+    _record_job(job_id, status='running', started_at=time.time(),
+                progress=0, total=n)
+    for i in range(n):
+        # Spawn a subprocess instead of calling in-process — keeps the bot
+        # / dashboard memory clean and lets each trainer manage its own
+        # CUDA context. Matches the existing close_all retrain pattern.
+        cmd = [
+            sys.executable, '-c',
+            f'import {module_path} as m; '
+            f'fn = getattr(m, {fn_name!r}); fn()',
+        ]
+        try:
+            r = subprocess.run(cmd, cwd=project_root,
+                               capture_output=True, timeout=3600)
+            if r.returncode == 0:
+                successes += 1
+            else:
+                errors.append((r.stderr or b'')[-400:].decode('utf-8', 'replace'))
+        except subprocess.TimeoutExpired:
+            errors.append(f'iteration {i+1} timed out (>1h)')
+        except Exception as exc:
+            errors.append(f'iteration {i+1} crashed: {type(exc).__name__}: {exc}')
+        _record_job(job_id, progress=i + 1)
+    _record_job(job_id,
+                status='done' if not errors else ('partial' if successes else 'error'),
+                successes=successes, errors=errors[-3:],
+                finished_at=time.time())
+
+
+@app.route('/api/training/run/<key>', methods=['POST'])
+@require_api_key
+def api_training_run_one(key: str):
+    """Kick off a training run for one model key. Body or query: n=<int>."""
+    if key not in _TRAINER_DISPATCH:
+        return jsonify({'ok': False,
+                        'error': f'unknown model key: {key}',
+                        'valid': sorted(_TRAINER_DISPATCH.keys())}), 400
+    body = request.get_json(silent=True) or {}
+    try:
+        n = int(body.get('n') or request.args.get('n') or 1)
+    except (TypeError, ValueError):
+        n = 1
+    n = max(1, min(n, 20))   # clamp so a stray 1000 doesn't pin a CPU all day
+    job_id = uuid.uuid4().hex[:12]
+    _record_job(job_id, model=key, n=n,
+                status='queued', created_at=time.time())
+    threading.Thread(
+        target=_run_trainer_blocking,
+        args=(job_id, key, n),
+        daemon=True, name=f'train-{key}-{job_id}',
+    ).start()
+    return jsonify({'ok': True, 'job_id': job_id, 'model': key, 'n': n})
+
+
+@app.route('/api/training/run/all', methods=['POST'])
+@require_api_key
+def api_training_run_all():
+    """Run train_all_models.py once — the canonical full-pipeline retrain."""
+    job_id = uuid.uuid4().hex[:12]
+    _record_job(job_id, model='all', n=1,
+                status='queued', created_at=time.time())
+    threading.Thread(
+        target=_run_trainer_blocking,
+        args=(job_id, 'all', 1),
+        daemon=True, name=f'train-all-{job_id}',
+    ).start()
+    return jsonify({'ok': True, 'job_id': job_id, 'model': 'all', 'n': 1})
+
+
+@app.route('/api/training/jobs', methods=['GET'])
+def api_training_jobs():
+    """Most-recent N training jobs, newest first. Used by the status pill."""
+    try:
+        limit = int(request.args.get('limit', 20))
+    except (TypeError, ValueError):
+        limit = 20
+    with _training_jobs_lock:
+        rows = list(_training_jobs.values())
+    rows.sort(key=lambda x: x.get('created_at', 0), reverse=True)
+    return jsonify({'jobs': rows[:limit], 'total': len(rows)})
 
 
 @app.route('/api/db/training_history')
