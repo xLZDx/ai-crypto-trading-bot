@@ -2447,6 +2447,89 @@ def test_phase36_debug_supervisor():
         check('supervisor smoke test', False, str(e))
 
 
+def test_phase41_pr2_trainer_multi_tf():
+    """Phase 41 — PR 2 trainer multi-timeframe refactor:
+       - Each tabular trainer accepts timeframe= kwarg
+       - Per-TF artifacts via src/utils/model_paths.py + legacy fallback
+       - train_all_models.py loops over per-key TF lists
+       - Dashboard ml_models surfaces additional per-TF rows
+       - /api/training/run/<key> honors a tf body parameter
+    """
+    print('\n[Phase 41 — PR 2 trainer multi-TF refactor]')
+
+    # 1. model_paths helper
+    mp_path = os.path.join(BASE_DIR, 'src', 'utils', 'model_paths.py')
+    check('src/utils/model_paths.py exists', os.path.exists(mp_path))
+    mp_src = open(mp_path, encoding='utf-8').read()
+    check('model_paths.KEYS frozenset has all 8',
+          'KEYS = frozenset({' in mp_src
+          and all(k in mp_src for k in
+                  ('"base"', '"trend"', '"futures"', '"scalping"',
+                   '"tft"', '"oft"', '"meta"', '"regime"')))
+    check('CANONICAL_TF maps each key to a default',
+          'CANONICAL_TF: dict[str, str]' in mp_src
+          and '"base":     "1h"' in mp_src
+          and '"scalping": "1m"' in mp_src)
+    check('artifact_paths returns per-TF + legacy + is_canonical',
+          'def artifact_paths(' in mp_src
+          and '"is_canonical"' in mp_src
+          and "'legacy_model'" in mp_src or '"legacy_model"' in mp_src)
+    check('list_per_tf_artifacts() enumerates on-disk variants',
+          'def list_per_tf_artifacts(' in mp_src)
+
+    # 2. Each refactored trainer accepts timeframe=
+    for fname, fn in (
+        ('train_model.py',          'def train_model('),
+        ('train_trend_model.py',    'def train_trend_model('),
+        ('train_futures_model.py',  'def train_futures_model('),
+        ('train_scalping_model.py', 'def train_scalping_model('),
+        ('train_meta_labeler.py',   'def train_meta_labeler('),
+    ):
+        src = open(os.path.join(BASE_DIR, 'src', 'engine', fname),
+                   encoding='utf-8').read()
+        check(f'{fname} signature accepts timeframe=',
+              f"{fn}timeframe: str = '" in src or
+              f"{fn}timeframe='" in src)
+        check(f'{fname} writes via artifact_paths()',
+              'from src.utils.model_paths import artifact_paths' in src
+              and 'paths = artifact_paths(' in src)
+        check(f'{fname} dual-writes legacy when canonical TF',
+              "if paths['is_canonical']:" in src
+              and "joblib.dump(calibrated, paths['legacy_model'])" in src)
+        check(f'{fname} CLI argparse exposes --timeframe',
+              "ap.add_argument(\"--timeframe\"" in src)
+
+    # 3. train_all_models.py loops per-key
+    train_all_src = open(os.path.join(BASE_DIR, 'src', 'engine',
+                                       'train_all_models.py'),
+                         encoding='utf-8').read()
+    check('train_all has DEFAULT_PER_KEY_TFS map',
+          'DEFAULT_PER_KEY_TFS' in train_all_src
+          and "'base':" in train_all_src and "'1h', '4h', '1d'" in train_all_src)
+    check('train_all has _train_loop helper',
+          'def _train_loop(' in train_all_src
+          and 'fn(timeframe=tf)' in train_all_src)
+
+    # 4. Dashboard surfaces per-TF rows
+    app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
+               encoding='utf-8').read()
+    check('strategy_full enumerates per-TF artifacts via list_per_tf_artifacts',
+          'list_per_tf_artifacts as _list_per_tf' in app)
+    check('per-TF rows carry parent_key / tf / is_canonical',
+          "'parent_key':" in app and "'tf':             tf" in app
+          and "'is_canonical':   False" in app)
+
+    # 5. _TRAINER_DISPATCH supports tf parameter
+    check('_run_trainer_blocking accepts tf argument',
+          'def _run_trainer_blocking(job_id: str, key: str, n: int,' in app
+          and 'tf: str | None = None' in app)
+    check('subprocess passes timeframe= kwarg into trainer',
+          'kw = f"timeframe={tf!r}" if tf else ""' in app)
+    check('/api/training/run/<key> validates tf body param',
+          "tf = body.get('tf')" in app
+          and "tf not in ('1m', '5m', '15m', '1h', '4h', '1d', '1w', '1mo')" in app)
+
+
 def test_phase40_pr1_data_coverage_resample():
     """Phase 40 — PR 1 data backfill foundation: audit module, 1s→higher TF
     resampler, dashboard endpoints, and Data Coverage UI panel.
@@ -3571,6 +3654,7 @@ def main():
     test_phase38_clear_all_suppression()
     test_phase39_pr5_ui_bundle()
     test_phase40_pr1_data_coverage_resample()
+    test_phase41_pr2_trainer_multi_tf()
 
     if not args.offline:
         test_api(args.url)

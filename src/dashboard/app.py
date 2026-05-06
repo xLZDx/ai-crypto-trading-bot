@@ -1246,7 +1246,80 @@ def strategy_full():
             'age_s':          int(age_s) if age_s is not None else None,
             'runs_today':     runs_today,
             'total_runs_min': total_runs_min,
+            'is_canonical':   True,   # this row is the legacy/canonical TF
         })
+
+    # ── Multi-TF model variants ────────────────────────────────────────────────
+    # The canonical rows above represent the legacy artifact per key (1h for
+    # most, 1m for scalping). PR 2 adds <key>_<tf>_*.{joblib,json} alongside
+    # the legacy file when trainers are run at non-canonical TFs. Enumerate
+    # each per-TF artifact and add one extra row per (key, tf) so the
+    # Stability comparison view (PR 4) and the Model Training table can
+    # surface them. Keys map to display labels via _ML.
+    try:
+        from src.utils.model_paths import (
+            list_per_tf_artifacts as _list_per_tf,
+            CANONICAL_TF as _CANONICAL_TF,
+        )
+        per_key_label = {k: (lbl, icon, mkt)
+                         for k, _mf, lbl, _mfile, icon, mkt in _ML}
+        for key in per_key_label:
+            for tf, mp, mtp in _list_per_tf(key):
+                if tf == _CANONICAL_TF.get(key):
+                    # Skip — already represented by the legacy row above.
+                    continue
+                m: dict = {}
+                if mtp.exists():
+                    try: m = _json.loads(mtp.read_text())
+                    except Exception: pass
+                acc_p  = _to_pct(m.get('accuracy'))
+                long_p = _to_pct(m.get('long_accuracy', 0)) or 0.0
+                shrt_p = _to_pct(m.get('short_accuracy', 0)) or 0.0
+                wf_p   = _to_pct(m.get('walk_forward_mean_acc'))
+                lbl, icon, mkt = per_key_label[key]
+                try:
+                    age_v = _now_s - mtp.stat().st_mtime if mtp.exists() else (
+                        _now_s - mp.stat().st_mtime if mp.exists() else None
+                    )
+                except Exception:
+                    age_v = None
+                ml_models.append({
+                    'key':            f'{key}_{tf}',
+                    'parent_key':     key,
+                    'tf':             tf,
+                    'label':          f'{lbl} @ {tf}',
+                    'icon':           icon,
+                    'market':         mkt,
+                    'model_exists':   mp.exists(),
+                    'accuracy':       round(acc_p, 2) if acc_p is not None else None,
+                    'accuracy_test':  round(acc_p, 2) if acc_p is not None else None,
+                    'accuracy_walk_forward': round(wf_p, 2) if wf_p is not None else None,
+                    'accuracy_warning': None,
+                    'long_accuracy':  round(long_p, 2),
+                    'short_accuracy': round(shrt_p, 2),
+                    'directionless':  (key == 'meta'),
+                    'auc_roc':        round(float(m['auc_roc']), 4) if m.get('auc_roc') is not None else None,
+                    'win_precision':  _to_pct(m.get('win_precision')),
+                    'win_rate_pct':   _to_pct(m.get('win_rate_pct')),
+                    'n_samples':      m.get('n_samples'),
+                    'n_train':        m.get('n_train'),
+                    'n_test':         m.get('n_test'),
+                    'n_features':     m.get('n_features'),
+                    'n_iterations':   m.get('n_iterations'),
+                    'symbols':        m.get('symbols', []),
+                    'symbols_count':  len(m.get('symbols', []) or []),
+                    'timeframe':      tf,
+                    'last_trained':   m.get('last_trained', ''),
+                    'target':         m.get('target', ''),
+                    'age_s':          int(age_v) if age_v is not None else None,
+                    'runs_today':     1 if (age_v is not None and age_v <= 86400) else 0,
+                    'total_runs_min': 1 if mp.exists() else 0,
+                    'is_canonical':   False,
+                })
+    except Exception as _exc:
+        # Multi-TF enumeration is best-effort; legacy rows are still served.
+        import logging as _lg
+        _lg.getLogger(__name__).debug("multi-TF enum failed: %s", _exc)
 
     # ── Strategy registry ──────────────────────────────────────────────────────
     try:
@@ -2369,8 +2442,11 @@ def _record_job(job_id: str, **fields) -> None:
             _training_jobs.pop(oldest['job_id'], None)
 
 
-def _run_trainer_blocking(job_id: str, key: str, n: int) -> None:
-    """Worker thread body: invoke the matching trainer N times sequentially."""
+def _run_trainer_blocking(job_id: str, key: str, n: int,
+                          tf: str | None = None) -> None:
+    """Worker thread body: invoke the matching trainer N times sequentially.
+    tf — optional per-TF override (defaults to the trainer's own default).
+    Used for manual per-TF training from the dashboard."""
     spec = _TRAINER_DISPATCH.get(key)
     if not spec:
         _record_job(job_id, status='error',
@@ -2380,15 +2456,16 @@ def _run_trainer_blocking(job_id: str, key: str, n: int) -> None:
     module_path, fn_name = spec
     successes, errors = 0, []
     _record_job(job_id, status='running', started_at=time.time(),
-                progress=0, total=n)
+                progress=0, total=n, tf=tf)
     for i in range(n):
         # Spawn a subprocess instead of calling in-process — keeps the bot
         # / dashboard memory clean and lets each trainer manage its own
         # CUDA context. Matches the existing close_all retrain pattern.
+        kw = f"timeframe={tf!r}" if tf else ""
         cmd = [
             sys.executable, '-c',
             f'import {module_path} as m; '
-            f'fn = getattr(m, {fn_name!r}); fn()',
+            f'fn = getattr(m, {fn_name!r}); fn({kw})',
         ]
         try:
             r = subprocess.run(cmd, cwd=project_root,
@@ -2411,7 +2488,13 @@ def _run_trainer_blocking(job_id: str, key: str, n: int) -> None:
 @app.route('/api/training/run/<key>', methods=['POST'])
 @require_api_key
 def api_training_run_one(key: str):
-    """Kick off a training run for one model key. Body or query: n=<int>."""
+    """Kick off a training run for one model key.
+    Body / query params:
+      n  — repetitions (default 1, clamped 1..20)
+      tf — optional timeframe (5m, 15m, 1h, 4h, 1d, 1w, 1mo). Default is
+           the trainer's own default. Passed straight through as the
+           timeframe= kwarg, so 'base @ 4h' writes models/base_4h_*.
+    """
     if key not in _TRAINER_DISPATCH:
         return jsonify({'ok': False,
                         'error': f'unknown model key: {key}',
@@ -2422,15 +2505,18 @@ def api_training_run_one(key: str):
     except (TypeError, ValueError):
         n = 1
     n = max(1, min(n, 20))   # clamp so a stray 1000 doesn't pin a CPU all day
+    tf = body.get('tf') or request.args.get('tf') or None
+    if tf and tf not in ('1m', '5m', '15m', '1h', '4h', '1d', '1w', '1mo'):
+        return jsonify({'ok': False, 'error': f'invalid tf: {tf}'}), 400
     job_id = uuid.uuid4().hex[:12]
-    _record_job(job_id, model=key, n=n,
+    _record_job(job_id, model=key, n=n, tf=tf,
                 status='queued', created_at=time.time())
     threading.Thread(
         target=_run_trainer_blocking,
-        args=(job_id, key, n),
-        daemon=True, name=f'train-{key}-{job_id}',
+        args=(job_id, key, n, tf),
+        daemon=True, name=f'train-{key}-{tf or "default"}-{job_id}',
     ).start()
-    return jsonify({'ok': True, 'job_id': job_id, 'model': key, 'n': n})
+    return jsonify({'ok': True, 'job_id': job_id, 'model': key, 'n': n, 'tf': tf})
 
 
 @app.route('/api/training/run/all', methods=['POST'])

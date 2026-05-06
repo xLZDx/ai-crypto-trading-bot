@@ -126,7 +126,11 @@ def _build_signal_dataset(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
     return df_feat
 
 
-def train_meta_labeler():
+def train_meta_labeler(timeframe: str = '1h'):
+    """Train the meta-labeler classifier at a given timeframe. The
+    meta-labeler operates on signals from primary strategies/models, so
+    its TF should match the primary it filters (default 1h matches the
+    base/trend/futures models)."""
     raw_dir = os.path.join(PROJECT_ROOT, 'data', 'raw')
     models_dir = os.path.join(PROJECT_ROOT, 'models')
     os.makedirs(models_dir, exist_ok=True)
@@ -141,7 +145,7 @@ def train_meta_labeler():
     all_frames = []
     for sym in symbols:
         loaded = False
-        for fname in [f'{sym}_1h.csv.gz', f'{sym}_spot_1h.csv.gz']:
+        for fname in [f'{sym}_{timeframe}.csv.gz', f'{sym}_spot_{timeframe}.csv.gz']:
             fpath = os.path.join(raw_dir, fname)
             if not os.path.exists(fpath):
                 continue
@@ -243,32 +247,46 @@ def train_meta_labeler():
         log.info("Meta-labeler | Accuracy: %.2f%% | AUC: %.3f | Win precision: %.1f%%",
                  accuracy * 100, auc, precision_win)
 
-    model_path = os.path.join(models_dir, 'meta_labeler.joblib')
-    joblib.dump(calibrated, model_path)
-    log.info("Meta-labeler saved -> %s", model_path)
-
+    # ── Persist via canonical model_paths helper ──────────────────────────
+    from src.utils.model_paths import artifact_paths
+    from src.utils.safe_json import write_json
     from datetime import datetime, timezone
-    meta_path = os.path.join(models_dir, 'meta_labeler_meta.json')
-    with open(meta_path, 'w') as f:
-        json.dump({
-            "model": "Meta-Labeler (HistGBT + Calibrated)",
-            "accuracy": accuracy * 100,
-            "auc_roc": auc,
-            "win_precision": precision_win,
-            "confidence_threshold": 0.60,
-            "n_samples": len(combined),
-            "n_train": calib_split,
-            "n_test": len(X_test),
-            "n_features": len(META_FEATURES),
-            "win_rate_pct": round(float(y.mean()) * 100, 1),
-            "symbols": symbols,
-            "timeframe": "1h",
-            "walk_forward_mean_acc": round(_wf_mean_acc, 2),
-            "walk_forward_std_acc":  round(_wf_std_acc,  2),
-            "walk_forward_folds":    len(_wf_fold_accs),
-            "last_trained": datetime.now(timezone.utc).isoformat()
-        }, f)
+
+    paths = artifact_paths('meta', timeframe)
+    paths['model'].parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(calibrated, paths['model'])
+    log.info("Meta-labeler saved -> %s", paths['model'])
+
+    meta = {
+        "model": "Meta-Labeler (HistGBT + Calibrated)",
+        "accuracy": accuracy * 100,
+        "auc_roc": auc,
+        "win_precision": precision_win,
+        "confidence_threshold": 0.60,
+        "n_samples": len(combined),
+        "n_train": calib_split,
+        "n_test": len(X_test),
+        "n_features": len(META_FEATURES),
+        "win_rate_pct": round(float(y.mean()) * 100, 1),
+        "symbols": symbols,
+        "timeframe": timeframe,
+        "walk_forward_mean_acc": round(_wf_mean_acc, 2),
+        "walk_forward_std_acc":  round(_wf_std_acc,  2),
+        "walk_forward_folds":    len(_wf_fold_accs),
+        "last_trained": datetime.now(timezone.utc).isoformat()
+    }
+    write_json(str(paths['meta']), meta)
+    if paths['is_canonical']:
+        joblib.dump(calibrated, paths['legacy_model'])
+        write_json(str(paths['legacy_meta']), meta)
+        log.info("Also wrote legacy artifacts -> %s / %s",
+                 paths['legacy_model'].name, paths['legacy_meta'].name)
 
 
 if __name__ == "__main__":
-    train_meta_labeler()
+    import argparse
+    ap = argparse.ArgumentParser(description="Train the meta-labeler")
+    ap.add_argument("--timeframe", default="1h",
+                    choices=["1m", "5m", "15m", "1h", "4h", "1d", "1w", "1mo"])
+    args = ap.parse_args()
+    train_meta_labeler(timeframe=args.timeframe)

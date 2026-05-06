@@ -99,7 +99,13 @@ def prepare_trend_data(filepath):
     return df
 
 
-def train_trend_model():
+def train_trend_model(timeframe: str = '1h'):
+    """Train the trend-following classifier at a given timeframe.
+
+    timeframe — drives both the input file and the output artifact name
+    (per src.utils.model_paths). Default 1h matches legacy behaviour;
+    other TFs (4h, 1d) are well suited for trend regimes.
+    """
     wl_path = os.path.join(base_dir, 'data', 'watchlist.json')
     if os.path.exists(wl_path):
         with open(wl_path, 'r') as f:
@@ -109,14 +115,14 @@ def train_trend_model():
 
     all_data = []
     for sym in symbols:
-        full_data_path = os.path.join(base_dir, 'data', 'raw', f'{sym}_1h.csv.gz')
-        archive_path = os.path.join(base_dir, 'data', 'raw', f'{sym}_spot_1h.csv.gz')
+        full_data_path = os.path.join(base_dir, 'data', 'raw', f'{sym}_{timeframe}.csv.gz')
+        archive_path = os.path.join(base_dir, 'data', 'raw', f'{sym}_spot_{timeframe}.csv.gz')
         if not os.path.exists(full_data_path) and os.path.exists(archive_path):
             full_data_path = archive_path
         if not os.path.exists(full_data_path):
             log.warning("Data for %s not found. Auto-downloading...", sym)
             from src.data_ingestion.historical_backfill import backfill_history
-            backfill_history(symbol=sym.replace('_', '/'), timeframe='1h', days=6 * 365)
+            backfill_history(symbol=sym.replace('_', '/'), timeframe=timeframe, days=6 * 365)
 
         if os.path.exists(full_data_path):
             try:
@@ -139,8 +145,8 @@ def train_trend_model():
     X = combined_df[FEATURE_COLUMNS].fillna(0)
     y = combined_df['target']
 
-    log.info("Trend dataset: %d total | features %d | symbols %s | timeframe 1h",
-             len(combined_df), len(FEATURE_COLUMNS), symbols)
+    log.info("Trend dataset: %d total | features %d | symbols %s | timeframe %s",
+             len(combined_df), len(FEATURE_COLUMNS), symbols, timeframe)
 
     t1_series = combined_df['t1_timestamp']
     # Embargo = 2 * horizon (48 bars for trend model)
@@ -187,24 +193,39 @@ def train_trend_model():
     log.info("Trend Model | Accuracy: %.2f%% | Long: %.2f%% | Short: %.2f%% | Iters: %d",
              accuracy * 100, long_acc, short_acc, n_iter)
 
-    models_dir = os.path.join(base_dir, 'models')
-    os.makedirs(models_dir, exist_ok=True)
-    joblib.dump(calibrated, os.path.join(models_dir, 'trend_model.joblib'))
-
+    # ── Persist via canonical model_paths helper ──────────────────────────
+    from src.utils.model_paths import artifact_paths
+    from src.utils.safe_json import write_json
     from datetime import datetime, timezone
-    with open(os.path.join(models_dir, 'trend_model_meta.json'), 'w') as f:
-        json.dump({
-            "model": "Trend (HistGBT + Calibrated)",
-            "accuracy": accuracy * 100,
-            "long_accuracy": long_acc, "short_accuracy": short_acc,
-            "n_samples": len(combined_df), "n_train": calib_split, "n_test": len(X_test),
-            "n_features": len(FEATURE_COLUMNS), "n_iterations": n_iter,
-            "walk_forward_mean_acc": round(float(np.mean(fold_accs)) * 100, 2),
-            "target": "triple_barrier_long_win",
-            "symbols": symbols, "timeframe": "1h",
-            "last_trained": datetime.now(timezone.utc).isoformat()
-        }, f)
+
+    paths = artifact_paths('trend', timeframe)
+    paths['model'].parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(calibrated, paths['model'])
+    log.info("Model saved -> %s", paths['model'])
+
+    meta = {
+        "model": "Trend (HistGBT + Calibrated)",
+        "accuracy": accuracy * 100,
+        "long_accuracy": long_acc, "short_accuracy": short_acc,
+        "n_samples": len(combined_df), "n_train": calib_split, "n_test": len(X_test),
+        "n_features": len(FEATURE_COLUMNS), "n_iterations": n_iter,
+        "walk_forward_mean_acc": round(float(np.mean(fold_accs)) * 100, 2),
+        "target": "triple_barrier_long_win",
+        "symbols": symbols, "timeframe": timeframe,
+        "last_trained": datetime.now(timezone.utc).isoformat()
+    }
+    write_json(str(paths['meta']), meta)
+    if paths['is_canonical']:
+        joblib.dump(calibrated, paths['legacy_model'])
+        write_json(str(paths['legacy_meta']), meta)
+        log.info("Also wrote legacy artifacts -> %s / %s",
+                 paths['legacy_model'].name, paths['legacy_meta'].name)
 
 
 if __name__ == "__main__":
-    train_trend_model()
+    import argparse
+    ap = argparse.ArgumentParser(description="Train the trend-following model")
+    ap.add_argument("--timeframe", default="1h",
+                    choices=["1m", "5m", "15m", "1h", "4h", "1d", "1w", "1mo"])
+    args = ap.parse_args()
+    train_trend_model(timeframe=args.timeframe)

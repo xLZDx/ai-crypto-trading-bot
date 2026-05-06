@@ -134,15 +134,21 @@ def prepare_data(filepath):
     return df
 
 
-def train_model():
+def train_model(timeframe: str = '1h'):
+    """Train the base directional classifier at a given timeframe.
+
+    timeframe — one of 1m, 5m, 15m, 1h, 4h, 1d, 1w, 1mo. Drives both the
+    input file (data/raw/<sym>_<tf>.csv.gz) and the output artifact name
+    (per src.utils.model_paths). Default 1h matches the canonical (legacy)
+    behaviour — when called at 1h the trainer ALSO writes the legacy
+    btc_rf_model.joblib so the bot's inference path stays unchanged.
+    """
     wl_path = os.path.join(base_dir, 'data', 'watchlist.json')
     if os.path.exists(wl_path):
         with open(wl_path, 'r') as f:
             symbols = [s.replace('/', '_') for s in json.load(f)]
     else:
         symbols = ['BTC_USDT', 'SOL_USDT', 'ADA_USDT', 'ETH_USDT']
-
-    timeframe = '1h'
     all_data = []
     for sym in symbols:
         full_data_path = os.path.join(base_dir, 'data', 'raw', f'{sym}_{timeframe}.csv.gz')
@@ -234,16 +240,21 @@ def train_model():
     log.info("Base Model | Accuracy: %.2f%% | Long: %.2f%% | Short: %.2f%% | Iters: %d",
              accuracy * 100, long_acc, short_acc, n_iter)
 
-    models_dir = os.path.join(base_dir, 'models')
-    os.makedirs(models_dir, exist_ok=True)
-    model_path = os.path.join(models_dir, 'btc_rf_model.joblib')
-    joblib.dump(calibrated, model_path)
-    log.info("Model saved -> %s", model_path)
-
+    # ── Persist artifacts via the canonical model_paths helper ───────────
+    # Always writes models/<key>_<tf>_model.joblib + <key>_<tf>_meta.json.
+    # When tf == CANONICAL_TF[key] (1h for base), ALSO writes the legacy
+    # btc_rf_model.joblib + btc_rf_model_meta.json so the bot's inference
+    # engine (which still loads the legacy paths) stays compatible.
+    from src.utils.model_paths import artifact_paths
     from src.utils.safe_json import write_json
     from datetime import datetime, timezone
-    meta_path = os.path.join(models_dir, 'btc_rf_model_meta.json')
-    write_json(meta_path, {
+
+    paths = artifact_paths('base', timeframe)
+    paths['model'].parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(calibrated, paths['model'])
+    log.info("Model saved -> %s", paths['model'])
+
+    meta = {
         "model": "Base (HistGBT + Calibrated)",
         "accuracy": accuracy * 100,
         "long_accuracy": long_acc, "short_accuracy": short_acc,
@@ -254,8 +265,19 @@ def train_model():
         "target": "triple_barrier_long_win",
         "symbols": symbols, "timeframe": timeframe,
         "last_trained": datetime.now(timezone.utc).isoformat()
-    })
+    }
+    write_json(str(paths['meta']), meta)
+    if paths['is_canonical']:
+        joblib.dump(calibrated, paths['legacy_model'])
+        write_json(str(paths['legacy_meta']), meta)
+        log.info("Also wrote legacy artifacts -> %s / %s",
+                 paths['legacy_model'].name, paths['legacy_meta'].name)
 
 
 if __name__ == "__main__":
-    train_model()
+    import argparse
+    ap = argparse.ArgumentParser(description="Train the base directional model")
+    ap.add_argument("--timeframe", default="1h",
+                    choices=["1m", "5m", "15m", "1h", "4h", "1d", "1w", "1mo"])
+    args = ap.parse_args()
+    train_model(timeframe=args.timeframe)

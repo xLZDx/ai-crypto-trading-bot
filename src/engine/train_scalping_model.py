@@ -178,7 +178,18 @@ def _process_single_symbol(sym):
     return None
 
 
-def train_scalping_model():
+def train_scalping_model(timeframe: str = '1m'):
+    """Train the scalping classifier. timeframe is accepted for API
+    consistency with the other trainers but is currently fixed at 1m —
+    scalping at higher TFs is a contradiction in terms (the whole point
+    is the high-frequency edge). The 1s→1m resample is internal and
+    handled by _process_single_symbol; widening to 5m would require
+    refactoring resample_1s_to_1m into a parameterised helper.
+    """
+    if timeframe != '1m':
+        log.warning("Scalping requested at %s — coercing to 1m (multi-TF "
+                    "scalping not yet supported).", timeframe)
+        timeframe = '1m'
     wl_path = os.path.join(base_dir, 'data', 'watchlist.json')
     if os.path.exists(wl_path):
         with open(wl_path, 'r') as f:
@@ -255,24 +266,39 @@ def train_scalping_model():
     log.info("Scalping Model | Accuracy: %.2f%% | Long: %.2f%% | Short: %.2f%% | Iters: %d",
              accuracy * 100, long_acc, short_acc, n_iter)
 
-    models_dir = os.path.join(base_dir, 'models')
-    os.makedirs(models_dir, exist_ok=True)
-    joblib.dump(calibrated, os.path.join(models_dir, 'scalping_model.joblib'))
-
+    # ── Persist via canonical model_paths helper (canonical TF is 1m) ─────
+    from src.utils.model_paths import artifact_paths
+    from src.utils.safe_json import write_json
     from datetime import datetime, timezone
-    with open(os.path.join(models_dir, 'scalping_model_meta.json'), 'w') as f:
-        json.dump({
-            "model": "Scalping (HistGBT + Calibrated)",
-            "accuracy": accuracy * 100,
-            "long_accuracy": long_acc, "short_accuracy": short_acc,
-            "n_samples": len(combined_df), "n_train": calib_split, "n_test": len(X_test),
-            "n_features": len(FEATURE_COLUMNS), "n_iterations": n_iter,
-            "walk_forward_mean_acc": round(float(np.mean(fold_accs)) * 100, 2),
-            "target": "triple_barrier_long_win_1m",
-            "symbols": symbols, "timeframe": "1m",
-            "last_trained": datetime.now(timezone.utc).isoformat()
-        }, f)
+
+    paths = artifact_paths('scalping', timeframe)
+    paths['model'].parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(calibrated, paths['model'])
+    log.info("Model saved -> %s", paths['model'])
+
+    meta = {
+        "model": "Scalping (HistGBT + Calibrated)",
+        "accuracy": accuracy * 100,
+        "long_accuracy": long_acc, "short_accuracy": short_acc,
+        "n_samples": len(combined_df), "n_train": calib_split, "n_test": len(X_test),
+        "n_features": len(FEATURE_COLUMNS), "n_iterations": n_iter,
+        "walk_forward_mean_acc": round(float(np.mean(fold_accs)) * 100, 2),
+        "target": "triple_barrier_long_win_1m",
+        "symbols": symbols, "timeframe": timeframe,
+        "last_trained": datetime.now(timezone.utc).isoformat()
+    }
+    write_json(str(paths['meta']), meta)
+    if paths['is_canonical']:
+        joblib.dump(calibrated, paths['legacy_model'])
+        write_json(str(paths['legacy_meta']), meta)
+        log.info("Also wrote legacy artifacts -> %s / %s",
+                 paths['legacy_model'].name, paths['legacy_meta'].name)
 
 
 if __name__ == "__main__":
-    train_scalping_model()
+    import argparse
+    ap = argparse.ArgumentParser(description="Train the scalping (1m) model")
+    ap.add_argument("--timeframe", default="1m",
+                    choices=["1m", "5m", "15m", "1h", "4h", "1d", "1w", "1mo"])
+    args = ap.parse_args()
+    train_scalping_model(timeframe=args.timeframe)

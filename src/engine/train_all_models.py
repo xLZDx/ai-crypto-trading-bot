@@ -41,10 +41,36 @@ from src.engine.train_tft_model import train_tft_model
 from src.utils.hw_config import configure as _hw_configure
 
 
-def train_all():
+# Per-key timeframes the multi-TF training pipeline iterates over.
+# Each key gets a list of TFs that make sense for it:
+#   base/trend/futures/meta — directional / signal-quality models; useful at
+#     a range of TFs from intraday to swing.
+#   scalping — locked at 1m (the higher-TF variants would defeat the
+#     purpose; trainer would coerce anyway).
+#   tft / regime — single-TF only here; Darts TFT is expensive to retrain
+#     and the GMM regime classifier is feature-stage, not bar-stage.
+DEFAULT_PER_KEY_TFS: dict[str, tuple[str, ...]] = {
+    'base':     ('1h', '4h', '1d'),
+    'trend':    ('1h', '4h', '1d'),
+    'futures':  ('1h', '4h', '1d'),
+    'scalping': ('1m',),
+    'meta':     ('1h',),
+    'tft':      ('1h',),
+    'regime':   ('1h',),
+}
+
+
+def train_all(per_key_tfs: dict[str, tuple[str, ...]] | None = None):
+    """Run the full training pipeline. Each tabular trainer runs once per
+    timeframe in per_key_tfs[key] (defaults to DEFAULT_PER_KEY_TFS). Each
+    invocation writes models/<key>_<tf>_*.{joblib,json} and — when tf is
+    canonical — also writes the legacy filenames the bot's inference path
+    still loads."""
     _hw_configure(verbose=True)
+    cfg = per_key_tfs or DEFAULT_PER_KEY_TFS
     log.info("==========================================")
     log.info("   STARTING BATCH ML TRAINING PIPELINE   ")
+    log.info("   Multi-TF: %s", cfg)
     log.info("==========================================")
 
     # ── 0. Download data ──────────────────────────────────────────────────
@@ -55,44 +81,35 @@ def train_all():
     except Exception as e:
         log.warning("Funding rate download failed (will train without): %s", e)
 
-    # ── 1. Base model ─────────────────────────────────────────────────────
-    try:
-        log.info(">>> [1/8] Training Base Model (1h, Triple Barrier, Walk-Forward, Calibrated)...")
-        train_model()
-    except Exception as e:
-        log.error("Error training Base Model: %s", e)
+    # Helper: run a trainer for every TF in its list, isolating failures.
+    def _train_loop(key: str, fn, label: str):
+        for tf in cfg.get(key, ()):
+            try:
+                log.info(">>> Training %s @ %s ...", label, tf)
+                fn(timeframe=tf)
+            except Exception as exc:
+                log.error("Error training %s @ %s: %s", label, tf, exc)
 
-    # ── 2. Trend model ────────────────────────────────────────────────────
-    try:
-        log.info(">>> [2/8] Training Trend Model (1h, Triple Barrier, Donchian+Keltner)...")
-        train_trend_model()
-    except Exception as e:
-        log.error("Error training Trend Model: %s", e)
+    # ── 1. Base ───────────────────────────────────────────────────────────
+    _train_loop('base',     train_model,         'Base Model')
+    # ── 2. Trend ──────────────────────────────────────────────────────────
+    _train_loop('trend',    train_trend_model,   'Trend Model')
+    # ── 3. Futures ────────────────────────────────────────────────────────
+    _train_loop('futures',  train_futures_model, 'Futures Short Model')
+    # ── 4. Scalping (1m only by design) ───────────────────────────────────
+    _train_loop('scalping', train_scalping_model, 'Scalping Model')
 
-    # ── 3. Futures model ──────────────────────────────────────────────────
-    try:
-        log.info(">>> [3/8] Training Futures Short Model (1h, Triple Barrier, Funding Z-score)...")
-        train_futures_model()
-    except Exception as e:
-        log.error("Error training Futures Model: %s", e)
+    # ── 5. TFT model (single-TF) ──────────────────────────────────────────
+    for tf in cfg.get('tft', ()):
+        try:
+            log.info(">>> Training TFT Model @ %s ...", tf)
+            train_tft_model()
+        except Exception as exc:
+            log.warning("Skipping TFT @ %s: %s", tf, exc)
 
-    # ── 4. Scalping model ─────────────────────────────────────────────────
+    # ── 6. Regime classifier (feature-stage, single-TF) ───────────────────
     try:
-        log.info(">>> [4/8] Training Scalping Model (1m, Triple Barrier 5-bar, OFI+VWAP)...")
-        train_scalping_model()
-    except Exception as e:
-        log.error("Error training Scalping Model: %s", e)
-
-    # ── 5. TFT model ──────────────────────────────────────────────────────
-    try:
-        log.info(">>> [5/8] Training TFT Model (1h, neural probabilistic forecasting)...")
-        train_tft_model()
-    except Exception as e:
-        log.warning("Skipping TFT Model training (optional): %s", e)
-
-    # ── 6. Regime classifier ──────────────────────────────────────────────
-    try:
-        log.info(">>> [6/8] Training Regime Classifier (GMM, 3 regimes: ranging/trending/volatile)...")
+        log.info(">>> Training Regime Classifier (GMM, 3 regimes)...")
         from src.analysis.regime_classifier import train_regime_classifier
         clf = train_regime_classifier()
         if clf.is_ready:
@@ -102,17 +119,16 @@ def train_all():
     except Exception as e:
         log.warning("Skipping Regime Classifier: %s", e)
 
-    # ── 7. Meta-labeler ───────────────────────────────────────────────────
+    # ── 7. Meta-labeler (per TF) ──────────────────────────────────────────
     try:
-        log.info(">>> [7/8] Training Meta-Labeler (second-pilot signal filter)...")
         from src.engine.train_meta_labeler import train_meta_labeler
-        train_meta_labeler()
+        _train_loop('meta', train_meta_labeler, 'Meta-Labeler')
     except Exception as e:
-        log.warning("Skipping Meta-Labeler training: %s", e)
+        log.warning("Skipping Meta-Labeler: %s", e)
 
     # ── 8. Full backtester with A/B comparison ────────────────────────────
     try:
-        log.info(">>> [8/8] Running Full Backtester (Group A vs Group B + Meta-filtered)...")
+        log.info(">>> Running Full Backtester (Group A vs Group B + Meta-filtered)...")
         from src.engine.backtester import run_full_backtest
         comparison = run_full_backtest()
         if not comparison.empty:
