@@ -1500,6 +1500,48 @@ select.field option{background:#0d1628;color:#e2e8f0}
         </div>
       </div>
 
+      <!-- ── Section: Data Coverage (multi-timeframe inventory) ─────── -->
+      <style>
+        .dcov-grid{display:grid;grid-template-columns:120px repeat(8,minmax(50px,1fr));gap:2px}
+        .dcov-cell{padding:5px 4px;text-align:center;font-size:.55rem;font-weight:700;
+          border-radius:4px;border:1px solid rgba(148,163,184,.1)}
+        .dcov-cell.present{background:rgba(52,211,153,.15);color:#34d399;border-color:rgba(52,211,153,.3)}
+        .dcov-cell.stale{background:rgba(251,191,36,.12);color:#fbbf24;border-color:rgba(251,191,36,.28)}
+        .dcov-cell.missing{background:rgba(251,113,133,.12);color:#fb7185;border-color:rgba(251,113,133,.28)}
+        .dcov-hdr{font-size:.55rem;font-weight:700;color:#94a3b8;text-align:center;padding:5px 4px;letter-spacing:.04em}
+        .dcov-sym{font-size:.6rem;font-weight:700;color:#cbd5e1;padding:5px 4px}
+        .dcov-legend{display:flex;gap:10px;font-size:.55rem;color:#94a3b8;align-items:center;flex-wrap:wrap}
+        .dcov-dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:middle}
+      </style>
+      <div class="card collapsible-section" id="st-sec-dcov" style="margin-bottom:10px">
+        <div class="st-sec-hdr card-header collapsible-hdr" onclick="toggleSection(this)">
+          <span class="st-sec-title">Data Coverage (multi-timeframe)</span>
+          <span class="chip" id="chip-dcov" style="font-size:.56rem">—</span>
+          <span class="st-chevron">▼</span>
+        </div>
+        <div class="st-sec-body">
+          <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+            <button onclick="loadDataCoverage()" style="font-size:.58rem;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(99,102,241,.2);color:#818cf8;border:1px solid rgba(99,102,241,.3);font-weight:700">↻ Refresh</button>
+            <button onclick="dcovResampleAll()" style="font-size:.58rem;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(244,114,182,.18);color:#f472b6;border:1px solid rgba(244,114,182,.35);font-weight:700" title="Resample 1s archives → 5m/15m/4h/1w/1mo for every symbol. Takes ~1-2 hours total in background.">▶ Resample All Missing</button>
+            <span id="dcov-jobs-status" style="font-size:.55rem;color:#64748b;font-style:italic">idle</span>
+            <span style="margin-left:auto;font-size:.55rem;color:#64748b" class="dcov-legend">
+              <span><span class="dcov-dot" style="background:#34d399"></span>present</span>
+              <span><span class="dcov-dot" style="background:#fbbf24"></span>stale (last bar &gt;3× tf old)</span>
+              <span><span class="dcov-dot" style="background:#fb7185"></span>missing</span>
+            </span>
+          </div>
+          <div id="dcov-grid" class="dcov-grid">
+            <div style="grid-column:1/-1;text-align:center;color:#475569;padding:14px;font-size:.62rem">Loading…</div>
+          </div>
+          <div id="dcov-sentiment" style="margin-top:10px;padding:8px 11px;background:rgba(5,8,22,.45);border:1px solid rgba(148,163,184,.12);border-radius:7px;font-size:.6rem;color:#94a3b8">
+            <span style="color:#475569">Sentiment</span> — loading…
+          </div>
+          <div style="margin-top:8px;font-size:.55rem;color:#475569;line-height:1.55">
+            Resample is sourced from <code>data/raw/historical/&lt;sym&gt;_spot_1s.csv.gz</code> (or the smaller live <code>_1s</code> tail) and writes to <code>data/raw/&lt;sym&gt;_&lt;tf&gt;.csv.gz</code>. Idempotent — safe to re-run. <b>Stale</b> rows just need a fresh resample to catch up to current 1s data.
+          </div>
+        </div>
+      </div>
+
       <!-- ── Section: Pure vs ML Comparison ─────────────────────────── -->
       <style>
         .bcmp{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
@@ -3149,6 +3191,8 @@ function renderStrategyTab(state) {
   _renderStratCards(_stratFull);
   _renderBtSummary(_stratFull);
   loadBucketCompare();   // refresh aggregate panel alongside strategies
+  loadDataCoverage();    // refresh data inventory matrix
+  pollResampleJobs();    // surface any in-flight resample
 }
 
 // ── ML Model Cards ────────────────────────────────────────────────────────────
@@ -3418,6 +3462,107 @@ async function pollTrainingJobs() {
       else if (last && last.status === 'partial') { if (pill){pill.textContent=`${last.model} partial`;pill.style.color='#fbbf24';} if (inline){inline.textContent=`${last.model} partial — ${last.successes||0}/${last.n||1} ok`;inline.style.color='#fbbf24';} loadStrategyFull(); }
       else if (last && last.status === 'error')   { if (pill){pill.textContent=`${last.model} ERROR`;pill.style.color='#fb7185';} if (inline){inline.textContent=`${last.model} error: ${(last.errors||[''])[0]||'unknown'}`;inline.style.color='#fb7185';} }
       else if (!last) { if (pill) pill.style.display='none'; if (inline){inline.textContent='idle';inline.style.color='#64748b';} }
+    }
+  } catch(e) { /* silent */ }
+}
+
+// ── Data Coverage panel ──────────────────────────────────────────────────────
+async function loadDataCoverage() {
+  const grid = $('dcov-grid');
+  const chip = $('chip-dcov');
+  const sent = $('dcov-sentiment');
+  if (chip) chip.textContent = 'Loading…';
+  try {
+    const r = await fetch('/api/data/coverage');
+    const d = await r.json();
+    const symbols    = d.symbols || [];
+    const timeframes = d.timeframes || [];
+    const rows       = d.rows || [];
+    const summary    = d.summary || {};
+    if (chip) chip.textContent = `${summary.present||0}/${summary.total||0} present · ${summary.stale||0} stale · ${summary.missing||0} missing`;
+    // Index by symbol then timeframe for fast lookup.
+    const idx = {};
+    for (const r2 of rows) (idx[r2.symbol] = idx[r2.symbol] || {})[r2.timeframe] = r2;
+    if (grid) {
+      const fmtBytes = b => b == null ? '?' : b > 1e9 ? (b/1e9).toFixed(1)+'GB' : b > 1e6 ? (b/1e6).toFixed(0)+'MB' : (b/1e3).toFixed(0)+'kB';
+      const cells = [];
+      cells.push('<div></div>');
+      for (const tf of timeframes) cells.push(`<div class="dcov-hdr">${tf}</div>`);
+      for (const sym of symbols) {
+        cells.push(`<div class="dcov-sym">${sym}</div>`);
+        for (const tf of timeframes) {
+          const c = (idx[sym]||{})[tf] || {status:'missing'};
+          const lagH = c.lag_s != null ? Math.round(c.lag_s/3600) : null;
+          const tip = c.exists
+            ? `last bar: ${c.last_ts || '?'} · lag ${lagH != null ? lagH+'h' : '?'} · ${fmtBytes(c.file_size_bytes)}`
+            : `missing — run Resample to derive from 1s`;
+          cells.push(`<div class="dcov-cell ${c.status}" title="${esc(tip)}">${
+            c.status === 'present' ? '✓' :
+            c.status === 'stale'   ? '!' :
+            '–'
+          }</div>`);
+        }
+      }
+      grid.innerHTML = cells.join('');
+    }
+    if (sent) {
+      const s = d.sentiment || {};
+      if (s.available) {
+        sent.innerHTML = `<span style="color:#cbd5e1;font-weight:700">Sentiment</span> — ${s.partitions.length} partitions · <b>${s.yyyymm_first}</b> → <b>${s.yyyymm_last}</b> · ~${(s.rows_estimate||0).toLocaleString()} rows`;
+      } else {
+        sent.innerHTML = `<span style="color:#fb7185;font-weight:700">Sentiment</span> — no parquet partitions present (data/parquet/_NEWS/news/)`;
+      }
+    }
+  } catch(e) {
+    if (grid) grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;color:#fb7185;padding:14px">Error: ${e.message||e}</div>`;
+    if (chip) chip.textContent = 'Error';
+  }
+}
+
+async function dcovResampleAll() {
+  if (!confirm('Resample 1s archives → 5m / 15m / 1h / 4h / 1d / 1w / 1mo for all 20 symbols?\n\nReads ~35 GB of 1s data, takes 1–2 hours in background. Idempotent — safe to re-run later. Existing files for those TFs will be overwritten.')) return;
+  try {
+    const r = await fetch('/api/data/resample',
+      { method: 'POST', headers: hdrs(), body: JSON.stringify({}) });
+    const body = await r.json();
+    if (!body.ok) throw new Error(body.error || 'request failed');
+    _dcovMarkPending(`Resample queued (job ${body.job_id})`);
+    pollResampleJobs();
+  } catch(e) {
+    alert('Resample failed: ' + (e.message||e));
+  }
+}
+
+function _dcovMarkPending(msg) {
+  const inline = $('dcov-jobs-status');
+  if (inline) { inline.textContent = msg; inline.style.color = '#fbbf24'; }
+}
+
+let _dcovJobsTimer = null;
+async function pollResampleJobs() {
+  try {
+    const r = await fetch('/api/data/resample/jobs?limit=5');
+    const d = await r.json();
+    const jobs = d.jobs || [];
+    const active = jobs.filter(j => j.status === 'queued' || j.status === 'running');
+    const inline = $('dcov-jobs-status');
+    if (active.length) {
+      const j = active[0];
+      const cur = j.current_symbol ? ` · ${j.current_symbol}` : '';
+      const ev = j.last_event || {};
+      const evTxt = ev.phase ? ` · ${ev.phase}` : '';
+      const msg = `${j.done_symbols||0}/${j.total_symbols||0}${cur}${evTxt}`;
+      if (inline) { inline.textContent = msg; inline.style.color = '#fbbf24'; }
+      if (!_dcovJobsTimer) _dcovJobsTimer = setInterval(pollResampleJobs, 5000);
+    } else {
+      if (_dcovJobsTimer) { clearInterval(_dcovJobsTimer); _dcovJobsTimer = null; }
+      const last = jobs[0];
+      if (last && last.status === 'done') {
+        if (inline) { inline.textContent = `done ${last.total_symbols||0} symbols`; inline.style.color = '#34d399'; }
+        loadDataCoverage();
+      } else if (!last) {
+        if (inline) { inline.textContent = 'idle'; inline.style.color = '#64748b'; }
+      }
     }
   } catch(e) { /* silent */ }
 }

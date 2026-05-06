@@ -2461,6 +2461,123 @@ def api_training_jobs():
     return jsonify({'jobs': rows[:limit], 'total': len(rows)})
 
 
+# ─── Data coverage + 1s→higher-TF resample endpoints ────────────────────────
+# Operator-triggered backfill of missing timeframes. We resample from the
+# canonical 1s archives in data/raw/historical/ rather than re-downloading
+# from Binance, which would take hours and hit rate limits.
+
+_resample_jobs: dict[str, dict] = {}
+_resample_jobs_lock = threading.Lock()
+_RESAMPLE_JOBS_MAX = 10
+
+
+def _record_resample_job(job_id: str, **fields) -> None:
+    with _resample_jobs_lock:
+        e = _resample_jobs.get(job_id) or {'job_id': job_id}
+        e.update(fields)
+        _resample_jobs[job_id] = e
+        if len(_resample_jobs) > _RESAMPLE_JOBS_MAX:
+            oldest = min(_resample_jobs.values(),
+                         key=lambda x: x.get('created_at', 0))
+            _resample_jobs.pop(oldest['job_id'], None)
+
+
+def _run_resample_blocking(job_id: str, symbols: list[str],
+                           timeframes: list[str]) -> None:
+    """Worker body: stream resample for each symbol; progress callback writes
+    into the job record so the dashboard can poll /api/data/resample/jobs
+    and show a live status pill."""
+    from src.utils.resample_ohlcv import resample_symbol
+    total = len(symbols)
+    _record_resample_job(job_id, status='running',
+                         started_at=time.time(),
+                         total_symbols=total,
+                         done_symbols=0,
+                         current_symbol=None,
+                         results={})
+    results: dict = {}
+    for i, sym in enumerate(symbols):
+        _record_resample_job(job_id,
+                             current_symbol=sym, done_symbols=i)
+        def _on_progress(ev: dict, _sym=sym, _job=job_id):
+            # Cheap update — just store the latest event so the UI can show
+            # "BTC_USDT stream chunk 24, rows_seen 6.0M".
+            _record_resample_job(_job, last_event=ev)
+        try:
+            r = resample_symbol(sym, timeframes=tuple(timeframes),
+                                progress=_on_progress)
+            results[sym] = r
+        except Exception as exc:
+            results[sym] = {'_error': f'{type(exc).__name__}: {exc}'}
+    _record_resample_job(job_id,
+                         status='done',
+                         done_symbols=total,
+                         current_symbol=None,
+                         finished_at=time.time(),
+                         results=results)
+
+
+@app.route('/api/data/coverage', methods=['GET'])
+def api_data_coverage():
+    """Return the (symbol × timeframe) coverage matrix used by the Data
+    Coverage panel. Read-only; safe to call frequently."""
+    try:
+        from src.utils.data_audit import (
+            audit_coverage, audit_summary, audit_sentiment,
+            DEFAULT_SYMBOLS, DEFAULT_TIMEFRAMES,
+        )
+        rows = audit_coverage()
+        return jsonify({
+            'symbols':    list(DEFAULT_SYMBOLS),
+            'timeframes': list(DEFAULT_TIMEFRAMES),
+            'rows':       rows,
+            'summary':    audit_summary(rows),
+            'sentiment':  audit_sentiment(),
+        })
+    except Exception as exc:
+        return jsonify({'error': f'{type(exc).__name__}: {exc}'}), 500
+
+
+@app.route('/api/data/resample', methods=['POST'])
+@require_api_key
+def api_data_resample():
+    """Kick off a 1s→higher-TF resample. Body: {symbols: [...], timeframes: [...]}.
+    Symbols defaults to all 20; timeframes defaults to (5m,15m,4h,1w,1mo)."""
+    from src.utils.resample_ohlcv import DEFAULT_SYMBOLS, DEFAULT_TIMEFRAMES
+    body = request.get_json(silent=True) or {}
+    symbols = body.get('symbols') or list(DEFAULT_SYMBOLS)
+    timeframes = body.get('timeframes') or list(DEFAULT_TIMEFRAMES)
+    job_id = uuid.uuid4().hex[:12]
+    _record_resample_job(job_id,
+                         status='queued',
+                         created_at=time.time(),
+                         symbols=symbols,
+                         timeframes=timeframes,
+                         total_symbols=len(symbols),
+                         done_symbols=0)
+    threading.Thread(
+        target=_run_resample_blocking,
+        args=(job_id, symbols, timeframes),
+        daemon=True, name=f'resample-{job_id}',
+    ).start()
+    return jsonify({'ok': True, 'job_id': job_id,
+                    'symbols': symbols, 'timeframes': timeframes})
+
+
+@app.route('/api/data/resample/jobs', methods=['GET'])
+def api_data_resample_jobs():
+    """Most-recent N resample jobs, newest first. Used by the status pill
+    in the Data Coverage panel."""
+    try:
+        limit = int(request.args.get('limit', 10))
+    except (TypeError, ValueError):
+        limit = 10
+    with _resample_jobs_lock:
+        rows = list(_resample_jobs.values())
+    rows.sort(key=lambda x: x.get('created_at', 0), reverse=True)
+    return jsonify({'jobs': rows[:limit], 'total': len(rows)})
+
+
 @app.route('/api/db/training_history')
 def db_training_history():
     """Return training telemetry for one model."""

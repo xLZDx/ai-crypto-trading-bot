@@ -2447,6 +2447,97 @@ def test_phase36_debug_supervisor():
         check('supervisor smoke test', False, str(e))
 
 
+def test_phase40_pr1_data_coverage_resample():
+    """Phase 40 — PR 1 data backfill foundation: audit module, 1s→higher TF
+    resampler, dashboard endpoints, and Data Coverage UI panel.
+
+    The user's intent: build multi-timeframe coverage (5m, 15m, 4h, 1w, 1mo)
+    by resampling existing 1s archives instead of re-downloading from
+    Binance. Internally consistent, no rate limits, reproducible.
+    """
+    print('\n[Phase 40 — PR 1 data audit + 1s→TF resampler + UI]')
+
+    # 1. Audit module
+    audit_path = os.path.join(BASE_DIR, 'src', 'utils', 'data_audit.py')
+    check('src/utils/data_audit.py exists', os.path.exists(audit_path))
+    audit_src = open(audit_path, encoding='utf-8').read()
+    check('audit_coverage() returns per (sym, tf) row',
+          'def audit_coverage(' in audit_src
+          and '"symbol":' in audit_src
+          and '"timeframe":' in audit_src
+          and '"status":' in audit_src)
+    check('DEFAULT_TIMEFRAMES covers 1m..1mo',
+          all(tf in audit_src for tf in
+              ('"1m"', '"5m"', '"15m"', '"1h"', '"4h"', '"1d"', '"1w"', '"1mo"')))
+    check('audit_summary returns present/stale/missing counts',
+          'def audit_summary(' in audit_src
+          and '"present":' in audit_src and '"stale":' in audit_src and '"missing":' in audit_src)
+    check('audit_sentiment audits parquet/_NEWS partitions',
+          'def audit_sentiment(' in audit_src
+          and 'PARQUET_NEWS' in audit_src)
+
+    # 2. Resampler module
+    rs_path = os.path.join(BASE_DIR, 'src', 'utils', 'resample_ohlcv.py')
+    check('src/utils/resample_ohlcv.py exists', os.path.exists(rs_path))
+    rs_src = open(rs_path, encoding='utf-8').read()
+    check('resample_symbol() defined',
+          'def resample_symbol(' in rs_src)
+    check('resample_all() defined',
+          'def resample_all(' in rs_src)
+    check('OHLCV agg uses first/max/min/last/sum',
+          '"open":' in rs_src and '"first"' in rs_src
+          and '"high":' in rs_src and '"max"' in rs_src
+          and '"low":' in rs_src and '"min"' in rs_src
+          and '"close":' in rs_src and '"last"' in rs_src
+          and '"volume":' in rs_src and '"sum"' in rs_src)
+    check('resampler streams chunks (no full-file load for 30 GB BTC archive)',
+          '_stream_chunks' in rs_src
+          and 'chunksize=' in rs_src)
+    check('resampler picks 1s source from data/raw/historical first',
+          '_candidate_source_paths' in rs_src
+          and '_spot_1s.csv.gz' in rs_src
+          and 'RAW_HIST_DIR' in rs_src)
+    check('resampler writes atomically (.tmp then rename)',
+          '.tmp' in rs_src and 'os.replace(' in rs_src)
+
+    # 3. Dashboard endpoints
+    app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
+               encoding='utf-8').read()
+    check('/api/data/coverage GET endpoint defined',
+          "@app.route('/api/data/coverage'" in app)
+    check('/api/data/resample POST endpoint defined',
+          "@app.route('/api/data/resample'" in app
+          and 'def api_data_resample(' in app)
+    check('/api/data/resample gated by @require_api_key',
+          app.split('def api_data_resample(')[0].rstrip().endswith('@require_api_key'))
+    check('/api/data/resample/jobs GET endpoint defined',
+          "@app.route('/api/data/resample/jobs'" in app)
+    check('_resample_jobs cache + cap defined',
+          '_resample_jobs' in app and '_RESAMPLE_JOBS_MAX' in app)
+
+    # 4. UI panel
+    tpl = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html'),
+               encoding='utf-8').read()
+    check('Data Coverage section present',
+          'id="st-sec-dcov"' in tpl
+          and 'Data Coverage (multi-timeframe)' in tpl)
+    check('Heatmap grid + cell classes defined',
+          'class="dcov-grid"' in tpl
+          and '.dcov-cell.present{' in tpl
+          and '.dcov-cell.stale{' in tpl
+          and '.dcov-cell.missing{' in tpl)
+    check('Resample All button + handler',
+          'dcovResampleAll(' in tpl
+          and "fetch('/api/data/resample'" in tpl)
+    check('Jobs poller wired (5s while active)',
+          'pollResampleJobs' in tpl
+          and "'/api/data/resample/jobs?limit=" in tpl)
+    check('renderStrategyTab calls loadDataCoverage()',
+          'loadDataCoverage();' in tpl)
+    check('Sentiment row in Data Coverage panel',
+          'id="dcov-sentiment"' in tpl)
+
+
 def test_phase39_pr5_ui_bundle():
     """Phase 39 — PR 5 UI bundle: collapse fix, manual training controls,
     ML Health Notes panel, bucket classification, per-bucket disable toggle,
@@ -3479,6 +3570,7 @@ def main():
     test_phase37_training_table_and_bt_tooltips()
     test_phase38_clear_all_suppression()
     test_phase39_pr5_ui_bundle()
+    test_phase40_pr1_data_coverage_resample()
 
     if not args.offline:
         test_api(args.url)
