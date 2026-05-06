@@ -8,6 +8,52 @@ Write-Host "   AI TRADER: POWERSHELL AUTO-SETUP"
 Write-Host "   Root: $root"
 Write-Host "==========================================" -ForegroundColor Cyan
 
+# Start-Detached — create a fully detached process via WMI Win32_Process.Create.
+# Why: Start-Process powershell -WindowStyle Hidden -PassThru spawns a child
+# that shares the parent's console session. When the parent (e.g. the Bash
+# shell that ran this script, or a closed Windows Terminal tab) ends, all
+# children sharing the console get CTRL_CLOSE_EVENT and die. This was the
+# root cause of dashboards/bots crashing silently within minutes of every
+# restart_all (logs/dashboard.log just stops mid-stream, no traceback).
+#
+# WMI Win32_Process.Create runs the new process in the context of the WMI
+# service — it has NO parent in our shell tree, so console-group death
+# doesn't reach it. Returns the new PID (or $null on failure).
+function Start-Detached {
+    param(
+        [Parameter(Mandatory=$true)][string]$CommandLine,
+        [string]$LogFile = $null
+    )
+    if ($LogFile) {
+        # Funnel stdout+stderr to the log file at the OS file-handle level
+        # (no PowerShell pipeline). cmd /S /C "..." parses the inner string
+        # as the command — /S preserves the outer quote pair so paths with
+        # spaces (D:\test 2\…) survive intact. Without /S, cmd's default
+        # rule strips first+last quotes, breaking quoted exe paths.
+        $logQuoted = '"' + $LogFile + '"'
+        $inner = $CommandLine + ' >> ' + $logQuoted + ' 2>&1'
+        $CommandLine = 'cmd /S /C "' + $inner + '"'
+    }
+    try {
+        # Win32_Process.Create defaults to C:\Windows\System32 — that breaks
+        # `python -m <project_module>` since the working directory needs to be
+        # the project root for module resolution (and for relative paths like
+        # data/, logs/, src/).
+        $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create `
+                              -Arguments @{
+                                  CommandLine      = $CommandLine
+                                  CurrentDirectory = $root
+                              } `
+                              -ErrorAction Stop
+        if ($r.ReturnValue -eq 0) { return [int]$r.ProcessId }
+        Write-Host "  Win32_Process.Create returned $($r.ReturnValue)" -ForegroundColor Red
+        return $null
+    } catch {
+        Write-Host "  Start-Detached failed: $_" -ForegroundColor Red
+        return $null
+    }
+}
+
 # Step 0: ParquetClient store — file-based, no daemon. Just verifies the
 # data directory + DuckDB import. (Was QuestDB Docker/native-binary launch
 # before the Phase 1-5 migration; see commits 43db156..b64b733.)
@@ -134,21 +180,25 @@ Write-Host "[3.5/6] Applying D-drive cache redirect + CPU/GPU env vars..." -Fore
 . (Join-Path $root 'setup_env.ps1')
 Write-Host "[3.5/6] Environment configured." -ForegroundColor Green
 
-# Helper: launch a .ps1 in the BACKGROUND (no visible window).
-# -WindowStyle Hidden + -NoProfile keeps the desktop clean and starts faster.
-# We drop -NoExit because the wrapper PS no longer needs to stay readable;
-# logs are tailed via the dashboard's /api/monitor/logs/<component> endpoint.
+# Helper: launch a .ps1 in the BACKGROUND, fully detached from this shell's
+# console group via Start-Detached / WMI. The script's own logging (Python's
+# logging module + the launcher's Tee-Object) keeps writing to logs/.
 function Start-Window {
     param([string]$Label, [string]$ScriptFile)
-    Write-Host "  Launching $Label (hidden) ..."
+    Write-Host "  Launching $Label (detached) ..."
     if (-not (Test-Path $ScriptFile)) {
         Write-Host "  WARNING: $ScriptFile not found" -ForegroundColor Red
         return $null
     }
-    $argStr = '-NoProfile -ExecutionPolicy Bypass -File "' + $ScriptFile + '"'
-    $proc = Start-Process powershell -ArgumentList $argStr -WindowStyle Hidden -PassThru
-    Write-Host "  $Label started (PID $($proc.Id))"
-    return $proc
+    $cmdLine = 'powershell -NoProfile -ExecutionPolicy Bypass -File "' + $ScriptFile + '"'
+    $newPid = Start-Detached -CommandLine $cmdLine
+    if (-not $newPid) {
+        Write-Host "  $Label failed to start" -ForegroundColor Red
+        return $null
+    }
+    Write-Host "  $Label started (PID $newPid)"
+    # Return a synthetic object exposing .Id so callers' `$proc.Id` keeps working.
+    return [PSCustomObject]@{ Id = $newPid }
 }
 
 # Step 0: Monitor server (dashboard)
@@ -165,9 +215,12 @@ $trainingScript = Join-Path $root 'launch_training.ps1'
 $trainingDelay  = 600   # seconds
 $procTraining = $null
 if (Test-Path $trainingScript) {
-    $argStr = "-NoProfile -ExecutionPolicy Bypass -Command `"Start-Sleep -Seconds $trainingDelay; & '$trainingScript'`""
-    $procTraining = Start-Process powershell -ArgumentList $argStr -WindowStyle Hidden -PassThru
-    Write-Host "  Training will start at $(( Get-Date ).AddSeconds($trainingDelay).ToString('HH:mm:ss')) (PID $($procTraining.Id), hidden)"
+    $cmdLine = 'powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Sleep -Seconds ' + $trainingDelay + '; & ''' + $trainingScript + '''"'
+    $newPid = Start-Detached -CommandLine $cmdLine
+    if ($newPid) {
+        $procTraining = [PSCustomObject]@{ Id = $newPid }
+        Write-Host "  Training will start at $(( Get-Date ).AddSeconds($trainingDelay).ToString('HH:mm:ss')) (PID $newPid, detached)"
+    }
 } else {
     Write-Host "  WARNING: launch_training.ps1 not found" -ForegroundColor Red
 }
@@ -219,9 +272,11 @@ if ($rtRunning) {
     Write-Host "  Realtime DB Writer already running (PID $($rtRunning.ProcessId)) - skipping." -ForegroundColor DarkCyan
     $procRealtime = Get-Process -Id $rtRunning.ProcessId -ErrorAction SilentlyContinue
 } else {
-    $rtArgStr = "-NoProfile -ExecutionPolicy Bypass -Command `"& '$venvPython' -m src.data_ingestion.realtime_db_writer 2>&1 | Tee-Object -FilePath '$root\logs\realtime_db.log' -Append`""
-    $procRealtime = Start-Process powershell -ArgumentList $rtArgStr -WindowStyle Hidden -PassThru
-    Write-Host "  Realtime DB Writer started (PID $($procRealtime.Id), hidden)"
+    $newPid = Start-Detached -CommandLine "`"$venvPython`" -m src.data_ingestion.realtime_db_writer" -LogFile "$root\logs\realtime_db.log"
+    if ($newPid) {
+        $procRealtime = [PSCustomObject]@{ Id = $newPid }
+        Write-Host "  Realtime DB Writer started (PID $newPid, detached)"
+    }
 }
 Write-Host "[5.7/6] Realtime DB Writer ready." -ForegroundColor Green
 
@@ -234,9 +289,11 @@ if ($orchRunning) {
     Write-Host "  Orchestrator already running (PID $($orchRunning.ProcessId)) - skipping." -ForegroundColor DarkCyan
     $procOrch = Get-Process -Id $orchRunning.ProcessId -ErrorAction SilentlyContinue
 } else {
-    $orchArgStr = "-NoProfile -ExecutionPolicy Bypass -Command `"& '$venvPython' -m src.data_governance.orchestrator 2>&1 | Tee-Object -FilePath '$root\logs\data_orchestrator.log' -Append`""
-    $procOrch = Start-Process powershell -ArgumentList $orchArgStr -WindowStyle Hidden -PassThru
-    Write-Host "  Data Orchestrator started (PID $($procOrch.Id), hidden)"
+    $newPid = Start-Detached -CommandLine "`"$venvPython`" -m src.data_governance.orchestrator" -LogFile "$root\logs\data_orchestrator.log"
+    if ($newPid) {
+        $procOrch = [PSCustomObject]@{ Id = $newPid }
+        Write-Host "  Data Orchestrator started (PID $newPid, detached)"
+    }
 }
 Write-Host "[5.8/6] Data Orchestrator ready." -ForegroundColor Green
 
@@ -255,9 +312,11 @@ if ($env:OB_COLLECTOR_DISABLED -eq '1') {
         Write-Host "  Orderbook Collector already running (PID $($obRunning.ProcessId)) - skipping." -ForegroundColor DarkCyan
         $procOrderbook = Get-Process -Id $obRunning.ProcessId -ErrorAction SilentlyContinue
     } else {
-        $obArgStr = "-NoProfile -ExecutionPolicy Bypass -Command `"& '$venvPython' -m src.data_ingestion.orderbook_collector --symbols '$obSymbols' --depth 20 --speed 100ms 2>&1 | Tee-Object -FilePath '$root\logs\orderbook_collector.log' -Append`""
-        $procOrderbook = Start-Process powershell -ArgumentList $obArgStr -WindowStyle Hidden -PassThru
-        Write-Host "  Orderbook Collector started (PID $($procOrderbook.Id), symbols: $obSymbols)"
+        $newPid = Start-Detached -CommandLine "`"$venvPython`" -m src.data_ingestion.orderbook_collector --symbols `"$obSymbols`" --depth 20 --speed 100ms" -LogFile "$root\logs\orderbook_collector.log"
+        if ($newPid) {
+            $procOrderbook = [PSCustomObject]@{ Id = $newPid }
+            Write-Host "  Orderbook Collector started (PID $newPid, detached, symbols: $obSymbols)"
+        }
     }
 }
 Write-Host "[5.9/6] Orderbook Collector ready." -ForegroundColor Green
@@ -270,9 +329,13 @@ Write-Host "[5.9/6] Orderbook Collector ready." -ForegroundColor Green
 # crashes - that's the whole point.
 Write-Host ""
 Write-Host "[5.95/6] Starting Debug Supervisor (process crash detector)..." -ForegroundColor Yellow
-$dbgArgStr = "-NoProfile -ExecutionPolicy Bypass -Command `"& '$venvPython' -m scripts.debug_supervisor 2>&1 | Tee-Object -FilePath '$root\logs\debug_supervisor.log' -Append`""
-$procDebug = Start-Process powershell -ArgumentList $dbgArgStr -WindowStyle Hidden -PassThru
-Write-Host "  Debug Supervisor started (PID $($procDebug.Id))"
+$newPid = Start-Detached -CommandLine "`"$venvPython`" -m scripts.debug_supervisor" -LogFile "$root\logs\debug_supervisor.log"
+if ($newPid) {
+    $procDebug = [PSCustomObject]@{ Id = $newPid }
+    Write-Host "  Debug Supervisor started (PID $newPid, detached)"
+} else {
+    $procDebug = $null
+}
 Write-Host "[5.95/6] Debug Supervisor ready." -ForegroundColor Green
 
 # Step 6: Save PIDs
