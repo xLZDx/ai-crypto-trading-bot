@@ -295,36 +295,69 @@ def add_news_sentiment(df: pd.DataFrame, news_path: str) -> pd.DataFrame:
     df = df.copy()
 
     # ── Phase 10F: try Parquet first ──────────────────────────────────────
+    # Sentiment-source preference, in order:
+    #   1. `tone` column         — populated by GDELT / Reddit /
+    #                              CryptoCompare scrapers (our new schema)
+    #   2. `score` column        — legacy field
+    #   3. `sentiment` column    — older legacy
+    #   4. fall back to lexicon-scoring the title text
+    # All four cases coexist because partitions can be from different
+    # eras / sources; we use whichever signal each row carries.
     try:
         from src.analysis.feature_reader import load_news_recent
         news_rows = load_news_recent(hours=24 * 365)   # 1y window
         if news_rows:
             news = pd.DataFrame(news_rows)
-            ts_col = "published_at" if "published_at" in news.columns else "ts"
-            if ts_col in news.columns:
-                news["timestamp"] = pd.to_datetime(news[ts_col],
-                                                    unit="ms" if ts_col == "ts" else None,
-                                                    errors="coerce", utc=True)
-                news = news.dropna(subset=["timestamp"])
-                news["timestamp"] = news["timestamp"].dt.tz_convert(None)
-                if "score" in news.columns and news["score"].abs().sum() > 0:
-                    news["sentiment"] = pd.to_numeric(news["score"], errors="coerce").fillna(0)
-                else:
-                    text_col = "title" if "title" in news.columns else "summary"
+            # Pick whichever timestamp the row has (ts / published_at / timestamp)
+            for ts_col in ("ts", "published_at", "timestamp"):
+                if ts_col in news.columns and pd.api.types.is_numeric_dtype(news[ts_col]):
+                    news["_t"] = pd.to_datetime(news[ts_col], unit="ms",
+                                                 errors="coerce", utc=True)
+                    break
+                elif ts_col in news.columns:
+                    news["_t"] = pd.to_datetime(news[ts_col],
+                                                 errors="coerce", utc=True)
+                    break
+            else:
+                news["_t"] = pd.NaT
+            news = news.dropna(subset=["_t"])
+            if news.empty:
+                raise ValueError("no parseable timestamps in news partition")
+            news["_t"] = news["_t"].dt.tz_convert(None)
+            # Pick the best sentiment column. tone is float-coded directly,
+            # score may be int (Reddit upvotes) → normalise via tanh later.
+            if "tone" in news.columns and pd.to_numeric(news["tone"], errors="coerce").abs().sum() > 0:
+                news["sentiment"] = pd.to_numeric(news["tone"], errors="coerce").fillna(0)
+            elif "score" in news.columns and pd.to_numeric(news["score"], errors="coerce").abs().sum() > 0:
+                news["sentiment"] = pd.to_numeric(news["score"], errors="coerce").fillna(0)
+                # Reddit scores can be huge — squash to ±1 range so they
+                # don't dominate the merged-asof feature.
+                import numpy as _np
+                news["sentiment"] = _np.tanh(news["sentiment"] / 50.0)
+            elif "sentiment" in news.columns and pd.to_numeric(news["sentiment"], errors="coerce").abs().sum() > 0:
+                news["sentiment"] = pd.to_numeric(news["sentiment"], errors="coerce").fillna(0)
+            else:
+                text_col = "title" if "title" in news.columns else (
+                    "summary" if "summary" in news.columns else None
+                )
+                if text_col:
                     news["sentiment"] = news[text_col].fillna("").apply(_score_kw)
-                hourly = (news.set_index("timestamp")["sentiment"]
-                          .resample("1h").mean()
-                          .reset_index()
-                          .rename(columns={"sentiment": "news_sentiment"}))
-                df_ts = pd.to_datetime(df["timestamp"])
-                if df_ts.dt.tz is not None:
-                    df_ts = df_ts.dt.tz_convert(None)
-                df["timestamp"] = df_ts
-                df = pd.merge_asof(df.sort_values("timestamp"),
-                                    hourly.sort_values("timestamp"),
-                                    on="timestamp", direction="backward")
-                df["news_sentiment"] = df["news_sentiment"].fillna(0.0)
-                return df
+                else:
+                    news["sentiment"] = 0.0
+            hourly = (news.set_index("_t")["sentiment"]
+                      .resample("1h").mean()
+                      .reset_index()
+                      .rename(columns={"_t": "timestamp",
+                                       "sentiment": "news_sentiment"}))
+            df_ts = pd.to_datetime(df["timestamp"])
+            if df_ts.dt.tz is not None:
+                df_ts = df_ts.dt.tz_convert(None)
+            df["timestamp"] = df_ts
+            df = pd.merge_asof(df.sort_values("timestamp"),
+                                hourly.sort_values("timestamp"),
+                                on="timestamp", direction="backward")
+            df["news_sentiment"] = df["news_sentiment"].fillna(0.0)
+            return df
     except Exception as exc:
         logging.getLogger(__name__).debug(
             "news_sentiment: parquet path failed (%s) — falling back to CSV.", exc)
