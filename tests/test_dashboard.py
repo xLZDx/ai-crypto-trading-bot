@@ -2536,6 +2536,65 @@ def test_phase44_pr6_live_trading_toggle():
           and 'Add how much to virtual balance' in tpl)
 
 
+def test_phase52_pr15_finbert_sentiment():
+    """Phase 52 — PR 15 / Phase B: FinBERT/CryptoBERT sentiment upgrade.
+
+    Replaces the 30-word lexicon with a real model (CryptoBERT primary,
+    FinBERT fallback, lexicon as final fallback). Output stays in [-1, +1]
+    so existing parquet readers don't change."""
+    print('\n[Phase 52 — PR 15 FinBERT sentiment]')
+
+    fb_path = os.path.join(BASE_DIR, 'src', 'analysis', 'finbert_scorer.py')
+    check('finbert_scorer.py exists', os.path.exists(fb_path))
+    if not os.path.exists(fb_path):
+        return
+    src = open(fb_path, encoding='utf-8').read()
+    cc  = open(os.path.join(BASE_DIR, 'src', 'data_ingestion', 'cryptocompare_news_backfill.py'),
+               encoding='utf-8').read()
+    rd  = open(os.path.join(BASE_DIR, 'src', 'data_ingestion', 'reddit_news_backfill.py'),
+               encoding='utf-8').read()
+    app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
+               encoding='utf-8').read()
+
+    # 1. Module surface
+    check('finbert_scorer prefers CryptoBERT, falls back to FinBERT, lexicon',
+          "ElKulako/cryptobert" in src
+          and "ProsusAI/finbert" in src
+          and 'def _lexicon_score(' in src)
+    check('Lazy singleton load — _ensure_loaded() sets _classifier',
+          'def _ensure_loaded(' in src
+          and '_load_attempted' in src
+          and '_classifier = clf' in src)
+    check('score_one cached via lru_cache',
+          '@lru_cache(maxsize=10_000)' in src
+          and 'def score_one(' in src)
+    check('Batch scoring uses pipeline batch_size for speed',
+          'def score_batch(' in src
+          and 'batch_size=' in src)
+    check('HF cache redirected to D: drive (not C:)',
+          'HF_HOME' in src
+          and 'data/cache/huggingface' in src.replace('\\', '/'))
+    check('Output mapped to [-1, +1] tone scale',
+          'def _label_to_score(' in src
+          and 'return round(float(conf), 3)' in src
+          and 'return -round(float(conf), 3)' in src)
+
+    # 2. Scrapers wired to defer to model when ready
+    check('CryptoCompare scraper defers to finbert_scorer when ready',
+          'from src.analysis.finbert_scorer import score_one, is_ready' in cc
+          and 'if is_ready():' in cc
+          and 'return score_one(title)' in cc)
+    check('Reddit scraper defers to finbert_scorer when ready',
+          'from src.analysis.finbert_scorer import score_one, is_ready' in rd
+          and 'if is_ready():' in rd)
+
+    # 3. Dashboard endpoint
+    check('GET /api/news/sentiment_model reports active backend',
+          "@app.route('/api/news/sentiment_model'" in app
+          and 'get_active_model()' in app
+          and "'cryptobert'" in app or "cryptobert" in app)
+
+
 def test_phase51_pr14_live_news_inference():
     """Phase 51 — PR 14 / Phase D: live news inference path.
 
@@ -4300,6 +4359,7 @@ def main():
     test_phase49_pr12_tf_pinning()
     test_phase50_pr13_auto_retrain()
     test_phase51_pr14_live_news_inference()
+    test_phase52_pr15_finbert_sentiment()
 
     if not args.offline:
         test_api(args.url)

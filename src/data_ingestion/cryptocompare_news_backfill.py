@@ -61,10 +61,22 @@ _POS_WORDS = {
 
 
 def _crude_tone(title: str) -> float:
-    """Tone in [-1, +1] from a small word-bag. Replace with a model later
-    once we standardise on FinBERT or VADER."""
+    """Tone in [-1, +1] from a small word-bag.
+
+    Phase B preference: when finbert_scorer is available + a real model
+    loaded (CryptoBERT / FinBERT), defer to it. Falls back to the
+    lexicon when the model can't be loaded (no transformers, GPU OOM,
+    network issue on first download). The output range stays the same
+    [-1, +1] so existing parquet readers don't change.
+    """
     if not title:
         return 0.0
+    try:
+        from src.analysis.finbert_scorer import score_one, is_ready
+        if is_ready():
+            return score_one(title)
+    except Exception:
+        pass
     words = {w.strip(".,!?:;'\"()").lower() for w in title.split()}
     n = sum(1 for w in words if w in _NEG_WORDS)
     p = sum(1 for w in words if w in _POS_WORDS)

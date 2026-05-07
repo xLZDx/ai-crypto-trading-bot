@@ -2948,6 +2948,29 @@ def api_pipeline_status():
     return jsonify(snap)
 
 
+@app.route('/api/news/sentiment_model', methods=['GET'])
+def api_news_sentiment_model():
+    """Return which sentiment backend is active (cryptobert / finbert /
+    lexicon). Useful for the operator to confirm whether new scraper runs
+    are using a real model or the fallback."""
+    try:
+        from src.analysis.finbert_scorer import get_active_model, is_ready
+        # Trigger lazy load so the answer is meaningful even on first call.
+        ready = is_ready()
+        return jsonify({
+            'model':  get_active_model(),
+            'ready':  ready,
+            'note':   ('A real model is loaded — new scraper writes use it.'
+                       if ready
+                       else 'Falling back to lexicon — install `transformers` and '
+                            'first scraper run will download the model.')
+        })
+    except Exception as exc:
+        return jsonify({'model': 'unknown',
+                        'ready': False,
+                        'error': str(exc)}), 500
+
+
 @app.route('/api/news/buffer', methods=['GET'])
 def api_news_buffer_status():
     """Return the live news buffer's status (rows cached, snapshot age,

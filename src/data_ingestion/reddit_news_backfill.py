@@ -89,8 +89,15 @@ _POS_WORDS = {
 
 
 def _crude_tone(title: str) -> float:
+    """Phase B: defer to finbert_scorer when available; lexicon fallback."""
     if not title:
         return 0.0
+    try:
+        from src.analysis.finbert_scorer import score_one, is_ready
+        if is_ready():
+            return score_one(title)
+    except Exception:
+        pass
     words = {w.strip(".,!?:;'\"()").lower() for w in title.split()}
     n = sum(1 for w in words if w in _NEG_WORDS)
     p = sum(1 for w in words if w in _POS_WORDS)
