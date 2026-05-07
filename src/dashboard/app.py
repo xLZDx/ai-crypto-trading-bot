@@ -131,6 +131,40 @@ def get_control():
     return jsonify(ctrl)
 
 
+@app.route('/api/system/restart_all', methods=['POST'])
+@require_api_key
+def api_system_restart_all():
+    """Operator-triggered full-stack restart. Spawns restart_all.ps1 in
+    a detached PowerShell window so it survives this dashboard process
+    being killed (which it WILL be — the script kills/respawns the
+    dashboard). The browser will see the connection drop for ~30s
+    until the new dashboard comes up; the JS auto-reconnects on its
+    next poll."""
+    import subprocess as _sp, os as _os
+    script = os.path.join(project_root, 'restart_all.ps1')
+    if not os.path.exists(script):
+        return jsonify({'ok': False,
+                        'error': f'restart_all.ps1 not found at {script}'}), 500
+    try:
+        # Detached on Windows so we survive being killed mid-execution.
+        creationflags = 0
+        if _os.name == 'nt':
+            creationflags = (_sp.CREATE_NEW_PROCESS_GROUP |
+                             getattr(_sp, 'DETACHED_PROCESS', 0x00000008))
+        log_path = os.path.join(project_root, 'logs', f'restart_all_{int(time.time())}.log')
+        log_fp = open(log_path, 'a', encoding='utf-8')
+        proc = _sp.Popen(
+            ['powershell.exe', '-NoProfile', '-NonInteractive', '-File', script],
+            cwd=project_root, stdout=log_fp, stderr=log_fp,
+            creationflags=creationflags, close_fds=True,
+        )
+        return jsonify({'ok': True, 'pid': proc.pid,
+                        'log_path': log_path,
+                        'message': 'restart_all spawned; dashboard will go offline ~10-30s while it relaunches'})
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
+
+
 @app.route('/api/control', methods=['POST'])
 @require_api_key
 def set_control():

@@ -1217,8 +1217,9 @@ document.addEventListener('DOMContentLoaded', function() {
       <div class="topbar-sub" id="topbar-sub">Spot, futures, and scalping context in one place with live state, strategy analytics, and execution controls.</div>
     </div>
     <div class="topbar-actions">
-      <button id="btn-start" class="btn btn-green">▶ Start</button>
-      <button id="btn-stop"  class="btn btn-red">■ Stop</button>
+      <button id="btn-start" class="btn btn-green" title="Set control.running=true so the bot starts trading">▶ Start</button>
+      <button id="btn-stop"  class="btn btn-red"   title="Set control.running=false so the bot pauses trading (no new orders)">■ Stop</button>
+      <button id="btn-restart-all" class="btn" style="background:rgba(168,85,247,.25);color:#c4b5fd;border:1px solid rgba(168,85,247,.45)" title="Run restart_all.ps1 — kills + respawns bot, dashboard, monitor, training cluster, etc. Dashboard will go offline ~30s.">↻ Restart All</button>
       <span class="chip">Control Sync: <span id="ctrl-state">--</span></span>
     </div>
   </div>
@@ -5138,6 +5139,47 @@ async function setControl(running) {
   } catch(e) { console.error('control:', e); }
 }
 
+async function restartAll() {
+  if (!confirm(
+    '↻ RESTART ALL?\n\n' +
+    'This runs restart_all.ps1 — kills and respawns:\n' +
+    '  • Trading bot\n  • Dashboard (this UI will go offline ~10-30s)\n' +
+    '  • Monitor / Realtime ingest / Orderbook collector\n' +
+    '  • Data orchestrator / Debug supervisor\n\n' +
+    'Active training subprocesses will also be killed. Continue?')) return;
+  const btn = document.getElementById('btn-restart-all');
+  if (btn) { btn.disabled = true; btn.textContent = '↻ Restarting…'; }
+  try {
+    const r = await fetch('/api/system/restart_all',
+      { method: 'POST', headers: hdrs(), body: '{}' });
+    const body = await r.json();
+    if (!body.ok) throw new Error(body.error || 'restart failed');
+    // Schedule a reconnect probe — every 3s ping /api/state until it
+    // comes back, then reload the page.
+    const banner = document.createElement('div');
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#a855f7;color:#fff;text-align:center;padding:10px;font-weight:700;z-index:9999';
+    banner.textContent = '↻ RESTART ALL in progress — reconnecting…';
+    document.body.appendChild(banner);
+    const start = Date.now();
+    const probe = async () => {
+      try {
+        const ok = await fetch('/api/state', {cache:'no-store'});
+        if (ok.ok) { banner.textContent = '✓ Dashboard back — reloading…'; setTimeout(() => location.reload(), 700); return; }
+      } catch(_) {}
+      if (Date.now() - start > 90_000) {
+        banner.style.background = '#fb7185';
+        banner.textContent = '⚠ Restart taking longer than 90s — check launch_dashboard.ps1 manually';
+        return;
+      }
+      setTimeout(probe, 3000);
+    };
+    setTimeout(probe, 3000);
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = '↻ Restart All'; }
+    alert('Restart All failed: ' + (e.message||e));
+  }
+}
+
 // ─── SORTABLE TABLES ─────────────────────────────────────────────────────────
 function sortTbl(th) {
   const table = th.closest('table');
@@ -5494,6 +5536,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('[data-tmarket]').forEach(b => b.addEventListener('click', () => setTradesMarket(b.dataset.tmarket)));
   $('btn-start')?.addEventListener('click', () => setControl(true));
   $('btn-stop')?.addEventListener('click',  () => setControl(false));
+  $('btn-restart-all')?.addEventListener('click', restartAll);
   $('btn-top20')?.addEventListener('click', loadTop20);
   apiFetch('/api/control').then(d => setText('ctrl-state', d.running ? 'Running' : 'Stopped')).catch(()=>{});
   $('ov-sym-select')?.addEventListener('change', e => setActiveSym(e.target.value));
