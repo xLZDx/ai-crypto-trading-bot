@@ -2948,6 +2948,61 @@ def api_pipeline_status():
     return jsonify(snap)
 
 
+@app.route('/api/auto_retrain/status', methods=['GET'])
+def api_auto_retrain_status():
+    """Return the last auto-retrain result (or empty when never run)."""
+    from src.utils.safe_json import read_json
+    snap = read_json(str(project_root / 'data' / 'auto_retrain_status.json'),
+                     default={}) or {}
+    return jsonify(snap)
+
+
+@app.route('/api/auto_retrain/run', methods=['POST'])
+@require_api_key
+def api_auto_retrain_run():
+    """Spawn auto_retrain as a detached subprocess. Body (optional):
+        {"tolerance": 0.05, "rollback": false}
+    Idempotent — refuses to spawn a second auto-retrain if one is alive."""
+    global _pipeline_proc_pid
+    # auto_retrain runs through the same pipeline orchestrator, so reuse
+    # its alive-check to prevent overlapping cycles.
+    if _pipeline_proc_alive():
+        return jsonify({'ok': False,
+                        'error': 'pipeline already running — auto-retrain shares its process slot',
+                        'pid': _pipeline_proc_pid}), 409
+
+    body = request.get_json(silent=True) or {}
+    cmd = [sys.executable, '-m', 'src.engine.auto_retrain']
+    try:
+        cmd += ['--tolerance', str(float(body.get('tolerance', 0.05)))]
+    except (TypeError, ValueError):
+        pass
+    if body.get('rollback'):
+        cmd.append('--rollback')
+
+    log_dir = os.path.join(project_root, 'logs')
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, f"auto_retrain_{int(time.time())}.log")
+    try:
+        log_fp = open(log_path, 'a', encoding='utf-8')
+        creationflags = 0
+        if os.name == 'nt':
+            creationflags = (subprocess.CREATE_NEW_PROCESS_GROUP |
+                             getattr(subprocess, 'DETACHED_PROCESS', 0x00000008))
+        proc = subprocess.Popen(
+            cmd, cwd=project_root,
+            stdout=log_fp, stderr=log_fp,
+            creationflags=creationflags,
+            close_fds=True,
+        )
+        with _pipeline_proc_lock:
+            _pipeline_proc_pid = proc.pid
+        return jsonify({'ok': True, 'pid': proc.pid,
+                        'log_path': log_path, 'cmd': cmd})
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
+
+
 @app.route('/api/pipeline/run', methods=['POST'])
 @require_api_key
 def api_pipeline_run():

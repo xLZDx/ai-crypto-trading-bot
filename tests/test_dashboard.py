@@ -2536,6 +2536,65 @@ def test_phase44_pr6_live_trading_toggle():
           and 'Add how much to virtual balance' in tpl)
 
 
+def test_phase50_pr13_auto_retrain():
+    """Phase 50 — PR 13 / Phase C: walk-forward auto-retrain with regression
+    guard. Wraps the pipeline orchestrator with a before/after WF Sharpe
+    comparison. Optional --rollback restores meta backups on regression."""
+    print('\n[Phase 50 — PR 13 auto-retrain]')
+
+    ar_path = os.path.join(BASE_DIR, 'src', 'engine', 'auto_retrain.py')
+    check('auto_retrain.py exists', os.path.exists(ar_path))
+    if not os.path.exists(ar_path):
+        return
+    src = open(ar_path, encoding='utf-8').read()
+    app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
+               encoding='utf-8').read()
+
+    # 1. Module surface
+    check('run_auto_retrain entry function',
+          'def run_auto_retrain(' in src
+          and 'tolerance' in src
+          and 'rollback' in src)
+    check('Snapshots WF Sharpe per strategy from wf_results.json',
+          'def _wf_sharpe_snapshot(' in src
+          and 'wf_results.json' in src
+          and 'wf_mean_sharpe' in src)
+    check('Backs up meta files before retrain',
+          'def _backup_models(' in src
+          and 'shutil.copy2' in src)
+    check('Compares before/after with tolerance threshold',
+          'threshold = (a_old or 0) * (1 - tolerance)' in src
+          and '"accepted"' in src
+          and '"regression"' in src)
+    check('Records regression report on degradation',
+          'def _record_regression(' in src
+          and 'retrain_regressions' in src)
+    check('Optional rollback restores meta from backup on regression',
+          'def _restore_meta_from_backup(' in src
+          and 'rollback and backup_dir' in src)
+    check('Calls run_pipeline() from pipeline_orchestrator',
+          'from src.engine.pipeline_orchestrator import run_pipeline' in src
+          and 'pipe_result = run_pipeline()' in src)
+    check('Persists status to data/auto_retrain_status.json via safe_json',
+          'auto_retrain_status.json' in src
+          and 'write_json' in src)
+    check('CLI exposes --tolerance + --rollback',
+          '--tolerance' in src and '--rollback' in src)
+
+    # 2. Dashboard endpoints
+    check('GET /api/auto_retrain/status',
+          "@app.route('/api/auto_retrain/status'" in app
+          and 'auto_retrain_status.json' in app)
+    check('POST /api/auto_retrain/run gated by api_key + reuses pipeline alive-check',
+          "@app.route('/api/auto_retrain/run'" in app
+          and '@require_api_key' in app
+          and '_pipeline_proc_alive()' in app
+          and 'pipeline already running' in app)
+    check('Detached subprocess flags so retrain survives Flask restart',
+          'CREATE_NEW_PROCESS_GROUP' in app
+          and 'DETACHED_PROCESS' in app)
+
+
 def test_phase49_pr12_tf_pinning():
     """Phase 49 — PR 12 / Phase A: per-strategy TF pinning.
 
@@ -4173,6 +4232,7 @@ def main():
     test_phase47_pr10_loading_chips_and_simulator()
     test_phase48_pr11_multi_tf_inference()
     test_phase49_pr12_tf_pinning()
+    test_phase50_pr13_auto_retrain()
 
     if not args.offline:
         test_api(args.url)
