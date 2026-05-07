@@ -2536,6 +2536,70 @@ def test_phase44_pr6_live_trading_toggle():
           and 'Add how much to virtual balance' in tpl)
 
 
+def test_phase49_pr12_tf_pinning():
+    """Phase 49 — PR 12 / Phase A: per-strategy TF pinning.
+
+    The Stability heatmap (PR 4) identifies the most-stable TF per
+    strategy from walk-forward backtests; this PR persists those
+    assignments so the live bot can route each strategy's signal to its
+    most-stable TF + the matching per-TF model from PR 11.
+
+    Resolution: manual override > auto pin (from latest backtest) > default.
+    """
+    print('\n[Phase 49 — PR 12 strategy TF pinning]')
+
+    pin_path = os.path.join(BASE_DIR, 'src', 'engine', 'strategy_tf_pinning.py')
+    check('strategy_tf_pinning.py exists', os.path.exists(pin_path))
+    if not os.path.exists(pin_path):
+        return
+    src = open(pin_path, encoding='utf-8').read()
+    app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
+               encoding='utf-8').read()
+    orch = open(os.path.join(BASE_DIR, 'src', 'engine', 'pipeline_orchestrator.py'),
+                encoding='utf-8').read()
+
+    # 1. Pinning module surface
+    check('PINNING_PATH points at data/strategy_tf_pinning.json',
+          'strategy_tf_pinning.json' in src
+          and 'PINNING_PATH' in src)
+    check('Resolution order: manual > auto > default',
+          'def get_pinned_tf(' in src
+          and 'manual.get(strategy) or auto.get(strategy) or default' in src)
+    check('set_manual_pin clears when tf is empty/None',
+          'def set_manual_pin(' in src
+          and 'if not tf:' in src
+          and 'manual.pop(strategy, None)' in src)
+    check('update_auto_pins replaces stale assignments wholesale',
+          'def update_auto_pins(' in src
+          and 'state["auto"] = ' in src)
+    check('get_all_pins returns auto + manual + effective per strategy',
+          'def get_all_pins(' in src
+          and '"effective"' in src
+          and '"auto"' in src
+          and '"manual"' in src)
+    check('Persistence uses safe_json (filelock + atomic)',
+          'from src.utils.safe_json import read_json, write_json' in src)
+
+    # 2. Orchestrator post-backtest hook
+    check('Orchestrator refreshes TF pinning post-backtest',
+          'def _refresh_tf_pinning(' in orch
+          and 'update_auto_pins(best_tf)' in orch
+          and 'tf_pins_written' in orch)
+
+    # 3. Dashboard endpoints
+    check('GET /api/strategy/tf_pinning returns auto+manual+effective',
+          "@app.route('/api/strategy/tf_pinning', methods=['GET'])" in app
+          and 'def api_strategy_tf_pinning_get(' in app
+          and "'effective'" in app)
+    check('POST /api/strategy/tf_pinning sets/clears manual override',
+          "@app.route('/api/strategy/tf_pinning', methods=['POST'])" in app
+          and 'def api_strategy_tf_pinning_set(' in app
+          and 'set_manual_pin(strat, tf)' in app
+          and '@require_api_key' in app)
+    check('POST validates strategy field is required',
+          "'strategy required'" in app)
+
+
 def test_phase48_pr11_multi_tf_inference():
     """Phase 48 — PR 11 / Phase G: multi-TF inference.
        PR 2 made the trainer multi-TF (writing models/<key>_<tf>_*); now
@@ -4108,6 +4172,7 @@ def main():
     test_phase46_pr9_ux_bundle()
     test_phase47_pr10_loading_chips_and_simulator()
     test_phase48_pr11_multi_tf_inference()
+    test_phase49_pr12_tf_pinning()
 
     if not args.offline:
         test_api(args.url)

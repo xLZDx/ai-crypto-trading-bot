@@ -2437,6 +2437,43 @@ def api_strategy_stability():
     })
 
 
+# ─── Strategy TF pinning (Phase A) ────────────────────────────────────────────
+@app.route('/api/strategy/tf_pinning', methods=['GET'])
+def api_strategy_tf_pinning_get():
+    """Return the current pinning state (auto + manual + effective per
+    strategy). The orchestrator writes 'auto' after each multi-TF backtest;
+    the operator can override via POST below."""
+    from src.engine import strategy_tf_pinning as _tp
+    state = _tp.read_state()
+    return jsonify({
+        'auto':       state.get('auto')   or {},
+        'manual':     state.get('manual') or {},
+        'effective':  _tp.get_all_pins(),
+        'updated_at': state.get('updated_at') or '',
+        'default_tf': _tp.DEFAULT_TF,
+    })
+
+
+@app.route('/api/strategy/tf_pinning', methods=['POST'])
+@require_api_key
+def api_strategy_tf_pinning_set():
+    """Set or clear a manual TF override for one strategy.
+    Body: {"strategy": "RSI_MeanReversion", "tf": "4h"}.
+    Pass tf="" or null to clear (falls back to auto / default)."""
+    body = request.get_json(silent=True) or {}
+    strat = (body.get('strategy') or '').strip()
+    tf = body.get('tf')
+    if tf is not None:
+        tf = str(tf).strip() or None
+    if not strat:
+        return jsonify({'ok': False, 'error': 'strategy required'}), 400
+    from src.engine import strategy_tf_pinning as _tp
+    state = _tp.set_manual_pin(strat, tf)
+    return jsonify({'ok': True, 'strategy': strat, 'tf': tf,
+                    'state': {'auto': state.get('auto'),
+                              'manual': state.get('manual')}})
+
+
 # ─── Bucket aggregate comparison (Pure rule vs ML-driven vs Meta-filtered) ───
 @app.route('/api/strategy/bucket_compare', methods=['GET'])
 def api_strategy_bucket_compare():

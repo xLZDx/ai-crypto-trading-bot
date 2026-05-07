@@ -123,6 +123,63 @@ def _run_train_phase() -> dict:
         return out
 
 
+def _refresh_tf_pinning() -> int:
+    """Post-backtest hook (Phase A). Reads the freshly-written
+    latest_comparison + wf_results, computes best_tf per strategy via the
+    same logic as /api/strategy/stability, and persists into
+    data/strategy_tf_pinning.json. Returns the number of strategies pinned.
+    """
+    try:
+        import json as _json
+        import re as _re
+        from src.engine import strategy_registry as _sr
+        from src.engine.strategy_tf_pinning import update_auto_pins
+        bt_path = PROJECT_ROOT / "data" / "backtest" / "latest_comparison.json"
+        wf_path = PROJECT_ROOT / "data" / "backtest" / "wf_results.json"
+        bt_rows = _json.loads(bt_path.read_text()) if bt_path.exists() else []
+        wf_rows = _json.loads(wf_path.read_text()) if wf_path.exists() else []
+        label_to_key = {info.get("label", nm): nm for nm, info in _sr.REGISTRY.items()}
+        cells: dict[str, dict[str, dict]] = {}
+
+        def _f(v):
+            try: return float(v)
+            except (TypeError, ValueError): return None
+
+        for r in bt_rows:
+            raw = (r.get("strategy") or "").strip()
+            clean = _re.sub(r"^[AB]_", "", raw)
+            key = label_to_key.get(clean, clean)
+            tf = (r.get("timeframe") or "1h").strip() or "1h"
+            b = cells.setdefault(key, {}).setdefault(tf, {"sharpe_sum": 0.0, "sharpe_n": 0,
+                                                           "wf_sharpe_sum": 0.0, "wf_sharpe_n": 0})
+            v = _f(r.get("sharpe"))
+            if v is not None: b["sharpe_sum"] += v; b["sharpe_n"] += 1
+        for r in wf_rows:
+            key = (r.get("strategy") or "").strip()
+            tf = (r.get("timeframe") or "1h").strip() or "1h"
+            b = cells.get(key, {}).get(tf)
+            if not b: continue
+            v = _f(r.get("wf_mean_sharpe"))
+            if v is not None: b["wf_sharpe_sum"] += v; b["wf_sharpe_n"] += 1
+
+        best_tf: dict[str, str] = {}
+        for strat, by_tf in cells.items():
+            ranked = []
+            for tf, b in by_tf.items():
+                wf = b["wf_sharpe_sum"]/b["wf_sharpe_n"] if b["wf_sharpe_n"] else None
+                sh = b["sharpe_sum"]/b["sharpe_n"]       if b["sharpe_n"]    else None
+                score = wf if wf is not None else sh
+                if score is not None: ranked.append((score, tf))
+            if ranked:
+                ranked.sort(reverse=True)
+                best_tf[strat] = ranked[0][1]
+        update_auto_pins(best_tf)
+        return len(best_tf)
+    except Exception as exc:
+        logger.warning("refresh_tf_pinning failed: %s", exc)
+        return 0
+
+
 def _run_backtest_phase(timeframes: tuple[str, ...]) -> dict:
     """Phase 2: multi-TF backtest to populate Stability heatmap. Returns
     {ok, error, rows_written, timeframes}."""
@@ -138,12 +195,17 @@ def _run_backtest_phase(timeframes: tuple[str, ...]) -> dict:
         from src.engine.backtester import run_full_backtest
         df = run_full_backtest(timeframes=timeframes)
         rows = int(len(df)) if df is not None else 0
+        # Phase A — refresh strategy_tf_pinning.json from the new results
+        # so the bot's next signal cycle uses the freshly-computed best TFs.
+        n_pins = _refresh_tf_pinning()
         out = {"started_at": _now_iso(), "finished_at": _now_iso(),
                "ok": True, "error": None, "rows_written": rows,
                "timeframes": list(timeframes),
-               "elapsed_s": round(time.time() - started, 1)}
-        _emit_event("backtest", f"run_full_backtest completed ({rows} rows)",
-                    rows=rows, elapsed_s=out["elapsed_s"])
+               "elapsed_s": round(time.time() - started, 1),
+               "tf_pins_written": n_pins}
+        _emit_event("backtest",
+                    f"run_full_backtest completed ({rows} rows, {n_pins} TF pins)",
+                    rows=rows, n_pins=n_pins, elapsed_s=out["elapsed_s"])
         return out
     except Exception as exc:
         tb = traceback.format_exc()
