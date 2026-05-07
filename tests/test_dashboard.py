@@ -2536,6 +2536,72 @@ def test_phase44_pr6_live_trading_toggle():
           and 'Add how much to virtual balance' in tpl)
 
 
+def test_phase51_pr14_live_news_inference():
+    """Phase 51 — PR 14 / Phase D: live news inference path.
+
+    Background thread caches the recent news partition in memory so
+    add_news_sentiment() doesn't pay a DuckDB cold-start (~100-500 ms)
+    on every bot signal cycle. Refreshes every 5 min so newly-scraped
+    GDELT/Reddit/CC partitions show up in inference within 5 min of
+    being written.
+    """
+    print('\n[Phase 51 — PR 14 live news inference]')
+
+    buf_path = os.path.join(BASE_DIR, 'src', 'analysis', 'live_news_buffer.py')
+    check('live_news_buffer.py exists', os.path.exists(buf_path))
+    if not os.path.exists(buf_path):
+        return
+    src = open(buf_path, encoding='utf-8').read()
+    fe   = open(os.path.join(BASE_DIR, 'src', 'analysis', 'feature_engineering.py'),
+                encoding='utf-8').read()
+    main = open(os.path.join(BASE_DIR, 'src', 'main.py'), encoding='utf-8').read()
+    app  = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
+                encoding='utf-8').read()
+
+    # 1. Module surface
+    check('LiveNewsBuffer class with thread-safe snapshot',
+          'class LiveNewsBuffer' in src
+          and 'def get_snapshot(' in src
+          and 'with self._lock' in src)
+    check('Background refresher uses Event-based sleep so stop() is fast',
+          'self._stop = threading.Event()' in src
+          and 'self._stop.wait(timeout=' in src)
+    check('start() does inline first refresh before returning',
+          'def start(' in src
+          and '_refresh_once_safe()' in src
+          and 'self._thread.start()' in src)
+    check('Module-level singleton + helpers',
+          'def start_buffer(' in src
+          and 'def get_active_buffer(' in src
+          and 'def stop_buffer(' in src
+          and '_active_buffer' in src)
+    check('Status surface exposes rows, age, refresh_count, last_error',
+          'def status(self)' in src
+          and '"snapshot_age_s"' in src
+          and '"refresh_count"' in src
+          and '"last_error"' in src)
+
+    # 2. add_news_sentiment uses the buffer when present
+    check('add_news_sentiment prefers live buffer when active',
+          'from src.analysis.live_news_buffer import get_active_buffer' in fe
+          and 'buf.get_snapshot()' in fe
+          and 'news = snap.copy()' in fe)
+    check('Falls back to parquet load when no buffer',
+          'if news is None:' in fe
+          and 'load_news_recent(hours=24 * 365)' in fe)
+
+    # 3. main.py wires it
+    check('main.py starts the live news buffer at boot',
+          'from src.analysis.live_news_buffer import start_buffer' in main
+          and 'self.live_news_buffer = start_buffer(' in main)
+
+    # 4. Dashboard endpoint
+    check('GET /api/news/buffer returns buffer status',
+          "@app.route('/api/news/buffer'" in app
+          and 'def api_news_buffer_status(' in app
+          and 'get_active_buffer()' in app)
+
+
 def test_phase50_pr13_auto_retrain():
     """Phase 50 — PR 13 / Phase C: walk-forward auto-retrain with regression
     guard. Wraps the pipeline orchestrator with a before/after WF Sharpe
@@ -4233,6 +4299,7 @@ def main():
     test_phase48_pr11_multi_tf_inference()
     test_phase49_pr12_tf_pinning()
     test_phase50_pr13_auto_retrain()
+    test_phase51_pr14_live_news_inference()
 
     if not args.offline:
         test_api(args.url)

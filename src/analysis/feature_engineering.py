@@ -304,10 +304,27 @@ def add_news_sentiment(df: pd.DataFrame, news_path: str) -> pd.DataFrame:
     # All four cases coexist because partitions can be from different
     # eras / sources; we use whichever signal each row carries.
     try:
-        from src.analysis.feature_reader import load_news_recent
-        news_rows = load_news_recent(hours=24 * 365)   # 1y window
-        if news_rows:
-            news = pd.DataFrame(news_rows)
+        # Phase D — prefer in-memory live news buffer when the bot started
+        # one (skips the per-call DuckDB cold-start ~100-500ms). Fall back
+        # to the parquet query for trainers / backtests that don't run a
+        # buffer thread.
+        news = None
+        try:
+            from src.analysis.live_news_buffer import get_active_buffer
+            buf = get_active_buffer()
+            if buf is not None:
+                snap = buf.get_snapshot()
+                if snap is not None and not snap.empty:
+                    news = snap.copy()
+        except Exception:
+            news = None
+
+        if news is None:
+            from src.analysis.feature_reader import load_news_recent
+            news_rows = load_news_recent(hours=24 * 365)   # 1y window
+            if news_rows:
+                news = pd.DataFrame(news_rows)
+        if news is not None and not news.empty:
             # Pick whichever timestamp the row has (ts / published_at / timestamp)
             for ts_col in ("ts", "published_at", "timestamp"):
                 if ts_col in news.columns and pd.api.types.is_numeric_dtype(news[ts_col]):

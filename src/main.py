@@ -120,6 +120,21 @@ class MultiAssetTrader:
         self._strat_cfg = _load_strat_cfg()
         self._strat_cfg_mtime = 0.0
 
+        # --- Live news buffer (Phase D) ---
+        # Background thread that maintains an in-memory rolling cache of
+        # recent news. Without it, add_news_sentiment() pays a 100-500 ms
+        # DuckDB cold-start on every signal cycle. With it, the lookup is
+        # O(1) and the cache refreshes every 5 minutes.
+        try:
+            from src.analysis.live_news_buffer import start_buffer
+            self.live_news_buffer = start_buffer(window_hours=48,
+                                                 refresh_seconds=300)
+        except Exception as exc:
+            import logging as _l
+            _l.getLogger(__name__).warning(
+                "live_news_buffer failed to start: %s — sentiment will use parquet path", exc)
+            self.live_news_buffer = None
+
         # --- Regime Classifier ---
         try:
             from src.analysis.regime_classifier import RegimeClassifier

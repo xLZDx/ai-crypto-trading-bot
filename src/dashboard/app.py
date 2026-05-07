@@ -2948,6 +2948,25 @@ def api_pipeline_status():
     return jsonify(snap)
 
 
+@app.route('/api/news/buffer', methods=['GET'])
+def api_news_buffer_status():
+    """Return the live news buffer's status (rows cached, snapshot age,
+    refresh count, last error). Returns ready=false when the bot hasn't
+    started a buffer (training / backtest workers run without one)."""
+    try:
+        from src.analysis.live_news_buffer import get_active_buffer
+        buf = get_active_buffer()
+        if buf is None:
+            return jsonify({'ready': False, 'rows': 0,
+                            'snapshot_age_s': None,
+                            'refresh_count': 0,
+                            'last_error': '',
+                            'message': 'no buffer active in this process — bot must be running for live news inference'})
+        return jsonify(buf.status())
+    except Exception as exc:
+        return jsonify({'ready': False, 'error': str(exc)}), 500
+
+
 @app.route('/api/auto_retrain/status', methods=['GET'])
 def api_auto_retrain_status():
     """Return the last auto-retrain result (or empty when never run)."""
