@@ -2842,6 +2842,8 @@ function switchTab(name) {
     scPoll();
     dlPollStatus();
     dbPollStatus();
+    if (typeof clusterPoll === 'function') clusterPoll();
+    if (typeof renderLocalTrainingProgress === 'function') renderLocalTrainingProgress();
   }
   if (name === 'simulator') { simPoll(); simLoadStrategyStats(); }
   if (name === 'institutional') {
@@ -5327,12 +5329,15 @@ function monCopyLog()  { navigator.clipboard?.writeText(document.getElementById(
 
 // ── Model Stats ──────────────────────────────────────────────────────────────
 async function monLoadModelStats() {
+  const chip = document.getElementById('ms-summary-chip');
   try {
     const r = await fetch('/api/monitor/model_stats', { headers: hdrs() });
-    if (!r.ok) return;
+    if (!r.ok) { if (chip) { chip.textContent = `offline (HTTP ${r.status})`; chip.style.color = '#fb7185'; } return; }
     const d = await r.json();
     renderModelStats(d.models || [], d.cuda || {});
-  } catch {}
+  } catch (e) {
+    if (chip) { chip.textContent = 'unreachable'; chip.style.color = '#fb7185'; }
+  }
 }
 
 function renderModelStats(models, cuda) {
@@ -5464,12 +5469,15 @@ function agToggle() {
 }
 
 async function agPoll() {
+  const chip = document.getElementById('ag-summary-chip');
   try {
     const r = await fetch('/api/agents', { headers: hdrs() });
-    if (!r.ok) return;
+    if (!r.ok) { if (chip) { chip.textContent = `offline (HTTP ${r.status})`; chip.style.color = '#fb7185'; } return; }
     const d = await r.json();
     renderAgents(d.agents || [], d.ts || Date.now()/1000);
-  } catch {}
+  } catch (e) {
+    if (chip) { chip.textContent = 'unreachable'; chip.style.color = '#fb7185'; }
+  }
 }
 
 function fmtRelTime(ts, nowTs) {
@@ -5552,11 +5560,11 @@ function logToggleSection() {
 
 // ── Parquet Store status (was QuestDB pre-Phase-3) ───────────────────────────
 async function dbPollStatus() {
+  const chip = document.getElementById('db-status-chip');
   try {
     const r = await fetch('/api/db/status', { headers: hdrs() });
-    if (!r.ok) return;
+    if (!r.ok) { if (chip) { chip.textContent = `offline (HTTP ${r.status})`; chip.style.color = '#fb7185'; } return; }
     const d = await r.json();
-    const chip = document.getElementById('db-status-chip');
     const body = document.getElementById('db-status-body');
     if (!chip) return;
     if (d.available) {
@@ -5587,7 +5595,9 @@ async function dbPollStatus() {
           <button onclick="dbIngest()" class="btn btn-blue btn-sm">⬆ Ingest CSV.gz → Parquet</button>
         </div>`;
     }
-  } catch {}
+  } catch (e) {
+    if (chip) { chip.textContent = 'unreachable'; chip.style.color = '#fb7185'; }
+  }
 }
 
 async function dbIngest() {
@@ -5757,14 +5767,17 @@ async function clusterPoll() {
   // its body so opening it shows fresh data immediately.
   renderLocalTrainingProgress();
 
+  const chip = document.getElementById('cluster-summary-chip');
   try {
     const r = await fetch('/api/cluster/status', { headers: hdrs() });
-    if (!r.ok) return;
+    if (!r.ok) { if (chip) { chip.textContent = `offline (HTTP ${r.status})`; chip.style.color = '#fb7185'; } return; }
     const d = await r.json();
-    if (d.error) return;
+    if (d.error)  { if (chip) { chip.textContent = 'error'; chip.style.color = '#fb7185'; } return; }
 
-    const chip = document.getElementById('cluster-summary-chip');
-    if (chip) chip.textContent = `${d.workers_online||0} nodes · ${d.tasks_running||0} running · ${d.tasks_pending||0} queued`;
+    if (chip) {
+      chip.textContent = `${d.workers_online||0} nodes · ${d.tasks_running||0} running · ${d.tasks_pending||0} queued`;
+      chip.style.color = '';
+    }
 
     // Workers
     const grid = document.getElementById('cluster-workers-grid');
@@ -5815,7 +5828,9 @@ async function clusterPoll() {
         </tr>`).join('')}
       </table>`;
     }
-  } catch {}
+  } catch (e) {
+    if (chip) { chip.textContent = 'unreachable'; chip.style.color = '#fb7185'; }
+  }
 }
 
 async function clusterSubmitAll() {
@@ -5845,9 +5860,10 @@ function dlToggleSection() {
 }
 
 async function dlPollStatus() {
+  const chip = document.getElementById('dl-summary-chip');
   try {
     const r = await fetch('/api/monitor/downloader/status', { headers: hdrs() });
-    if (!r.ok) return;
+    if (!r.ok) { if (chip) { chip.textContent = `offline (HTTP ${r.status})`; chip.style.color = '#fb7185'; } return; }
     const d = await r.json();
     const hist = d.historical || {};
     const curr = d.current    || {};
@@ -5866,12 +5882,16 @@ async function dlPollStatus() {
     setText('dl-hist-missing', missingHist.length ? missingHist.join(', ') : 'None ✓');
     setText('dl-curr-missing', missingCurr.length ? missingCurr.join(', ') : 'None ✓');
 
-    const chip = document.getElementById('dl-summary-chip');
-    if (chip) chip.textContent = `${hist.file_count||0} hist · ${curr.file_count||0} current`;
+    if (chip) {
+      chip.textContent = `${hist.file_count||0} hist · ${curr.file_count||0} current`;
+      chip.style.color = '';
+    }
 
     const saved = d.saved_state || {};
     setText('dl-last-checked', saved.last_checked ? `Checked: ${saved.last_checked}` : '');
-  } catch {}
+  } catch (e) {
+    if (chip) { chip.textContent = 'unreachable'; chip.style.color = '#fb7185'; }
+  }
 }
 
 async function dlMigrate() {
@@ -6049,14 +6069,25 @@ async function simPoll() {
     if (d.error) {
       const errBar = document.getElementById('sim-error-bar');
       if (errBar) { errBar.style.display=''; errBar.textContent=`⚠ ${d.error}`; }
+      // Even on error, render the state — `initializing`, `error`, `busy`
+      // states should be visible in the State pill, not just hidden behind
+      // an error bar.
+      if (d.state) simRenderStatus(d);
     } else {
       simRenderStatus(d);
     }
   } catch(e) {
     const errBar = document.getElementById('sim-error-bar');
     if (errBar) { errBar.style.display=''; errBar.textContent=`⚠ Could not reach /api/simulator/status: ${e}`; }
+    const stateEl = document.getElementById('sim-state');
+    if (stateEl) { stateEl.textContent = 'UNREACHABLE'; stateEl.style.color = '#fb7185'; }
   }
 }
+
+// Auto-poll while the Simulator tab is active so Start/Stop transitions
+// are visible without a manual refresh. 4s strikes a balance between
+// responsiveness and bot CPU load.
+setInterval(() => { if (activeTab === 'simulator') simPoll(); }, 4_000);
 
 function simRenderStatus(d) {
   const stateEl = document.getElementById('sim-state');

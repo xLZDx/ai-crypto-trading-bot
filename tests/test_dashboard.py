@@ -2536,6 +2536,44 @@ def test_phase44_pr6_live_trading_toggle():
           and 'Add how much to virtual balance' in tpl)
 
 
+def test_phase47_pr10_loading_chips_and_simulator():
+    """Phase 47 — PR 10: Monitor 'Loading…' chip recovery + simulator
+    auto-poll. Defensive UX so the dashboard never looks frozen when an
+    endpoint is briefly unreachable, and the Simulator state pill
+    actually transitions on Start/Stop without a manual refresh."""
+    print('\n[Phase 47 — PR 10 loading chips + simulator]')
+    tpl = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html'),
+               encoding='utf-8').read()
+
+    # 1. Each chip's poller surfaces unreachable / HTTP error in the chip
+    #    text instead of silently leaving 'Loading…' forever.
+    for chip_id in ['cluster-summary-chip', 'dl-summary-chip',
+                    'db-status-chip', 'ag-summary-chip', 'ms-summary-chip']:
+        check(f'{chip_id} catch sets unreachable on fetch failure',
+              ('chip-id-presence', chip_id) and
+              tpl.count(f"document.getElementById('{chip_id}')") >= 1
+              and 'unreachable' in tpl)
+
+    # Each poller writes 'offline (HTTP n)' on a non-200 response.
+    check('Pollers report HTTP status on non-200',
+          tpl.count('offline (HTTP') >= 5)
+    check('Failed-fetch chip text colour is red (#fb7185)',
+          tpl.count("chip.style.color = '#fb7185'") >= 5)
+
+    # 2. Simulator auto-poll wired so Start/Stop transitions are visible.
+    check('Simulator tab has periodic auto-poll',
+          "setInterval(() => { if (activeTab === 'simulator') simPoll();" in tpl)
+    check('Sim status renders state even when error present',
+          'if (d.state) simRenderStatus(d)' in tpl)
+    check('Sim UNREACHABLE state shown when fetch throws',
+          "stateEl.textContent = 'UNREACHABLE'" in tpl)
+
+    # 3. Monitor tab opens cluster + local-training panels too.
+    check("Monitor tab open triggers clusterPoll + renderLocalTrainingProgress",
+          "if (typeof clusterPoll === 'function') clusterPoll();" in tpl
+          and "if (typeof renderLocalTrainingProgress === 'function')" in tpl)
+
+
 def test_phase46_pr9_ux_bundle():
     """Phase 46 — PR 9 UX bug bundle:
        - Status pill column on Model Training (RUNNING/OK/FAILED/STOPPED/NOT-STARTED)
@@ -4008,6 +4046,7 @@ def main():
     test_phase44_pr6_live_trading_toggle()
     test_phase45_pipeline_orchestrator()
     test_phase46_pr9_ux_bundle()
+    test_phase47_pr10_loading_chips_and_simulator()
 
     if not args.offline:
         test_api(args.url)
