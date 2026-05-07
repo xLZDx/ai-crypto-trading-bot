@@ -3719,6 +3719,14 @@ function _renderTrainingTable() {
       // Optimistic UI: trRunOne sets activeJobId immediately, but the
       // first poll hasn't returned yet — show STARTING.
       st = {cls:'run', txt:'STARTING', tip:'Trainer subprocess spawning…'};
+    } else if (typeof _trRecentFails !== 'undefined' && _trRecentFails && _trRecentFails[m.key]) {
+      // Surface a recently-failed run so the operator sees the failure
+      // reason inline (instead of the row reverting to last-OK state and
+      // hiding the recent error). Auto-clears 2 min after finished_at.
+      const f = _trRecentFails[m.key];
+      const reason = (f.errors && f.errors[0]) || (f.errors_by_tf && Object.values(f.errors_by_tf).flat()[0]) || f.error || 'unknown error';
+      st = {cls:'err', txt:f.status === 'cancelled' ? 'CANCELLED' : 'FAILED',
+            tip:String(reason).slice(0, 300)};
     }
     const stColor = {ok:'#34d399',run:'#fbbf24',err:'#fb7185',stp:'#94a3b8',na:'#475569'}[st.cls] || '#475569';
     const stBg    = {ok:'rgba(52,211,153,.15)',run:'rgba(251,191,36,.18)',err:'rgba(251,113,133,.16)',stp:'rgba(148,163,184,.12)',na:'rgba(71,85,105,.12)'}[st.cls] || 'rgba(71,85,105,.12)';
@@ -3776,8 +3784,10 @@ const _MODEL_DESCRIPTIONS = {
 // Active training jobs by model key, polled by pollTrainingJobs.
 // _trActiveByModel = {model_key: job_id}  — quick lookup
 // _trActiveJobs    = {model_key: job_record} — full record (status, progress, current_tf...)
+// _trRecentFails   = {model_key: job_record} — finished error/partial/cancelled jobs <2min old
 let _trActiveByModel = {};
 let _trActiveJobs = {};
+let _trRecentFails = {};
 
 // ── Manual training triggers ─────────────────────────────────────────────────
 async function trRunOne(key) {
@@ -3801,9 +3811,27 @@ async function trRunOne(key) {
   try {
     const body = {n};
     if (tf) body.tf = tf;
-    const r = await fetch(`/api/training/run/${encodeURIComponent(key)}`,
+    let r = await fetch(`/api/training/run/${encodeURIComponent(key)}`,
       { method: 'POST', headers: hdrs(), body: JSON.stringify(body) });
-    const resp = await r.json();
+    let resp = await r.json();
+    // 409 — same model already training. Ask operator if they want to
+    // retrain anyway (force=true). User-friendly: tells them which job
+    // is already running so they can decide to wait or override.
+    if (r.status === 409 && resp.error === 'already_running') {
+      const ok = confirm(
+        `${key} is already training (status: ${resp.existing_status}).\n\n` +
+        `Force a new training run anyway? The existing one will keep going in parallel — both will write to the same model file, last one wins.`);
+      if (!ok) {
+        // Keep optimistic state pointing at the existing job so UI is consistent
+        _trActiveByModel[key] = resp.existing_job_id || _trActiveByModel[key];
+        if (typeof _renderTrainingTable === 'function') _renderTrainingTable();
+        return;
+      }
+      r = await fetch(`/api/training/run/${encodeURIComponent(key)}`,
+        { method: 'POST', headers: hdrs(),
+          body: JSON.stringify({...body, force: true}) });
+      resp = await r.json();
+    }
     if (!resp.ok) throw new Error(resp.error || 'request failed');
     _trMarkPending(`${key}@${tfLabel} ×${n} queued`);
     // Replace the placeholder job_id with the real one.
@@ -3876,9 +3904,14 @@ async function pollTrainingJobs() {
     const d = await r.json();
     const jobs = d.jobs || [];
     const active = jobs.filter(j => j.status === 'queued' || j.status === 'running' || j.status === 'starting');
-    // Rebuild both maps so rows can show fine-grained status (queued /
-    // starting / running phase / completed / failed) instead of a single
-    // RUNNING for everything.
+    // Recently-failed jobs we want to surface for ~2 minutes so the
+    // operator can see the FAILED pill with the error reason without
+    // having to dig through logs.
+    const now = Date.now() / 1000;
+    const recentFails = jobs.filter(j =>
+      (j.status === 'error' || j.status === 'partial' || j.status === 'cancelled')
+      && j.finished_at && (now - j.finished_at) < 120
+    );
     const newActive = {};
     const newJobs = {};
     for (const j of active) {
@@ -3887,10 +3920,17 @@ async function pollTrainingJobs() {
         newJobs[j.model] = j;
       }
     }
+    // Stash recent fails in _trRecentFails so _renderTrainingTable can show them
+    const newFails = {};
+    for (const j of recentFails) {
+      if (j.model && !newActive[j.model]) newFails[j.model] = j;
+    }
     const changed = JSON.stringify(newActive) !== JSON.stringify(_trActiveByModel)
-                 || JSON.stringify(newJobs) !== JSON.stringify(_trActiveJobs);
+                 || JSON.stringify(newJobs) !== JSON.stringify(_trActiveJobs)
+                 || JSON.stringify(newFails) !== JSON.stringify(_trRecentFails);
     _trActiveByModel = newActive;
     _trActiveJobs = newJobs;
+    _trRecentFails = newFails;
     if (changed && typeof _renderTrainingTable === 'function') _renderTrainingTable();
     const last = jobs[0];  // newest
     const pill = $('chip-training-jobs');

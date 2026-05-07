@@ -2639,22 +2639,26 @@ _training_jobs: dict[str, dict] = {}
 _training_jobs_lock = threading.Lock()
 _TRAINING_JOBS_MAX = 50
 
-# Maps the model key shown in the UI to the (module, callable) the trainer
-# subprocess invokes. Each callable runs the full training pipeline and
-# writes the matching meta JSON + model artifact under models/.
+# Maps the model key shown in the UI to (module, callable, accepts_tf).
+# accepts_tf=True means the function takes a `timeframe=` kwarg and the
+# trainer should pass it through; False means the function ignores TF
+# (e.g. train_all takes per_key_tfs dict, regime classifier takes
+# symbols= only, OFT main() is argparse-driven). Pre-fix bug:
+# 'regime' dispatched to train_all which DOESN'T accept timeframe= and
+# every regime training run failed with TypeError.
 _TRAINER_DISPATCH = {
-    'base':     ('src.engine.train_model',          'train_model'),
-    'trend':    ('src.engine.train_trend_model',    'train_trend_model'),
-    'futures':  ('src.engine.train_futures_model',  'train_futures_model'),
-    'scalping': ('src.engine.train_scalping_model', 'train_scalping_model'),
-    'tft':      ('src.engine.train_tft_model',      'train_tft_model'),
-    # OFT lives in src/training/oft_trainer.py with main() entry point.
-    'oft':      ('src.training.oft_trainer',        'main'),
-    'meta':     ('src.engine.train_meta_labeler',   'train_meta_labeler'),
-    # Regime classifier currently retrains as part of train_all; no
-    # standalone callable. Falling back to train_all for that key.
-    'regime':   ('src.engine.train_all_models',     'train_all'),
-    'all':      ('src.engine.train_all_models',     'train_all'),
+    'base':     ('src.engine.train_model',           'train_model',          True),
+    'trend':    ('src.engine.train_trend_model',     'train_trend_model',    True),
+    'futures':  ('src.engine.train_futures_model',   'train_futures_model',  True),
+    'scalping': ('src.engine.train_scalping_model',  'train_scalping_model', True),
+    'tft':      ('src.engine.train_tft_model',       'train_tft_model',      True),
+    'oft':      ('src.training.oft_trainer',         'main',                 False),
+    'meta':     ('src.engine.train_meta_labeler',    'train_meta_labeler',   True),
+    # Regime classifier has its own standalone trainer.
+    'regime':   ('src.analysis.regime_classifier',   'train_regime_classifier', False),
+    # train_all() takes per_key_tfs dict, not a single tf — pass nothing
+    # and let it use its own DEFAULT_PER_KEY_TFS map.
+    'all':      ('src.engine.train_all_models',      'train_all',            False),
 }
 
 
@@ -2691,7 +2695,7 @@ def _run_trainer_multi_tf(job_id: str, key: str, n: int,
                     error=f'unknown model key {key}',
                     finished_at=time.time())
         return
-    module_path, fn_name = spec
+    module_path, fn_name, accepts_tf = spec
     iter_count = 0
     for tf_idx, tf in enumerate(tfs):
         if cancelled:
@@ -2701,7 +2705,9 @@ def _run_trainer_multi_tf(job_id: str, key: str, n: int,
         for i in range(n):
             if cancelled:
                 break
-            kw = f"timeframe={tf!r}"
+            # Some trainers don't accept timeframe= (regime, oft, all) —
+            # pass nothing for those even if a TF is in the chain.
+            kw = f"timeframe={tf!r}" if accepts_tf else ""
             cmd = [
                 sys.executable, '-c',
                 f'import {module_path} as m; '
@@ -2766,7 +2772,7 @@ def _run_trainer_blocking(job_id: str, key: str, n: int,
                     error=f'unknown model key {key}',
                     finished_at=time.time())
         return
-    module_path, fn_name = spec
+    module_path, fn_name, accepts_tf = spec
     successes, errors = 0, []
     cancelled = False
     _record_job(job_id, status='running', started_at=time.time(),
@@ -2774,7 +2780,9 @@ def _run_trainer_blocking(job_id: str, key: str, n: int,
     for i in range(n):
         if cancelled:
             break
-        kw = f"timeframe={tf!r}" if tf else ""
+        # Skip the timeframe kwarg entirely for trainers that don't
+        # accept it (regime / oft / all), even if the UI passed a TF.
+        kw = f"timeframe={tf!r}" if (tf and accepts_tf) else ""
         cmd = [
             sys.executable, '-c',
             f'import {module_path} as m; '
@@ -2839,6 +2847,23 @@ def api_training_run_one(key: str):
         n = 1
     n = max(1, min(n, 20))   # clamp so a stray 1000 doesn't pin a CPU all day
     tf = body.get('tf') or request.args.get('tf') or None
+    # Duplicate-job guard. If this same model is already training, return
+    # 409 with the existing job_id unless the caller explicitly opted in
+    # via {"force":true}. Operator's UI shows a confirm dialog when 409
+    # comes back so they can pick 'retrain anyway'.
+    force = bool(body.get('force'))
+    if not force:
+        with _training_jobs_lock:
+            for j in _training_jobs.values():
+                if (j.get('model') == key
+                        and j.get('status') in ('queued', 'running', 'starting')):
+                    return jsonify({
+                        'ok': False,
+                        'error': 'already_running',
+                        'message': f'{key} is already training (job {j.get("job_id")}, status={j.get("status")})',
+                        'existing_job_id': j.get('job_id'),
+                        'existing_status':  j.get('status'),
+                    }), 409
     # 'all' expands to every TF the trainer supports for this model — we
     # spawn one job per TF and let the worker chain them sequentially.
     valid_tfs = ('1m', '5m', '15m', '1h', '4h', '1d', '1w', '1mo')
