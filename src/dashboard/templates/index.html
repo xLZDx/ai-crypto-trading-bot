@@ -3921,11 +3921,38 @@ async function trStopOne(jobId, key) {
 async function trRetrainAll() {
   if (!confirm('Run train_all_models.py now?\n\nThis runs every trainer (base, trend, futures, scalping, TFT, OFT, meta, regime) sequentially. Can take 1–3 hours depending on hardware. Existing models keep working until each new artifact lands.')) return;
   try {
-    const r = await fetch('/api/training/run/all',
-      { method: 'POST', headers: hdrs() });
-    const body = await r.json();
+    let r = await fetch('/api/training/run/all',
+      { method: 'POST', headers: hdrs(), body: JSON.stringify({}) });
+    let body = await r.json();
+    // Duplicate-prevention path: server returns 409 when another training
+    // job is already running. Show what's running and ask if the operator
+    // wants to spawn a parallel run anyway.
+    if (r.status === 409 && body.error === 'already_running') {
+      const ok = confirm(
+        `A training job is already running:\n` +
+        `  model: ${body.existing_model}\n  status: ${body.existing_status}\n  job_id: ${body.existing_job_id}\n\n` +
+        `Spawn a parallel Retrain ALL anyway? Both will compete for CPU/GPU and write to the same model files.`);
+      if (!ok) {
+        // Fall back: just refresh the polling so the user sees the active job
+        pollTrainingJobs();
+        _trMarkPending(`already running: ${body.existing_model}`);
+        return;
+      }
+      r = await fetch('/api/training/run/all',
+        { method: 'POST', headers: hdrs(), body: JSON.stringify({force: true}) });
+      body = await r.json();
+    }
     if (!body.ok) throw new Error(body.error || 'request failed');
     _trMarkPending('Retrain ALL queued');
+    // Optimistic broadcast — flip every model row to RUNNING immediately
+    // so the user gets visible feedback instead of clicking again.
+    const fakeJob = {job_id: body.job_id, status: 'queued', model: 'all',
+                    progress_label: 'as part of Retrain ALL'};
+    for (const k of ['base','trend','futures','scalping','tft','oft','meta','regime']) {
+      _trActiveByModel[k] = body.job_id;
+      _trActiveJobs[k]    = {...fakeJob, model: k};
+    }
+    if (typeof _renderTrainingTable === 'function') _renderTrainingTable();
     pollTrainingJobs();
   } catch(e) {
     alert('Retrain ALL failed: ' + (e.message||e));
@@ -3946,6 +3973,11 @@ async function pollTrainingJobs() {
     const d = await r.json();
     const jobs = d.jobs || [];
     const active = jobs.filter(j => j.status === 'queued' || j.status === 'running' || j.status === 'starting');
+    // Surface a 'Retrain ALL' job by broadcasting it to every model row.
+    // Pre-fix: clicking ▶ Retrain ALL spawned a job with model='all' that
+    // didn't appear on any row, so the user saw NOTHING happen and kept
+    // re-clicking — ending up with N parallel train_all subprocesses.
+    const allJob = active.find(j => j.model === 'all');
     // Recently-failed jobs we want to surface for ~2 minutes so the
     // operator can see the FAILED pill with the error reason without
     // having to dig through logs.
@@ -3966,6 +3998,17 @@ async function pollTrainingJobs() {
     const newFails = {};
     for (const j of recentFails) {
       if (j.model && !newActive[j.model]) newFails[j.model] = j;
+    }
+    // If a 'Retrain ALL' job is active, broadcast it to every individual
+    // model row that isn't already running its own job — so every row's
+    // pill flips to RETRAIN-ALL instead of staying on stale OK.
+    if (allJob) {
+      for (const k of ['base','trend','futures','scalping','tft','oft','meta','regime']) {
+        if (!newActive[k]) {
+          newActive[k] = allJob.job_id;
+          newJobs[k] = {...allJob, model: k, progress_label: 'as part of Retrain ALL'};
+        }
+      }
     }
     const changed = JSON.stringify(newActive) !== JSON.stringify(_trActiveByModel)
                  || JSON.stringify(newJobs) !== JSON.stringify(_trActiveJobs)
@@ -5495,6 +5538,29 @@ document.addEventListener('DOMContentLoaded', () => {
   scPoll();
 
   switchTab('overview');
+
+  // ── Staggered 10s card refresh ─────────────────────────────────────────
+  // User asked for 'one card per second, all in 10s'. Without this each
+  // card had its own setInterval that all fired at the same moment when
+  // a tab was opened, briefly thrashing CPU + the bot's API. Now: a
+  // single 1-second tick rotates through 10 pollers, one per second.
+  const _STAGGERED_POLLERS = [
+    () => { if (activeTab === 'monitor')      try { monPollHealth(); } catch(_){} },
+    () => { if (activeTab === 'monitor')      try { agPoll(); } catch(_){} },
+    () => { if (activeTab === 'monitor')      try { dlPollStatus(); } catch(_){} },
+    () => { if (activeTab === 'monitor')      try { dbPollStatus(); } catch(_){} },
+    () => { if (activeTab === 'monitor' && typeof clusterPoll==='function') try { clusterPoll(); } catch(_){} },
+    () => { if (activeTab === 'simulator')    try { simPoll(); } catch(_){} },
+    () => { if (activeTab === 'strategy' && typeof pollTrainingJobs==='function') try { pollTrainingJobs(); } catch(_){} },
+    () => { if (activeTab === 'strategy' && typeof pipelineRefresh==='function') try { pipelineRefresh(); } catch(_){} },
+    () => { try { pollErrors(); } catch(_){} },           // banner — tab-agnostic
+    () => { try { pollState(); } catch(_){} },             // bot-state — tab-agnostic
+  ];
+  let _staggerIdx = 0;
+  setInterval(() => {
+    try { _STAGGERED_POLLERS[_staggerIdx](); } catch(_) {}
+    _staggerIdx = (_staggerIdx + 1) % _STAGGERED_POLLERS.length;
+  }, 1000);
 });
 
 // ── Monitor tab ────────────────────────────────────────────────────────────

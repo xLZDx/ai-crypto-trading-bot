@@ -655,10 +655,35 @@ def monitor_health():
     pids = read_json('data/process_ids.json', default={})
     out = {}
 
-    # Externally launched components (PIDs saved by restart_all.ps1)
+    # Externally launched components (PIDs saved by restart_all.ps1).
+    # If the recorded PID is dead, fall back to a cmdline scan so a bot
+    # or dashboard that was relaunched directly (e.g. via Start-Process,
+    # bypassing restart_all) still shows as 'Running'. Pre-fix:
+    # process_ids.json's PIDs went stale after any direct relaunch and
+    # the Component Health card kept showing 'Stopped' for things that
+    # were obviously alive (the user was looking at the dashboard!).
+    _CMDLINE_SCAN = {
+        'bot':  r'src[\\/]main\.py',
+        'dash': r'src[\\/]dashboard[\\/]app\.py',
+    }
     for key, label in [('bot', 'Trading Bot'), ('dash', 'Dashboard')]:
         pid = pids.get(key)
         alive = _pid_alive(pid)
+        if not alive and key in _CMDLINE_SCAN:
+            try:
+                import psutil, re as _re
+                pat = _re.compile(_CMDLINE_SCAN[key])
+                for p in psutil.process_iter(['pid', 'name', 'cmdline']):
+                    try:
+                        if (p.info.get('name') or '').lower().startswith('python'):
+                            cmd = ' '.join(p.info.get('cmdline') or [])
+                            if pat.search(cmd):
+                                pid = p.info['pid']; alive = True
+                                break
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+            except Exception:
+                pass
         entry = {'label': label, 'running': alive, 'pid': pid, 'managed': False}
         if alive:
             entry.update(_proc_stats(pid))
@@ -2960,7 +2985,26 @@ def api_pipeline_reset():
 @app.route('/api/training/run/all', methods=['POST'])
 @require_api_key
 def api_training_run_all():
-    """Run train_all_models.py once — the canonical full-pipeline retrain."""
+    """Run train_all_models.py once — the canonical full-pipeline retrain.
+
+    Refuses to spawn a duplicate when ANY training subprocess (single
+    model OR another 'all' run) is currently active — pre-fix the user
+    clicked Retrain ALL, saw nothing happen, and kept clicking, ending
+    up with 10 train_all subprocesses competing for CPU/GPU."""
+    body = request.get_json(silent=True) or {}
+    force = bool(body.get('force'))
+    if not force:
+        with _training_jobs_lock:
+            for j in _training_jobs.values():
+                if j.get('status') in ('queued', 'running', 'starting'):
+                    return jsonify({
+                        'ok': False,
+                        'error': 'already_running',
+                        'message': f"a training job is already in flight (model={j.get('model')}, status={j.get('status')}). Pass force=true to spawn a parallel run anyway.",
+                        'existing_job_id': j.get('job_id'),
+                        'existing_model':  j.get('model'),
+                        'existing_status': j.get('status'),
+                    }), 409
     job_id = uuid.uuid4().hex[:12]
     _record_job(job_id, model='all', n=1,
                 status='queued', created_at=time.time())
