@@ -124,10 +124,22 @@ def get_control():
 @app.route('/api/control', methods=['POST'])
 @require_api_key
 def set_control():
+    """Merge incoming fields into control.json — never overwrite the whole
+    file. Older callers POSTed `{"running": false}` here and silently wiped
+    `trade_mode` (and any other field added later). Merge keeps every
+    previously-set field and only touches what the caller specified.
+    """
     try:
         data = request.json
-        write_json('data/control.json', data)
-        return jsonify({"success": True})
+        if not isinstance(data, dict):
+            return jsonify({"success": False,
+                            "error": "expected JSON object body"}), 400
+        existing = read_json('data/control.json', default={}) or {}
+        if not isinstance(existing, dict):
+            existing = {}
+        existing.update(data)
+        write_json('data/control.json', existing)
+        return jsonify({"success": True, "control": existing})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
 
@@ -2888,7 +2900,14 @@ def api_pipeline_status():
         # Orchestrator died without writing a final status — surface this
         # so the operator can re-launch instead of waiting forever.
         snap['status'] = 'error'
-        snap.setdefault('last_event', {})['message'] = 'orchestrator process exited without finalising'
+        # NB: setdefault returns the existing value if the key is present —
+        # even if that value is None (which the orchestrator initialises
+        # `last_event` to). Coerce to a dict before mutating.
+        last_event = snap.get('last_event')
+        if not isinstance(last_event, dict):
+            last_event = {}
+        last_event['message'] = 'orchestrator process exited without finalising'
+        snap['last_event'] = last_event
     return jsonify(snap)
 
 

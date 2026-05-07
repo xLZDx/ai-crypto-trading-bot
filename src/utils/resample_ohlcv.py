@@ -146,11 +146,26 @@ def _resample_target(target_tf: str, agg_state: dict) -> pd.DataFrame:
 
 def _write_csv_gz(df: pd.DataFrame, out_path: Path) -> int:
     """Write the result as gzipped CSV in the same schema as our existing
-    files (timestamp as 'YYYY-MM-DD HH:MM:SS')."""
+    files (timestamp as 'YYYY-MM-DD HH:MM:SS').
+
+    Drops gap rows (NaN OHLC) before writing — pandas resample emits one
+    row per period in the date range, so any source-data gap (exchange
+    downtime, listing-date pre-history) becomes a row with empty OHLC
+    cells. Downstream `float()` casts then crash. Dropping is correct:
+    no data == no bar.
+    """
     if df.empty:
         return 0
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out = df.copy()
+    pre = len(out)
+    out = out.dropna(subset=["open", "high", "low", "close"])
+    dropped = pre - len(out)
+    if dropped:
+        logger.info("resample %s dropped %d gap rows (NaN OHLC)",
+                    out_path.name, dropped)
+    if out.empty:
+        return 0
     out.index = out.index.strftime("%Y-%m-%d %H:%M:%S")
     out.index.name = "timestamp"
     # Atomic-ish write: write to .tmp, rename. Skips partial-file

@@ -14,29 +14,42 @@ class ElliottWaveAnalyzer:
         self.deviation_percent = deviation_percent / 100.0
         
     def load_data(self, filepath: str, tail_n: int = 0) -> List[Dict]:
-        """Load CSV data.  tail_n > 0 returns only the last tail_n rows (memory-safe)."""
+        """Load CSV data.  tail_n > 0 returns only the last tail_n rows (memory-safe).
+
+        Per-row try/except so a single malformed row (e.g. a resampler gap
+        emitted as ',,,,,') doesn't abort the whole load. Skipped rows are
+        counted and logged once at WARN, not 60 times per cycle.
+        """
         from collections import deque
         data_buf: deque = deque(maxlen=tail_n if tail_n > 0 else None)
+        skipped = 0
         try:
             open_func = gzip.open if filepath.endswith('.gz') else open
             mode = 'rt' if filepath.endswith('.gz') else 'r'
             with open_func(filepath, mode, encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    data_buf.append({
-                        'timestamp': row['timestamp'],
-                        'open': float(row['open']),
-                        'high': float(row['high']),
-                        'low': float(row['low']),
-                        'close': float(row['close']),
-                        'volume': float(row['volume']),
-                        'quote_volume': float(row.get('quote_volume', 0)),
-                        'trades_count': float(row.get('trades_count', 0)),
-                        'taker_buy_base': float(row.get('taker_buy_base', 0)),
-                        'taker_buy_quote': float(row.get('taker_buy_quote', 0))
-                    })
+                    try:
+                        data_buf.append({
+                            'timestamp': row['timestamp'],
+                            'open': float(row['open']),
+                            'high': float(row['high']),
+                            'low': float(row['low']),
+                            'close': float(row['close']),
+                            'volume': float(row['volume']),
+                            'quote_volume': float(row.get('quote_volume', 0)),
+                            'trades_count': float(row.get('trades_count', 0)),
+                            'taker_buy_base': float(row.get('taker_buy_base', 0)),
+                            'taker_buy_quote': float(row.get('taker_buy_quote', 0))
+                        })
+                    except (ValueError, KeyError, TypeError):
+                        skipped += 1
+                        continue
             data = list(data_buf)
-            logging.info(f"Loaded {len(data)} candles from {filepath}")
+            if skipped:
+                logging.warning(f"Loaded {len(data)} candles from {filepath} (skipped {skipped} malformed rows)")
+            else:
+                logging.info(f"Loaded {len(data)} candles from {filepath}")
             return data
         except Exception as e:
             logging.error(f"Error reading file {filepath}: {e}")

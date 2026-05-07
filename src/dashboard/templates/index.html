@@ -1010,23 +1010,29 @@ async function ltLoadBalance() {
   } catch(e) { console.error('ltLoadBalance', e); }
 }
 
+let _ltSwitchInFlight = false;
 async function ltSetMode(mode) {
+  // Debounce — clicking the same button twice (or a confirm while one is
+  // mid-flight) used to fire two POSTs and the second response could race
+  // ahead of the first, leaving the visible state desynced from disk.
+  if (_ltSwitchInFlight) return;
+  // Only mainnet needs a confirm (real money). Paper ↔ testnet should
+  // switch instantly so the operator can compare modes quickly.
   if (mode === 'mainnet') {
     if (!confirm('⚠ Switch to MAINNET?\n\nReal money will be at risk on every order. Make sure you have:\n  - reviewed strategy_config.json\n  - confirmed position sizing limits\n  - tested in TESTNET first\n\nProceed?')) return;
-  } else if (mode === 'testnet') {
-    if (!confirm('Switch to TESTNET?\n\nBot will send real orders to Binance testnet (fake money). Resamples + training continue unchanged.')) return;
-  } else if (mode === 'paper') {
-    if (!confirm('Switch to PAPER mode?\n\nBot will skip real orders entirely and book trades to the internal virtual balance only. Your testnet/mainnet positions stay where they are; new orders go to paper.')) return;
   }
+  _ltSwitchInFlight = true;
   try {
     const body = {mode}; if (mode === 'mainnet') body.confirm = true;
     const r = await fetch('/api/control/trade_mode',
       {method: 'POST', headers: hdrs(), body: JSON.stringify(body)});
     const d = await r.json();
     if (!d.ok) throw new Error(d.error || 'request failed');
-    ltLoadMode();
+    await ltLoadMode();
   } catch(e) {
     alert('Trade-mode switch failed: ' + (e.message||e));
+  } finally {
+    _ltSwitchInFlight = false;
   }
 }
 
