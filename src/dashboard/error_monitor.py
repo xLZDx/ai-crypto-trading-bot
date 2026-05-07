@@ -202,19 +202,53 @@ def _signature(line: str) -> str:
 _SURFACE_PREFIX = "surface:"
 
 
+# Per-file byte offset of the last fully-scanned position. Without this the
+# previous _tail() re-read the same trailing bytes every scan and re-counted
+# stale stack-trace lines (the TypeError lines that have no leading timestamp
+# slipped past the age-check and counted forever — banner showed 2000+
+# 'occurrences' for a single error from hours ago).
+_tail_offsets: dict[str, int] = {}
+
+
 def _tail(path: Path) -> list[str]:
+    """Tail-since-last-scan. Returns only NEW lines appended to `path` since
+    the previous call. On first call: returns the trailing TAIL_BYTES window
+    (so a freshly-restarted dashboard sees recent issues). On rotation or
+    truncation (size shrunk): resets and returns the new trailing window."""
     if not path.exists():
         return []
     try:
         size = path.stat().st_size
+        key = str(path)
+        prev = _tail_offsets.get(key)
         with open(path, "rb") as f:
-            if size > TAIL_BYTES:
-                f.seek(size - TAIL_BYTES)
-                f.readline()  # discard partial line
-            data = f.read()
+            if prev is None:
+                # First scan — return the trailing window
+                if size > TAIL_BYTES:
+                    f.seek(size - TAIL_BYTES)
+                    f.readline()  # discard partial line
+                data = f.read()
+            elif size < prev:
+                # Truncation / rotation — reset and read tail
+                if size > TAIL_BYTES:
+                    f.seek(size - TAIL_BYTES)
+                    f.readline()
+                data = f.read()
+            elif size == prev:
+                # No new data
+                return []
+            else:
+                # Read only the new bytes since last scan
+                f.seek(prev)
+                data = f.read()
+        _tail_offsets[key] = size
         text = data.decode("utf-8", errors="replace")
         lines = text.splitlines()
-        return lines[-TAIL_LINES:]
+        # On first call, still cap to TAIL_LINES; on subsequent calls, all
+        # new lines are by definition fresh and should be returned.
+        if prev is None:
+            return lines[-TAIL_LINES:]
+        return lines
     except Exception as exc:
         logger.debug("[error_monitor] tail %s: %s", path, exc)
         return []
@@ -314,6 +348,17 @@ def _line_age_s(line: str) -> float | None:
         return None
 
 
+def _file_mtime_age_s(path: Path) -> float:
+    """Seconds since the log file was last written. Used as a fallback
+    'age' for lines that have no leading timestamp (stack-trace tails,
+    raw stderr) — if the file hasn't been touched in 30+ minutes, every
+    line in it is by definition stale, so we shouldn't bump last_seen."""
+    try:
+        return time.time() - path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def _classify(line: str) -> str | None:
     if _BENIGN_RE.search(line):
         return None
@@ -350,6 +395,12 @@ def scan() -> dict[str, dict[str, Any]]:
                 # stuck in the log tail were re-flagged each scan despite
                 # the underlying processes being healthy.
                 age = _line_age_s(line)
+                if age is None:
+                    # Stack-trace / raw stderr line with no leading TS.
+                    # Fall back to file-mtime age — if the log hasn't
+                    # been touched in 30+ min, the orphan line is from a
+                    # historical incident and shouldn't keep showing up.
+                    age = _file_mtime_age_s(path)
                 if age is not None and age > ACTIVE_WINDOW_S:
                     continue
                 sig = _signature(line)
