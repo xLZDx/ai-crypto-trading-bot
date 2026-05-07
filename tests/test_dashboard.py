@@ -2537,6 +2537,47 @@ def test_phase44_pr6_live_trading_toggle():
           and 'Add how much to virtual balance' in tpl)
 
 
+def test_phase58_pr28_balance_by_mode():
+    """Phase 58 — PR 28: Live Trading card shows mode-correct balance.
+    Pre-fix: paper / testnet / mainnet all displayed the same virtual
+    $100k seed numbers. Post-fix: paper shows internal virtual; testnet
+    fetches Binance testnet USDT (spot + futures); mainnet hits Binance
+    mainnet."""
+    print('\n[Phase 58 — PR 28 mode-aware balance]')
+    app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
+               encoding='utf-8').read()
+    tpl = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html'),
+               encoding='utf-8').read()
+
+    check('GET /api/balance/by_mode endpoint defined',
+          "@app.route('/api/balance/by_mode')" in app
+          and 'def api_balance_by_mode(' in app)
+    check('Endpoint dispatches paper/testnet/mainnet',
+          "if mode == 'paper':" in app
+          and "if mode in ('testnet', 'mainnet'):" in app)
+    check('Per-mode OrderManager cached so we never accidentally cross sandbox flag',
+          '_order_mgr_cache: dict[bool' in app
+          and '_get_order_manager_for_mode(' in app)
+    check('Live Binance balance has 30s TTL cache',
+          '_balance_live_cache' in app
+          and '_BALANCE_TTL_S = 30' in app)
+    check('Live balance returns spot + futures separately',
+          "'spot_usdt'" in app
+          and "'futures_usdt'" in app
+          and 'futures_exchange.fetch_balance' in app)
+    check('Frontend ltLoadBalance uses /api/balance/by_mode with current mode',
+          "fetch('/api/balance/by_mode?mode=' + encodeURIComponent(mode))" in tpl
+          and 'let _ltCurrentMode' in tpl)
+    check('Mode switch refreshes balance immediately',
+          'await ltLoadMode();' in tpl
+          and 'await ltLoadBalance();' in tpl)
+    check('Paper-only fields hidden when not in paper mode',
+          'lt-deposits-row' in tpl
+          and 'lt-revenue-row' in tpl
+          and 'lt-pnl-row' in tpl
+          and "el.style.display = 'none'" in tpl)
+
+
 def test_phase57_pr26_all_tfs_and_status():
     """Phase 57 — PR 26: 'ALL TFs' option + fine-grained training status.
        User asked for: (a) one-click train across every TF the model
@@ -4652,6 +4693,7 @@ def main():
     test_phase55_pr19_training_controls()
     test_phase56_pr21_heatmap_rework()
     test_phase57_pr26_all_tfs_and_status()
+    test_phase58_pr28_balance_by_mode()
 
     if not args.offline:
         test_api(args.url)

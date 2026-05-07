@@ -971,14 +971,19 @@ select.field option{background:#0d1628;color:#e2e8f0}
 
 // ─── Live Trading switch + paper accounting (Overview tab) ──────────────────
 async function ltLoadAll() {
-  await Promise.all([ltLoadMode(), ltLoadBalance()]);
+  // Mode must load first so ltLoadBalance() knows which endpoint to hit.
+  await ltLoadMode();
+  await ltLoadBalance();
 }
+
+let _ltCurrentMode = 'testnet';
 
 async function ltLoadMode() {
   try {
     const r = await fetch('/api/control/trade_mode');
     const d = await r.json();
     const m = (d.trade_mode || 'testnet').toLowerCase();
+    _ltCurrentMode = m;
     for (const v of ['paper', 'testnet', 'mainnet']) {
       const btn = document.getElementById('lt-btn-' + v);
       if (btn) btn.classList.toggle('active', v === m);
@@ -997,23 +1002,51 @@ async function ltLoadMode() {
 }
 
 async function ltLoadBalance() {
+  // Balance shape differs per mode:
+  //   paper   → virtual {summary: {equity, cash, deposits_total, revenue_total, pnl}}
+  //   testnet → live    {cash_usdt, spot_usdt, futures_usdt, equity_usdt, available}
+  //   mainnet → live    same as testnet
   try {
-    const r = await fetch('/api/balance/virtual');
+    const mode = _ltCurrentMode || 'testnet';
+    const r = await fetch('/api/balance/by_mode?mode=' + encodeURIComponent(mode));
     const d = await r.json();
-    const s = d.summary || {};
     const fmt = v => v == null ? '—' : '$' + Number(v).toLocaleString(undefined, {maximumFractionDigits: 2, minimumFractionDigits: 2});
     const fmtSign = v => v == null ? '—' : (v >= 0 ? '+' : '') + '$' + Number(v).toLocaleString(undefined, {maximumFractionDigits: 2, minimumFractionDigits: 2});
     const set = (id, txt, col) => {
       const el = document.getElementById(id);
       if (el) { el.textContent = txt; if (col) el.style.color = col; }
     };
-    set('lt-equity',   fmt(s.equity));
-    set('lt-cash',     fmt(s.cash));
-    set('lt-deposits', fmt(s.deposits_total));
-    set('lt-revenue',  fmtSign(s.revenue_total),
-                       s.revenue_total > 0 ? '#34d399' : s.revenue_total < 0 ? '#fb7185' : '#94a3b8');
-    set('lt-pnl',      fmtSign(s.pnl),
-                       s.pnl > 0 ? '#34d399' : s.pnl < 0 ? '#fb7185' : '#94a3b8');
+
+    if (mode === 'paper') {
+      const s = d.summary || {};
+      // Show all 5 paper-trading metrics
+      ['lt-deposits-row','lt-revenue-row','lt-pnl-row'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = '';
+      });
+      set('lt-equity',   fmt(s.equity));
+      set('lt-cash',     fmt(s.cash));
+      set('lt-deposits', fmt(s.deposits_total));
+      set('lt-revenue',  fmtSign(s.revenue_total),
+                         s.revenue_total > 0 ? '#34d399' : s.revenue_total < 0 ? '#fb7185' : '#94a3b8');
+      set('lt-pnl',      fmtSign(s.pnl),
+                         s.pnl > 0 ? '#34d399' : s.pnl < 0 ? '#fb7185' : '#94a3b8');
+    } else {
+      // Live exchange balance — different shape, hide paper-only fields
+      ['lt-deposits-row','lt-revenue-row','lt-pnl-row'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+      });
+      if (d.available === false) {
+        set('lt-equity', '—');
+        set('lt-cash',   d.error ? `err: ${String(d.error).slice(0,40)}` : '—');
+      } else {
+        set('lt-equity', fmt(d.equity_usdt));
+        set('lt-cash',   fmt(d.spot_usdt));
+        // Reuse the (now-hidden) deposits slot to show futures balance —
+        // but only show its label. Actually keep it hidden as designed.
+      }
+    }
   } catch(e) { console.error('ltLoadBalance', e); }
 }
 
@@ -1036,6 +1069,9 @@ async function ltSetMode(mode) {
     const d = await r.json();
     if (!d.ok) throw new Error(d.error || 'request failed');
     await ltLoadMode();
+    // Mode just changed → refresh the balance from the right backend
+    // (paper / testnet / mainnet) so numbers update immediately.
+    await ltLoadBalance();
   } catch(e) {
     alert('Trade-mode switch failed: ' + (e.message||e));
   } finally {
@@ -1228,17 +1264,17 @@ document.addEventListener('DOMContentLoaded', function() {
             <div class="lt-stat-lbl">Cash</div>
             <div class="lt-stat-val" id="lt-cash">—</div>
           </div>
-          <div class="lt-stat">
+          <div class="lt-stat" id="lt-deposits-row">
             <div class="lt-stat-lbl">Deposits Total</div>
-            <div class="lt-stat-val" id="lt-deposits" title="Sum of operator-added funds (manual)">—</div>
+            <div class="lt-stat-val" id="lt-deposits" title="Sum of operator-added funds (manual). Paper-trading only.">—</div>
           </div>
-          <div class="lt-stat">
+          <div class="lt-stat" id="lt-revenue-row">
             <div class="lt-stat-lbl">Revenue (closed PnL)</div>
-            <div class="lt-stat-val" id="lt-revenue" title="Cumulative net PnL from closed paper trades">—</div>
+            <div class="lt-stat-val" id="lt-revenue" title="Cumulative net PnL from closed paper trades. Paper-trading only.">—</div>
           </div>
-          <div class="lt-stat">
+          <div class="lt-stat" id="lt-pnl-row">
             <div class="lt-stat-lbl">Total P&amp;L</div>
-            <div class="lt-stat-val" id="lt-pnl" title="Equity − sum(deposits). Equals revenue when no positions are open.">—</div>
+            <div class="lt-stat-val" id="lt-pnl" title="Equity − sum(deposits). Paper-trading only.">—</div>
           </div>
           <div style="margin-left:auto;display:flex;gap:6px">
             <button onclick="ltDeposit()" style="font-size:.62rem;font-weight:700;padding:7px 14px;border-radius:7px;cursor:pointer;background:rgba(52,211,153,.18);color:#34d399;border:1px solid rgba(52,211,153,.35)" title="Manually add funds — increases cash + deposits[]">+ Deposit</button>

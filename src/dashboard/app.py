@@ -3601,6 +3601,105 @@ def api_balance_real():
         return jsonify({'error': str(exc)}), 500
 
 
+# Cached OrderManager instances per (sandbox_flag) so we don't re-construct
+# (and re-sync clocks) on every dashboard balance poll. Live-fetched balances
+# get a 30-second TTL cache to keep the polling cheap.
+_order_mgr_cache: dict[bool, object] = {}
+_balance_live_cache: dict[str, dict] = {}
+_balance_live_lock = threading.Lock()
+_BALANCE_TTL_S = 30
+
+
+def _get_order_manager_for_mode(testnet: bool):
+    """Cached OrderManager. Sandbox vs mainnet are different instances
+    because ccxt.set_sandbox_mode is sticky — we don't want to flip a
+    single instance and accidentally hit the wrong API."""
+    if testnet not in _order_mgr_cache:
+        # Temporarily override the env so OrderManager picks the right
+        # sandbox flag. The constructor reads it once and stays put.
+        import os as _os
+        prev = _os.environ.get('USE_TESTNET')
+        _os.environ['USE_TESTNET'] = 'True' if testnet else 'False'
+        try:
+            from src.engine.order_manager import OrderManager
+            _order_mgr_cache[testnet] = OrderManager()
+        finally:
+            if prev is None:
+                _os.environ.pop('USE_TESTNET', None)
+            else:
+                _os.environ['USE_TESTNET'] = prev
+    return _order_mgr_cache[testnet]
+
+
+def _live_binance_balance(testnet: bool) -> dict:
+    """Live-fetch USDT balance from Binance (testnet or mainnet) with
+    a 30s TTL cache. Falls back to {available: false, error: ...} if the
+    exchange is unreachable."""
+    from datetime import datetime, timezone
+    ckey = 'testnet' if testnet else 'mainnet'
+    with _balance_live_lock:
+        cached = _balance_live_cache.get(ckey)
+        if cached and (time.time() - cached.get('_ts', 0)) < _BALANCE_TTL_S:
+            return cached
+    try:
+        om = _get_order_manager_for_mode(testnet)
+        usdt_spot = float(om.get_balance('USDT') or 0)
+        # Futures balance — same OrderManager has a futures client
+        usdt_futures = 0.0
+        try:
+            fb = om.futures_exchange.fetch_balance()
+            usdt_futures = float((fb.get('USDT') or {}).get('free') or 0)
+        except Exception as fexc:
+            logging.getLogger(__name__).debug(
+                "[balance/by_mode] futures fetch failed: %s", fexc)
+        out = {
+            'available':    True,
+            'mode':         ckey,
+            'cash_usdt':    usdt_spot,
+            'spot_usdt':    usdt_spot,
+            'futures_usdt': usdt_futures,
+            'equity_usdt':  usdt_spot + usdt_futures,
+            'fetched_at':   datetime.fromtimestamp(time.time(), tz=timezone.utc).isoformat(),
+            '_ts':          time.time(),
+        }
+    except Exception as exc:
+        out = {
+            'available':  False,
+            'mode':       ckey,
+            'error':      f'{type(exc).__name__}: {exc}',
+            '_ts':        time.time(),
+        }
+    with _balance_live_lock:
+        _balance_live_cache[ckey] = out
+    return out
+
+
+@app.route('/api/balance/by_mode')
+def api_balance_by_mode():
+    """Return the balance appropriate for the active trade mode.
+       paper   → internal virtual balance (with deposits/revenue split)
+       testnet → live Binance testnet balance (USDT spot + futures)
+       mainnet → live Binance mainnet balance (USDT spot + futures)
+    Mode comes from query string (?mode=...) or, if absent, from
+    data/control.json so the dashboard can call without arguments."""
+    from datetime import datetime, timezone
+    mode = (request.args.get('mode') or '').strip().lower()
+    if not mode:
+        ctrl = read_json('data/control.json', default={}) or {}
+        mode = (ctrl.get('trade_mode') or 'testnet').lower()
+    if mode == 'paper':
+        # Re-use the virtual balance endpoint payload exactly.
+        from src.engine.dual_balance import read_virtual, compute_summary
+        snap = read_virtual()
+        snap['summary'] = compute_summary()
+        snap['mode'] = 'paper'
+        return jsonify(snap)
+    if mode in ('testnet', 'mainnet'):
+        return jsonify(_live_binance_balance(testnet=(mode == 'testnet')))
+    return jsonify({'error': f'unknown mode: {mode}',
+                    'valid': ['paper', 'testnet', 'mainnet']}), 400
+
+
 # ─── Local scheduler endpoints (Windows Task Scheduler wrapper) ──────────────
 # All execution stays on the local machine. No cloud, no remote agents.
 # The dashboard's Scheduler panel calls these to register/run/list/remove
