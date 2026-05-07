@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -101,6 +102,24 @@ def _coin_keywords(coin: str) -> set[str]:
     return base | EXTRA.get(coin.upper(), set())
 
 
+def _api_key() -> str | None:
+    """Return CRYPTOCOMPARE_API_KEY from env if present (loads .env on first
+    call). Free-tier key still required as of 2025; without it the news
+    endpoint returns 'valid auth key required'."""
+    key = os.environ.get("CRYPTOCOMPARE_API_KEY")
+    if not key:
+        try:
+            from dotenv import load_dotenv
+            load_dotenv(PROJECT_ROOT / ".env")
+            key = os.environ.get("CRYPTOCOMPARE_API_KEY")
+        except Exception:
+            pass
+    if key:
+        # Strip surrounding quotes that .env may carry
+        key = key.strip().strip('"').strip("'")
+    return key or None
+
+
 def fetch_page(l_ts: int | None = None,
                categories: str | None = None,
                timeout: int = 30) -> list[dict]:
@@ -112,8 +131,14 @@ def fetch_page(l_ts: int | None = None,
         params["lTs"] = int(l_ts)
     if categories:
         params["categories"] = categories
+    headers: dict[str, str] = {}
+    key = _api_key()
+    if key:
+        # CryptoCompare accepts the key as a header OR as ?api_key=
+        # — header is cleaner and doesn't appear in proxy logs.
+        headers["authorization"] = f"Apikey {key}"
     try:
-        r = requests.get(CC_API, params=params, timeout=timeout)
+        r = requests.get(CC_API, params=params, headers=headers, timeout=timeout)
         if r.status_code != 200:
             logger.warning("CryptoCompare HTTP %d: %s", r.status_code, r.text[:80])
             return []
