@@ -104,7 +104,17 @@ def require_api_key(f):
 
 @app.route('/')
 def index():
-    return render_template('index.html', api_key=DASHBOARD_API_KEY or '')
+    """Render the main dashboard. Forces no-store cache headers so the
+    operator's browser always fetches the freshly-edited template — the
+    pre-fix UX bug was that browser cache kept stale onclick handlers
+    after restart_all.ps1 reloaded the bot, making refresh buttons look
+    broken when really the JS was just from a prior dashboard process."""
+    from flask import make_response
+    resp = make_response(render_template('index.html', api_key=DASHBOARD_API_KEY or ''))
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    resp.headers['Pragma']        = 'no-cache'
+    resp.headers['Expires']       = '0'
+    return resp
 
 
 @app.route('/api/state')
@@ -2243,36 +2253,77 @@ def monitor_migrate_to_historical():
 
 # ─── Parquet Store / Database endpoints (was QuestDB pre-Phase-3) ────────────
 
+_db_status_cache: dict = {'value': None, 'ts': 0.0}
+_db_status_cache_ttl = 300.0   # seconds — row counts change in batches, not in real time
+_db_status_lock = threading.Lock()
+
+
+def _refresh_db_status_async():
+    """Background-thread refresh of the parquet row-count cache. The
+    Monitor tab polls /api/db/status every 30s; without caching, each poll
+    burned ~60s scanning 89M+ rows × 7 tables and timed the request out
+    (empty body → JS chip stuck on 'Loading…'). Cache TTL is 5 min — row
+    counts don't change in real time anyway."""
+    def _job():
+        try:
+            from src.database.parquet_client import get_client
+            c = get_client()
+            available = c.is_available(force=True)
+            tables = {}
+            if available:
+                for tbl in ['market_data', 'trade_events', 'model_signals',
+                            'training_telemetry', 'strategy_performance',
+                            'news_sentiment', 'backtest_results']:
+                    try:
+                        rows = c.query(f"SELECT COUNT(*) as n FROM {tbl}")
+                        tables[tbl] = rows[0]['n'] if rows else 0
+                    except Exception:
+                        tables[tbl] = None
+            value = {
+                'available': available,
+                'backend':   'duckdb+parquet',
+                'host':      'in-process',
+                'http_port': None,
+                'ilp_port':  None,
+                'data_dir':  str(c.base_dir),
+                'tables':    tables,
+            }
+            with _db_status_lock:
+                _db_status_cache['value'] = value
+                _db_status_cache['ts'] = time.time()
+        except Exception as exc:
+            with _db_status_lock:
+                _db_status_cache['value'] = {'available': False, 'error': str(exc)}
+                _db_status_cache['ts'] = time.time()
+    threading.Thread(target=_job, daemon=True, name='db-status-refresh').start()
+
+
 @app.route('/api/db/status')
 def db_status():
     """ParquetClient store status + table row counts.
 
-    Backwards-compatible response shape — older dashboard JS that reads
-    `host`, `http_port`, `ilp_port` keeps working (`http_port` reports as
-    'in-process'; `ilp_port` is null since there's no network ingest).
-    """
-    try:
-        from src.database.parquet_client import get_client
-        c = get_client()
-        available = c.is_available(force=True)
-        tables = {}
-        if available:
-            for tbl in ['market_data', 'trade_events', 'model_signals',
-                        'training_telemetry', 'strategy_performance',
-                        'news_sentiment', 'backtest_results']:
-                rows = c.query(f"SELECT COUNT(*) as n FROM {tbl}")
-                tables[tbl] = rows[0]['n'] if rows else 0
+    Returns the most-recent TTL-cached snapshot in O(1). A background
+    thread refreshes the row counts every 5 minutes; the dashboard's
+    poll cadence (30s) never blocks on the slow scan."""
+    with _db_status_lock:
+        cached = _db_status_cache.get('value')
+        cache_age = time.time() - (_db_status_cache.get('ts') or 0)
+    if cached is None or cache_age > _db_status_cache_ttl:
+        _refresh_db_status_async()
+    if cached is None:
+        # First call — return a placeholder so the chip doesn't hang
         return jsonify({
-            'available': available,
-            'backend': 'duckdb+parquet',
-            'host': 'in-process',
+            'available': True,
+            'backend':   'duckdb+parquet',
+            'host':      'in-process',
             'http_port': None,
-            'ilp_port': None,
-            'data_dir': str(c.base_dir),
-            'tables': tables,
+            'ilp_port':  None,
+            'data_dir':  '',
+            'tables':    {},
+            'cache_warming': True,
         })
-    except Exception as e:
-        return jsonify({'available': False, 'error': str(e)})
+    cached['cache_age_s'] = round(cache_age, 1)
+    return jsonify(cached)
 
 
 @app.route('/api/db/query', methods=['POST'])
