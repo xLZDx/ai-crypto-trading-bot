@@ -2536,6 +2536,66 @@ def test_phase44_pr6_live_trading_toggle():
           and 'Add how much to virtual balance' in tpl)
 
 
+def test_phase48_pr11_multi_tf_inference():
+    """Phase 48 — PR 11 / Phase G: multi-TF inference.
+       PR 2 made the trainer multi-TF (writing models/<key>_<tf>_*); now
+       the bot loads every per-TF artifact and exposes per-TF predictions.
+
+       Backwards-compat is preserved — `.predict(data)` still routes to
+       the canonical TF (1h or 1m) so all existing call sites keep
+       working. New call sites use predict_at(tf, data) or predict_all().
+    """
+    print('\n[Phase 48 — PR 11 multi-TF inference]')
+
+    mtp_path = os.path.join(BASE_DIR, 'src', 'analysis', 'multi_tf_predictor.py')
+    check('multi_tf_predictor.py exists', os.path.exists(mtp_path))
+    if not os.path.exists(mtp_path):
+        return
+    src = open(mtp_path, encoding='utf-8').read()
+    main = open(os.path.join(BASE_DIR, 'src', 'main.py'), encoding='utf-8').read()
+
+    # 1. MultiTFPredictor surface
+    check('MultiTFPredictor class defined',
+          'class MultiTFPredictor' in src)
+    check('Constructor checks model key against KEYS',
+          'if key not in KEYS' in src
+          and 'unknown model key' in src)
+    check('Loads canonical via legacy filename for backwards compat',
+          'LEGACY_MODEL_NAME[key]' in src
+          and 'self._predictors[self._canonical_tf]' in src)
+    check('Auto-discovers per-TF artifacts via list_per_tf_artifacts',
+          'list_per_tf_artifacts(key)' in src)
+    check('predict() routes to canonical TF',
+          'def predict(self, data)' in src
+          and 'self._predictors[self._canonical_tf].predict(data)' in src)
+    check('predict_at(tf, data) returns None for unloaded TFs',
+          'def predict_at(self, tf' in src
+          and 'if p is None or not p.is_loaded' in src
+          and 'return None' in src)
+    check('predict_all(data_by_tf) iterates loaded TFs only',
+          'def predict_all(self, data_by_tf' in src
+          and 'if not p.is_loaded' in src
+          and 'data_by_tf.get(tf)' in src)
+    check('available_tfs returns sorted loaded list',
+          'def available_tfs' in src
+          and 'sorted(' in src)
+    check('Backwards-compat passthrough properties',
+          '@property\n    def is_loaded' in src
+          and '@property\n    def accuracy' in src
+          and '@property\n    def last_error' in src)
+    check('_get_model_features forwarded for meta-labeler trainer',
+          'def _get_model_features' in src)
+
+    # 2. main.py wiring
+    check('main.py imports MultiTFPredictor',
+          'from src.analysis.multi_tf_predictor import MultiTFPredictor' in main)
+    check('main.py uses MultiTFPredictor for all four model families',
+          "MultiTFPredictor('base')" in main
+          and "MultiTFPredictor('scalping')" in main
+          and "MultiTFPredictor('futures')" in main
+          and "MultiTFPredictor('trend')" in main)
+
+
 def test_phase47_pr10_loading_chips_and_simulator():
     """Phase 47 — PR 10: Monitor 'Loading…' chip recovery + simulator
     auto-poll. Defensive UX so the dashboard never looks frozen when an
@@ -4047,6 +4107,7 @@ def main():
     test_phase45_pipeline_orchestrator()
     test_phase46_pr9_ux_bundle()
     test_phase47_pr10_loading_chips_and_simulator()
+    test_phase48_pr11_multi_tf_inference()
 
     if not args.offline:
         test_api(args.url)

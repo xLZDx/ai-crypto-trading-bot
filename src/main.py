@@ -100,10 +100,17 @@ class MultiAssetTrader:
         self.engine = OrderManager()
         self.tracker = TradeTracker()
         self.sentiment_analyzer = NewsSentimentAnalyzer()
-        self.ml_predictor = MLPredictor()
-        self.scalping_predictor = MLPredictor(model_filename='scalping_model.joblib', model_type='scalping')
-        self.futures_predictor = MLPredictor(model_filename='futures_short_model.joblib', model_type='futures')
-        self.trend_predictor = MLPredictor(model_filename='trend_model.joblib', model_type='trend')
+        # Phase G — multi-TF inference. Replaces the single-TF MLPredictor
+        # with a wrapper that auto-loads every per-TF artifact present on
+        # disk. `.predict(data)` still routes to the canonical TF (1h for
+        # base/trend/futures, 1m for scalping) so existing call sites work
+        # unchanged. Per-TF inference is exposed via .predict_at(tf, data)
+        # — used by strategy_registry once Phase A pins per-strategy TFs.
+        from src.analysis.multi_tf_predictor import MultiTFPredictor
+        self.ml_predictor       = MultiTFPredictor('base')
+        self.scalping_predictor = MultiTFPredictor('scalping')
+        self.futures_predictor  = MultiTFPredictor('futures')
+        self.trend_predictor    = MultiTFPredictor('trend')
         self.agent = AgenticLLM()
         self.telegram_monitor = TelegramMonitor()
         self.state_file = 'data/state.json'
