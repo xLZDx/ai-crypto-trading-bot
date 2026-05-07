@@ -2536,6 +2536,71 @@ def test_phase44_pr6_live_trading_toggle():
           and 'Add how much to virtual balance' in tpl)
 
 
+def test_phase46_pr9_ux_bundle():
+    """Phase 46 — PR 9 UX bug bundle:
+       - Status pill column on Model Training (RUNNING/OK/FAILED/STOPPED/NOT-STARTED)
+       - Inline 'How to read' on Stability heatmap with colour-band legend
+       - Inline guide on Pure vs ML aggregate (defines each bucket + reading order)
+       - Meta-Filtered card surfaces '0 trades — meta-labeler not trained' hint
+       - setP6Tab lazy-inits panes on first click so subtabs work even
+         without prior tab switch
+    """
+    print('\n[Phase 46 — PR 9 UX bundle]')
+    tpl = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html'),
+               encoding='utf-8').read()
+
+    # 1. Model Training status column
+    check('Model Training table has Status column header',
+          'data-col="run_status"' in tpl
+          and '>Status <' in tpl)
+    check('Status pill colours wired (ok/run/err/stp/na)',
+          "{ok:'#34d399',run:'#fbbf24',err:'#fb7185',stp:'#94a3b8',na:'#475569'}" in tpl)
+    check('_statusFor() derives status from age + warnings + pipeline state',
+          'function _statusFor(' in tpl
+          and 'pipeRunning' in tpl
+          and 'NOT STARTED' in tpl
+          and "'STOPPED'" in tpl)
+    check('RUNNING pill pulses (CSS animation)',
+          '@keyframes pulse' in tpl
+          and 'animation:pulse' in tpl)
+    check('Pipeline orchestrator status fed into _pipeStatus',
+          'let _pipeStatus = null' in tpl
+          and '_pipeStatus = snap' in tpl)
+    check('Training table re-renders on pipeline status change',
+          '_renderTrainingTable()' in tpl)
+
+    # 2. Stability heatmap: How to read
+    check('Stability heatmap has inline How-to-read guide',
+          '>How to read this:</b>' in tpl
+          and 'most stable timeframe per strategy' in tpl
+          and 'Gold</span>' in tpl
+          and 'Yellow</span>' in tpl)
+    check('Heatmap explains the ★ best-TF badge',
+          'most stable timeframe per strategy' in tpl)
+
+    # 3. Pure vs ML inline guide (item 6)
+    check('Pure vs ML has bucket-definition guide',
+          '>Pure Rule</b>' in tpl
+          and '>ML-Driven</b>' in tpl
+          and '>Meta-Filtered</b>' in tpl
+          and 'WF Sharpe</b>' in tpl)
+    check('Guide explains read order (WF Sharpe + WF Consist first)',
+          'In-sample Sharpe over-reports' in tpl)
+
+    # 4. Meta-filtered 0-trade explainer (item 7)
+    check('Meta-Filtered card surfaces 0-trade explainer',
+          'isEmptyMeta' in tpl
+          and 'meta-labeler filter rejecting' in tpl
+          and 'Model Training tab' in tpl)
+
+    # 5. Institutional sub-tab fix (item 11)
+    check('setP6Tab lazy-inits panes on first click',
+          "if (!document.querySelector('.p6-pane'))" in tpl
+          and '_renderTabs failed' in tpl)
+    check('refreshPhase6Pane wrapped in try/catch so it cannot break the click',
+          "console.error('refreshPhase6Pane'" in tpl)
+
+
 def test_phase45_pipeline_orchestrator():
     """Phase 45 — Pipeline orchestrator (post-resample auto-runner):
        - src/engine/pipeline_orchestrator.py drives train_all() then
@@ -3942,6 +4007,7 @@ def main():
     test_phase43_pr4_stability_heatmap()
     test_phase44_pr6_live_trading_toggle()
     test_phase45_pipeline_orchestrator()
+    test_phase46_pr9_ux_bundle()
 
     if not args.offline:
         test_api(args.url)

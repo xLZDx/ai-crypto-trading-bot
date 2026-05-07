@@ -389,9 +389,16 @@ select.field option{background:#0d1628;color:#e2e8f0}
   }
   window.setP6Tab = function(name){
     try { localStorage.setItem('p6-tab', name); } catch(e){}
+    // Lazy-init the panes the first time a sub-tab is clicked. Without this,
+    // clicking a sub-tab before _initPhase6() ran (which only fires on tab
+    // switch) appeared to do nothing — the panes hadn't been created yet so
+    // showPane() couldn't find them.
+    if (!document.querySelector('.p6-pane')) {
+      try { _renderTabs(); } catch(e) { console.error('_renderTabs failed', e); }
+    }
     setActiveBtn(name);
     showPane(name);
-    refreshPhase6Pane(name);
+    try { refreshPhase6Pane(name); } catch(e) { console.error('refreshPhase6Pane', name, e); }
   };
   // Per-tab AbortController so switching tabs cancels stale fetches.
   // Without this, every tab showed the same "Loading /api/decision_summary..."
@@ -1713,6 +1720,7 @@ document.addEventListener('DOMContentLoaded', function() {
         .pipe-status-pill.running{background:rgba(251,191,36,.15);color:#fbbf24;border:1px solid rgba(251,191,36,.3)}
         .pipe-status-pill.done{background:rgba(52,211,153,.16);color:#34d399;border:1px solid rgba(52,211,153,.3)}
         .pipe-status-pill.error{background:rgba(251,113,133,.16);color:#fb7185;border:1px solid rgba(251,113,133,.3)}
+        @keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}
       </style>
       <div class="card collapsible-section" id="st-sec-pipe" style="margin-bottom:10px">
         <div class="st-sec-hdr card-header collapsible-hdr" onclick="toggleSection(this)">
@@ -1759,6 +1767,12 @@ document.addEventListener('DOMContentLoaded', function() {
             <button onclick="loadBucketCompare()" style="font-size:.58rem;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(99,102,241,.2);color:#818cf8;border:1px solid rgba(99,102,241,.3);font-weight:700">↻ Refresh</button>
             <span style="font-size:.55rem;color:#64748b">Aggregates from <code>latest_comparison.json</code> (in-sample) + <code>wf_results.json</code> (OOS). The honest comparison is <b>WF Sharpe</b> and <b>WF Consist.</b> — in-sample Sharpe / Win% over-report.</span>
           </div>
+          <div style="background:rgba(15,23,42,.5);border:1px solid rgba(99,102,241,.18);border-radius:7px;padding:8px 11px;margin-bottom:8px;font-size:.58rem;color:#94a3b8;line-height:1.55">
+            <b style="color:#60a5fa">Pure Rule</b> — strategies with no ML gate (e.g. raw RSI cross, MACD momentum). Baseline.<br>
+            <b style="color:#a78bfa">ML-Driven</b> — same strategy passed through a trained classifier confidence filter (Base RF, Trend RF, Futures Short, Scalping).<br>
+            <b style="color:#fbbf24">Meta-Filtered</b> — ML-Driven further filtered by the meta-labeler's predicted-true-positive score. Higher signal quality, fewer trades. Often <b>0 trades</b> if the meta-labeler isn't trained or its threshold is too tight — train it via the <i>Model Training</i> table above.<br>
+            Read order: <b>WF Sharpe</b> → <b>WF Consist.</b> first (out-of-sample, robust). In-sample Sharpe over-reports by ~0.5–1.0 due to lookahead.
+          </div>
           <div id="bcmp-grid" class="bcmp">
             <div class="bcmp-card" style="text-align:center;color:#475569;grid-column:1/-1;padding:14px">Loading…</div>
           </div>
@@ -1799,6 +1813,13 @@ document.addEventListener('DOMContentLoaded', function() {
             <span style="margin-left:auto;font-size:.55rem;color:#64748b">★ = best TF for that strategy</span>
           </div>
           <div id="stab-status" style="font-size:.56rem;color:#fbbf24;margin-bottom:6px;display:none"></div>
+          <div style="background:rgba(15,23,42,.5);border:1px solid rgba(52,211,153,.15);border-radius:7px;padding:7px 11px;margin-bottom:8px;font-size:.55rem;color:#94a3b8;line-height:1.6">
+            <b style="color:#cbd5e1">How to read this:</b>
+            Each row = one strategy. Each column = one timeframe. Cell colour = how good that strategy performs at that TF on the selected metric.
+            <span style="color:#10b981">Gold</span> = excellent · <span style="color:#34d399">Green</span> = good · <span style="color:#fbbf24">Yellow</span> = marginal · <span style="color:#fb7185">Red</span> = bad · — = no data (re-run multi-TF backtest to populate).
+            The <span class="best-badge">★ TF</span> badge marks the most stable timeframe per strategy — <b>that's where the bot should run that strategy</b>.
+            Rows are sorted by best-TF score descending so winners stay at top.
+          </div>
           <div style="overflow-x:auto">
             <div id="stab-grid" class="stab-grid">
               <div style="grid-column:1/-1;text-align:center;color:#475569;padding:14px;font-size:.62rem">Loading…</div>
@@ -1893,6 +1914,7 @@ document.addEventListener('DOMContentLoaded', function() {
                   <th class="tr-th" data-col="label"        onclick="trSort('label')"        style="text-align:left;padding:5px 6px;white-space:nowrap" title="Model name (click to sort A→Z)">Model <span class="tr-chev"></span></th>
                   <th class="tr-th" data-col="market"       onclick="trSort('market')"       style="text-align:left;padding:5px 6px" title="Asset class / venue this model targets">Market <span class="tr-chev"></span></th>
                   <th class="tr-th" data-col="timeframe"    onclick="trSort('timeframe')"    style="text-align:left;padding:5px 6px" title="Bar timeframe used for features and labels">TF <span class="tr-chev"></span></th>
+                  <th class="tr-th" data-col="run_status"   onclick="trSort('run_status')"   style="text-align:center;padding:5px 6px" title="Live training status. RUNNING = orchestrator currently training this row · OK = last train succeeded · FAILED = last train errored (hover for reason) · STOPPED = operator killed · NOT STARTED = model never trained.">Status <span class="tr-chev"></span></th>
                   <th class="tr-th active" data-col="age_s" onclick="trSort('age_s')"        style="text-align:right;padding:5px 6px" title="Time since meta JSON was written. Smaller = fresher.">Last trained <span class="tr-chev">▲</span></th>
                   <th class="tr-th" data-col="runs_today"   onclick="trSort('runs_today')"   style="text-align:right;padding:5px 6px" title="1 if meta updated within 24h, else 0">Today <span class="tr-chev"></span></th>
                   <th class="tr-th" data-col="total_runs_min" onclick="trSort('total_runs_min')" style="text-align:right;padding:5px 6px" title="Lower bound: archived metas + current. Trainers don't yet write training_runs Parquet rows.">Total ≥ <span class="tr-chev"></span></th>
@@ -1911,7 +1933,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 </tr>
               </thead>
               <tbody id="training-tbody">
-                <tr><td colspan="18" style="text-align:center;color:#475569;padding:12px">Loading…</td></tr>
+                <tr><td colspan="19" style="text-align:center;color:#475569;padding:12px">Loading…</td></tr>
               </tbody>
             </table>
           </div>
@@ -3592,8 +3614,25 @@ function _renderTrainingTable() {
   }
 
   if (!filtered.length) {
-    tbody.innerHTML = `<tr><td colspan="18" style="text-align:center;color:#475569;padding:14px">No models match this filter.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="19" style="text-align:center;color:#475569;padding:14px">No models match this filter.</td></tr>`;
     return;
+  }
+
+  // Derive a status pill per model from the data we have. We don't yet
+  // persist last_run_status on disk — derive from age + warnings + the
+  // live pipeline orchestrator state.
+  // _pipeStatus is set by pipelineRefresh(); copy phase + currently-training key.
+  const pipeRunning = (typeof _pipeStatus !== 'undefined') && _pipeStatus
+                      && _pipeStatus.status === 'running'
+                      && _pipeStatus.phase === 'train';
+  function _statusFor(m) {
+    if (pipeRunning && m.included_in_pipeline) return {cls:'run', txt:'RUNNING', tip:'Pipeline orchestrator is currently retraining this model'};
+    if (m.accuracy_warning)                    return {cls:'err', txt:'FAILED', tip:m.accuracy_warning};
+    if (m.last_error)                          return {cls:'err', txt:'FAILED', tip:m.last_error};
+    if (!m.model_exists && m.age_s == null)    return {cls:'na',  txt:'NOT STARTED', tip:'Model has never been trained'};
+    if (m.age_s != null && m.age_s > 30*86400) return {cls:'stp', txt:'STOPPED', tip:'No training in the last 30 days — likely abandoned or paused'};
+    if (m.model_exists)                        return {cls:'ok',  txt:'OK',     tip:'Last training run succeeded'};
+    return {cls:'na', txt:'—', tip:''};
   }
 
   const numFmt = (v, dec=2, suf='') => v == null ? '—' : Number(v).toFixed(dec) + suf;
@@ -3614,10 +3653,14 @@ function _renderTrainingTable() {
     const wp     = m.win_precision;
     const dirless = m.directionless;
     const warnMark = m.accuracy_warning ? ' <span title="' + esc(m.accuracy_warning) + '" style="color:#fbbf24;cursor:help">⚠</span>' : '';
+    const st = _statusFor(m);
+    const stColor = {ok:'#34d399',run:'#fbbf24',err:'#fb7185',stp:'#94a3b8',na:'#475569'}[st.cls] || '#475569';
+    const stBg    = {ok:'rgba(52,211,153,.15)',run:'rgba(251,191,36,.18)',err:'rgba(251,113,133,.16)',stp:'rgba(148,163,184,.12)',na:'rgba(71,85,105,.12)'}[st.cls] || 'rgba(71,85,105,.12)';
     return `<tr>
       <td style="color:#e2e8f0;font-weight:700">${m.icon||''} ${esc(m.label||m.key)}${warnMark}</td>
       <td style="color:#94a3b8">${esc(m.market||'—')}</td>
       <td style="color:#94a3b8">${esc(m.timeframe||'—')}</td>
+      <td style="text-align:center"><span title="${esc(st.tip)}" style="display:inline-block;font-size:.55rem;font-weight:800;letter-spacing:.04em;padding:2px 7px;border-radius:999px;background:${stBg};color:${stColor};border:1px solid ${stColor}55${st.cls==='run'?';animation:pulse 1.5s ease-in-out infinite':''}">${st.txt}</span></td>
       <td style="text-align:right;color:${m.runs_today?'#34d399':(m.age_s>7*86400?'#fb7185':'#94a3b8')}">${_trRelTime(m.age_s)}</td>
       <td style="text-align:right">${todayBadge}</td>
       <td style="text-align:right;color:#94a3b8">≥ ${m.total_runs_min||0}</td>
@@ -3809,6 +3852,7 @@ async function pollResampleJobs() {
 
 // ── Pipeline Orchestrator (train → multi-TF backtest) ───────────────────────
 let _pipeTimer = null;
+let _pipeStatus = null;   // last fetched snapshot — read by training-table render
 
 function _pipeFmt(snap) {
   if (!snap) return null;
@@ -3836,6 +3880,12 @@ async function pipelineRefresh() {
   try {
     const r = await fetch('/api/pipeline/status');
     const snap = await r.json();
+    _pipeStatus = snap;
+    // If the training table is rendered, re-render so RUNNING pills sync
+    // with the orchestrator state without waiting for the next poll.
+    if (typeof _renderTrainingTable === 'function' && document.getElementById('training-tbody')) {
+      try { _renderTrainingTable(); } catch (_) {}
+    }
     const pill = $('pipe-pill');
     const status = snap.status || 'idle';
     if (pill) {
@@ -3994,7 +4044,12 @@ async function loadBucketCompare() {
       const sharpeCol = v => v == null ? '#94a3b8' : v >= 1 ? '#34d399' : v >= 0 ? '#fbbf24' : '#fb7185';
       const ddCol     = v => v == null ? '#94a3b8' : v >= -15 ? '#34d399' : v >= -30 ? '#fbbf24' : '#fb7185';
       const pnlCol    = v => v == null ? '#94a3b8' : v > 0 ? '#34d399' : v < 0 ? '#fb7185' : '#94a3b8';
+      // Meta-filtered with strategies but zero trades is a common state —
+      // surface the cause inline so the operator doesn't think the bucket
+      // is simply inactive.
+      const isEmptyMeta = b === 'meta_filtered' && (x.n_strategies||0) > 0 && (x.n_trades_total||0) === 0;
       return `<div class="bcmp-card ${b}">
+        ${isEmptyMeta ? `<div style="background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.3);border-radius:5px;padding:5px 8px;margin-bottom:6px;font-size:.55rem;color:#fbbf24;line-height:1.4">⚠ <b>0 trades</b> — meta-labeler filter rejecting every signal. Either retrain the meta-labeler (Model Training tab → ▶ Train on the Meta-Labeler row) or loosen its threshold in <code>strategy_config.json</code>.</div>` : ''}
         <div class="bcmp-hdr" style="color:${m.col}">${m.label}</div>
         <div class="bcmp-row"><span>Strategies</span><b>${x.n_strategies||0}</b></div>
         <div class="bcmp-row"><span>Trades total</span><b>${(x.n_trades_total||0).toLocaleString()}</b></div>
