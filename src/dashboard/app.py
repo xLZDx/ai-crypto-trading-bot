@@ -3110,36 +3110,67 @@ def api_data_archive_topup():
     })
 
 
+_data_coverage_cache: dict = {'value': None, 'ts': 0.0}
+_data_coverage_lock = threading.Lock()
+_DATA_COVERAGE_TTL = 120.0
+
+
+def _refresh_data_coverage_async() -> None:
+    """Background-thread refresh of the data-coverage matrix.
+    audit_coverage scans every (symbol × tf) gzip CSV's first + last
+    line; with BTC 1m at 211MB compressed × 8 TFs × 20 symbols the
+    cold-path took 30s+. Cache it on a 2-min TTL so the dashboard's
+    Data Coverage panel never blocks the operator."""
+    def _job():
+        try:
+            from src.utils.data_audit import (
+                audit_coverage, audit_summary, audit_sentiment,
+                discover_symbols, FALLBACK_SYMBOLS, DEFAULT_TIMEFRAMES,
+            )
+            symbols = discover_symbols()
+            rows = audit_coverage(symbols=symbols)
+            value = {
+                'symbols':    list(symbols),
+                'timeframes': list(DEFAULT_TIMEFRAMES),
+                'rows':       rows,
+                'summary':    audit_summary(rows),
+                'sentiment':  audit_sentiment(),
+                'discovery': {
+                    'discovered_count': len(symbols),
+                    'fallback_count':   len(FALLBACK_SYMBOLS),
+                    'using_fallback':   set(symbols) == set(FALLBACK_SYMBOLS)
+                                        and len(symbols) == len(FALLBACK_SYMBOLS),
+                },
+            }
+            with _data_coverage_lock:
+                _data_coverage_cache['value'] = value
+                _data_coverage_cache['ts'] = time.time()
+        except Exception as exc:
+            with _data_coverage_lock:
+                _data_coverage_cache['value'] = {'error': f'{type(exc).__name__}: {exc}'}
+                _data_coverage_cache['ts'] = time.time()
+    threading.Thread(target=_job, daemon=True, name='data-coverage-refresh').start()
+
+
 @app.route('/api/data/coverage', methods=['GET'])
 def api_data_coverage():
-    """Return the (symbol × timeframe) coverage matrix used by the Data
-    Coverage panel. Read-only; safe to call frequently. Symbols are
-    auto-discovered from data/raw/historical/<sym>_spot_1s.csv.gz so
-    dropping a new archive in extends coverage with no code change."""
-    try:
-        from src.utils.data_audit import (
-            audit_coverage, audit_summary, audit_sentiment,
-            discover_symbols, FALLBACK_SYMBOLS, DEFAULT_TIMEFRAMES,
-        )
-        # Re-discover on every call so newly-dropped archives appear
-        # without a server restart.
-        symbols = discover_symbols()
-        rows = audit_coverage(symbols=symbols)
+    """Return the (symbol × timeframe) coverage matrix.
+    TTL-cached (2 min) on a background thread so a slow gzip walk
+    (200+ MB files at 1m) never blocks the dashboard's poll cadence."""
+    with _data_coverage_lock:
+        cached = _data_coverage_cache.get('value')
+        cache_age = time.time() - (_data_coverage_cache.get('ts') or 0)
+    if cached is None or cache_age > _DATA_COVERAGE_TTL:
+        _refresh_data_coverage_async()
+    if cached is None:
         return jsonify({
-            'symbols':    list(symbols),
-            'timeframes': list(DEFAULT_TIMEFRAMES),
-            'rows':       rows,
-            'summary':    audit_summary(rows),
-            'sentiment':  audit_sentiment(),
-            'discovery': {
-                'discovered_count': len(symbols),
-                'fallback_count':   len(FALLBACK_SYMBOLS),
-                'using_fallback':   set(symbols) == set(FALLBACK_SYMBOLS)
-                                    and len(symbols) == len(FALLBACK_SYMBOLS),
-            },
+            'symbols':    [], 'timeframes': [], 'rows': [],
+            'summary':    {},  'sentiment':  {},
+            'cache_warming': True,
         })
-    except Exception as exc:
-        return jsonify({'error': f'{type(exc).__name__}: {exc}'}), 500
+    if isinstance(cached, dict):
+        cached = {**cached, 'cache_age_s': round(cache_age, 1)}
+    return jsonify(cached)
 
 
 @app.route('/api/data/resample', methods=['POST'])
@@ -3363,7 +3394,7 @@ def api_news_buffer_status():
 def api_auto_retrain_status():
     """Return the last auto-retrain result (or empty when never run)."""
     from src.utils.safe_json import read_json
-    snap = read_json(str(project_root / 'data' / 'auto_retrain_status.json'),
+    snap = read_json(os.path.join(project_root, 'data', 'auto_retrain_status.json'),
                      default={}) or {}
     return jsonify(snap)
 

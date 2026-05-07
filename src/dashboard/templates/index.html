@@ -3481,15 +3481,57 @@ function toggleSection(hdrEl) {
 // ─── STRATEGY TAB DATA LOAD ───────────────────────────────────────────────────
 let _stratFull = null;
 
+// Guard against the load-recursion bug. Pre-fix: loadStrategyFull failed
+// silently → _stratFull stayed null → renderStrategyTab re-entered
+// loadStrategyFull → repeated forever if the endpoint was slow/erroring,
+// keeping every Strategy/ML card stuck on 'Loading…' indefinitely.
+let _stratLoadInFlight = false;
+let _stratLoadAttempts = 0;
+let _stratLoadFailed   = false;
+
 async function loadStrategyFull() {
+  if (_stratLoadInFlight) return;
+  _stratLoadInFlight = true;
+  _stratLoadAttempts++;
   try {
     _stratFull = await apiFetch('/api/strategy/full');
-  } catch(e) {}
-  renderStrategyTab(botState);
+    _stratLoadFailed = false;
+  } catch (e) {
+    _stratLoadFailed = true;
+    console.error('loadStrategyFull failed:', e);
+  } finally {
+    _stratLoadInFlight = false;
+  }
+  // Cap retries — show inline error after 3 failures rather than spinning.
+  if (_stratFull) {
+    renderStrategyTab(botState);
+  } else if (_stratLoadAttempts < 3) {
+    setTimeout(loadStrategyFull, 2000);
+  } else {
+    _renderStrategyTabError();
+  }
+}
+
+function _renderStrategyTabError() {
+  // Replace 'Loading…' chips with a visible error so the user knows to retry
+  const targets = ['chip-ml-count','chip-training-count','chip-strat-count',
+                    'chip-dcov','chip-stab','chip-bcmp','bt-compare-chip'];
+  for (const id of targets) {
+    const el = document.getElementById(id);
+    if (el) { el.textContent = 'API error'; el.style.color = '#fb7185'; }
+  }
+  console.error('loadStrategyFull failed after 3 attempts — ' +
+                'check /api/strategy/full directly. Click ↻ to retry.');
 }
 
 function renderStrategyTab(state) {
-  if (!_stratFull) { loadStrategyFull(); return; }
+  if (!_stratFull) {
+    if (!_stratLoadInFlight && _stratLoadAttempts < 3) loadStrategyFull();
+    return;
+  }
+  // Reset retry counter on successful render — operator can retry via ↻
+  _stratLoadAttempts = 0;
+  _stratLoadFailed   = false;
   _renderMLCards(_stratFull);
   _renderTrainingTable();
   _renderStratCards(_stratFull);
