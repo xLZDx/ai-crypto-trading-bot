@@ -2536,6 +2536,59 @@ def test_phase44_pr6_live_trading_toggle():
           and 'Add how much to virtual balance' in tpl)
 
 
+def test_phase53_pr16_long_horizon_backtest():
+    """Phase 53 — PR 16 / Phase E: long-horizon backtest preset.
+
+    With 8+ years of 1s archives, naive multi-TF backtest at 5m blows
+    past memory limits. This PR ships horizon presets that auto-pick
+    safe TFs per window (long=5y → 1h+4h+1d+1w; max=all → 4h+1d+1w+1mo).
+    """
+    print('\n[Phase 53 — PR 16 long-horizon backtest]')
+
+    lh_path = os.path.join(BASE_DIR, 'src', 'engine', 'long_horizon_backtest.py')
+    check('long_horizon_backtest.py exists', os.path.exists(lh_path))
+    if not os.path.exists(lh_path):
+        return
+    src = open(lh_path, encoding='utf-8').read()
+    app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
+               encoding='utf-8').read()
+
+    # 1. Module surface
+    check('Four horizon presets defined (short/medium/long/max)',
+          '"short":' in src
+          and '"medium":' in src
+          and '"long":' in src
+          and '"max":' in src)
+    check('long horizon excludes 5m to avoid 250M-row blowup',
+          '"long":   (5.0,  ("1h", "4h", "1d", "1w"))' in src)
+    check('max horizon uses lowest-resolution TFs only',
+          '"max":    (None, ("4h", "1d", "1w", "1mo"))' in src)
+    check('run() validates horizon name + falls back to default tfs',
+          'def run(' in src
+          and 'if horizon not in HORIZONS' in src
+          and 'years_back, default_tfs = HORIZONS[horizon]' in src)
+    check('Calls run_full_backtest with the chosen TFs',
+          'from src.engine.backtester import run_full_backtest' in src
+          and 'run_full_backtest(timeframes=tfs' in src)
+    check('Tags latest_comparison rows with horizon + years_back',
+          'r.setdefault("horizon", horizon)' in src
+          and 'r.setdefault("years_back", years_back)' in src)
+    check('CLI exposes --horizon and --timeframes overrides',
+          '--horizon' in src
+          and '--timeframes' in src
+          and '--fee-preset' in src)
+
+    # 2. Dashboard endpoint
+    check('POST /api/backtest/long_horizon spawns detached subprocess',
+          "@app.route('/api/backtest/long_horizon'" in app
+          and 'long_horizon_backtest' in app
+          and '@require_api_key' in app
+          and 'CREATE_NEW_PROCESS_GROUP' in app)
+    check('long_horizon endpoint reuses pipeline alive-check (409)',
+          '_pipeline_proc_alive()' in app
+          and 'pipeline already running' in app)
+
+
 def test_phase52_pr15_finbert_sentiment():
     """Phase 52 — PR 15 / Phase B: FinBERT/CryptoBERT sentiment upgrade.
 
@@ -4360,6 +4413,7 @@ def main():
     test_phase50_pr13_auto_retrain()
     test_phase51_pr14_live_news_inference()
     test_phase52_pr15_finbert_sentiment()
+    test_phase53_pr16_long_horizon_backtest()
 
     if not args.offline:
         test_api(args.url)

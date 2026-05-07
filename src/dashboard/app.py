@@ -2948,6 +2948,45 @@ def api_pipeline_status():
     return jsonify(snap)
 
 
+@app.route('/api/backtest/long_horizon', methods=['POST'])
+@require_api_key
+def api_backtest_long_horizon():
+    """Spawn a long-horizon backtest as a detached subprocess.
+    Body: {"horizon": "short|medium|long|max"}. Auto-picks safe TFs
+    per horizon (5y window won't try 5m bars → 250M rows blowup)."""
+    global _pipeline_proc_pid
+    if _pipeline_proc_alive():
+        return jsonify({'ok': False,
+                        'error': 'pipeline already running — backtest shares its slot',
+                        'pid': _pipeline_proc_pid}), 409
+    body = request.get_json(silent=True) or {}
+    horizon = (body.get('horizon') or 'long').strip()
+    cmd = [sys.executable, '-m', 'src.engine.long_horizon_backtest',
+           '--horizon', horizon]
+    log_dir = os.path.join(project_root, 'logs')
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, f"long_horizon_{int(time.time())}.log")
+    try:
+        log_fp = open(log_path, 'a', encoding='utf-8')
+        creationflags = 0
+        if os.name == 'nt':
+            creationflags = (subprocess.CREATE_NEW_PROCESS_GROUP |
+                             getattr(subprocess, 'DETACHED_PROCESS', 0x00000008))
+        proc = subprocess.Popen(
+            cmd, cwd=project_root,
+            stdout=log_fp, stderr=log_fp,
+            creationflags=creationflags,
+            close_fds=True,
+        )
+        with _pipeline_proc_lock:
+            _pipeline_proc_pid = proc.pid
+        return jsonify({'ok': True, 'pid': proc.pid,
+                        'horizon': horizon,
+                        'log_path': log_path, 'cmd': cmd})
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 500
+
+
 @app.route('/api/news/sentiment_model', methods=['GET'])
 def api_news_sentiment_model():
     """Return which sentiment backend is active (cryptobert / finbert /
