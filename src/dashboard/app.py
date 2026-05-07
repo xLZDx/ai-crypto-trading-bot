@@ -2944,6 +2944,44 @@ def _run_resample_blocking(job_id: str, symbols: list[str],
                          results=results)
 
 
+@app.route('/api/data/archive_topup', methods=['GET'])
+def api_data_archive_topup():
+    """Snapshot of the 1s archive top-up — file sizes + last-modified
+    times for every <sym>_spot_1s.csv.gz in data/raw/historical/.
+    Lets the operator see download progress without tailing logs."""
+    import os as _os
+    from datetime import datetime, timezone
+    out = []
+    from pathlib import Path as _P
+    hist_dir = _P(project_root) / 'data' / 'raw' / 'historical'
+    if not hist_dir.exists():
+        return jsonify({'files': [], 'total_size_gb': 0.0,
+                        'message': f'no {hist_dir} dir'})
+    total = 0
+    now = time.time()
+    for p in sorted(hist_dir.glob('*_spot_1s.csv.gz')):
+        try:
+            st = p.stat()
+            sym = p.name.replace('_spot_1s.csv.gz', '')
+            out.append({
+                'symbol': sym,
+                'path':   str(p),
+                'size_mb': round(st.st_size / (1024*1024), 1),
+                'modified_age_s': round(now - st.st_mtime, 1),
+                'modified_iso': datetime.fromtimestamp(
+                    st.st_mtime, tz=timezone.utc).isoformat(),
+                'recent_activity': (now - st.st_mtime) < 600,
+            })
+            total += st.st_size
+        except OSError:
+            pass
+    return jsonify({
+        'files': out,
+        'total_size_gb': round(total / (1024**3), 2),
+        'recent_activity_count': sum(1 for f in out if f.get('recent_activity')),
+    })
+
+
 @app.route('/api/data/coverage', methods=['GET'])
 def api_data_coverage():
     """Return the (symbol × timeframe) coverage matrix used by the Data
