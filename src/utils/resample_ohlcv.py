@@ -80,24 +80,74 @@ DEFAULT_SYMBOLS: tuple[str, ...] = _discover_symbols()
 
 
 def _candidate_source_paths(symbol: str) -> list[Path]:
-    """Where to look for 1s data, in priority order. The historical archive
-    is the deep one (years); the recent file in data/raw/ is the small live
-    tail. We use whichever exists; if both, we'll prefer the bigger one."""
+    """Where to look for source data, in priority order.
+    1s archives are the deepest (years of tick-level history). The live
+    1m file is shorter but kept current by the bot. With Binance.vision
+    archive currently ending at 2024-12-31, falling back to 1m for the
+    higher TFs is the only way to get 2025-2026 bars without paying for
+    a tick-data feed."""
     return [
         RAW_HIST_DIR / f"{symbol}_spot_1s.csv.gz",
         RAW_HIST_DIR / f"{symbol}_1s.csv.gz",
         RAW_DIR      / f"{symbol}_1s.csv.gz",
+        # 1m fallback — live-updated by the bot; 5m+ aggregation gives
+        # the same OHLCV values whether built from 1s or 1m.
+        RAW_DIR      / f"{symbol}_1m.csv.gz",
     ]
 
 
 def _pick_source(symbol: str, source_path: Path | None) -> Path | None:
+    """Pick the best resample source for `symbol`.
+
+    Algorithm:
+      1. Caller-supplied path wins if given.
+      2. Otherwise score every candidate by (depth, freshness):
+         depth     = (mtime - 6 months ago)  → was the file just born?
+         freshness = mtime
+         A 1m file with 5+ years of history AND a recent mtime should
+         beat the 2024-12-31 1s archive. A 1m file with only 12 days
+         (ETH bug case) should lose to the deeper 1s archive even though
+         it's fresher.
+    """
     if source_path is not None:
         return source_path if source_path.exists() else None
     candidates = [p for p in _candidate_source_paths(symbol) if p.exists()]
     if not candidates:
         return None
-    # Pick the largest — heuristic for "deepest history".
-    return max(candidates, key=lambda p: p.stat().st_size)
+    # Quick depth probe: read first bar timestamp. If we can't tell, fall
+    # back to file size as a proxy (bigger = deeper, usually).
+    import time as _time
+    now = _time.time()
+    six_months = 180 * 86400
+
+    def _score(p: Path) -> float:
+        try:
+            stat = p.stat()
+            # Read just the first data line for the first-bar timestamp.
+            with gzip.open(p, "rt", encoding="utf-8", errors="replace") as f:
+                f.readline()  # header
+                first = f.readline().strip().split(",")[0]
+            try:
+                from datetime import datetime as _dt
+                first_ts = _dt.fromisoformat(first.replace(" ", "T")).timestamp()
+                age_first = now - first_ts
+                if age_first < six_months:
+                    # Less than 6 months of history — penalise heavily.
+                    depth_score = age_first / six_months   # 0..1
+                else:
+                    depth_score = 1.0
+            except Exception:
+                # Couldn't parse — score by file size as fallback
+                depth_score = min(1.0, stat.st_size / (50 * 1024 * 1024))
+            # Freshness: how recent is the LAST mtime, normalised to days
+            recency_days = (now - stat.st_mtime) / 86400
+            recency_score = max(0.0, 1.0 - recency_days / 365)   # 1=today, 0=1y old
+            # Combined: depth × 0.6 + recency × 0.4
+            return depth_score * 0.6 + recency_score * 0.4
+        except Exception:
+            return 0.0
+
+    return max(candidates, key=_score)
 
 
 def _stream_chunks(path: Path, chunksize: int = 250_000) -> Iterable[pd.DataFrame]:
