@@ -2948,6 +2948,37 @@ def api_pipeline_status():
     return jsonify(snap)
 
 
+@app.route('/api/breaker_drill/run', methods=['POST'])
+@require_api_key
+def api_breaker_drill_run():
+    """Run the synthetic circuit-breaker drill in-process. Cheap (~ms);
+    no subprocess. Returns per-scenario verdicts and pass/fail counts."""
+    try:
+        from src.engine.breaker_drill import run_drill
+        body = request.get_json(silent=True) or {}
+        only = body.get('scenario') if body.get('scenario') in (
+            'max_dd', 'api_latency', 'stale_feed', 'clean') else None
+        return jsonify(run_drill(only=only))
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
+
+
+@app.route('/api/audit_trail/run', methods=['POST'])
+@require_api_key
+def api_audit_trail_run():
+    """Audit trades → signals → models for orphans / missing refs.
+    Body: {"max_trades": 100} to limit scan to recent N (default: all)."""
+    try:
+        from src.engine.audit_trail import run_audit
+        body = request.get_json(silent=True) or {}
+        max_trades = body.get('max_trades')
+        try: max_trades = int(max_trades) if max_trades is not None else None
+        except (TypeError, ValueError): max_trades = None
+        return jsonify(run_audit(max_trades=max_trades))
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
+
+
 @app.route('/api/backtest/long_horizon', methods=['POST'])
 @require_api_key
 def api_backtest_long_horizon():

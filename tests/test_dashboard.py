@@ -2536,6 +2536,89 @@ def test_phase44_pr6_live_trading_toggle():
           and 'Add how much to virtual balance' in tpl)
 
 
+def test_phase54_pr17_production_readiness():
+    """Phase 54 — PR 17 / Phase F: production readiness pass.
+
+    Three deliverables:
+      1. breaker_drill — exercise every circuit breaker offline,
+         confirm correct trigger fires + no false positives.
+      2. audit_trail — verify trades → signals → models traceability,
+         flag orphan orders / missing artifacts.
+      3. RUNBOOK.md — single-page operator handbook at repo root.
+    """
+    print('\n[Phase 54 — PR 17 production readiness]')
+
+    drill_path = os.path.join(BASE_DIR, 'src', 'engine', 'breaker_drill.py')
+    audit_path = os.path.join(BASE_DIR, 'src', 'engine', 'audit_trail.py')
+    rb_path    = os.path.join(BASE_DIR, 'RUNBOOK.md')
+    check('breaker_drill.py exists', os.path.exists(drill_path))
+    check('audit_trail.py exists',   os.path.exists(audit_path))
+    check('RUNBOOK.md exists at repo root', os.path.exists(rb_path))
+    if not (os.path.exists(drill_path) and os.path.exists(audit_path)):
+        return
+
+    drill = open(drill_path, encoding='utf-8').read()
+    audit = open(audit_path, encoding='utf-8').read()
+    app   = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
+                 encoding='utf-8').read()
+    rb    = open(rb_path, encoding='utf-8').read() if os.path.exists(rb_path) else ''
+
+    # 1. breaker_drill scenarios
+    check('Drill covers max_dd / api_latency / stale_feed / clean',
+          '_scenario_max_dd' in drill
+          and '_scenario_api_latency' in drill
+          and '_scenario_stale_feed' in drill
+          and '_scenario_clean' in drill)
+    check('Drill validates expected vs actual trigger',
+          'expected_trigger' in drill
+          and 'actual_trigger' in drill
+          and 'verdict' in drill)
+    check('Drill returns pass/fail counts',
+          'scenarios_passed' in drill
+          and 'scenarios_failed' in drill
+          and 'scenarios_run' in drill)
+
+    # 2. audit_trail surface
+    check('Audit detects orphan orders + missing artifacts',
+          'orphan_orders' in audit
+          and 'missing_artifacts' in audit
+          and 'untraced_signals' in audit)
+    check('Audit checks model freshness vs trade timestamps',
+          'pre_train_trades' in audit
+          and 'training_completed_at' in audit)
+    check('Audit persists JSON report under data/audit_reports/',
+          'audit_reports' in audit
+          and 'rep_path.write_text' in audit)
+
+    # 3. Dashboard endpoints
+    check('POST /api/breaker_drill/run wired (api-key gated)',
+          "@app.route('/api/breaker_drill/run'" in app
+          and 'def api_breaker_drill_run(' in app
+          and 'run_drill(only=only)' in app)
+    check('POST /api/audit_trail/run wired (api-key gated)',
+          "@app.route('/api/audit_trail/run'" in app
+          and 'def api_audit_trail_run(' in app
+          and 'run_audit(max_trades=' in app)
+
+    # 4. RUNBOOK content
+    if rb:
+        check('RUNBOOK has daily go/no-go checklist',
+              'go/no-go' in rb.lower() or 'go / no-go' in rb.lower())
+        check('RUNBOOK lists all 3 trade modes (paper/testnet/mainnet)',
+              'PAPER' in rb and 'TESTNET' in rb and 'MAINNET' in rb)
+        check('RUNBOOK has incident-response section',
+              'Incident response' in rb or 'incident response' in rb.lower())
+        check('RUNBOOK has pre-deploy checklist',
+              'Pre-deploy' in rb or 'pre-deploy' in rb.lower())
+        check('RUNBOOK references each PR-7..PR-17 module',
+              'breaker_drill' in rb
+              and 'audit_trail' in rb
+              and 'auto_retrain' in rb
+              and 'long_horizon_backtest' in rb
+              and 'scrub_resampled_csvs' in rb
+              and 'strategy_tf_pinning' in rb)
+
+
 def test_phase53_pr16_long_horizon_backtest():
     """Phase 53 — PR 16 / Phase E: long-horizon backtest preset.
 
@@ -4414,6 +4497,7 @@ def main():
     test_phase51_pr14_live_news_inference()
     test_phase52_pr15_finbert_sentiment()
     test_phase53_pr16_long_horizon_backtest()
+    test_phase54_pr17_production_readiness()
 
     if not args.offline:
         test_api(args.url)
