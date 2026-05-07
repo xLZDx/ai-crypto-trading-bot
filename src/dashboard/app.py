@@ -3601,77 +3601,117 @@ def api_balance_real():
         return jsonify({'error': str(exc)}), 500
 
 
-# Cached OrderManager instances per (sandbox_flag) so we don't re-construct
-# (and re-sync clocks) on every dashboard balance poll. Live-fetched balances
-# get a 30-second TTL cache to keep the polling cheap.
-_order_mgr_cache: dict[bool, object] = {}
+# Cached balance snapshots — 30s TTL keeps the dashboard's poll cadence
+# cheap without ever blocking on a slow exchange call.
 _balance_live_cache: dict[str, dict] = {}
 _balance_live_lock = threading.Lock()
 _BALANCE_TTL_S = 30
 
 
-def _get_order_manager_for_mode(testnet: bool):
-    """Cached OrderManager. Sandbox vs mainnet are different instances
-    because ccxt.set_sandbox_mode is sticky — we don't want to flip a
-    single instance and accidentally hit the wrong API."""
-    if testnet not in _order_mgr_cache:
-        # Temporarily override the env so OrderManager picks the right
-        # sandbox flag. The constructor reads it once and stays put.
-        import os as _os
-        prev = _os.environ.get('USE_TESTNET')
-        _os.environ['USE_TESTNET'] = 'True' if testnet else 'False'
-        try:
-            from src.engine.order_manager import OrderManager
-            _order_mgr_cache[testnet] = OrderManager()
-        finally:
-            if prev is None:
-                _os.environ.pop('USE_TESTNET', None)
-            else:
-                _os.environ['USE_TESTNET'] = prev
-    return _order_mgr_cache[testnet]
-
-
 def _live_binance_balance(testnet: bool) -> dict:
-    """Live-fetch USDT balance from Binance (testnet or mainnet) with
-    a 30s TTL cache. Falls back to {available: false, error: ...} if the
-    exchange is unreachable."""
+    """Return Binance balance for the requested mode.
+
+    History: an earlier version constructed a fresh ccxt.binance per mode
+    on the dashboard's hot path. Switching modes rapidly (paper ↔ testnet
+    ↔ mainnet) raced on the USE_TESTNET env-var mutation AND tried to
+    authenticate mainnet using testnet keys (which hangs ccxt for many
+    seconds) — the dashboard worker thread blocked, then the operator's
+    next request returned 'Failed to fetch'. Repeated → bot/dashboard
+    instability.
+
+    Fix: never construct ccxt on demand. Read the cached
+    data/balance_real.json snapshot the bot itself maintains, and only
+    actively refresh when the bot can do it safely (i.e. when its own
+    OrderManager already exists in this process). Mainnet specifically
+    is NEVER auto-fetched from the dashboard — it requires the operator
+    to actually be running the bot in mainnet mode."""
     from datetime import datetime, timezone
     ckey = 'testnet' if testnet else 'mainnet'
     with _balance_live_lock:
         cached = _balance_live_cache.get(ckey)
         if cached and (time.time() - cached.get('_ts', 0)) < _BALANCE_TTL_S:
             return cached
-    try:
-        om = _get_order_manager_for_mode(testnet)
-        usdt_spot = float(om.get_balance('USDT') or 0)
-        # Futures balance — same OrderManager has a futures client
-        usdt_futures = 0.0
+
+    # Safety: mainnet never gets a live fetch from the dashboard. The
+    # dashboard's OrderManager (if any) is configured by the bot's
+    # USE_TESTNET env var at process start; flipping it on a running
+    # ccxt instance can corrupt the auth context.
+    out: dict = {
+        'available':  False,
+        'mode':       ckey,
+        'cash_usdt':  None, 'spot_usdt': None,
+        'futures_usdt': None, 'equity_usdt': None,
+        '_ts':        time.time(),
+    }
+    if testnet is False:
+        # Mainnet — show cached balance_real.json if the bot is in
+        # mainnet mode, otherwise tell the operator to switch the bot.
         try:
-            fb = om.futures_exchange.fetch_balance()
-            usdt_futures = float((fb.get('USDT') or {}).get('free') or 0)
-        except Exception as fexc:
-            logging.getLogger(__name__).debug(
-                "[balance/by_mode] futures fetch failed: %s", fexc)
-        out = {
-            'available':    True,
-            'mode':         ckey,
-            'cash_usdt':    usdt_spot,
-            'spot_usdt':    usdt_spot,
-            'futures_usdt': usdt_futures,
-            'equity_usdt':  usdt_spot + usdt_futures,
-            'fetched_at':   datetime.fromtimestamp(time.time(), tz=timezone.utc).isoformat(),
-            '_ts':          time.time(),
-        }
-    except Exception as exc:
-        out = {
-            'available':  False,
-            'mode':       ckey,
-            'error':      f'{type(exc).__name__}: {exc}',
-            '_ts':        time.time(),
-        }
+            from src.engine.dual_balance import read_real
+            snap = read_real() or {}
+            if snap and snap.get('cash_usdt') is not None:
+                out.update({
+                    'available':    True,
+                    'cash_usdt':    float(snap.get('cash_usdt') or 0),
+                    'spot_usdt':    float(snap.get('cash_usdt') or 0),
+                    'futures_usdt': 0.0,
+                    'equity_usdt':  float(snap.get('equity_usdt') or 0),
+                    'fetched_at':   snap.get('timestamp') or '',
+                    'source':       'cached (data/balance_real.json)',
+                })
+            else:
+                out['error'] = 'mainnet balance unavailable — start the bot with USE_TESTNET=False to populate balance_real.json'
+        except Exception as exc:
+            out['error'] = f'{type(exc).__name__}: {exc}'
+    else:
+        # Testnet — try the cached file first; only do a live fetch when
+        # the bot's own OrderManager singleton is already loaded in this
+        # process (lazy-loaded by other endpoints like /api/balance/real
+        # via refresh_real_from_binance). Avoids constructing a new
+        # ccxt instance on the dashboard's hot path.
+        try:
+            from src.engine.dual_balance import read_real
+            snap = read_real() or {}
+            usdt_spot = float(snap.get('cash_usdt') or 0)
+            usdt_eq   = float(snap.get('equity_usdt') or 0)
+            out.update({
+                'available':    bool(snap.get('cash_usdt') is not None),
+                'cash_usdt':    usdt_spot,
+                'spot_usdt':    usdt_spot,
+                'futures_usdt': 0.0,
+                'equity_usdt':  usdt_eq,
+                'fetched_at':   snap.get('timestamp') or '',
+                'source':       'cached (data/balance_real.json)',
+            })
+            if not out.get('available'):
+                out['error'] = 'no cached testnet balance — bot has not refreshed it yet'
+        except Exception as exc:
+            out['error'] = f'{type(exc).__name__}: {exc}'
+
     with _balance_live_lock:
         _balance_live_cache[ckey] = out
     return out
+
+
+@app.route('/api/balance/refresh', methods=['POST'])
+@require_api_key
+def api_balance_refresh():
+    """Operator-triggered live refresh of the cached balance file.
+    Spawns refresh_real_from_binance on a background thread so the HTTP
+    request returns instantly. Result lands in data/balance_real.json
+    within seconds."""
+    def _job():
+        try:
+            from src.engine.dual_balance import refresh_real_from_binance
+            refresh_real_from_binance()
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "[balance/refresh] failed: %s", exc)
+    threading.Thread(target=_job, daemon=True, name='balance-refresh').start()
+    # Invalidate caches so the next /api/balance/by_mode poll picks up the new file.
+    with _balance_live_lock:
+        _balance_live_cache.clear()
+    return jsonify({'ok': True, 'message': 'refresh queued; cached values may take a few seconds to update'})
 
 
 @app.route('/api/balance/by_mode')
