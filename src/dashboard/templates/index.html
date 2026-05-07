@@ -1782,7 +1782,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
       <!-- ── Section: Stability Heatmap (per-TF backtest) ───────────── -->
       <style>
-        .stab-grid{display:grid;gap:2px}
+        .stab-grid{display:block;gap:0}
+        .stab-grid table{width:100%}
+        .stab-grid th{user-select:none}
+        .stab-grid th:hover{color:#cbd5e1!important}
         .stab-cell{padding:4px 6px;text-align:right;font-size:.55rem;font-weight:700;
           border-radius:3px;border:1px solid rgba(148,163,184,.08);min-width:62px}
         .stab-hdr{font-size:.55rem;font-weight:700;color:#94a3b8;text-align:center;padding:4px 6px}
@@ -4039,24 +4042,56 @@ async function loadStabilityHeatmap() {
   }
 }
 
+// Strategy descriptions sourced from src/engine/strategy_registry.py — keep
+// in sync. Used by the rebuilt heatmap (PR 21) and could be exposed
+// elsewhere later. Indexed by registry key.
+const _STRATEGY_DESCRIPTIONS = {
+  RSI_MeanReversion:   'Long RSI<30, short RSI>70 — classic mean-reversion.',
+  MACD_Momentum:       'Long when MACD histogram > 0; short when < 0.',
+  BB_Reversion:        'Long at lower band (BB%B<0.1), short at upper.',
+  Ensemble_A:          'Average of RSI / MACD / BB votes.',
+  VWAP_Reversion:      'Long when price 0.5% below VWAP; short above.',
+  Donchian_Breakout:   'Long on 20-bar high break; short on 20-bar low.',
+  Keltner_Breakout:    'Long break above Keltner upper; short below lower.',
+  Funding_Arb:         'Long pairs with most negative funding; short positive.',
+  OFI_Momentum:        'Order-flow imbalance momentum (L2 microstructure).',
+  Ensemble_B:          'Avg of VWAP / Donchian / Keltner / Funding / OFI.',
+  Base_ML:             'Random-forest classifier on Triple-Barrier long labels.',
+  Trend_ML:            'Trend RF — entries when SMA + ADX + regime align.',
+  Futures_Short_ML:    'Short-side RF for futures — overbought + regime flip.',
+  Scalping_ML:         '1m fast model — micro-MR + flow imbalance HFT exits.',
+  MTF_SMA200_Filter:   'Multi-TF SMA200 trend filter.',
+  GARCH_PositionSizing:'Volatility-conditional sizing via GARCH residuals.',
+  Volatility_Breakout: 'Volatility breakout (TTM Squeeze).',
+  Ichimoku_Cloud:      'Ichimoku full system (Tenkan/Kijun/SenkouA/B).',
+  Supertrend:          'SuperTrend (ATR×3, period 10).',
+  MACD_Divergence:     'MACD centerline + divergence detector.',
+  OU_Entry:            'Ornstein-Uhlenbeck entry on mean-reversion z-score.',
+  OU_MeanReversion_Filter:'OU mean-reversion as a filter on primary signal.',
+  Base_ML_MetaFiltered:'Base ML gated by meta-labeler TP probability.',
+  MACD_MetaFiltered:   'MACD signal gated by meta-labeler.',
+  RSI_MetaFiltered:    'RSI signal gated by meta-labeler.',
+  Ensemble_MetaFiltered:'Ensemble signal gated by meta-labeler.',
+};
+
+let _stabSortCol = '__best';   // 'strategy' | TF name | '__best'
+let _stabSortDir = 'desc';
+
+function stabSort(col) {
+  if (_stabSortCol === col) _stabSortDir = (_stabSortDir === 'desc' ? 'asc' : 'desc');
+  else { _stabSortCol = col; _stabSortDir = (col === 'strategy') ? 'asc' : 'desc'; }
+  _renderStabilityHeatmap();
+}
+
 function _renderStabilityHeatmap() {
   const grid = $('stab-grid');
   if (!grid || !_stabData) return;
-  const ts = (_stabData.timeframes || []).slice();
-  const ss = (_stabData.strategies || []).slice();
-  const cells = _stabData.cells || {};
-  const best = _stabData.best_tf || {};
-  // Stable column order (5m, 15m, 1h, 4h, 1d, 1w, 1mo) when present.
-  const TF_ORDER = ['1m','5m','15m','1h','4h','1d','1w','1mo'];
-  ts.sort((a, b) => (TF_ORDER.indexOf(a)||0) - (TF_ORDER.indexOf(b)||0));
-  // Sort strategies by best-TF metric desc.
-  ss.sort((a, b) => {
-    const av = (cells[a]?.[best[a]]?.[_stabMetric]) ?? -Infinity;
-    const bv = (cells[b]?.[best[b]]?.[_stabMetric]) ?? -Infinity;
-    return bv - av;
-  });
+  const ALL_TFS = ['1m','5m','15m','1h','4h','1d','1w','1mo'];
+  const cells   = _stabData.cells || {};
+  const best    = _stabData.best_tf || {};
+  const ss      = (_stabData.strategies || []).slice();
 
-  // Color thresholds by metric — a few crypto-tuned bands.
+  // Color thresholds by metric — same crypto-tuned bands as v1.
   function classify(metric, v) {
     if (v == null) return 'empty';
     if (metric === 'wf_sharpe_avg' || metric === 'sharpe_avg')
@@ -4065,37 +4100,76 @@ function _renderStabilityHeatmap() {
       return v >= 0.7 ? 'gold' : v >= 0.5 ? 'ok' : v >= 0.3 ? 'warn' : 'bad';
     if (metric === 'win_rate_avg')
       return v >= 55 ? 'gold' : v >= 50 ? 'ok' : v >= 45 ? 'warn' : 'bad';
-    if (metric === 'maxdd_avg')   // negative %
+    if (metric === 'maxdd_avg')
       return v >= -10 ? 'gold' : v >= -20 ? 'ok' : v >= -35 ? 'warn' : 'bad';
     if (metric === 'profit_factor_avg')
       return v >= 1.5 ? 'gold' : v >= 1.1 ? 'ok' : v >= 0.9 ? 'warn' : 'bad';
     return 'empty';
   }
+  const cellBg = {gold:'rgba(52,211,153,.22)', ok:'rgba(52,211,153,.10)',
+                  warn:'rgba(251,191,36,.10)',  bad:'rgba(251,113,133,.13)',
+                  empty:'rgba(5,8,22,.35)'};
+  const cellFg = {gold:'#10b981', ok:'#34d399', warn:'#fbbf24', bad:'#fb7185', empty:'#475569'};
   function fmt(metric, v) {
     if (v == null) return '—';
-    if (metric === 'wf_consistency_avg') return Math.round(v * 100) + '%';
+    if (metric === 'wf_consistency_avg') return Math.round(v*100) + '%';
     if (metric === 'maxdd_avg' || metric === 'win_rate_avg') return v.toFixed(1) + '%';
     return v.toFixed(2);
   }
 
-  grid.style.gridTemplateColumns = `220px repeat(${ts.length||1}, 1fr)`;
-  const out = ['<div></div>'];
-  for (const tf of ts) out.push(`<div class="stab-hdr">${tf}</div>`);
-  for (const s of ss) {
-    const star = best[s] ? `<span class="best-badge">★ ${best[s]}</span>` : '';
-    out.push(`<div class="stab-strat">${esc(s)}${star}</div>`);
-    for (const tf of ts) {
-      const c = (cells[s] || {})[tf];
-      const v = c ? c[_stabMetric] : null;
-      const cls = classify(_stabMetric, v);
-      const isBest = best[s] === tf;
-      const tip = c
-        ? `Sharpe ${c.sharpe_avg ?? '—'} · WF Sharpe ${c.wf_sharpe_avg ?? '—'} · WF Consist ${c.wf_consistency_avg != null ? Math.round(c.wf_consistency_avg*100)+'%' : '—'} · Win% ${c.win_rate_avg ?? '—'} · MaxDD ${c.maxdd_avg ?? '—'} · trades ${c.n_trades_total||0}`
-        : `no data for ${s} @ ${tf}`;
-      out.push(`<div class="stab-cell ${cls}" title="${esc(tip)}" style="${isBest?'box-shadow:inset 0 0 0 2px #34d399':''}">${fmt(_stabMetric, v)}</div>`);
+  // Sort
+  ss.sort((a, b) => {
+    let av, bv;
+    if (_stabSortCol === 'strategy') {
+      av = a.toLowerCase(); bv = b.toLowerCase();
+      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      return _stabSortDir === 'desc' ? -cmp : cmp;
     }
-  }
-  grid.innerHTML = out.join('');
+    if (_stabSortCol === '__best') {
+      av = (cells[a]?.[best[a]]?.[_stabMetric]) ?? -Infinity;
+      bv = (cells[b]?.[best[b]]?.[_stabMetric]) ?? -Infinity;
+    } else {
+      av = (cells[a]?.[_stabSortCol]?.[_stabMetric]) ?? -Infinity;
+      bv = (cells[b]?.[_stabSortCol]?.[_stabMetric]) ?? -Infinity;
+    }
+    return _stabSortDir === 'desc' ? (bv - av) : (av - bv);
+  });
+
+  const chev = (col) => _stabSortCol === col ? (_stabSortDir === 'desc' ? ' ▼' : ' ▲') : '';
+  const headerCols = [
+    `<th onclick="stabSort('strategy')" style="text-align:left;padding:5px 8px;cursor:pointer;font-size:.6rem;color:#94a3b8;font-weight:700;letter-spacing:.04em;background:rgba(15,23,42,.6);position:sticky;left:0;z-index:2">Strategy${chev('strategy')}</th>`,
+    ...ALL_TFS.map(tf =>
+      `<th onclick="stabSort('${tf}')" style="text-align:right;padding:5px 6px;cursor:pointer;font-size:.55rem;color:#94a3b8;font-weight:700;letter-spacing:.04em;min-width:48px">${tf}${chev(tf)}</th>`
+    ),
+    `<th onclick="stabSort('__best')" style="text-align:center;padding:5px 6px;cursor:pointer;font-size:.55rem;color:#34d399;font-weight:700;letter-spacing:.04em;min-width:54px" title="Most stable timeframe per strategy (best WF Sharpe)">★ Best${chev('__best')}</th>`,
+    `<th style="text-align:left;padding:5px 8px;font-size:.55rem;color:#94a3b8;font-weight:700;letter-spacing:.04em;min-width:200px;max-width:280px">Description</th>`,
+  ];
+
+  const rowsHtml = ss.map(s => {
+    const tds = [
+      `<td style="padding:4px 8px;color:#cbd5e1;font-size:.6rem;font-weight:700;white-space:nowrap;background:rgba(15,23,42,.4);position:sticky;left:0;z-index:1">${esc(s)}</td>`,
+      ...ALL_TFS.map(tf => {
+        const c = (cells[s] || {})[tf];
+        const v = c ? c[_stabMetric] : null;
+        const cls = classify(_stabMetric, v);
+        const isBest = best[s] === tf;
+        const tip = c
+          ? `Sharpe ${c.sharpe_avg ?? '—'} · WF Sharpe ${c.wf_sharpe_avg ?? '—'} · WF Consist ${c.wf_consistency_avg!=null?Math.round(c.wf_consistency_avg*100)+'%':'—'} · Win% ${c.win_rate_avg ?? '—'} · MaxDD ${c.maxdd_avg ?? '—'} · trades ${c.n_trades_total||0}`
+          : `no data for ${s} @ ${tf} — re-run multi-TF backtest`;
+        return `<td title="${esc(tip)}" style="text-align:right;padding:4px 6px;font-size:.58rem;font-weight:700;color:${cellFg[cls]};background:${cellBg[cls]};${isBest?'box-shadow:inset 0 0 0 2px #34d399;border-radius:3px;':''}">${fmt(_stabMetric, v)}</td>`;
+      }),
+      `<td style="text-align:center;padding:4px 6px;font-size:.58rem;font-weight:800;color:#34d399">${best[s] || '—'}</td>`,
+      `<td style="padding:4px 8px;color:#94a3b8;font-size:.55rem;line-height:1.4;max-width:280px" title="${esc(_STRATEGY_DESCRIPTIONS[s] || '')}">${esc(_STRATEGY_DESCRIPTIONS[s] || '—')}</td>`,
+    ];
+    return `<tr style="border-bottom:1px solid rgba(148,163,184,.05)">${tds.join('')}</tr>`;
+  }).join('');
+
+  grid.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-family:'JetBrains Mono', monospace">
+      <thead><tr style="border-bottom:1px solid rgba(148,163,184,.15);background:rgba(15,23,42,.6)">${headerCols.join('')}</tr></thead>
+      <tbody>${rowsHtml || '<tr><td colspan="' + (ALL_TFS.length + 3) + '" style="text-align:center;color:#475569;padding:14px;font-size:.62rem">No strategies in latest_comparison.json yet.</td></tr>'}</tbody>
+    </table>
+  `;
 }
 
 // ── Pure Rule vs ML-Driven aggregate comparison ──────────────────────────────

@@ -2537,6 +2537,46 @@ def test_phase44_pr6_live_trading_toggle():
           and 'Add how much to virtual balance' in tpl)
 
 
+def test_phase56_pr21_heatmap_rework():
+    """Phase 56 — PR 21: stability heatmap rework.
+    User asked for the same look as the Model Training table:
+      - sortable column headers (click to sort by any TF, by best,
+        or by strategy name)
+      - per-column number colours (green/gold = good, red = bad)
+      - compact column widths
+      - all 8 TFs always shown (placeholder cells when no data)
+      - description column (right side) — short blurb per strategy
+      - dedicated ★ Best column instead of an inline badge
+    """
+    print('\n[Phase 56 — PR 21 heatmap rework]')
+    tpl = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html'),
+               encoding='utf-8').read()
+
+    check('Heatmap is now a real <table> (sortable headers)',
+          '<table style="width:100%;border-collapse:collapse' in tpl
+          and 'function stabSort(' in tpl
+          and "stabSort('strategy')" in tpl)
+    check('All 8 TFs always shown — empty cells for no data',
+          "const ALL_TFS = ['1m','5m','15m','1h','4h','1d','1w','1mo']" in tpl
+          and 'no data for ${s} @ ${tf}' in tpl)
+    check('Each cell coloured per metric (gold/ok/warn/bad/empty)',
+          'function classify(metric, v)' in tpl
+          and 'cellBg = ' in tpl
+          and 'cellFg = ' in tpl)
+    check('★ Best is its own dedicated sortable column',
+          '★ Best' in tpl
+          and "stabSort('__best')" in tpl)
+    check('Description column with per-strategy one-liner',
+          'const _STRATEGY_DESCRIPTIONS' in tpl
+          and 'RSI_MeanReversion:' in tpl
+          and 'Random-forest classifier on Triple-Barrier' in tpl)
+    check('Sticky strategy column on horizontal scroll',
+          "position:sticky;left:0" in tpl)
+    check('Header sort indicator chevron',
+          "chev = (col) =>" in tpl
+          and " ▼" in tpl and " ▲" in tpl)
+
+
 def test_phase55_pr19_training_controls():
     """Phase 55 — PR 18/19/20: dashboard hardening bundle.
        PR 18: /api/db/status TTL cache so Monitor stops hanging
@@ -3305,9 +3345,9 @@ def test_phase43_pr4_stability_heatmap():
           ".stab-cell.gold" in tpl
           and ".stab-cell.bad" in tpl
           and ".stab-cell.empty" in tpl)
-    check('Best-TF badge ★ rendered on the row label',
-          'class="best-badge">★' in tpl
-          and 'best[s] ? `' in tpl)
+    check('Best-TF column ★ rendered (PR 21 reworked from inline badge to dedicated column)',
+          '★ Best' in tpl
+          and "_stabSortCol === '__best'" in tpl)
     check('renderStrategyTab calls loadStabilityHeatmap()',
           'loadStabilityHeatmap();' in tpl)
     check('Empty/single-TF state shows guidance message',
@@ -4566,6 +4606,7 @@ def main():
     test_phase53_pr16_long_horizon_backtest()
     test_phase54_pr17_production_readiness()
     test_phase55_pr19_training_controls()
+    test_phase56_pr21_heatmap_rework()
 
     if not args.offline:
         test_api(args.url)
