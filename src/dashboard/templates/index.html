@@ -1732,6 +1732,7 @@ document.addEventListener('DOMContentLoaded', function() {
           <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
             <button onclick="pipelineRun()" id="pipe-run-btn" style="font-size:.58rem;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(244,114,182,.18);color:#f472b6;border:1px solid rgba(244,114,182,.35);font-weight:700">▶ Run Train + Multi-TF Backtest</button>
             <button onclick="pipelineRefresh()" style="font-size:.58rem;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(99,102,241,.2);color:#818cf8;border:1px solid rgba(99,102,241,.3);font-weight:700">↻ Refresh</button>
+            <button onclick="pipelineReset()" id="pipe-reset-btn" style="font-size:.58rem;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(148,163,184,.15);color:#94a3b8;border:1px solid rgba(148,163,184,.3);font-weight:700" title="Clear stale status from a prior run (only works when no orchestrator is currently alive)">✕ Reset</button>
             <span style="font-size:.55rem;color:#64748b;font-style:italic">Sequential: full <code>train_all()</code> per-key multi-TF, then <code>run_full_backtest(timeframes=5m,1h,4h,1d,1w)</code> to populate Stability heatmap with real WF Sharpe.</span>
           </div>
           <div id="pipe-status-rows">
@@ -1929,11 +1930,12 @@ document.addEventListener('DOMContentLoaded', function() {
                   <th class="tr-th" data-col="n_iterations"   onclick="trSort('n_iterations')"   style="text-align:right;padding:5px 6px" title="Boosting rounds (RF/HGBT) or epochs (TFT/OFT). Early-stop is healthier than max.">Iter <span class="tr-chev"></span></th>
                   <th class="tr-th" data-col="symbols_count"  onclick="trSort('symbols_count')"  style="text-align:right;padding:5px 6px" title="Number of distinct symbols this model was trained on.">Syms <span class="tr-chev"></span></th>
                   <th class="tr-th" data-col="target"         onclick="trSort('target')"         style="text-align:left;padding:5px 6px" title="Label / target the model predicts.">Target <span class="tr-chev"></span></th>
-                  <th style="text-align:right;padding:5px 6px;color:#94a3b8;font-weight:700;letter-spacing:.02em;font-size:.6rem" title="Trigger this trainer N times. Runs in background.">Action</th>
+                  <th style="text-align:left;padding:5px 6px;color:#94a3b8;font-weight:700;letter-spacing:.02em;font-size:.6rem" title="One-line description of what this model does.">Description</th>
+                  <th style="text-align:right;padding:5px 6px;color:#94a3b8;font-weight:700;letter-spacing:.02em;font-size:.6rem" title="Trigger this trainer N times. TF picker selects which timeframe (default = canonical for that model).">Action</th>
                 </tr>
               </thead>
               <tbody id="training-tbody">
-                <tr><td colspan="19" style="text-align:center;color:#475569;padding:12px">Loading…</td></tr>
+                <tr><td colspan="20" style="text-align:center;color:#475569;padding:12px">Loading…</td></tr>
               </tbody>
             </table>
           </div>
@@ -3616,7 +3618,7 @@ function _renderTrainingTable() {
   }
 
   if (!filtered.length) {
-    tbody.innerHTML = `<tr><td colspan="19" style="text-align:center;color:#475569;padding:14px">No models match this filter.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="20" style="text-align:center;color:#475569;padding:14px">No models match this filter.</td></tr>`;
     return;
   }
 
@@ -3655,10 +3657,17 @@ function _renderTrainingTable() {
     const wp     = m.win_precision;
     const dirless = m.directionless;
     const warnMark = m.accuracy_warning ? ' <span title="' + esc(m.accuracy_warning) + '" style="color:#fbbf24;cursor:help">⚠</span>' : '';
-    const st = _statusFor(m);
+    // Active job for this model (poll runs every 5s via pollTrainingJobs).
+    const activeJobId = (typeof _trActiveByModel !== 'undefined' && _trActiveByModel)
+                        ? _trActiveByModel[m.key] : null;
+    // If actively training, override status to RUNNING
+    let st = _statusFor(m);
+    if (activeJobId) st = {cls:'run', txt:'RUNNING', tip:'Training in progress (job ' + activeJobId + ')'};
     const stColor = {ok:'#34d399',run:'#fbbf24',err:'#fb7185',stp:'#94a3b8',na:'#475569'}[st.cls] || '#475569';
     const stBg    = {ok:'rgba(52,211,153,.15)',run:'rgba(251,191,36,.18)',err:'rgba(251,113,133,.16)',stp:'rgba(148,163,184,.12)',na:'rgba(71,85,105,.12)'}[st.cls] || 'rgba(71,85,105,.12)';
-    return `<tr>
+    // Description: short blurb sourced from _MODEL_DESCRIPTIONS
+    const desc = (typeof _MODEL_DESCRIPTIONS !== 'undefined') ? (_MODEL_DESCRIPTIONS[m.key] || '') : '';
+    return `<tr data-model-key="${esc(m.key)}">
       <td style="color:#e2e8f0;font-weight:700">${m.icon||''} ${esc(m.label||m.key)}${warnMark}</td>
       <td style="color:#94a3b8">${esc(m.market||'—')}</td>
       <td style="color:#94a3b8">${esc(m.timeframe||'—')}</td>
@@ -3677,30 +3686,75 @@ function _renderTrainingTable() {
       <td style="text-align:right;color:#94a3b8">${m.n_iterations||'—'}</td>
       <td style="text-align:right;color:#94a3b8">${m.symbols_count||0}</td>
       <td style="color:#64748b;font-size:.58rem">${esc(m.target||'—')}</td>
+      <td style="color:#94a3b8;font-size:.55rem;line-height:1.35;max-width:220px" title="${esc(desc)}">${esc(desc)}</td>
       <td style="text-align:right;white-space:nowrap">
+        <select id="tr-tf-${esc(m.key)}" style="font-size:.55rem;padding:1px 3px;border-radius:4px;background:rgba(5,8,22,.6);color:#e2e8f0;border:1px solid rgba(148,163,184,.18)" title="Timeframe to train at — defaults to model's canonical TF">
+          ${['1m','5m','15m','1h','4h','1d','1w','1mo'].map(tf =>
+            `<option value="${tf}"${tf===(m.timeframe||'1h')?' selected':''}>${tf}</option>`).join('')}
+        </select>
         <select id="tr-n-${esc(m.key)}" style="font-size:.55rem;padding:1px 3px;border-radius:4px;background:rgba(5,8,22,.6);color:#e2e8f0;border:1px solid rgba(148,163,184,.18)" title="Repetitions">
           <option value="1">×1</option><option value="3">×3</option><option value="5">×5</option><option value="10">×10</option>
         </select>
-        <button onclick="trRunOne('${esc(m.key)}')" style="font-size:.55rem;padding:2px 7px;border-radius:4px;cursor:pointer;background:rgba(52,211,153,.18);color:#34d399;border:1px solid rgba(52,211,153,.35);font-weight:700;margin-left:3px" title="Train this model now">▶ Train</button>
+        ${activeJobId
+          ? `<button onclick="trStopOne('${esc(activeJobId)}','${esc(m.key)}')" style="font-size:.55rem;padding:2px 7px;border-radius:4px;cursor:pointer;background:rgba(251,113,133,.2);color:#fb7185;border:1px solid rgba(251,113,133,.4);font-weight:700;margin-left:3px" title="Stop this training run">⏹ Stop</button>`
+          : `<button onclick="trRunOne('${esc(m.key)}')" style="font-size:.55rem;padding:2px 7px;border-radius:4px;cursor:pointer;background:rgba(52,211,153,.18);color:#34d399;border:1px solid rgba(52,211,153,.35);font-weight:700;margin-left:3px" title="Train this model now">▶ Train</button>`}
       </td>
     </tr>`;
   }).join('');
 }
 
+// Short one-liner per model — surfaces in the Description column.
+const _MODEL_DESCRIPTIONS = {
+  base:     'Random forest on Triple-Barrier long labels — the bot\'s primary directional signal.',
+  trend:    'Trend-following classifier — long entries when SMA + ADX align with regime.',
+  futures:  'Short-side classifier for futures — flags overbought/regime-flip setups.',
+  scalping: 'Fast 1m model — micro-mean-reversion + flow imbalance for HFT exits.',
+  tft:      'Temporal Fusion Transformer — multi-horizon forecast with attention.',
+  oft:      'Order-Flow Transformer — L2 microstructure → mu/sigma + liquidity risk.',
+  meta:     'Meta-labeler — gates primary signals on predicted true-positive probability.',
+  regime:   'Bayesian GMM — classifies bars into bull/bear/sideways regimes for sizing.',
+};
+
+// Active training jobs by model key, polled by pollTrainingJobs.
+let _trActiveByModel = {};
+
 // ── Manual training triggers ─────────────────────────────────────────────────
 async function trRunOne(key) {
   const sel = document.getElementById('tr-n-' + key);
+  const tfSel = document.getElementById('tr-tf-' + key);
   const n = sel ? parseInt(sel.value, 10) || 1 : 1;
-  if (!confirm(`Train model "${key}" ${n} time${n>1?'s':''}? Each iteration runs the full trainer in a subprocess (can take 1–30 min depending on the model).`)) return;
+  const tf = tfSel ? tfSel.value : '';
+  if (!confirm(`Train model "${key}" @ ${tf||'default TF'} ${n} time${n>1?'s':''}? Each iteration runs the full trainer in a subprocess (can take 1–30 min depending on the model).`)) return;
   try {
+    const body = {n};
+    if (tf) body.tf = tf;
     const r = await fetch(`/api/training/run/${encodeURIComponent(key)}`,
-      { method: 'POST', headers: hdrs(), body: JSON.stringify({n}) });
-    const body = await r.json();
-    if (!body.ok) throw new Error(body.error || 'request failed');
-    _trMarkPending(`${key} ×${n} queued`);
+      { method: 'POST', headers: hdrs(), body: JSON.stringify(body) });
+    const resp = await r.json();
+    if (!resp.ok) throw new Error(resp.error || 'request failed');
+    _trMarkPending(`${key}@${tf||'def'} ×${n} queued`);
+    // Optimistic UI: mark this row as active so the Train button flips to Stop
+    // immediately, even before pollTrainingJobs catches up.
+    _trActiveByModel = {..._trActiveByModel, [key]: resp.job_id || 'pending'};
+    if (typeof _renderTrainingTable === 'function') _renderTrainingTable();
     pollTrainingJobs();
   } catch(e) {
     alert('Training trigger failed: ' + (e.message||e));
+  }
+}
+
+async function trStopOne(jobId, key) {
+  if (!confirm(`Stop training of "${key}"? The current iteration will be killed and any subsequent iterations skipped.`)) return;
+  try {
+    const r = await fetch(`/api/training/stop/${encodeURIComponent(jobId)}`,
+      { method: 'POST', headers: hdrs() });
+    const body = await r.json();
+    if (!body.ok) throw new Error(body.error || 'stop failed');
+    _trActiveByModel = {..._trActiveByModel}; delete _trActiveByModel[key];
+    if (typeof _renderTrainingTable === 'function') _renderTrainingTable();
+    pollTrainingJobs();
+  } catch(e) {
+    alert('Stop failed: ' + (e.message||e));
   }
 }
 
@@ -3732,6 +3786,12 @@ async function pollTrainingJobs() {
     const d = await r.json();
     const jobs = d.jobs || [];
     const active = jobs.filter(j => j.status === 'queued' || j.status === 'running');
+    // Rebuild the active map so each row's Train/Stop button matches reality.
+    const newActive = {};
+    for (const j of active) if (j.model) newActive[j.model] = j.job_id;
+    const changed = JSON.stringify(newActive) !== JSON.stringify(_trActiveByModel);
+    _trActiveByModel = newActive;
+    if (changed && typeof _renderTrainingTable === 'function') _renderTrainingTable();
     const last = jobs[0];  // newest
     const pill = $('chip-training-jobs');
     const inline = $('tr-jobs-status');
@@ -3911,6 +3971,18 @@ async function pipelineRefresh() {
     if (status === 'running' && !_pipeTimer) _pipeTimer = setInterval(pipelineRefresh, 8000);
     if (status !== 'running' && _pipeTimer) { clearInterval(_pipeTimer); _pipeTimer = null; }
   } catch (e) { /* silent */ }
+}
+
+async function pipelineReset() {
+  if (!confirm('Clear the pipeline orchestrator status?\n\nThis only clears the on-disk status file (data/pipeline_status.json). It cannot interrupt a still-running orchestrator subprocess — the dashboard will refuse to clear if one is alive.')) return;
+  try {
+    const r = await fetch('/api/pipeline/reset', { method: 'POST', headers: hdrs() });
+    const body = await r.json();
+    if (!body.ok) throw new Error(body.error || 'reset failed');
+    pipelineRefresh();
+  } catch (e) {
+    alert('Reset failed: ' + (e.message||e));
+  }
 }
 
 async function pipelineRun() {

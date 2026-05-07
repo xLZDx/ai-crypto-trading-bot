@@ -2670,11 +2670,20 @@ def _record_job(job_id: str, **fields) -> None:
             _training_jobs.pop(oldest['job_id'], None)
 
 
+_training_active_procs: dict[str, "subprocess.Popen"] = {}
+_training_active_lock = threading.Lock()
+
+
 def _run_trainer_blocking(job_id: str, key: str, n: int,
                           tf: str | None = None) -> None:
     """Worker thread body: invoke the matching trainer N times sequentially.
     tf — optional per-TF override (defaults to the trainer's own default).
-    Used for manual per-TF training from the dashboard."""
+    Used for manual per-TF training from the dashboard.
+
+    Each iteration is launched as a Popen we track in
+    _training_active_procs so /api/training/stop/<job_id> can kill it.
+    Falls through to next iteration on stop (treated as 'cancelled').
+    """
     spec = _TRAINER_DISPATCH.get(key)
     if not spec:
         _record_job(job_id, status='error',
@@ -2683,34 +2692,54 @@ def _run_trainer_blocking(job_id: str, key: str, n: int,
         return
     module_path, fn_name = spec
     successes, errors = 0, []
+    cancelled = False
     _record_job(job_id, status='running', started_at=time.time(),
                 progress=0, total=n, tf=tf)
     for i in range(n):
-        # Spawn a subprocess instead of calling in-process — keeps the bot
-        # / dashboard memory clean and lets each trainer manage its own
-        # CUDA context. Matches the existing close_all retrain pattern.
+        if cancelled:
+            break
         kw = f"timeframe={tf!r}" if tf else ""
         cmd = [
             sys.executable, '-c',
             f'import {module_path} as m; '
             f'fn = getattr(m, {fn_name!r}); fn({kw})',
         ]
+        proc = None
         try:
-            r = subprocess.run(cmd, cwd=project_root,
-                               capture_output=True, timeout=3600)
-            if r.returncode == 0:
+            proc = subprocess.Popen(
+                cmd, cwd=project_root,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            with _training_active_lock:
+                _training_active_procs[job_id] = proc
+            try:
+                _stdout, _stderr = proc.communicate(timeout=3600)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                errors.append(f'iteration {i+1} timed out (>1h)')
+                continue
+            with _training_active_lock:
+                _training_active_procs.pop(job_id, None)
+            if proc.returncode == 0:
                 successes += 1
+            elif proc.returncode == -9 or proc.returncode == 1 and 'killed' in (_stderr or b'').decode('utf-8', 'replace').lower():
+                cancelled = True
+                errors.append(f'iteration {i+1} cancelled by operator')
             else:
-                errors.append((r.stderr or b'')[-400:].decode('utf-8', 'replace'))
-        except subprocess.TimeoutExpired:
-            errors.append(f'iteration {i+1} timed out (>1h)')
+                errors.append((_stderr or b'')[-400:].decode('utf-8', 'replace'))
         except Exception as exc:
             errors.append(f'iteration {i+1} crashed: {type(exc).__name__}: {exc}')
+            with _training_active_lock:
+                _training_active_procs.pop(job_id, None)
         _record_job(job_id, progress=i + 1)
-    _record_job(job_id,
-                status='done' if not errors else ('partial' if successes else 'error'),
+    final_status = ('cancelled' if cancelled else
+                    'done' if not errors else
+                    'partial' if successes else 'error')
+    _record_job(job_id, status=final_status,
                 successes=successes, errors=errors[-3:],
                 finished_at=time.time())
+    with _training_active_lock:
+        _training_active_procs.pop(job_id, None)
 
 
 @app.route('/api/training/run/<key>', methods=['POST'])
@@ -2745,6 +2774,59 @@ def api_training_run_one(key: str):
         daemon=True, name=f'train-{key}-{tf or "default"}-{job_id}',
     ).start()
     return jsonify({'ok': True, 'job_id': job_id, 'model': key, 'n': n, 'tf': tf})
+
+
+@app.route('/api/training/stop/<job_id>', methods=['POST'])
+@require_api_key
+def api_training_stop(job_id: str):
+    """Kill the subprocess backing this training job. Returns ok=true if
+    we either killed something or the job was already finished. Returns
+    404 only if the job_id was never seen."""
+    with _training_jobs_lock:
+        rec = _training_jobs.get(job_id)
+    if not rec:
+        return jsonify({'ok': False, 'error': f'unknown job_id {job_id}'}), 404
+    with _training_active_lock:
+        proc = _training_active_procs.pop(job_id, None)
+    if proc is None:
+        return jsonify({'ok': True, 'message': 'job already finished',
+                        'status': rec.get('status')})
+    try:
+        proc.kill()
+        return jsonify({'ok': True, 'message': 'killed', 'job_id': job_id})
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 500
+
+
+@app.route('/api/training/active', methods=['GET'])
+def api_training_active():
+    """Return a {model_key: job_id} map of currently-active training jobs.
+    The Strategy/ML row JS uses this to decide whether to render Train or
+    Stop on each row."""
+    out: dict[str, str] = {}
+    with _training_jobs_lock:
+        rows = list(_training_jobs.values())
+    for r in rows:
+        if r.get('status') in ('running', 'queued'):
+            out[r.get('model', '')] = r.get('job_id', '')
+    return jsonify({'active': out})
+
+
+@app.route('/api/pipeline/reset', methods=['POST'])
+@require_api_key
+def api_pipeline_reset():
+    """Clear stale pipeline status. Refuses to clear if a process is
+    actually alive — the operator's expectation should match disk."""
+    if _pipeline_proc_alive():
+        return jsonify({'ok': False,
+                        'error': 'orchestrator process is still alive — refuse to clear status',
+                        'pid': _pipeline_proc_pid}), 409
+    from src.utils.safe_json import write_json
+    try:
+        write_json(_pipeline_status_path(), {})
+        return jsonify({'ok': True, 'message': 'pipeline status cleared'})
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 500
 
 
 @app.route('/api/training/run/all', methods=['POST'])

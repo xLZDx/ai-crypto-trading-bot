@@ -2360,7 +2360,8 @@ def test_phase28_dashboard_read_path_cutover():
 
     # /api/db/status reports the new backend
     check("/api/db/status reports backend='duckdb+parquet'",
-          "'backend': 'duckdb+parquet'" in app_src)
+          "'backend': 'duckdb+parquet'" in app_src
+          or "'backend':   'duckdb+parquet'" in app_src)
     check("/api/db/status returns data_dir for the file-based store",
           "'data_dir':" in app_src)
 
@@ -2534,6 +2535,72 @@ def test_phase44_pr6_live_trading_toggle():
     check('+ Deposit button + ltDeposit() prompts for amount',
           'ltDeposit()' in tpl
           and 'Add how much to virtual balance' in tpl)
+
+
+def test_phase55_pr19_training_controls():
+    """Phase 55 — PR 18/19/20: dashboard hardening bundle.
+       PR 18: /api/db/status TTL cache so Monitor stops hanging
+              + Cache-Control: no-store on / so stale browser cache
+              can't mask freshly-edited JS.
+       PR 19: training row gains TF picker, status column flips RUNNING
+              when row's training subprocess is alive, Train ↔ Stop
+              button toggle, model description column.
+       PR 20: pipeline orchestrator status can be reset (clears stale
+              'error' from yesterday's run when no live process)."""
+    print('\n[Phase 55 — PR 18/19/20 dashboard hardening]')
+    app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
+               encoding='utf-8').read()
+    tpl = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html'),
+               encoding='utf-8').read()
+
+    # PR 18 — Cache + cache-headers
+    check('/api/db/status is TTL-cached (5 min)',
+          '_db_status_cache' in app
+          and '_db_status_cache_ttl = 300.0' in app
+          and '_refresh_db_status_async' in app)
+    check('Background refresher is fire-and-forget',
+          "name='db-status-refresh'" in app)
+    check('Index sets Cache-Control: no-store',
+          "'Cache-Control'" in app
+          and "'no-store, no-cache, must-revalidate, max-age=0'" in app)
+
+    # PR 19 — Training row controls
+    check('Training endpoint can be killed via /api/training/stop/<job_id>',
+          "@app.route('/api/training/stop/<job_id>'" in app
+          and 'def api_training_stop(' in app
+          and 'proc.kill()' in app)
+    check('Training subprocess tracked in _training_active_procs dict',
+          '_training_active_procs' in app
+          and '_training_active_lock' in app)
+    check('GET /api/training/active returns model_key→job_id map',
+          "@app.route('/api/training/active'" in app
+          and 'def api_training_active(' in app)
+    check('Train→Stop swap rendered when row has active job',
+          'activeJobId' in tpl
+          and 'trStopOne(' in tpl
+          and "'⏹ Stop'" in tpl or '⏹ Stop' in tpl)
+    check('TF picker per training row, defaulting to model timeframe',
+          "id=\"tr-tf-${esc(m.key)}\"" in tpl
+          and "tf===(m.timeframe||'1h')?' selected':''" in tpl)
+    check('trRunOne now sends tf in body',
+          'if (tf) body.tf = tf' in tpl)
+    check('pollTrainingJobs rebuilds _trActiveByModel + re-renders on change',
+          '_trActiveByModel = newActive' in tpl
+          and 'JSON.stringify(newActive) !== JSON.stringify' in tpl)
+    check('Training row has Description column header + cell',
+          'One-line description of what this model does' in tpl
+          and '_MODEL_DESCRIPTIONS' in tpl
+          and 'Random forest on Triple-Barrier' in tpl)
+
+    # PR 20 — Pipeline reset
+    check('POST /api/pipeline/reset clears status when no process alive',
+          "@app.route('/api/pipeline/reset'" in app
+          and 'def api_pipeline_reset(' in app
+          and '_pipeline_proc_alive()' in app
+          and 'pipeline status cleared' in app)
+    check('Pipeline card has Reset button',
+          'pipelineReset()' in tpl
+          and '✕ Reset' in tpl)
 
 
 def test_phase54_pr17_production_readiness():
@@ -4498,6 +4565,7 @@ def main():
     test_phase52_pr15_finbert_sentiment()
     test_phase53_pr16_long_horizon_backtest()
     test_phase54_pr17_production_readiness()
+    test_phase55_pr19_training_controls()
 
     if not args.offline:
         test_api(args.url)
