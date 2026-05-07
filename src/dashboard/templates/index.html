@@ -3663,9 +3663,27 @@ function _renderTrainingTable() {
     // Active job for this model (poll runs every 5s via pollTrainingJobs).
     const activeJobId = (typeof _trActiveByModel !== 'undefined' && _trActiveByModel)
                         ? _trActiveByModel[m.key] : null;
-    // If actively training, override status to RUNNING
+    const activeJob   = (typeof _trActiveJobs !== 'undefined' && _trActiveJobs)
+                        ? _trActiveJobs[m.key] : null;
+    // If actively training, override status with the actual job phase.
     let st = _statusFor(m);
-    if (activeJobId) st = {cls:'run', txt:'RUNNING', tip:'Training in progress (job ' + activeJobId + ')'};
+    if (activeJob) {
+      const js = activeJob.status || 'queued';
+      const phase = activeJob.progress_label || activeJob.current_tf || '';
+      const lbl = (
+        js === 'queued'    ? 'QUEUED' :
+        js === 'starting'  ? 'STARTING' :
+        js === 'running'   ? (phase ? `RUNNING ${phase}` : 'RUNNING') :
+        js === 'cancelled' ? 'CANCELLED' :
+        js.toUpperCase()
+      );
+      st = {cls:'run', txt:lbl,
+            tip:`Job ${activeJob.job_id} · ${js} · ${activeJob.progress||0}/${activeJob.total||activeJob.n||1}`};
+    } else if (activeJobId) {
+      // Optimistic UI: trRunOne sets activeJobId immediately, but the
+      // first poll hasn't returned yet — show STARTING.
+      st = {cls:'run', txt:'STARTING', tip:'Trainer subprocess spawning…'};
+    }
     const stColor = {ok:'#34d399',run:'#fbbf24',err:'#fb7185',stp:'#94a3b8',na:'#475569'}[st.cls] || '#475569';
     const stBg    = {ok:'rgba(52,211,153,.15)',run:'rgba(251,191,36,.18)',err:'rgba(251,113,133,.16)',stp:'rgba(148,163,184,.12)',na:'rgba(71,85,105,.12)'}[st.cls] || 'rgba(71,85,105,.12)';
     // Description: short blurb sourced from _MODEL_DESCRIPTIONS
@@ -3691,9 +3709,10 @@ function _renderTrainingTable() {
       <td style="color:#64748b;font-size:.58rem">${esc(m.target||'—')}</td>
       <td style="color:#94a3b8;font-size:.55rem;line-height:1.35;max-width:220px" title="${esc(desc)}">${esc(desc)}</td>
       <td style="text-align:right;white-space:nowrap">
-        <select id="tr-tf-${esc(m.key)}" style="font-size:.55rem;padding:1px 3px;border-radius:4px;background:rgba(5,8,22,.6);color:#e2e8f0;border:1px solid rgba(148,163,184,.18)" title="Timeframe to train at — defaults to model's canonical TF">
+        <select id="tr-tf-${esc(m.key)}" style="font-size:.55rem;padding:1px 3px;border-radius:4px;background:rgba(5,8,22,.6);color:#e2e8f0;border:1px solid rgba(148,163,184,.18)" title="Timeframe to train at — 'ALL' chains every supported TF for this model sequentially">
           ${['1m','5m','15m','1h','4h','1d','1w','1mo'].map(tf =>
             `<option value="${tf}"${tf===(m.timeframe||'1h')?' selected':''}>${tf}</option>`).join('')}
+          <option value="all">ALL TFs</option>
         </select>
         <select id="tr-n-${esc(m.key)}" style="font-size:.55rem;padding:1px 3px;border-radius:4px;background:rgba(5,8,22,.6);color:#e2e8f0;border:1px solid rgba(148,163,184,.18)" title="Repetitions">
           <option value="1">×1</option><option value="3">×3</option><option value="5">×5</option><option value="10">×10</option>
@@ -3719,7 +3738,10 @@ const _MODEL_DESCRIPTIONS = {
 };
 
 // Active training jobs by model key, polled by pollTrainingJobs.
+// _trActiveByModel = {model_key: job_id}  — quick lookup
+// _trActiveJobs    = {model_key: job_record} — full record (status, progress, current_tf...)
 let _trActiveByModel = {};
+let _trActiveJobs = {};
 
 // ── Manual training triggers ─────────────────────────────────────────────────
 async function trRunOne(key) {
@@ -3727,7 +3749,19 @@ async function trRunOne(key) {
   const tfSel = document.getElementById('tr-tf-' + key);
   const n = sel ? parseInt(sel.value, 10) || 1 : 1;
   const tf = tfSel ? tfSel.value : '';
-  if (!confirm(`Train model "${key}" @ ${tf||'default TF'} ${n} time${n>1?'s':''}? Each iteration runs the full trainer in a subprocess (can take 1–30 min depending on the model).`)) return;
+  const tfLabel = tf === 'all' ? 'ALL TFs' : (tf || 'default TF');
+  if (!confirm(`Train model "${key}" @ ${tfLabel} ${n} time${n>1?'s':''}? Each iteration runs the full trainer in a subprocess (can take 1–30 min depending on the model).`)) return;
+
+  // Optimistic UI #1 — flash QUEUED *immediately* so the user sees
+  // visible feedback the instant they click OK, before the network
+  // round-trip even finishes.
+  _trActiveByModel = {..._trActiveByModel, [key]: 'pending'};
+  _trActiveJobs    = {..._trActiveJobs,    [key]: {
+    job_id: 'pending', status: 'queued', model: key, n, tf,
+    progress_label: tf === 'all' ? `chained ${n} iter × ALL` : '',
+  }};
+  if (typeof _renderTrainingTable === 'function') _renderTrainingTable();
+
   try {
     const body = {n};
     if (tf) body.tf = tf;
@@ -3735,13 +3769,30 @@ async function trRunOne(key) {
       { method: 'POST', headers: hdrs(), body: JSON.stringify(body) });
     const resp = await r.json();
     if (!resp.ok) throw new Error(resp.error || 'request failed');
-    _trMarkPending(`${key}@${tf||'def'} ×${n} queued`);
-    // Optimistic UI: mark this row as active so the Train button flips to Stop
-    // immediately, even before pollTrainingJobs catches up.
-    _trActiveByModel = {..._trActiveByModel, [key]: resp.job_id || 'pending'};
+    _trMarkPending(`${key}@${tfLabel} ×${n} queued`);
+    // Replace the placeholder job_id with the real one.
+    _trActiveByModel = {..._trActiveByModel, [key]: resp.job_id};
+    _trActiveJobs    = {..._trActiveJobs, [key]: {
+      ..._trActiveJobs[key], job_id: resp.job_id,
+      tfs: resp.tfs || (tf ? [tf] : []),
+    }};
     if (typeof _renderTrainingTable === 'function') _renderTrainingTable();
+    // Speed up polling for the next ~30 s so the row reflects state
+    // changes (queued → starting → running) without a 5s lag.
+    if (_trJobsTimer) clearInterval(_trJobsTimer);
+    _trJobsTimer = setInterval(pollTrainingJobs, 1500);
+    setTimeout(() => {
+      if (_trJobsTimer) {
+        clearInterval(_trJobsTimer);
+        _trJobsTimer = setInterval(pollTrainingJobs, 5000);
+      }
+    }, 30_000);
     pollTrainingJobs();
   } catch(e) {
+    // Roll back the optimistic state
+    delete _trActiveByModel[key];
+    delete _trActiveJobs[key];
+    if (typeof _renderTrainingTable === 'function') _renderTrainingTable();
     alert('Training trigger failed: ' + (e.message||e));
   }
 }
@@ -3788,12 +3839,22 @@ async function pollTrainingJobs() {
     const r = await fetch('/api/training/jobs?limit=10');
     const d = await r.json();
     const jobs = d.jobs || [];
-    const active = jobs.filter(j => j.status === 'queued' || j.status === 'running');
-    // Rebuild the active map so each row's Train/Stop button matches reality.
+    const active = jobs.filter(j => j.status === 'queued' || j.status === 'running' || j.status === 'starting');
+    // Rebuild both maps so rows can show fine-grained status (queued /
+    // starting / running phase / completed / failed) instead of a single
+    // RUNNING for everything.
     const newActive = {};
-    for (const j of active) if (j.model) newActive[j.model] = j.job_id;
-    const changed = JSON.stringify(newActive) !== JSON.stringify(_trActiveByModel);
+    const newJobs = {};
+    for (const j of active) {
+      if (j.model) {
+        newActive[j.model] = j.job_id;
+        newJobs[j.model] = j;
+      }
+    }
+    const changed = JSON.stringify(newActive) !== JSON.stringify(_trActiveByModel)
+                 || JSON.stringify(newJobs) !== JSON.stringify(_trActiveJobs);
     _trActiveByModel = newActive;
+    _trActiveJobs = newJobs;
     if (changed && typeof _renderTrainingTable === 'function') _renderTrainingTable();
     const last = jobs[0];  // newest
     const pill = $('chip-training-jobs');

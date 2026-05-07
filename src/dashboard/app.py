@@ -2674,6 +2674,82 @@ _training_active_procs: dict[str, "subprocess.Popen"] = {}
 _training_active_lock = threading.Lock()
 
 
+def _run_trainer_multi_tf(job_id: str, key: str, n: int,
+                          tfs: tuple[str, ...]) -> None:
+    """Multi-TF wrapper around _run_trainer_blocking. Trains the model at
+    each TF sequentially. Status reflects which TF is currently running so
+    the dashboard can show e.g. 'running base @ 4h (2/3 TFs done)'."""
+    successes_by_tf: dict[str, int] = {}
+    errors_by_tf: dict[str, list[str]] = {}
+    cancelled = False
+    _record_job(job_id, status='running', started_at=time.time(),
+                progress=0, total=len(tfs) * n,
+                tfs=list(tfs), tf_done=0, current_tf=None)
+    spec = _TRAINER_DISPATCH.get(key)
+    if not spec:
+        _record_job(job_id, status='error',
+                    error=f'unknown model key {key}',
+                    finished_at=time.time())
+        return
+    module_path, fn_name = spec
+    iter_count = 0
+    for tf_idx, tf in enumerate(tfs):
+        if cancelled:
+            break
+        _record_job(job_id, current_tf=tf, status='running',
+                    progress_label=f'{key} @ {tf} ({tf_idx+1}/{len(tfs)})')
+        for i in range(n):
+            if cancelled:
+                break
+            kw = f"timeframe={tf!r}"
+            cmd = [
+                sys.executable, '-c',
+                f'import {module_path} as m; '
+                f'fn = getattr(m, {fn_name!r}); fn({kw})',
+            ]
+            try:
+                proc = subprocess.Popen(cmd, cwd=project_root,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                with _training_active_lock:
+                    _training_active_procs[job_id] = proc
+                try:
+                    _stdout, _stderr = proc.communicate(timeout=3600)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    errors_by_tf.setdefault(tf, []).append(f'iter {i+1} timed out')
+                    continue
+                with _training_active_lock:
+                    _training_active_procs.pop(job_id, None)
+                if proc.returncode == 0:
+                    successes_by_tf[tf] = successes_by_tf.get(tf, 0) + 1
+                elif proc.returncode == -9:
+                    cancelled = True
+                    errors_by_tf.setdefault(tf, []).append(f'iter {i+1} cancelled')
+                else:
+                    msg = (_stderr or b'')[-300:].decode('utf-8', 'replace')
+                    errors_by_tf.setdefault(tf, []).append(msg)
+            except Exception as exc:
+                errors_by_tf.setdefault(tf, []).append(f'{type(exc).__name__}: {exc}')
+                with _training_active_lock:
+                    _training_active_procs.pop(job_id, None)
+            iter_count += 1
+            _record_job(job_id, progress=iter_count, tf_done=tf_idx)
+        _record_job(job_id, tf_done=tf_idx + 1)
+    total_succ = sum(successes_by_tf.values())
+    total_err = sum(len(v) for v in errors_by_tf.values())
+    final_status = ('cancelled' if cancelled else
+                    'done' if total_err == 0 else
+                    'partial' if total_succ > 0 else 'error')
+    _record_job(job_id, status=final_status,
+                successes=total_succ,
+                successes_by_tf=successes_by_tf,
+                errors_by_tf={k: v[-2:] for k, v in errors_by_tf.items()},
+                current_tf=None,
+                finished_at=time.time())
+    with _training_active_lock:
+        _training_active_procs.pop(job_id, None)
+
+
 def _run_trainer_blocking(job_id: str, key: str, n: int,
                           tf: str | None = None) -> None:
     """Worker thread body: invoke the matching trainer N times sequentially.
@@ -2763,7 +2839,34 @@ def api_training_run_one(key: str):
         n = 1
     n = max(1, min(n, 20))   # clamp so a stray 1000 doesn't pin a CPU all day
     tf = body.get('tf') or request.args.get('tf') or None
-    if tf and tf not in ('1m', '5m', '15m', '1h', '4h', '1d', '1w', '1mo'):
+    # 'all' expands to every TF the trainer supports for this model — we
+    # spawn one job per TF and let the worker chain them sequentially.
+    valid_tfs = ('1m', '5m', '15m', '1h', '4h', '1d', '1w', '1mo')
+    if tf == 'all':
+        # Default per-key TF set mirrors src.engine.train_all_models.
+        ALL_TFS_BY_KEY = {
+            'base':     ('1h', '4h', '1d'),
+            'trend':    ('1h', '4h', '1d'),
+            'futures':  ('1h', '4h', '1d'),
+            'scalping': ('1m',),
+            'meta':     ('1h',),
+            'tft':      ('1h',),
+            'oft':      ('1m',),
+            'regime':   ('1h',),
+        }
+        tfs = ALL_TFS_BY_KEY.get(key, ('1h',))
+        # Single job that loops the TFs internally for clean status reporting.
+        job_id = uuid.uuid4().hex[:12]
+        _record_job(job_id, model=key, n=n, tf='all', tfs=list(tfs),
+                    status='queued', created_at=time.time())
+        threading.Thread(
+            target=_run_trainer_multi_tf,
+            args=(job_id, key, n, tfs),
+            daemon=True, name=f'train-{key}-all-{job_id}',
+        ).start()
+        return jsonify({'ok': True, 'job_id': job_id, 'model': key,
+                        'n': n, 'tf': 'all', 'tfs': list(tfs)})
+    if tf and tf not in valid_tfs:
         return jsonify({'ok': False, 'error': f'invalid tf: {tf}'}), 400
     job_id = uuid.uuid4().hex[:12]
     _record_job(job_id, model=key, n=n, tf=tf,

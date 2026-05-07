@@ -2537,6 +2537,49 @@ def test_phase44_pr6_live_trading_toggle():
           and 'Add how much to virtual balance' in tpl)
 
 
+def test_phase57_pr26_all_tfs_and_status():
+    """Phase 57 — PR 26: 'ALL TFs' option + fine-grained training status.
+       User asked for: (a) one-click train across every TF the model
+       supports, (b) instant visual feedback on click (QUEUED flash
+       before network round-trip), (c) per-phase status pills
+       (QUEUED / STARTING / RUNNING <tf> / FAILED / COMPLETED)."""
+    print('\n[Phase 57 — PR 26 ALL-TFs + fine-grained status]')
+    app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
+               encoding='utf-8').read()
+    tpl = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html'),
+               encoding='utf-8').read()
+
+    check('Backend accepts tf="all" + has _run_trainer_multi_tf worker',
+          "if tf == 'all':" in app
+          and 'def _run_trainer_multi_tf(' in app
+          and 'ALL_TFS_BY_KEY' in app)
+    check('Multi-TF worker reports current_tf + progress_label',
+          "_record_job(job_id, current_tf=tf" in app
+          and 'progress_label' in app)
+    check('Multi-TF chains TFs sequentially with cancellable Popen',
+          'for tf_idx, tf in enumerate(tfs)' in app
+          and '_training_active_procs[job_id]' in app)
+    check('TF picker dropdown includes "ALL TFs" option',
+          '<option value="all">ALL TFs</option>' in tpl)
+    check('Fine-grained status: QUEUED / STARTING / RUNNING / CANCELLED',
+          "'QUEUED'" in tpl
+          and "'STARTING'" in tpl
+          and "'RUNNING'" in tpl
+          and "'CANCELLED'" in tpl)
+    check('Status pill shows progress_label / current_tf when running',
+          'activeJob.progress_label' in tpl
+          and 'activeJob.current_tf' in tpl)
+    check('Optimistic UI flashes QUEUED before network round-trip',
+          "_trActiveJobs    = {..._trActiveJobs,    [key]: {" in tpl
+          and "status: 'queued'" in tpl)
+    check('Failed POST rolls back the optimistic state',
+          'delete _trActiveByModel[key]' in tpl
+          and 'delete _trActiveJobs[key]' in tpl)
+    check('Polling interval drops to 1.5s for 30s after click',
+          'setInterval(pollTrainingJobs, 1500)' in tpl
+          and "setTimeout(() => {" in tpl)
+
+
 def test_phase56_pr21_heatmap_rework():
     """Phase 56 — PR 21: stability heatmap rework.
     User asked for the same look as the Model Training table:
@@ -3464,7 +3507,8 @@ def test_phase41_pr2_trainer_multi_tf():
           'kw = f"timeframe={tf!r}" if tf else ""' in app)
     check('/api/training/run/<key> validates tf body param',
           "tf = body.get('tf')" in app
-          and "tf not in ('1m', '5m', '15m', '1h', '4h', '1d', '1w', '1mo')" in app)
+          and ("tf not in ('1m', '5m', '15m', '1h', '4h', '1d', '1w', '1mo')" in app
+               or "tf not in valid_tfs" in app))
 
 
 def test_phase40_pr1_data_coverage_resample():
@@ -4607,6 +4651,7 @@ def main():
     test_phase54_pr17_production_readiness()
     test_phase55_pr19_training_controls()
     test_phase56_pr21_heatmap_rework()
+    test_phase57_pr26_all_tfs_and_status()
 
     if not args.offline:
         test_api(args.url)
