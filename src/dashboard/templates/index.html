@@ -4327,7 +4327,7 @@ function _pipeFmt(snap) {
     backtest: fmtPhase(snap.backtest) +
               (snap.backtest && snap.backtest.rows_written ? ` · ${snap.backtest.rows_written} rows` : ''),
     last_event: snap.last_event
-      ? `${snap.last_event.phase}: ${snap.last_event.message}`
+      ? `${snap.last_event.phase || snap.last_event.kind || 'pipeline'}: ${snap.last_event.message || snap.last_event}`
       : '—',
   };
 }

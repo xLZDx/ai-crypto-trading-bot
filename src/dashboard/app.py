@@ -4003,6 +4003,11 @@ def api_pipeline_status():
         last_event = snap.get('last_event')
         if not isinstance(last_event, dict):
             last_event = {}
+        # Always set both `phase` and `message` so the frontend renderer
+        # `${last_event.phase}: ${last_event.message}` doesn't print
+        # 'undefined: …'. Use 'orchestrator' as the phase tag — it's
+        # the orchestrator that died, not any one trainer phase.
+        last_event.setdefault('phase', 'orchestrator')
         last_event['message'] = 'orchestrator process exited without finalising'
         snap['last_event'] = last_event
     return jsonify(snap)
