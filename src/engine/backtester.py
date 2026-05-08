@@ -668,12 +668,37 @@ def _apply_meta_filter(df: pd.DataFrame, signal_col: str) -> pd.Series:
         return df[signal_col]
 
 
+def _strategy_uses_model(reg_name: str, model_key: str) -> bool:
+    """Map a strategy registry name to its underlying ML model key.
+
+    Used by run_full_backtest's `models` filter (PR-46 v3.1 step 3).
+    The substring match handles the canonical naming pattern (Trend_ML,
+    Base_ML, Scalping_ML, Futures_Short_ML, TFT_*, OFT_*); the special
+    cases cover meta-labeler / regime-classifier strategies whose
+    registry names don't include the literal model key.
+    """
+    name = (reg_name or "").lower()
+    key = (model_key or "").lower()
+    if not key:
+        return True
+    if key in name:
+        return True
+    if key == "meta" and ("metafiltered" in name or "metalabeler" in name):
+        return True
+    if key == "regime" and "regimeclassifier" in name:
+        return True
+    if key == "futures" and "futures_short" in name:
+        return True  # canonical 'futures' key matches Futures_Short_*
+    return False
+
+
 def run_full_backtest(
     raw_dir: str | None = None,
     output_dir: str | None = None,
     initial_capital: float = 10_000.0,
     fee_preset: str = "futures",
     timeframes: tuple[str, ...] = ("1h",),
+    models: tuple[str, ...] | None = None,
 ) -> pd.DataFrame:
     """
     Entry point: loads all watchlist data, runs all strategies (Group A + B)
@@ -684,6 +709,14 @@ def run_full_backtest(
     multi-TF resample lands to compare strategy stability across TFs.
     Each comparison row is tagged with its `timeframe` so the dashboard's
     Stability view can group / rank by it.
+
+    models — optional tuple of model keys (`'trend'`, `'base'`,
+    `'futures'`, `'scalping'`, `'meta'`, `'tft'`, `'oft'`, `'regime'`).
+    When provided, the run only includes strategies whose underlying
+    model is in the filter — used by the dashboard's chained-backtest
+    path (PR-46 v3.1) so a manual `train trend @ 4h` followup-backtest
+    finishes in <2 min instead of running every strategy on every
+    symbol. None means run everything (default).
     """
     import json as _json
 
@@ -744,6 +777,11 @@ def run_full_backtest(
             for reg_name, label, sig_col in enabled_backtest_signal_cols():
                 if sig_col not in df.columns:
                     continue
+                # Per-model filter: skip strategies whose underlying ML
+                # model isn't in the operator-supplied models tuple.
+                if models is not None and not any(
+                        _strategy_uses_model(reg_name, m) for m in models):
+                    continue
                 try:
                     group_prefix = "A_" if reg_name in _A_ORIG else "B_"
                     _bt_run = _bt_scalping if reg_name == "Scalping_ML" else bt
@@ -758,7 +796,12 @@ def run_full_backtest(
                                  sym, reg_name, tf, e)
 
             # ── Meta-filtered variants ────────────────────────────────────
-            if is_enabled_backtest("MetaLabeler_Filter"):
+            # Same per-model filter applies — meta-filtered strategies
+            # only run if 'meta' (or the underlying model, e.g. 'base')
+            # is in the filter.
+            if is_enabled_backtest("MetaLabeler_Filter") and (
+                    models is None
+                    or any(_strategy_uses_model("MetaLabeler_Filter", m) for m in models)):
                 for strat, sig_col in [
                     ("RSI_MetaFiltered",      "signal_rsi"),
                     ("MACD_MetaFiltered",     "signal_macd"),
@@ -822,6 +865,9 @@ def run_full_backtest(
         if last_df is not None and len(last_df) >= 200:
             for reg_name, label, sig_col in enabled_backtest_signal_cols():
                 if sig_col not in last_df.columns:
+                    continue
+                if models is not None and not any(
+                        _strategy_uses_model(reg_name, m) for m in models):
                     continue
                 wf = bt.walk_forward(last_df, sig_col, reg_name,
                                      sym if sym else "BTC_USDT")

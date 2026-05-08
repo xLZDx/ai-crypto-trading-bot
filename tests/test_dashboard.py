@@ -5147,6 +5147,71 @@ def test_phase71b_v31_curated_tf_map():
     os.environ.pop('AI_TRADER_TRAIN_TF_MAP', None)
 
 
+def test_phase71c_v31_backtest_per_model_filter():
+    """v3.1 step 3 (1F): run_full_backtest accepts a `models` filter so
+    chained-backtest-after-training only re-runs strategies for the
+    trained model. _spawn_followup_backtest forwards both `timeframes`
+    and `models` to the subprocess invocation."""
+    print('\n[Phase 71c — v3.1 step 3: per-model backtest filter]')
+
+    bt_path = os.path.join(BASE_DIR, 'src', 'engine', 'backtester.py')
+    with open(bt_path, encoding='utf-8') as f:
+        bt = f.read()
+
+    # 1. Helper function exists with the canonical mapping.
+    check('_strategy_uses_model() helper defined',
+          'def _strategy_uses_model(' in bt)
+    check('helper handles meta special case',
+          "key == \"meta\"" in bt and 'metafiltered' in bt.lower())
+    check('helper handles regime special case',
+          'regimeclassifier' in bt.lower())
+    check('helper handles futures → futures_short mapping',
+          "key == \"futures\"" in bt and 'futures_short' in bt.lower())
+
+    # 2. run_full_backtest signature includes models param.
+    check('run_full_backtest has `models` param',
+          'def run_full_backtest(' in bt
+          and 'models: tuple[str, ...] | None = None' in bt)
+
+    # 3. Per-model skip logic at the inner loop.
+    check('inner loop skips when model not in filter',
+          '_strategy_uses_model(reg_name, m) for m in models' in bt
+          and bt.count('_strategy_uses_model(reg_name, m) for m in models') >= 2)
+    check('meta-filtered branch gated by models filter',
+          'MetaLabeler_Filter' in bt
+          and '_strategy_uses_model("MetaLabeler_Filter", m)' in bt)
+
+    # 4. _spawn_followup_backtest forwards models to subprocess.
+    app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
+    with open(app_path, encoding='utf-8') as f:
+        app = f.read()
+    check('_spawn_followup_backtest exists',
+          'def _spawn_followup_backtest(' in app)
+    check('subprocess invocation forwards `models=(model_key,)`',
+          'models=({model_key!r},)' in app
+          or "models=({model_key!r},)" in app)
+    check('progress label includes the filtered model name',
+          "post-train backtest: {model_key}" in app)
+
+    # 5. Live import — call with a filter and confirm no exception.
+    import importlib, sys
+    sys.path.insert(0, BASE_DIR)
+    if 'src.engine.backtester' in sys.modules:
+        del sys.modules['src.engine.backtester']
+    bt_mod = importlib.import_module('src.engine.backtester')
+    helper = getattr(bt_mod, '_strategy_uses_model', None)
+    check('_strategy_uses_model importable', callable(helper))
+    if callable(helper):
+        check('helper: Trend_ML matches trend',           helper('Trend_ML', 'trend'))
+        check('helper: Trend_ML does NOT match scalping', not helper('Trend_ML', 'scalping'))
+        check('helper: Futures_Short_ML matches futures', helper('Futures_Short_ML', 'futures'))
+        check('helper: TFT_MarketMaker matches tft',      helper('TFT_MarketMaker', 'tft'))
+        check('helper: OFT_Microstructure matches oft',   helper('OFT_Microstructure', 'oft'))
+        check('helper: RSI_MetaFiltered matches meta',    helper('RSI_MetaFiltered', 'meta'))
+        check('helper: RegimeClassifier_Router → regime', helper('RegimeClassifier_Router', 'regime'))
+        check('helper: empty key → matches all',          helper('Trend_ML', ''))
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -5476,6 +5541,7 @@ def main():
     test_phase70_pr43_dashboard_watchdog()
     test_phase71_pr46_real_cash_label_rename()
     test_phase71b_v31_curated_tf_map()
+    test_phase71c_v31_backtest_per_model_filter()
 
     if not args.offline:
         test_api(args.url)

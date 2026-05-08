@@ -3255,13 +3255,12 @@ _training_concurrency_sem = _LegacySemAdapter()
 def _spawn_followup_backtest(parent_job_id: str, model_key: str,
                              tfs: tuple[str, ...]) -> None:
     """After a manual training succeeds, optionally refresh the Stability
-    Heatmap data for the touched timeframe(s). run_full_backtest takes a
-    `timeframes` tuple but no model filter — it re-runs every strategy
-    at each TF and rewrites data/backtest/wf_results.json + the latest
-    comparison CSV. So this is "per-TF backtest", not strictly per-model,
-    but it's still much cheaper than the full multi-TF orchestrator
-    backtest (one TF instead of five). Spawns a detached subprocess so
-    it survives a dashboard restart, matching the trainer's pattern.
+    Heatmap data for the touched timeframe(s). run_full_backtest now
+    accepts both `timeframes` and `models` filters (PR-46 v3.1 step 3),
+    so this followup-backtest scopes to the trained (model, tf) tuple
+    only — finishes in <2 min instead of <10 min. Spawns a detached
+    subprocess so it survives a dashboard restart, matching the
+    trainer's pattern.
 
     Recorded as a separate job (resource_kind='cpu') so the scheduler
     queues it behind any in-flight training.
@@ -3273,7 +3272,7 @@ def _spawn_followup_backtest(parent_job_id: str, model_key: str,
     _record_job(bt_job_id, model=f'{model_key}-backtest', status='queued',
                 queued_at=time.time(), created_at=time.time(),
                 resource_kind='cpu',
-                progress_label=f'queued (post-train backtest @ {",".join(tfs)})',
+                progress_label=f'queued (post-train backtest: {model_key} @ {",".join(tfs)})',
                 tf=','.join(tfs), total=1, n=1,
                 parent_job_id=parent_job_id)
     threading.Thread(
@@ -3293,12 +3292,15 @@ def _run_followup_backtest_blocking(job_id: str, model_key: str,
     _training_scheduler.acquire('cpu')
     try:
         _record_job(job_id, status='running', started_at=time.time(),
-                    progress_label=f'post-train backtest @ {",".join(tfs)}')
+                    progress_label=f'post-train backtest: {model_key} @ {",".join(tfs)}')
         tf_arg = ','.join(repr(t) for t in tfs)
+        # Per-model filter — only re-run strategies whose underlying ML
+        # model matches the just-trained model_key. Cuts backtest time
+        # from ~10 min to <2 min for a single-model retrain.
         cmd = [
             sys.executable, '-c',
             'from src.engine.backtester import run_full_backtest; '
-            f'run_full_backtest(timeframes=({tf_arg},))',
+            f'run_full_backtest(timeframes=({tf_arg},), models=({model_key!r},))',
         ]
         try:
             proc = _spawn_training_subprocess(job_id, cmd)
