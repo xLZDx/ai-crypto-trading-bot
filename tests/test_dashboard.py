@@ -4997,6 +4997,59 @@ def test_phase61_pr37_resource_aware_scheduler():
     check('cpu acquire proceeds after exclusive release', cpu_done['fired'])
 
 
+def test_phase70_pr43_dashboard_watchdog():
+    """Watchdog daemon keeps the dashboard alive.
+
+    Polls /api/state; on FAILURE_THRESHOLD consecutive failed checks,
+    kills stale dash processes and respawns via Win32_Process.Create.
+    Circuit breaker prevents infinite restart loops on import-time
+    crashes. Started by restart_all.ps1 alongside the dashboard."""
+    print('\n[Phase 70 — PR-43 dashboard watchdog daemon]')
+
+    wd_path = os.path.join(BASE_DIR, 'scripts', 'dashboard_watchdog.py')
+    check('scripts/dashboard_watchdog.py exists', os.path.exists(wd_path))
+    if not os.path.exists(wd_path):
+        return
+    with open(wd_path, encoding='utf-8') as f:
+        wd = f.read()
+
+    check('FAILURE_THRESHOLD configurable via env var',
+          'AI_TRADER_DASH_WATCH_FAIL_N' in wd)
+    check('RESTART_LIMIT configurable via env var',
+          'AI_TRADER_DASH_WATCH_LIMIT' in wd)
+    check('RESTART_WINDOW_S configurable via env var',
+          'AI_TRADER_DASH_WATCH_WINDOW_S' in wd)
+    check('health probe targets /api/state by default',
+          "'http://127.0.0.1:5000/api/state'" in wd)
+    check('watchdog state persists to data/dashboard_watchdog_state.json',
+          'dashboard_watchdog_state.json' in wd)
+    check('logs to logs/dashboard_watchdog.log',
+          'dashboard_watchdog.log' in wd)
+    check('uses Win32_Process.Create on Windows for detached spawn',
+          'Win32_Process' in wd and 'CreationDate' not in wd  # we use ProcessId, not creationdate
+          and 'sys.platform' in wd)
+    check('kills stale dashboards before respawn',
+          'def _kill_existing_dashboards' in wd
+          and 'src.dashboard.app' in wd
+          and 'p.kill()' in wd)
+    check('circuit breaker stops infinite restart loops',
+          'def _circuit_tripped' in wd
+          and "state['tripped']" in wd
+          and 'CRITICAL' in wd)
+    check('atomic state write (.tmp + os.replace)',
+          'os.replace' in wd and 'with_suffix' in wd)
+
+    # restart_all.ps1 wires it in.
+    rs_path = os.path.join(BASE_DIR, 'restart_all.ps1')
+    with open(rs_path, encoding='utf-8') as f:
+        rs = f.read()
+    check('restart_all.ps1 launches the watchdog',
+          'scripts.dashboard_watchdog' in rs
+          and '5.96' in rs)
+    check('restart_all.ps1 records watchdog pid in data/process_ids.json',
+          'watchdog =' in rs.lower() or 'watchdog =' in rs)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -5323,6 +5376,7 @@ def main():
     test_phase67_pr40_loadStrategyFull_renders_directly()
     test_phase68_pr41_orphan_training_reattach_and_collapse_fix()
     test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest()
+    test_phase70_pr43_dashboard_watchdog()
 
     if not args.offline:
         test_api(args.url)

@@ -346,6 +346,30 @@ if ($newPid) {
 }
 Write-Host "[5.95/6] Debug Supervisor ready." -ForegroundColor Green
 
+# Step 5.96: Dashboard Watchdog — keeps :5000 up. Polls /api/state every
+# 10s; on FAILURE_THRESHOLD consecutive failures, kills any stale dash
+# process and respawns via the same launch_dashboard.ps1 chain. Circuit
+# breaker (5 restarts in 10 min) prevents an infinite loop on
+# import-time crashes. Independent process so it survives the
+# dashboard's death.
+Write-Host ""
+Write-Host "[5.96/6] Starting Dashboard Watchdog (auto-restart on health-check failure)..." -ForegroundColor Yellow
+$wdRunning = Get-WmiObject Win32_Process -Filter "Name='python.exe'" 2>$null |
+    Where-Object { $_.CommandLine -match 'dashboard_watchdog' }
+if ($wdRunning) {
+    Write-Host "  Dashboard Watchdog already running (PID $($wdRunning.ProcessId)) - skipping." -ForegroundColor DarkCyan
+    $procWatchdog = Get-Process -Id $wdRunning.ProcessId -ErrorAction SilentlyContinue
+} else {
+    $newPid = Start-Detached -CommandLine "`"$venvPython`" -m scripts.dashboard_watchdog" -LogFile "$root\logs\dashboard_watchdog.log"
+    if ($newPid) {
+        $procWatchdog = [PSCustomObject]@{ Id = $newPid }
+        Write-Host "  Dashboard Watchdog started (PID $newPid, detached)"
+    } else {
+        $procWatchdog = $null
+    }
+}
+Write-Host "[5.96/6] Dashboard Watchdog ready." -ForegroundColor Green
+
 # Step 6: Save PIDs
 Write-Host ""
 Write-Host "[6/6] Saving process IDs..." -ForegroundColor Yellow
@@ -359,9 +383,10 @@ $orchId      = if ($procOrch)      { $procOrch.Id      } else { 0 }
 $fastapiId   = if ($procFastapi)   { $procFastapi.Id   } else { 0 }
 $obId        = if ($procOrderbook) { $procOrderbook.Id } else { 0 }
 $debugId     = if ($procDebug)     { $procDebug.Id     } else { 0 }
-$pidData = @{ bot = $botId; dash = $dashId; monitor = $monId; watchlist = $watchlistId; training = $trainingId; realtime = $realtimeId; orch = $orchId; fastapi = $fastapiId; orderbook = $obId; debug = $debugId; mcp = 0 }
+$watchdogId  = if ($procWatchdog)  { $procWatchdog.Id  } else { 0 }
+$pidData = @{ bot = $botId; dash = $dashId; monitor = $monId; watchlist = $watchlistId; training = $trainingId; realtime = $realtimeId; orch = $orchId; fastapi = $fastapiId; orderbook = $obId; debug = $debugId; watchdog = $watchdogId; mcp = 0 }
 $pidData | ConvertTo-Json | Set-Content (Join-Path $root 'data\process_ids.json')
-Write-Host "[6/6] PIDs saved: monitor=$monId  dash=$dashId  bot=$botId  debug=$debugId  watchlist=$watchlistId  training=$trainingId  realtime=$realtimeId  orch=$orchId  fastapi=$fastapiId  orderbook=$obId" -ForegroundColor Green
+Write-Host "[6/6] PIDs saved: monitor=$monId  dash=$dashId  bot=$botId  debug=$debugId  watchdog=$watchdogId  watchlist=$watchlistId  training=$trainingId  realtime=$realtimeId  orch=$orchId  fastapi=$fastapiId  orderbook=$obId" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "==========================================" -ForegroundColor Green
