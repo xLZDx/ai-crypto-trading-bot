@@ -5366,6 +5366,46 @@ def test_phase71e_v31_scalping_rebalance():
           'imbalanced-learn' in req)
 
 
+def test_phase71f_v31_oft_sweep_coverage():
+    """v3.1 step 8 (1M): train_all_models.train_all() now folds OFT
+    (Microstructure) into the sweep — was the 15th dashboard row
+    stuck in NOT STARTED state. TFT loop also fixed to forward the
+    per-key timeframe instead of always calling train_tft_model() bare."""
+    print('\n[Phase 71f — v3.1 step 8: OFT sweep coverage + TFT TF forwarding]')
+
+    src_path = os.path.join(BASE_DIR, 'src', 'engine', 'train_all_models.py')
+    src = open(src_path, encoding='utf-8').read()
+
+    check('TFT loop forwards per-key TF (was bare-call before)',
+          'train_tft_model(timeframe=tf)' in src)
+    check('TFT loop honours skip-if-fresh per TF',
+          "_meta_age_s('tft', tf)" in src)
+    check('OFT block imports train_oft from joint_oft_rl',
+          'from src.training.joint_oft_rl import train_oft' in src)
+    check('OFT canonical TF is 1m',
+          "oft_tf = '1m'" in src)
+    check('OFT symbols defaultable via AI_TRADER_OFT_SYMBOLS env var',
+          "AI_TRADER_OFT_SYMBOLS" in src
+          and 'BTC/USDT,ETH/USDT,SOL/USDT' in src)
+    check('OFT inner loop wraps each symbol in try/except',
+          'Skipping OFT %s/%s' in src)
+    check('OFT outer block tolerates ImportError on joint_oft_rl',
+          'except ImportError' in src and 'Skipping OFT entirely' in src)
+
+    # Live import
+    import importlib, sys
+    sys.path.insert(0, BASE_DIR)
+    if 'src.engine.train_all_models' in sys.modules:
+        del sys.modules['src.engine.train_all_models']
+    mod = importlib.import_module('src.engine.train_all_models')
+    check('train_all_models imports cleanly with OFT block', hasattr(mod, 'train_all'))
+
+    # Resource kind map still has oft='exclusive' (no GPU contention with TFT).
+    app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'), encoding='utf-8').read()
+    check("_RESOURCE_KIND['oft'] = 'exclusive' preserved",
+          "'oft':      'exclusive'" in app or "'oft': 'exclusive'" in app)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -5698,6 +5738,7 @@ def main():
     test_phase71c_v31_backtest_per_model_filter()
     test_phase71d_v31_tft_dedupe_regression()
     test_phase71e_v31_scalping_rebalance()
+    test_phase71f_v31_oft_sweep_coverage()
 
     if not args.offline:
         test_api(args.url)

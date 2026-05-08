@@ -146,13 +146,38 @@ def train_all(per_key_tfs: dict[str, tuple[str, ...]] | None = None):
     # ── 4. Scalping (1m only by design) ───────────────────────────────────
     _train_loop('scalping', train_scalping_model, 'Scalping Model')
 
-    # ── 5. TFT model (single-TF) ──────────────────────────────────────────
+    # ── 5. TFT model (per-TF; v3.1 step 4 fix passes the TF through) ──────
     for tf in cfg.get('tft', ()):
+        age = _meta_age_s('tft', tf)
+        if SKIP_IF_FRESH_S > 0 and age is not None and age < SKIP_IF_FRESH_S:
+            log.info(">>> Skipping TFT @ %s — meta written %d min ago", tf, int(age / 60))
+            continue
         try:
             log.info(">>> Training TFT Model @ %s ...", tf)
-            train_tft_model()
+            train_tft_model(timeframe=tf)
         except Exception as exc:
             log.warning("Skipping TFT @ %s: %s", tf, exc)
+
+    # ── 5½. OFT (Microstructure) — v3.1 step 8 / 1M ───────────────────────
+    # OFT trains on L2/L3 order-book microstructure events; one
+    # canonical TF (1m) per symbol since higher TFs lose the
+    # microstructure detail. Wrapped in try/except per the rest of
+    # the sweep — a failure here can't crash later trainers. The
+    # canonical symbol set keeps the sweep bounded; operator can
+    # extend with AI_TRADER_OFT_SYMBOLS env var.
+    try:
+        from src.training.joint_oft_rl import train_oft
+        oft_symbols = os.getenv('AI_TRADER_OFT_SYMBOLS', 'BTC/USDT,ETH/USDT,SOL/USDT').split(',')
+        oft_symbols = [s.strip() for s in oft_symbols if s.strip()]
+        oft_tf = '1m'
+        for sym in oft_symbols:
+            try:
+                log.info(">>> Training OFT (Microstructure) @ %s/%s ...", sym, oft_tf)
+                train_oft(sym, oft_tf)
+            except Exception as exc:
+                log.warning("Skipping OFT %s/%s: %s", sym, oft_tf, exc)
+    except ImportError as exc:
+        log.warning("Skipping OFT entirely (joint_oft_rl unavailable): %s", exc)
 
     # ── 6. Regime classifier (feature-stage, single-TF) ───────────────────
     try:
