@@ -5327,6 +5327,45 @@ def test_phase71d_v31_tft_dedupe_regression():
                   target.time_index[-1] == past_cov.time_index[-1])
 
 
+def test_phase71e_v31_scalping_rebalance():
+    """v3.1 step 6 (1C): scalping trainer adds SMOTE oversampling +
+    self-heal retry + conditional accuracy_warning emission."""
+    print('\n[Phase 71e — v3.1 step 6: scalping rebalance + self-heal]')
+
+    src_path = os.path.join(BASE_DIR, 'src', 'engine', 'train_scalping_model.py')
+    with open(src_path, encoding='utf-8') as f:
+        src = f.read()
+
+    check('imblearn.SMOTE imported (with ImportError fallback)',
+          'from imblearn.over_sampling import SMOTE' in src
+          and '_SMOTE_AVAILABLE = True' in src
+          and '_SMOTE_AVAILABLE = False' in src)
+    check('_resample() helper defined for SMOTE-vs-fallback dispatch',
+          'def _resample(' in src and 'sm.fit_resample(' in src)
+    check('_resample falls back to sample_weight when SMOTE unavailable',
+          "compute_sample_weight('balanced'" in src and 'fall back to' in src)
+    check('walk-forward fold uses _resample',
+          'X_tr_bal, y_tr_bal, w_tr = _resample(X.iloc[tr]' in src)
+    check('calibration stage uses _resample',
+          'X_safe_bal, y_safe_bal, w_safe = _resample(X_safe' in src)
+    check('self-heal retry on single-class collapse',
+          'Single-class collapse detected' in src
+          and 'sm_strong = SMOTE(' in src
+          and 'Self-healing succeeded on retry' in src)
+    check('accuracy_warning is conditional (not unconditional)',
+          'accuracy_warning = None' in src
+          and 'Single-class collapse:' in src
+          and 'if accuracy_warning:' in src)
+    check('meta records smote_used + pos_rate_pct',
+          '"smote_used": bool(_SMOTE_AVAILABLE)' in src
+          and '"pos_rate_pct"' in src)
+
+    # requirements.txt declares imbalanced-learn.
+    req = open(os.path.join(BASE_DIR, 'requirements.txt'), encoding='utf-8').read()
+    check('requirements.txt lists imbalanced-learn',
+          'imbalanced-learn' in req)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -5658,6 +5697,7 @@ def main():
     test_phase71b_v31_curated_tf_map()
     test_phase71c_v31_backtest_per_model_filter()
     test_phase71d_v31_tft_dedupe_regression()
+    test_phase71e_v31_scalping_rebalance()
 
     if not args.offline:
         test_api(args.url)

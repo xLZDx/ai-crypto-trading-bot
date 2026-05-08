@@ -14,6 +14,7 @@ psutil
 # Data & ML
 pandas
 scikit-learn
+imbalanced-learn>=0.13   # SMOTE for scalping label rebalance (v3.1 step 6)
 joblib
 numpy
 

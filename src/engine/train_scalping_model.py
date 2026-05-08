@@ -6,6 +6,12 @@ import numpy as np
 import pandas as pd
 import gc
 from sklearn.ensemble import HistGradientBoostingClassifier
+try:
+    from imblearn.over_sampling import SMOTE
+    _SMOTE_AVAILABLE = True
+except ImportError:
+    SMOTE = None
+    _SMOTE_AVAILABLE = False
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import accuracy_score, classification_report
 from sklearn.utils.class_weight import compute_sample_weight
@@ -221,6 +227,38 @@ def train_scalping_model(timeframe: str = '1m'):
     log.info("Scalping dataset: %d total | features %d | symbols %s | timeframe 1m",
              len(combined_df), len(FEATURE_COLUMNS), symbols)
 
+    # ── Class balance diagnostic ──────────────────────────────────────────
+    # The legacy training run on 2026-04-29 produced long_acc=0% (model
+    # NEVER predicted class 1). class_weight='balanced' + sample_weight
+    # weren't enough on the ~88/12 split. v3.1 step 6 layers in SMOTE
+    # oversampling on each training fold so the classifier actually sees
+    # balanced classes during fit, plus a self-healing retry that
+    # detects single-class predictions and re-trains with more
+    # aggressive resampling.
+    pos_rate = float(y.mean())
+    log.info("Scalping target distribution: %d positive / %d negative (pos rate %.1f%%)",
+             int(y.sum()), len(y) - int(y.sum()), pos_rate * 100)
+
+    def _resample(Xtr: pd.DataFrame, ytr: pd.Series, *, k_neighbors: int = 5):
+        """Return (X_balanced, y_balanced). SMOTE if available, else
+        fall back to per-row sample_weight balancing (classifier-level
+        only)."""
+        if not _SMOTE_AVAILABLE:
+            return Xtr, ytr, compute_sample_weight('balanced', ytr)
+        try:
+            # SMOTE k_neighbors must be < count of minority class.
+            n_minority = int(min(ytr.value_counts())) if not ytr.empty else 0
+            k = max(1, min(k_neighbors, n_minority - 1))
+            if n_minority < 2:
+                return Xtr, ytr, compute_sample_weight('balanced', ytr)
+            sm = SMOTE(random_state=42, k_neighbors=k)
+            X_bal, y_bal = sm.fit_resample(Xtr, ytr)
+            # After SMOTE the classes are 1:1 — no need for sample_weight.
+            return X_bal, y_bal, None
+        except Exception as exc:
+            log.warning("SMOTE failed (%s) — falling back to sample_weight only", exc)
+            return Xtr, ytr, compute_sample_weight('balanced', ytr)
+
     t1_series = combined_df['t1_timestamp']
     # Embargo = 2 * horizon (5 bars for scalping model)
     pct_embargo = (2.0 * 5) / len(X)
@@ -231,8 +269,11 @@ def train_scalping_model(timeframe: str = '1m'):
             random_state=42, max_iter=400, max_depth=5,
             learning_rate=0.05, early_stopping=True, class_weight='balanced'
         )
-        weights = compute_sample_weight('balanced', y.iloc[tr])
-        clf.fit(X.iloc[tr], y.iloc[tr], sample_weight=weights)
+        X_tr_bal, y_tr_bal, w_tr = _resample(X.iloc[tr], y.iloc[tr])
+        if w_tr is None:
+            clf.fit(X_tr_bal, y_tr_bal)
+        else:
+            clf.fit(X_tr_bal, y_tr_bal, sample_weight=w_tr)
         fold_accs.append(accuracy_score(y.iloc[te], clf.predict(X.iloc[te])))
         log.info("Scalping walk-forward fold %d: %.2f%%", i + 1, fold_accs[-1] * 100)
 
@@ -248,15 +289,51 @@ def train_scalping_model(timeframe: str = '1m'):
     calib_start_time = combined_df.index[calib_split]
     valid_train_mask = combined_df['t1_timestamp'].iloc[:calib_split] < calib_start_time
     safe_train_idx = np.arange(calib_split)[valid_train_mask]
-    
-    weights_calib = compute_sample_weight('balanced', y.iloc[safe_train_idx])
-    base_clf.fit(X.iloc[safe_train_idx], y.iloc[safe_train_idx], sample_weight=weights_calib)
+
+    X_safe = X.iloc[safe_train_idx]
+    y_safe = y.iloc[safe_train_idx]
+    X_safe_bal, y_safe_bal, w_safe = _resample(X_safe, y_safe)
+    if w_safe is None:
+        base_clf.fit(X_safe_bal, y_safe_bal)
+    else:
+        base_clf.fit(X_safe_bal, y_safe_bal, sample_weight=w_safe)
     calibrated = CalibratedClassifierCV(base_clf, method='isotonic', cv='prefit', n_jobs=-1)
     calibrated.fit(X.iloc[calib_split:], y.iloc[calib_split:])
 
     X_test = X.iloc[int(n * 0.90):]
     y_test = y.iloc[int(n * 0.90):]
     predictions = calibrated.predict(X_test)
+
+    # ── Self-healing retry: if the model collapses to single-class
+    # predictions on the test set (long_accuracy = 0% pathology), retry
+    # the calibration stage with a stronger SMOTE oversample factor so
+    # the underlying classifier actually sees both classes' decision
+    # boundary samples.
+    unique_preds = set(np.unique(predictions).tolist())
+    if len(unique_preds) < 2 and _SMOTE_AVAILABLE:
+        log.warning("Single-class collapse detected (preds=%s) — retrying with stronger SMOTE",
+                    unique_preds)
+        sm_strong = SMOTE(random_state=42,
+                          k_neighbors=max(1, min(3, int(min(y_safe.value_counts()) - 1))),
+                          sampling_strategy=1.0)
+        try:
+            X_safe_bal2, y_safe_bal2 = sm_strong.fit_resample(X_safe, y_safe)
+            base_clf2 = HistGradientBoostingClassifier(
+                random_state=42, max_iter=600, max_depth=6,
+                learning_rate=0.04, early_stopping=True, class_weight='balanced'
+            )
+            base_clf2.fit(X_safe_bal2, y_safe_bal2)
+            calibrated2 = CalibratedClassifierCV(base_clf2, method='isotonic', cv='prefit', n_jobs=-1)
+            calibrated2.fit(X.iloc[calib_split:], y.iloc[calib_split:])
+            preds2 = calibrated2.predict(X_test)
+            if len(set(np.unique(preds2).tolist())) >= 2:
+                log.info("Self-healing succeeded on retry — both classes now predicted")
+                base_clf = base_clf2
+                calibrated = calibrated2
+                predictions = preds2
+        except Exception as exc:
+            log.warning("Self-heal retry failed: %s — keeping first-pass model", exc)
+
     accuracy = accuracy_score(y_test, predictions)
     report = classification_report(y_test, predictions, output_dict=True, zero_division=0)
     long_acc = report.get('1', {}).get('precision', 0.0) * 100
@@ -281,6 +358,20 @@ def train_scalping_model(timeframe: str = '1m'):
     joblib.dump(calibrated, paths['model'])
     log.info("Model saved -> %s", paths['model'])
 
+    # accuracy_warning is only set when the post-rebalance model still
+    # collapses to predicting one class (one of long_acc / short_acc is
+    # ~0%) OR when both per-class precisions are below 50 %. Previous
+    # builds emitted the warning unconditionally on the imbalanced
+    # target distribution, even when the model itself was healthy.
+    accuracy_warning = None
+    if long_acc < 5.0 or short_acc < 5.0:
+        accuracy_warning = ('Single-class collapse: model predicts only '
+                            f'{"long" if short_acc < 5.0 else "short"} class. '
+                            'Class imbalance unresolved post-SMOTE.')
+    elif long_acc < 50.0 and short_acc < 50.0:
+        accuracy_warning = ('Both per-class precisions <50% — model has no '
+                            'discrimination on either side.')
+
     meta = {
         "model": "Scalping (HistGBT + Calibrated)",
         "accuracy": accuracy * 100,
@@ -290,8 +381,12 @@ def train_scalping_model(timeframe: str = '1m'):
         "walk_forward_mean_acc": round(float(np.mean(fold_accs)) * 100, 2),
         "target": "triple_barrier_long_win_1m",
         "symbols": symbols, "timeframe": timeframe,
+        "smote_used": bool(_SMOTE_AVAILABLE),
+        "pos_rate_pct": round(pos_rate * 100, 2),
         "last_trained": datetime.now(timezone.utc).isoformat()
     }
+    if accuracy_warning:
+        meta["accuracy_warning"] = accuracy_warning
     if proba_test is not None:
         from src.utils.model_metrics import merge_metrics_into_meta
         merge_metrics_into_meta(meta, y_test, proba_test)
