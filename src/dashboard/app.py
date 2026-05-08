@@ -3252,8 +3252,89 @@ class _LegacySemAdapter:
 _training_concurrency_sem = _LegacySemAdapter()
 
 
+def _spawn_followup_backtest(parent_job_id: str, model_key: str,
+                             tfs: tuple[str, ...]) -> None:
+    """After a manual training succeeds, optionally refresh the Stability
+    Heatmap data for the touched timeframe(s). run_full_backtest takes a
+    `timeframes` tuple but no model filter — it re-runs every strategy
+    at each TF and rewrites data/backtest/wf_results.json + the latest
+    comparison CSV. So this is "per-TF backtest", not strictly per-model,
+    but it's still much cheaper than the full multi-TF orchestrator
+    backtest (one TF instead of five). Spawns a detached subprocess so
+    it survives a dashboard restart, matching the trainer's pattern.
+
+    Recorded as a separate job (resource_kind='cpu') so the scheduler
+    queues it behind any in-flight training.
+    """
+    if not tfs:
+        return
+    # Synthetic job for the backtest leg — operator sees it queued.
+    bt_job_id = uuid.uuid4().hex[:12]
+    _record_job(bt_job_id, model=f'{model_key}-backtest', status='queued',
+                queued_at=time.time(), created_at=time.time(),
+                resource_kind='cpu',
+                progress_label=f'queued (post-train backtest @ {",".join(tfs)})',
+                tf=','.join(tfs), total=1, n=1,
+                parent_job_id=parent_job_id)
+    threading.Thread(
+        target=_run_followup_backtest_blocking,
+        args=(bt_job_id, model_key, tfs),
+        daemon=True,
+        name=f'post-train-bt-{bt_job_id}',
+    ).start()
+
+
+def _run_followup_backtest_blocking(job_id: str, model_key: str,
+                                    tfs: tuple[str, ...]) -> None:
+    """Worker body for the chained-backtest job. Goes through the same
+    scheduler as a CPU-lane training (so it can't fight a TFT GPU run
+    or an OFT exclusive run). Spawns a Python subprocess invoking
+    run_full_backtest with the trained TFs."""
+    _training_scheduler.acquire('cpu')
+    try:
+        _record_job(job_id, status='running', started_at=time.time(),
+                    progress_label=f'post-train backtest @ {",".join(tfs)}')
+        tf_arg = ','.join(repr(t) for t in tfs)
+        cmd = [
+            sys.executable, '-c',
+            'from src.engine.backtester import run_full_backtest; '
+            f'run_full_backtest(timeframes=({tf_arg},))',
+        ]
+        try:
+            proc = _spawn_training_subprocess(job_id, cmd)
+        except Exception as exc:
+            _record_job(job_id, status='error', finished_at=time.time(),
+                        errors=[f'{type(exc).__name__}: {exc}'])
+            return
+        _record_job(job_id, child_pid=proc.pid)
+        # Same poll loop as _run_trainer_blocking. Backtest is bounded
+        # by the same 1-hour ceiling.
+        deadline = time.time() + 3600
+        rc = None
+        while True:
+            rc = proc.poll()
+            if rc is not None:
+                break
+            if time.time() > deadline:
+                proc.kill()
+                rc = -1
+                break
+            time.sleep(2)
+        finished_at = time.time()
+        if rc == 0:
+            _record_job(job_id, status='done', finished_at=finished_at)
+        else:
+            tail = _read_training_log_tail(job_id, 600)
+            _record_job(job_id, status='error',
+                        finished_at=finished_at,
+                        errors=[tail or f'exit code {rc}'])
+    finally:
+        _training_scheduler.release('cpu')
+
+
 def _run_trainer_multi_tf(job_id: str, key: str, n: int,
-                          tfs: tuple[str, ...]) -> None:
+                          tfs: tuple[str, ...],
+                          with_backtest: bool = False) -> None:
     """Multi-TF wrapper around _run_trainer_blocking. Trains the model at
     each TF sequentially. Status reflects which TF is currently running so
     the dashboard can show e.g. 'running base @ 4h (2/3 TFs done)'."""
@@ -3357,15 +3438,29 @@ def _run_trainer_multi_tf(job_id: str, key: str, n: int,
             _record_completed_duration(key, finished_at - started_at)
         with _training_active_lock:
             _training_active_procs.pop(job_id, None)
+        # P-2: chain a per-TF backtest after a fully-successful multi-TF
+        # train so the Stability Heatmap data refreshes for the touched
+        # TFs. Only run when the operator explicitly opted in via
+        # with_backtest=true on the API call. Failed runs skip this —
+        # backtesting a broken model wastes CPU.
+        if with_backtest and final_status == 'done':
+            tfs_done = tuple(t for t, c in successes_by_tf.items() if c > 0)
+            if tfs_done:
+                _spawn_followup_backtest(job_id, key, tfs_done)
     finally:
         _training_scheduler.release(res_kind)
 
 
 def _run_trainer_blocking(job_id: str, key: str, n: int,
-                          tf: str | None = None) -> None:
+                          tf: str | None = None,
+                          with_backtest: bool = False) -> None:
     """Worker thread body: invoke the matching trainer N times sequentially.
     tf — optional per-TF override (defaults to the trainer's own default).
     Used for manual per-TF training from the dashboard.
+
+    with_backtest — if True and the run finishes 'done', chain a
+    run_full_backtest(timeframes=(tf,)) subprocess so the Stability
+    Heatmap refreshes for the trained TF.
 
     Each iteration is launched as a Popen we track in
     _training_active_procs so /api/training/stop/<job_id> can kill it.
@@ -3457,6 +3552,12 @@ def _run_trainer_blocking(job_id: str, key: str, n: int,
             _record_completed_duration(key, finished_at - started_at)
         with _training_active_lock:
             _training_active_procs.pop(job_id, None)
+        # P-2: chain a per-TF backtest if the operator opted in.
+        if with_backtest and final_status == 'done':
+            # tf may be None — use the model's canonical TF in that case.
+            from src.engine.train_all_models import DEFAULT_PER_KEY_TFS
+            bt_tf = tf or (DEFAULT_PER_KEY_TFS.get(key, ('1h',)) or ('1h',))[0]
+            _spawn_followup_backtest(job_id, key, (bt_tf,))
     finally:
         _training_scheduler.release(res_kind)
 
@@ -3466,10 +3567,15 @@ def _run_trainer_blocking(job_id: str, key: str, n: int,
 def api_training_run_one(key: str):
     """Kick off a training run for one model key.
     Body / query params:
-      n  — repetitions (default 1, clamped 1..20)
-      tf — optional timeframe (5m, 15m, 1h, 4h, 1d, 1w, 1mo). Default is
-           the trainer's own default. Passed straight through as the
-           timeframe= kwarg, so 'base @ 4h' writes models/base_4h_*.
+      n             — repetitions (default 1, clamped 1..20)
+      tf            — optional timeframe (5m, 15m, 1h, 4h, 1d, 1w, 1mo).
+                      Default is the trainer's own default. Passed
+                      straight through as the timeframe= kwarg, so
+                      'base @ 4h' writes models/base_4h_*.
+      with_backtest — bool. When true, after the training finishes
+                      'done', spawn run_full_backtest(timeframes=(tf,))
+                      so the Stability Heatmap row for that TF refreshes
+                      without requiring a full pipeline orchestrator run.
     """
     if key not in _TRAINER_DISPATCH:
         return jsonify({'ok': False,
@@ -3482,6 +3588,7 @@ def api_training_run_one(key: str):
         n = 1
     n = max(1, min(n, 20))   # clamp so a stray 1000 doesn't pin a CPU all day
     tf = body.get('tf') or request.args.get('tf') or None
+    with_backtest = bool(body.get('with_backtest'))
     # Duplicate-job guard. If this same model is already training, return
     # 409 with the existing job_id unless the caller explicitly opted in
     # via {"force":true}. Operator's UI shows a confirm dialog when 409
@@ -3518,25 +3625,31 @@ def api_training_run_one(key: str):
         # Single job that loops the TFs internally for clean status reporting.
         job_id = uuid.uuid4().hex[:12]
         _record_job(job_id, model=key, n=n, tf='all', tfs=list(tfs),
+                    with_backtest=with_backtest,
                     status='queued', created_at=time.time())
         threading.Thread(
             target=_run_trainer_multi_tf,
             args=(job_id, key, n, tfs),
+            kwargs={'with_backtest': with_backtest},
             daemon=True, name=f'train-{key}-all-{job_id}',
         ).start()
         return jsonify({'ok': True, 'job_id': job_id, 'model': key,
-                        'n': n, 'tf': 'all', 'tfs': list(tfs)})
+                        'n': n, 'tf': 'all', 'tfs': list(tfs),
+                        'with_backtest': with_backtest})
     if tf and tf not in valid_tfs:
         return jsonify({'ok': False, 'error': f'invalid tf: {tf}'}), 400
     job_id = uuid.uuid4().hex[:12]
     _record_job(job_id, model=key, n=n, tf=tf,
+                with_backtest=with_backtest,
                 status='queued', created_at=time.time())
     threading.Thread(
         target=_run_trainer_blocking,
         args=(job_id, key, n, tf),
+        kwargs={'with_backtest': with_backtest},
         daemon=True, name=f'train-{key}-{tf or "default"}-{job_id}',
     ).start()
-    return jsonify({'ok': True, 'job_id': job_id, 'model': key, 'n': n, 'tf': tf})
+    return jsonify({'ok': True, 'job_id': job_id, 'model': key, 'n': n, 'tf': tf,
+                    'with_backtest': with_backtest})
 
 
 @app.route('/api/training/stop/<job_id>', methods=['POST'])
@@ -4180,17 +4293,69 @@ def api_auto_retrain_run():
         return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
 
 
+def _run_pipeline_blocking(job_id: str, cmd: list) -> None:
+    """Worker-thread body for a pipeline-orchestrator job. Acquires the
+    scheduler's exclusive slot (blocking — may wait minutes if OFT or
+    another exclusive job is in flight), spawns the orchestrator, waits
+    for it, then releases the slot. Runs on its own daemon thread so
+    api_pipeline_run returns immediately with a queued job_id."""
+    global _pipeline_proc_pid
+    _training_scheduler.acquire('exclusive')
+    try:
+        log_dir = os.path.join(project_root, 'logs')
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, f"pipeline_{int(time.time())}.log")
+        log_fp = open(log_path, 'a', encoding='utf-8')
+        creationflags = 0
+        if os.name == 'nt':
+            creationflags = (subprocess.CREATE_NEW_PROCESS_GROUP |
+                             getattr(subprocess, 'DETACHED_PROCESS', 0x00000008))
+        try:
+            proc = subprocess.Popen(
+                cmd, cwd=project_root,
+                stdout=log_fp, stderr=log_fp,
+                creationflags=creationflags,
+                close_fds=True,
+            )
+        except Exception as exc:
+            _record_job(job_id, status='error', finished_at=time.time(),
+                        errors=[f'{type(exc).__name__}: {exc}'])
+            return
+        with _pipeline_proc_lock:
+            _pipeline_proc_pid = proc.pid
+        _record_job(job_id, status='running', started_at=time.time(),
+                    progress_label='pipeline orchestrator',
+                    log_path=log_path, child_pid=proc.pid)
+        # Wait for orchestrator to exit. We poll the proc rather than
+        # use psutil.wait so we can also notice the dashboard shutting
+        # down (the daemon thread will be terminated then).
+        while True:
+            rc = proc.poll()
+            if rc is not None:
+                break
+            time.sleep(2)
+        _record_job(job_id,
+                    status=('done' if rc == 0 else 'error'),
+                    finished_at=time.time(),
+                    errors=([] if rc == 0 else [f'orchestrator exit code {rc}']))
+    finally:
+        _training_scheduler.release('exclusive')
+
+
 @app.route('/api/pipeline/run', methods=['POST'])
 @require_api_key
 def api_pipeline_run():
-    """Spawn the pipeline orchestrator as a subprocess.
+    """Queue a pipeline orchestrator run through the resource scheduler.
 
     Body (all optional):
         {"skip_train": bool, "skip_backtest": bool,
          "backtest_tfs": ["5m","1h","4h","1d","1w"]}
 
     Idempotent — refuses to spawn a second orchestrator if one is already
-    running."""
+    running. Goes through the 'exclusive' lane so it can't collide with
+    a manual OFT run (also exclusive) or take the GPU out from under a
+    TFT run. Returns immediately with a queued job_id; the actual
+    spawn happens on a worker thread once the lane is free."""
     global _pipeline_proc_pid
     if _pipeline_proc_alive():
         return jsonify({'ok': False,
@@ -4207,33 +4372,25 @@ def api_pipeline_run():
     if isinstance(tfs, list) and tfs:
         cmd += ['--backtest-tfs', ','.join(str(t) for t in tfs)]
 
-    log_dir = os.path.join(project_root, 'logs')
-    os.makedirs(log_dir, exist_ok=True)
-    log_path = os.path.join(log_dir, f"pipeline_{int(time.time())}.log")
-    try:
-        # Use DETACHED on Windows so the orchestrator survives Flask
-        # restarts. stdout+stderr both redirect to the same log file —
-        # progress JSON lines on stderr are interleaved with sub-trainer
-        # logs on stdout so the operator can `tail -f` one file.
-        log_fp = open(log_path, 'a', encoding='utf-8')
-        creationflags = 0
-        if os.name == 'nt':
-            creationflags = (subprocess.CREATE_NEW_PROCESS_GROUP |
-                             getattr(subprocess, 'DETACHED_PROCESS', 0x00000008))
-        proc = subprocess.Popen(
-            cmd, cwd=project_root,
-            stdout=log_fp, stderr=log_fp,
-            creationflags=creationflags,
-            close_fds=True,
-        )
-        with _pipeline_proc_lock:
-            _pipeline_proc_pid = proc.pid
-        return jsonify({'ok': True, 'pid': proc.pid,
-                        'log_path': log_path,
-                        'cmd': cmd})
-    except Exception as exc:
-        return jsonify({'ok': False,
-                        'error': f'{type(exc).__name__}: {exc}'}), 500
+    # Synthetic job entry so the operator sees the orchestrator queued
+    # behind any in-flight CPU/GPU/exclusive work, with the same UI
+    # treatment as a training job.
+    job_id = uuid.uuid4().hex[:12]
+    _record_job(job_id, model='pipeline', status='queued',
+                queued_at=time.time(), created_at=time.time(),
+                resource_kind='exclusive',
+                progress_label='queued (pipeline orchestrator)',
+                tf=None, total=1, n=1)
+    threading.Thread(
+        target=_run_pipeline_blocking,
+        args=(job_id, cmd),
+        daemon=True,
+        name=f'pipeline-{job_id}',
+    ).start()
+    return jsonify({'ok': True,
+                    'job_id': job_id,
+                    'status': 'queued',
+                    'cmd':    cmd})
 
 
 @app.route('/api/db/training_history')

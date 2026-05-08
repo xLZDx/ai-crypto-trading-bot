@@ -1913,6 +1913,13 @@ document.addEventListener('DOMContentLoaded', function() {
             <button onclick="loadStrategyFull()" style="font-size:.58rem;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(99,102,241,.2);color:#818cf8;border:1px solid rgba(99,102,241,.3);font-weight:700">↻ Refresh</button>
             <button onclick="trToggleHelp()" style="font-size:.58rem;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(148,163,184,.12);color:#94a3b8;border:1px solid rgba(148,163,184,.2)" title="Show 'what good looks like' for ML models">ⓘ Guide</button>
             <button onclick="trRetrainAll()" style="font-size:.58rem;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(244,114,182,.18);color:#f472b6;border:1px solid rgba(244,114,182,.35);font-weight:700" title="Run train_all_models.py (all 7 trainers in sequence)">▶ Retrain ALL</button>
+            <label style="display:flex;align-items:center;gap:4px;font-size:.55rem;color:#94a3b8;cursor:pointer"
+                   title="When checked, every ▶ Train click chains a per-TF backtest after the training succeeds, so the Stability Heatmap row for that TF refreshes without a full pipeline run. Adds ~1-3 min per training. Off = train only.">
+              <input type="checkbox" id="tr-with-backtest"
+                     onchange="try{localStorage.setItem('tr-with-backtest', this.checked?'1':'0')}catch(_){}"
+                     style="margin:0;cursor:pointer">
+              refresh stats after train
+            </label>
             <span id="tr-jobs-status" style="font-size:.55rem;color:#64748b;font-style:italic">idle</span>
             <input id="tr-search" type="text" placeholder="Search name / target…"
                    oninput="trSearch(this.value)"
@@ -3545,6 +3552,15 @@ function _restoreStrategySectionStates() {
 }
 document.addEventListener('DOMContentLoaded', _restoreStrategySectionStates);
 
+// Restore the "refresh stats after train" checkbox on page load so the
+// operator's previous choice survives F5 / dashboard restart.
+document.addEventListener('DOMContentLoaded', () => {
+  try {
+    const cb = document.getElementById('tr-with-backtest');
+    if (cb) cb.checked = (localStorage.getItem('tr-with-backtest') === '1');
+  } catch (_) {}
+});
+
 // ─── STRATEGY TAB DATA LOAD ───────────────────────────────────────────────────
 let _stratFull = null;
 
@@ -4001,6 +4017,13 @@ async function trRunOne(key) {
   try {
     const body = {n};
     if (tf) body.tf = tf;
+    // P-2: chain a per-TF backtest after the training succeeds, if the
+    // operator ticked the toolbar checkbox. localStorage backed so the
+    // choice survives F5 / dashboard restart. Off = train only (current
+    // behavior). On = train + run_full_backtest(timeframes=(tf,)) so
+    // the Stability Heatmap row for that TF refreshes.
+    const wbCb = document.getElementById('tr-with-backtest');
+    if (wbCb && wbCb.checked) body.with_backtest = true;
     let r = await fetch(`/api/training/run/${encodeURIComponent(key)}`,
       { method: 'POST', headers: hdrs(), body: JSON.stringify(body) });
     let resp = await r.json();
@@ -4125,12 +4148,15 @@ async function pollTrainingJobs() {
     // Pre-fix: clicking ▶ Retrain ALL spawned a job with model='all' that
     // didn't appear on any row, so the user saw NOTHING happen and kept
     // re-clicking — ending up with N parallel train_all subprocesses.
-    let allJob = active.find(j => j.model === 'all');
-    // Pipeline orchestrator runs train_all_models() in its own subprocess
-    // (via /api/pipeline/run) — it doesn't go through the dashboard's
-    // _training_jobs registry, so /api/training/jobs returns no allJob.
-    // Synthesize one from the pipeline status so the per-model rows
-    // still flip to RUNNING instead of looking stale.
+    // Either a manual ▶ Retrain ALL job (model='all', goes through
+    // _run_trainer_blocking) or a pipeline orchestrator run
+    // (model='pipeline', goes through _run_pipeline_blocking) triggers
+    // the broadcast-to-rows logic. Both hold the scheduler's exclusive
+    // lane so only one can run at a time.
+    let allJob = active.find(j => j.model === 'all' || j.model === 'pipeline');
+    // Legacy fallback — pre-PR-42 the pipeline didn't register a job
+    // record at all; we synthesized one from _pipeStatus directly.
+    // Kept as belt-and-suspenders in case the registry write fails.
     if (!allJob && typeof _pipeStatus !== 'undefined' && _pipeStatus
         && _pipeStatus.status === 'running' && _pipeStatus.phase === 'train') {
       allJob = {

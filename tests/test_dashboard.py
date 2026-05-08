@@ -4997,6 +4997,72 @@ def test_phase61_pr37_resource_aware_scheduler():
     check('cpu acquire proceeds after exclusive release', cpu_done['fired'])
 
 
+def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
+    """Two improvements to keep training and backtest panels coherent:
+      P1. /api/pipeline/run goes through the resource scheduler's
+          'exclusive' lane via a worker thread, so it can't collide
+          with a manual OFT (also exclusive) or steal the GPU from
+          a TFT run mid-flight.
+      P2. /api/training/run/<key> accepts {with_backtest: true}; on
+          success the worker chains run_full_backtest(timeframes=(tf,))
+          so the Stability Heatmap row for that TF refreshes without
+          a full pipeline orchestrator run."""
+    print('\n[Phase 69 — PR-42 pipeline-via-scheduler + chained backtest]')
+
+    app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
+    with open(app_path, encoding='utf-8') as f:
+        app = f.read()
+    tpl_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
+    with open(tpl_path, encoding='utf-8') as f:
+        tpl = f.read()
+
+    # P1: pipeline runs through scheduler.acquire('exclusive') on a
+    # worker thread, returns queued job_id immediately.
+    check('_run_pipeline_blocking helper defined',
+          'def _run_pipeline_blocking' in app)
+    pipe_run_start = app.find('def api_pipeline_run')
+    pipe_run_end   = app.find('\ndef ', pipe_run_start + 4)
+    pipe_run_body  = app[pipe_run_start:pipe_run_end] if pipe_run_end > 0 else ''
+    check('api_pipeline_run hands off to _run_pipeline_blocking thread',
+          '_run_pipeline_blocking' in pipe_run_body
+          and 'threading.Thread' in pipe_run_body)
+    check('api_pipeline_run records queued job before returning',
+          "status='queued'" in pipe_run_body
+          and "model='pipeline'" in pipe_run_body)
+    pipe_block_start = app.find('def _run_pipeline_blocking')
+    pipe_block_end   = app.find('\ndef ', pipe_block_start + 4)
+    pipe_block_body  = app[pipe_block_start:pipe_block_end] if pipe_block_end > 0 else ''
+    check('_run_pipeline_blocking acquires exclusive lane',
+          "_training_scheduler.acquire('exclusive')" in pipe_block_body)
+    check('_run_pipeline_blocking releases in finally',
+          'finally:' in pipe_block_body
+          and "_training_scheduler.release('exclusive')" in pipe_block_body)
+
+    # P2: with_backtest plumbed through trainer functions + API.
+    check('api_training_run_one parses with_backtest',
+          'with_backtest = bool(body.get(' in app)
+    check('_run_trainer_blocking accepts with_backtest kwarg',
+          'def _run_trainer_blocking' in app
+          and 'with_backtest: bool = False' in app)
+    check('_run_trainer_multi_tf accepts with_backtest kwarg',
+          'def _run_trainer_multi_tf' in app
+          and 'with_backtest: bool = False' in app)
+    check('_spawn_followup_backtest helper defined',
+          'def _spawn_followup_backtest' in app)
+    check('chained backtest only runs on final_status == \'done\'',
+          "with_backtest and final_status == 'done'" in app)
+    check('followup backtest invokes run_full_backtest',
+          'run_full_backtest(timeframes=' in app)
+
+    # Frontend: checkbox + restore from localStorage + send body field.
+    check('"refresh stats after train" checkbox present',
+          'id="tr-with-backtest"' in tpl)
+    check('checkbox state restored from localStorage on DOMContentLoaded',
+          "localStorage.getItem('tr-with-backtest')" in tpl)
+    check('trRunOne sends body.with_backtest when checkbox checked',
+          'body.with_backtest = true' in tpl)
+
+
 def test_phase68_pr41_orphan_training_reattach_and_collapse_fix():
     """Three follow-up fixes after PR-40:
       1. Duplicate stToggle definition was shadowing the working one,
@@ -5256,6 +5322,7 @@ def main():
     test_phase66_pr40_strategy_sections_collapsed_default()
     test_phase67_pr40_loadStrategyFull_renders_directly()
     test_phase68_pr41_orphan_training_reattach_and_collapse_fix()
+    test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest()
 
     if not args.offline:
         test_api(args.url)
