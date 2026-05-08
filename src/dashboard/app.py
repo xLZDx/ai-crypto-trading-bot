@@ -2740,6 +2740,19 @@ def _record_job(job_id: str, **fields) -> None:
 _training_active_procs: dict[str, "subprocess.Popen"] = {}
 _training_active_lock = threading.Lock()
 
+# Concurrency cap for trainer subprocesses. Each Popen below loads
+# torch/sklearn/pandas (~1-2 GB RSS) and runs flat-out on CPU+GPU. With
+# the 8-way parallel kick on 2026-05-08 the box hit 88% RAM, the dashboard
+# Popen syscall failed inside RPCRT4 and the dashboard process died
+# without a Python traceback. Three concurrent trainings is a reasonable
+# ceiling on a 32 GB / single-GPU host: enough to overlap model warm-up
+# with the next model's training, not enough to OOM the box.
+# Tunable via the AI_TRADER_TRAIN_CONCURRENCY env var if the operator
+# upgrades hardware or wants to throttle further.
+import os as _os
+_TRAINING_CONCURRENCY = max(1, int(_os.getenv('AI_TRADER_TRAIN_CONCURRENCY', '3')))
+_training_concurrency_sem = threading.Semaphore(_TRAINING_CONCURRENCY)
+
 
 def _run_trainer_multi_tf(job_id: str, key: str, n: int,
                           tfs: tuple[str, ...]) -> None:
@@ -2749,9 +2762,6 @@ def _run_trainer_multi_tf(job_id: str, key: str, n: int,
     successes_by_tf: dict[str, int] = {}
     errors_by_tf: dict[str, list[str]] = {}
     cancelled = False
-    _record_job(job_id, status='running', started_at=time.time(),
-                progress=0, total=len(tfs) * n,
-                tfs=list(tfs), tf_done=0, current_tf=None)
     spec = _TRAINER_DISPATCH.get(key)
     if not spec:
         _record_job(job_id, status='error',
@@ -2759,64 +2769,75 @@ def _run_trainer_multi_tf(job_id: str, key: str, n: int,
                     finished_at=time.time())
         return
     module_path, fn_name, accepts_tf = spec
-    iter_count = 0
-    for tf_idx, tf in enumerate(tfs):
-        if cancelled:
-            break
-        _record_job(job_id, current_tf=tf, status='running',
-                    progress_label=f'{key} @ {tf} ({tf_idx+1}/{len(tfs)})')
-        for i in range(n):
+    # Same concurrency gate as _run_trainer_blocking — queue when full so
+    # an operator firing off N retrains in a row doesn't crash the box.
+    _record_job(job_id, status='queued', queued_at=time.time(),
+                total=len(tfs) * n, tfs=list(tfs), tf_done=0, current_tf=None,
+                progress_label=f'queued (cap={_TRAINING_CONCURRENCY})')
+    _training_concurrency_sem.acquire()
+    try:
+        _record_job(job_id, status='running', started_at=time.time(),
+                    progress=0, progress_label=None)
+        iter_count = 0
+        for tf_idx, tf in enumerate(tfs):
             if cancelled:
                 break
-            # Some trainers don't accept timeframe= (regime, oft, all) —
-            # pass nothing for those even if a TF is in the chain.
-            kw = f"timeframe={tf!r}" if accepts_tf else ""
-            cmd = [
-                sys.executable, '-c',
-                f'import {module_path} as m; '
-                f'fn = getattr(m, {fn_name!r}); fn({kw})',
-            ]
-            try:
-                proc = subprocess.Popen(cmd, cwd=project_root,
-                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                with _training_active_lock:
-                    _training_active_procs[job_id] = proc
+            _record_job(job_id, current_tf=tf, status='running',
+                        progress_label=f'{key} @ {tf} ({tf_idx+1}/{len(tfs)})')
+            for i in range(n):
+                if cancelled:
+                    break
+                # Some trainers don't accept timeframe= (regime, oft, all) —
+                # pass nothing for those even if a TF is in the chain.
+                kw = f"timeframe={tf!r}" if accepts_tf else ""
+                cmd = [
+                    sys.executable, '-c',
+                    f'import {module_path} as m; '
+                    f'fn = getattr(m, {fn_name!r}); fn({kw})',
+                ]
                 try:
-                    _stdout, _stderr = proc.communicate(timeout=3600)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    errors_by_tf.setdefault(tf, []).append(f'iter {i+1} timed out')
-                    continue
-                with _training_active_lock:
-                    _training_active_procs.pop(job_id, None)
-                if proc.returncode == 0:
-                    successes_by_tf[tf] = successes_by_tf.get(tf, 0) + 1
-                elif proc.returncode == -9:
-                    cancelled = True
-                    errors_by_tf.setdefault(tf, []).append(f'iter {i+1} cancelled')
-                else:
-                    msg = (_stderr or b'')[-300:].decode('utf-8', 'replace')
-                    errors_by_tf.setdefault(tf, []).append(msg)
-            except Exception as exc:
-                errors_by_tf.setdefault(tf, []).append(f'{type(exc).__name__}: {exc}')
-                with _training_active_lock:
-                    _training_active_procs.pop(job_id, None)
-            iter_count += 1
-            _record_job(job_id, progress=iter_count, tf_done=tf_idx)
-        _record_job(job_id, tf_done=tf_idx + 1)
-    total_succ = sum(successes_by_tf.values())
-    total_err = sum(len(v) for v in errors_by_tf.values())
-    final_status = ('cancelled' if cancelled else
-                    'done' if total_err == 0 else
-                    'partial' if total_succ > 0 else 'error')
-    _record_job(job_id, status=final_status,
-                successes=total_succ,
-                successes_by_tf=successes_by_tf,
-                errors_by_tf={k: v[-2:] for k, v in errors_by_tf.items()},
-                current_tf=None,
-                finished_at=time.time())
-    with _training_active_lock:
-        _training_active_procs.pop(job_id, None)
+                    proc = subprocess.Popen(cmd, cwd=project_root,
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    with _training_active_lock:
+                        _training_active_procs[job_id] = proc
+                    try:
+                        _stdout, _stderr = proc.communicate(timeout=3600)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        errors_by_tf.setdefault(tf, []).append(f'iter {i+1} timed out')
+                        continue
+                    with _training_active_lock:
+                        _training_active_procs.pop(job_id, None)
+                    if proc.returncode == 0:
+                        successes_by_tf[tf] = successes_by_tf.get(tf, 0) + 1
+                    elif proc.returncode == -9:
+                        cancelled = True
+                        errors_by_tf.setdefault(tf, []).append(f'iter {i+1} cancelled')
+                    else:
+                        msg = (_stderr or b'')[-300:].decode('utf-8', 'replace')
+                        errors_by_tf.setdefault(tf, []).append(msg)
+                except Exception as exc:
+                    errors_by_tf.setdefault(tf, []).append(f'{type(exc).__name__}: {exc}')
+                    with _training_active_lock:
+                        _training_active_procs.pop(job_id, None)
+                iter_count += 1
+                _record_job(job_id, progress=iter_count, tf_done=tf_idx)
+            _record_job(job_id, tf_done=tf_idx + 1)
+        total_succ = sum(successes_by_tf.values())
+        total_err = sum(len(v) for v in errors_by_tf.values())
+        final_status = ('cancelled' if cancelled else
+                        'done' if total_err == 0 else
+                        'partial' if total_succ > 0 else 'error')
+        _record_job(job_id, status=final_status,
+                    successes=total_succ,
+                    successes_by_tf=successes_by_tf,
+                    errors_by_tf={k: v[-2:] for k, v in errors_by_tf.items()},
+                    current_tf=None,
+                    finished_at=time.time())
+        with _training_active_lock:
+            _training_active_procs.pop(job_id, None)
+    finally:
+        _training_concurrency_sem.release()
 
 
 def _run_trainer_blocking(job_id: str, key: str, n: int,
@@ -2838,55 +2859,65 @@ def _run_trainer_blocking(job_id: str, key: str, n: int,
     module_path, fn_name, accepts_tf = spec
     successes, errors = 0, []
     cancelled = False
-    _record_job(job_id, status='running', started_at=time.time(),
-                progress=0, total=n, tf=tf)
-    for i in range(n):
-        if cancelled:
-            break
-        # Skip the timeframe kwarg entirely for trainers that don't
-        # accept it (regime / oft / all), even if the UI passed a TF.
-        kw = f"timeframe={tf!r}" if (tf and accepts_tf) else ""
-        cmd = [
-            sys.executable, '-c',
-            f'import {module_path} as m; '
-            f'fn = getattr(m, {fn_name!r}); fn({kw})',
-        ]
-        proc = None
-        try:
-            proc = subprocess.Popen(
-                cmd, cwd=project_root,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            )
-            with _training_active_lock:
-                _training_active_procs[job_id] = proc
+    # Wait for a concurrency slot. Mark the job as 'queued' while waiting
+    # so the dashboard pill shows "queued — N ahead" instead of looking
+    # frozen. acquire(blocking=True) is a no-op if the sem is free.
+    _record_job(job_id, status='queued', queued_at=time.time(),
+                total=n, tf=tf,
+                progress_label=f'queued (cap={_TRAINING_CONCURRENCY})')
+    _training_concurrency_sem.acquire()
+    try:
+        _record_job(job_id, status='running', started_at=time.time(),
+                    progress=0, progress_label=None)
+        for i in range(n):
+            if cancelled:
+                break
+            # Skip the timeframe kwarg entirely for trainers that don't
+            # accept it (regime / oft / all), even if the UI passed a TF.
+            kw = f"timeframe={tf!r}" if (tf and accepts_tf) else ""
+            cmd = [
+                sys.executable, '-c',
+                f'import {module_path} as m; '
+                f'fn = getattr(m, {fn_name!r}); fn({kw})',
+            ]
+            proc = None
             try:
-                _stdout, _stderr = proc.communicate(timeout=3600)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                errors.append(f'iteration {i+1} timed out (>1h)')
-                continue
-            with _training_active_lock:
-                _training_active_procs.pop(job_id, None)
-            if proc.returncode == 0:
-                successes += 1
-            elif proc.returncode == -9 or proc.returncode == 1 and 'killed' in (_stderr or b'').decode('utf-8', 'replace').lower():
-                cancelled = True
-                errors.append(f'iteration {i+1} cancelled by operator')
-            else:
-                errors.append((_stderr or b'')[-400:].decode('utf-8', 'replace'))
-        except Exception as exc:
-            errors.append(f'iteration {i+1} crashed: {type(exc).__name__}: {exc}')
-            with _training_active_lock:
-                _training_active_procs.pop(job_id, None)
-        _record_job(job_id, progress=i + 1)
-    final_status = ('cancelled' if cancelled else
-                    'done' if not errors else
-                    'partial' if successes else 'error')
-    _record_job(job_id, status=final_status,
-                successes=successes, errors=errors[-3:],
-                finished_at=time.time())
-    with _training_active_lock:
-        _training_active_procs.pop(job_id, None)
+                proc = subprocess.Popen(
+                    cmd, cwd=project_root,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                )
+                with _training_active_lock:
+                    _training_active_procs[job_id] = proc
+                try:
+                    _stdout, _stderr = proc.communicate(timeout=3600)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    errors.append(f'iteration {i+1} timed out (>1h)')
+                    continue
+                with _training_active_lock:
+                    _training_active_procs.pop(job_id, None)
+                if proc.returncode == 0:
+                    successes += 1
+                elif proc.returncode == -9 or proc.returncode == 1 and 'killed' in (_stderr or b'').decode('utf-8', 'replace').lower():
+                    cancelled = True
+                    errors.append(f'iteration {i+1} cancelled by operator')
+                else:
+                    errors.append((_stderr or b'')[-400:].decode('utf-8', 'replace'))
+            except Exception as exc:
+                errors.append(f'iteration {i+1} crashed: {type(exc).__name__}: {exc}')
+                with _training_active_lock:
+                    _training_active_procs.pop(job_id, None)
+            _record_job(job_id, progress=i + 1)
+        final_status = ('cancelled' if cancelled else
+                        'done' if not errors else
+                        'partial' if successes else 'error')
+        _record_job(job_id, status=final_status,
+                    successes=successes, errors=errors[-3:],
+                    finished_at=time.time())
+        with _training_active_lock:
+            _training_active_procs.pop(job_id, None)
+    finally:
+        _training_concurrency_sem.release()
 
 
 @app.route('/api/training/run/<key>', methods=['POST'])

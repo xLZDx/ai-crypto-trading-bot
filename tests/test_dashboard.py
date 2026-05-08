@@ -4701,6 +4701,56 @@ def test_phase59_pr35_parquet_query_thread_safety():
         check('ParquetClient concurrent-query live test', False, str(e))
 
 
+def test_phase60_pr36_training_concurrency_cap():
+    """Trainer dispatch holds a semaphore-gated concurrency cap.
+
+    Why: pre-fix, kicking 8 retrains in a row spawned 8 concurrent
+    Popen processes (each loading torch/sklearn/pandas, ~1-2 GB RSS).
+    On a 32 GB / single-GPU box this hit ~88% RAM and the dashboard
+    Popen syscall failed inside RPCRT4 — the dashboard process died
+    with no Python traceback, taking the live UI down on 2026-05-08.
+    Fix: gate _run_trainer_blocking and _run_trainer_multi_tf with a
+    threading.Semaphore(N) so excess jobs queue instead of all-spawn.
+    """
+    print('\n[Phase 60 — PR-36 training concurrency cap]')
+
+    app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
+    with open(app_path, encoding='utf-8') as f:
+        app = f.read()
+
+    check('_training_concurrency_sem semaphore defined',
+          '_training_concurrency_sem = threading.Semaphore(' in app)
+    check('AI_TRADER_TRAIN_CONCURRENCY env var honored',
+          "AI_TRADER_TRAIN_CONCURRENCY" in app)
+    check('_run_trainer_blocking acquires the sem',
+          '_training_concurrency_sem.acquire()' in app
+          and app.count('_training_concurrency_sem.acquire()') >= 2)
+    check('_run_trainer_blocking releases the sem in finally',
+          '_training_concurrency_sem.release()' in app
+          and app.count('_training_concurrency_sem.release()') >= 2)
+
+    # Static check: the Popen call sites must each be inside a sem-acquire
+    # block. Cheap proxy — every subprocess.Popen in the trainer area must
+    # come AFTER an acquire() in source order.
+    blocking_idx = app.find('def _run_trainer_blocking(')
+    multi_idx    = app.find('def _run_trainer_multi_tf(')
+    for label, start in (('_run_trainer_blocking', blocking_idx),
+                         ('_run_trainer_multi_tf', multi_idx)):
+        if start < 0:
+            check(f'{label} found', False)
+            continue
+        # Function body up to next top-level def
+        end = app.find('\ndef ', start + 4)
+        body = app[start:end] if end > start else app[start:]
+        acquire_pos = body.find('_training_concurrency_sem.acquire()')
+        popen_pos   = body.find('subprocess.Popen(')
+        check(f'{label}: sem.acquire() precedes subprocess.Popen()',
+              0 <= acquire_pos < popen_pos)
+        check(f'{label}: status \'queued\' is set before sem acquire',
+              body.find("status='queued'") < acquire_pos
+              if acquire_pos > 0 else False)
+
+
 # ─── Runner ───────────────────────────────────────────────────────────────────
 
 def main():
@@ -4787,6 +4837,7 @@ def main():
     test_phase57_pr26_all_tfs_and_status()
     test_phase58_pr28_balance_by_mode()
     test_phase59_pr35_parquet_query_thread_safety()
+    test_phase60_pr36_training_concurrency_cap()
 
     if not args.offline:
         test_api(args.url)
