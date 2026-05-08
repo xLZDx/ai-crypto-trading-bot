@@ -4609,6 +4609,98 @@ def test_phase22_scheduler_no_autorefresh():
           'grid-template-columns:1.4fr 1fr 1.4fr auto auto' in tpl)
 
 
+def test_phase59_pr35_parquet_query_thread_safety():
+    """ParquetClient query/query_df hold _duck_lock during execute().
+
+    Why: DuckDB's Python connection is NOT thread-safe — concurrent
+    execute() on the same connection triggers C++ assertion failures
+    (e.g. "INTERNAL Error: Attempted to dereference unique_ptr that
+    is NULL!") that abort the whole process. The dashboard has many
+    concurrent request threads + an error-monitor scan thread, so
+    the abort took down the live UI on 2026-05-08. Fix is to hold
+    the existing _duck_lock for the entire execute+fetch sequence.
+    """
+    print('\n[Phase 59 — PR-35 ParquetClient query thread-safety]')
+
+    pc_path = os.path.join(BASE_DIR, 'src', 'database', 'parquet_client.py')
+    with open(pc_path, encoding='utf-8') as f:
+        pc = f.read()
+
+    # Locate query() and query_df() bodies and assert each holds the
+    # lock during execute(). Slice the file by `def ` boundaries so we
+    # can scan a fixed window without a regex that risks catastrophic
+    # backtracking on a 700-line file.
+    def _body_holds_lock(fn_name: str) -> bool:
+        marker = f"    def {fn_name}(self"
+        i = pc.find(marker)
+        if i < 0:
+            return False
+        # Body runs until the next top-level def at the same indent.
+        j = pc.find("\n    def ", i + len(marker))
+        body = pc[i:j] if j > i else pc[i:]
+        if 'with self._duck_lock:' not in body:
+            return False
+        # Scan line by line — `with self._duck_lock:` must be followed
+        # within a few lines by `con.execute(`.
+        lines = body.splitlines()
+        for idx, ln in enumerate(lines):
+            if 'with self._duck_lock:' in ln:
+                window = '\n'.join(lines[idx:idx + 5])
+                if 'con.execute(' in window:
+                    return True
+        return False
+
+    check('query() holds _duck_lock during con.execute()',
+          _body_holds_lock('query'))
+    check('query_df() holds _duck_lock during con.execute()',
+          _body_holds_lock('query_df'))
+
+    # Live behavior: spawn N threads that all hammer query() at once.
+    # Pre-fix this would fairly reliably trigger the abort within a few
+    # iterations; post-fix it returns N×rows without crashing.
+    try:
+        import importlib, tempfile, shutil, threading as _th
+        sys.path.insert(0, BASE_DIR) if BASE_DIR not in sys.path else None
+        pc_mod = importlib.import_module('src.database.parquet_client')
+        td = tempfile.mkdtemp(prefix='pq_phase59_')
+        try:
+            client = pc_mod.ParquetClient(
+                base_dir=td, flush_s=0.0, flush_rows=1,
+                legacy_parquet_dir=os.path.join(td, '_no_legacy'),
+            )
+            for i in range(20):
+                client.write_market_candle('BTC/USDT', '1h', {
+                    'timestamp': f'2026-05-04T{i:02d}:00:00',
+                    'open': 1, 'high': 2, 'low': 0.5,
+                    'close': 1.5 + i, 'volume': 100 + i,
+                })
+            client.flush_all()
+
+            errors: list[str] = []
+            results_count: list[int] = []
+            barrier = _th.Barrier(8)
+            def _worker():
+                try:
+                    barrier.wait(timeout=5)
+                    rows = client.query("SELECT COUNT(*) AS n FROM market_data")
+                    results_count.append(int(rows[0]['n']) if rows else -1)
+                except Exception as e:
+                    errors.append(f'{type(e).__name__}: {e}')
+            ts = [_th.Thread(target=_worker) for _ in range(8)]
+            for t in ts: t.start()
+            for t in ts: t.join(timeout=10)
+            client.close()
+            check('8-way concurrent query() — no exception',
+                  not errors, '; '.join(errors[:2]))
+            check('8-way concurrent query() — every thread saw 20 rows',
+                  results_count == [20] * 8,
+                  f'got {results_count}')
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
+    except Exception as e:
+        check('ParquetClient concurrent-query live test', False, str(e))
+
+
 # ─── Runner ───────────────────────────────────────────────────────────────────
 
 def main():
@@ -4694,6 +4786,7 @@ def main():
     test_phase56_pr21_heatmap_rework()
     test_phase57_pr26_all_tfs_and_status()
     test_phase58_pr28_balance_by_mode()
+    test_phase59_pr35_parquet_query_thread_safety()
 
     if not args.offline:
         test_api(args.url)

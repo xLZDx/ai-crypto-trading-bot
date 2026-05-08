@@ -530,9 +530,19 @@ class ParquetClient:
         if missing:
             logger.debug("ParquetClient: missing-table fallback for %s", missing)
             return []
+        # Serialize execute() across threads. DuckDB's Python connection
+        # is NOT thread-safe — concurrent execute() on the same con
+        # triggers C++ assertion failures (e.g. "unique_ptr NULL"
+        # INTERNAL Errors that abort the process). The Flask dashboard
+        # has many concurrent request threads + an error-monitor thread
+        # all reading via this client, so the abort took the whole
+        # dashboard down on 2026-05-08. Holding _duck_lock for the
+        # entire execute+fetch keeps everything single-threaded at the
+        # DuckDB layer without us needing per-thread cursors.
         try:
             con = self._conn()
-            res = con.execute(rewritten).fetch_arrow_table()
+            with self._duck_lock:
+                res = con.execute(rewritten).fetch_arrow_table()
             return res.to_pylist()
         except Exception as exc:
             logger.warning("ParquetClient: query failed — %s | SQL: %s",
@@ -548,7 +558,8 @@ class ParquetClient:
             return pd.DataFrame()
         try:
             con = self._conn()
-            return con.execute(rewritten).df()
+            with self._duck_lock:
+                return con.execute(rewritten).df()
         except Exception as exc:
             logger.warning("ParquetClient: query_df failed — %s", exc)
             return pd.DataFrame()
