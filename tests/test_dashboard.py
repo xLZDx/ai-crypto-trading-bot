@@ -5482,6 +5482,79 @@ def test_phase72_v31_dashboard_mode_aware_and_per_market():
           and 'id="risk-vol"  hidden' in html)
 
 
+def test_phase73_v31_trade_enrichment_going_forward():
+    """v3.1 step 11 (1D): every NEW trade row carries the 7 enrichment
+    fields (mode, regime_at_entry, model_confidence, mfe_pct, mae_pct,
+    slippage_pct, exit_reason). MFE/MAE update on trailing-stop ticks;
+    exit_reason inferred from PnL sign at close if not supplied.
+    paper_book.book_market_order writes the same 7 fields with
+    mode='paper'."""
+    print('\n[Phase 73 — v3.1 step 11: trade enrichment going-forward]')
+
+    tt_src = open(os.path.join(BASE_DIR, 'src', 'engine', 'trade_tracker.py'), encoding='utf-8').read()
+    pb_src = open(os.path.join(BASE_DIR, 'src', 'engine', 'paper_book.py'), encoding='utf-8').read()
+
+    # Static checks
+    check('TradeTracker._detect_trade_mode helper defined',
+          'def _detect_trade_mode()' in tt_src)
+    check('open_trade accepts mode/regime_at_entry/model_confidence kwargs',
+          'mode=None, regime_at_entry=None, model_confidence=None' in tt_src)
+    check('open_trade accepts intended_price kwarg for slippage',
+          'intended_price=None' in tt_src and 'slippage_pct = (current_price - intended_price)' in tt_src)
+    check('open_trade writes all 7 enrichment fields',
+          all(f'"{k}":' in tt_src for k in
+              ('mode', 'regime_at_entry', 'model_confidence',
+               'mfe_pct', 'mae_pct', 'slippage_pct', 'exit_reason')))
+    check('update_trailing_stops tracks MFE/MAE',
+          'trade["mfe_pct"]' in tt_src and 'trade["mae_pct"]' in tt_src
+          and '"lowest_price"' in tt_src)
+    check('close_trade_by_id accepts exit_reason kwarg + infers if absent',
+          'exit_reason=None' in tt_src and "trade[\"exit_reason\"] = ('TP'" in tt_src)
+
+    check('paper_book.book_market_order writes 7 enrichment fields',
+          '"mode":             "paper"' in pb_src
+          and '"mfe_pct":          0.0' in pb_src
+          and '"mae_pct":          0.0' in pb_src
+          and '"slippage_pct":     None' in pb_src
+          and '"exit_reason":      None' in pb_src)
+    check('paper_book.book_close infers exit_reason from net PnL',
+          't["exit_reason"] = (' in pb_src and "'TP'" in pb_src and "'SL'" in pb_src)
+
+    # Live: open + update + close round-trip
+    import importlib, sys, tempfile, os as _os
+    sys.path.insert(0, BASE_DIR)
+    if 'src.engine.trade_tracker' in sys.modules:
+        del sys.modules['src.engine.trade_tracker']
+    tt_mod = importlib.import_module('src.engine.trade_tracker')
+
+    tmp = tempfile.NamedTemporaryFile(suffix='.json', delete=False, mode='w')
+    tmp.write('[]'); tmp.close()
+    try:
+        tt = tt_mod.TradeTracker(filepath=tmp.name)
+        trade = tt.open_trade('BTC/USDT', 100.0, 50000.0,
+                              regime_at_entry='TRENDING',
+                              model_confidence=0.72,
+                              intended_price=49995.0)
+        for k in ('mode', 'regime_at_entry', 'model_confidence',
+                  'mfe_pct', 'mae_pct', 'slippage_pct', 'exit_reason'):
+            check(f'open_trade row has field "{k}"', k in trade)
+        check('regime_at_entry passes through', trade['regime_at_entry'] == 'TRENDING')
+        check('model_confidence passes through', abs(trade['model_confidence'] - 0.72) < 1e-9)
+        check('slippage_pct ≈ 0.01% on 5-bps gap',
+              trade['slippage_pct'] is not None and 0.005 < trade['slippage_pct'] < 0.02)
+
+        tt.update_trailing_stops('BTC/USDT', 51000.0)  # MFE +2%
+        tt.update_trailing_stops('BTC/USDT', 49000.0)  # MAE -2%
+        upd = [t for t in tt.trades if t['id'] == trade['id']][0]
+        check('MFE recorded after favourable tick', abs(upd['mfe_pct'] - 2.0) < 0.05)
+        check('MAE recorded after adverse tick',    abs(upd['mae_pct'] + 2.0) < 0.05)
+
+        closed = tt.close_trade_by_id(trade['id'], 50500.0)
+        check('close infers exit_reason TP on positive PnL', closed['exit_reason'] == 'TP')
+    finally:
+        _os.unlink(tmp.name)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -5816,6 +5889,7 @@ def main():
     test_phase71e_v31_scalping_rebalance()
     test_phase71f_v31_oft_sweep_coverage()
     test_phase72_v31_dashboard_mode_aware_and_per_market()
+    test_phase73_v31_trade_enrichment_going_forward()
 
     if not args.offline:
         test_api(args.url)

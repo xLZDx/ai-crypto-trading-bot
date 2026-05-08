@@ -98,6 +98,18 @@ def book_market_order(
         "strategy":    strategy or "manual",
         "market":      market,
         "pnl_usdt":    0.0,
+        # v3.1 step 11 (1D) — enrichment fields. paper_book always
+        # writes mode='paper' since paper trades book to the virtual
+        # balance only. Other fields are None until the bot's
+        # higher-level call site supplies them; they're at least
+        # present so the schema is uniform with TradeTracker rows.
+        "mode":             "paper",
+        "regime_at_entry":  None,
+        "model_confidence": None,
+        "mfe_pct":          0.0,
+        "mae_pct":          0.0,
+        "slippage_pct":     None,
+        "exit_reason":      None,
     }
     trades = _load_trades()
     trades.append(record)
@@ -135,6 +147,9 @@ def book_close(
             t["pnl_usdt"]   = round(net, 4)
             t["gross_pnl"]  = round(gross, 4)
             t["total_fees_usdt"] = round(entry_fee + exit_fee, 4)
+            # v3.1 step 11 (1D) — infer exit_reason if caller didn't tag it.
+            if t.get("exit_reason") is None:
+                t["exit_reason"] = ('TP' if net > 0 else 'SL' if net < 0 else 'flat')
             _save_trades(trades)
             try:
                 add_paper_pnl(net)
