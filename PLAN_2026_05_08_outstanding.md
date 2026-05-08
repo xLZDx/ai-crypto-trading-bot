@@ -1,11 +1,21 @@
-# PLAN — 2026-05-08 outstanding work (v3 — FINAL — awaiting approval)
+# PLAN — 2026-05-08 outstanding work (v3.1 — execution in progress)
 
-This is the v3 implementation plan. v3 folds in the new dashboard fixes
-that surfaced during the 2026-05-09 review (mode-aware Portfolio,
-per-market All-Markets breakdown, "MAINNET → REAL CASH" rename),
-re-orders steps by **priority + complexity + dependencies**, and
-puts the overnight retrain+backtest sweep **at the very end** of the
-implementation work per your latest direction.
+This is the v3.1 implementation plan.
+
+**v3 → v3.1 delta** (applied 2026-05-09 mid-execution after step 1
+landed):
+- **P0.A flipped back to curated** ("applicable based on model logic"
+  per operator clarification) instead of strict all×all.
+- **New item 1M added** — OFT (Microstructure) sweep coverage, since
+  the dashboard surfaces it as `NOT STARTED` and the operator wants
+  all 15 currently-shown model rows retrained.
+
+v3 folded in three new dashboard items surfaced during the 2026-05-09
+review (mode-aware Portfolio, per-market All-Markets breakdown,
+"MAINNET → REAL CASH" rename), re-ordered steps by **priority +
+complexity + dependencies**, and put the overnight retrain+backtest
+sweep **at the very end** of the implementation work per the operator's
+direction.
 
 Status: **everything stopped** since the operator's last "stop all".
 Nothing relaunches without your reply on this plan. No in-progress
@@ -13,15 +23,15 @@ training will be killed (per `feedback_dont_relaunch_inflight_training`).
 
 ---
 
-## §0 · Cross-reference: every original item is in v3
+## §0 · Cross-reference: every original item is in v3.1
 
 Per the lesson learned on 2026-05-08 (P2.2 nearly slipped), every
 original item ID is mapped explicitly to its new step. **No item is
-dropped.** Three new items were added (1K, 1L, scope-expansion of 1I).
+dropped.** Four new items were added (1K, 1L, 1M, scope-expansion of 1I).
 
 | Original ID | What it is | New step | Notes |
 |---|---|---|---|
-| **P0.A** | TF coverage policy | §1.P0.A | **Default flipped to strict all×all** per user's "all timeframes" |
+| **P0.A** | TF coverage policy | §1.P0.A | **Curated** (v3.1) — "applicable based on model logic" per operator clarification |
 | **P0.B** | Multi-TF trading architecture | §1.P0.B | Default unchanged (cross-TF confirmation gate) |
 | **P0.C** | Canonical model file policy | §1.P0.C | Default unchanged (canonical + per-TF variants) |
 | **1A** (TF map) | Update DEFAULT_PER_KEY_TFS | **Step 2** | — |
@@ -43,53 +53,73 @@ dropped.** Three new items were added (1K, 1L, scope-expansion of 1I).
 | **4A** (P1.1) | Analytical dashboard (7 sections) | **Step 21** | depends on 2A + 1E |
 | **5A** (P2.9) | Persistent cold-start disk cache | **Step 15** | parallel-safe |
 | **5B** (P2.10) | FastAPI process separation | **Step 22** | depends on 5A |
-| **NEW · 1K** | "MAINNET" → "REAL CASH" UI rename | **Step 1** | new — trivial, do first |
-| **NEW · 1L** | "All Markets" per-market Signal/Risk panels | **Step 10** | new — fixes screenshot you flagged 2026-05-09 |
+| **NEW · 1K** | "MAINNET" → "REAL CASH" UI rename | **Step 1** ✅ | done 2026-05-09 (commit 2dd612b) |
+| **NEW · 1L** | "All Markets" per-market Signal/Risk panels | **Step 10** | new — fixes screenshot flagged 2026-05-09 |
+| **NEW · 1M** | OFT (Microstructure) sweep coverage | **Step 8** | new (v3.1) — covers 15th dashboard row currently `NOT STARTED` |
 | **NEW · 1I expanded** | API-driven Balances + kill mode-blind PnL writes | **Step 9** | scope-expansion of existing 1I |
 
-**Total steps**: 22 (was 18 in v2; +1 from 1B′ split, +2 from 1K/1L, 1I scope-expanded in place).
+**Total steps**: 22 (was 18 in v2; +1 from 1B′ split, +3 from 1K/1L/1M, 1I scope-expanded in place).
 
 ---
 
 ## §1 · Decisions taken (operator may override)
 
 ### P0.A — TF coverage policy
-**Decision (default, v3 update)**: **strict all×all — every model on every TF.**
+**Decision (default, v3.1 — corrected per operator clarification 2026-05-09)**: **curated — "all 15 dashboard models trained on every TF *applicable based on model logic*", not naive all×all.**
 
 ```python
-ALL_TFS = ('1m', '5m', '15m', '1h', '4h', '1d', '1w')   # 7 timeframes
 DEFAULT_PER_KEY_TFS = {
-    'base':     ALL_TFS,
-    'trend':    ALL_TFS,
-    'futures':  ALL_TFS,
-    'scalping': ALL_TFS,
-    'meta':     ALL_TFS,
-    'tft':      ALL_TFS,
-    'regime':   ALL_TFS,
+    'base':     ('5m', '15m', '1h', '4h', '1d'),     # 5 TFs — directional signals across intraday→swing
+    'trend':    ('15m', '1h', '4h', '1d', '1w'),     # 5 TFs — trend lives at 15m+
+    'futures':  ('5m', '15m', '1h', '4h', '1d'),     # 5 TFs — same logic as base
+    'scalping': ('1m', '5m'),                         # 2 TFs — sub-minute mean reversion only
+    'meta':     ('5m', '15m', '1h', '4h'),           # 4 TFs — gates entry signals (5m–4h)
+    'tft':      ('15m', '1h', '4h'),                  # 3 TFs — swing horizons; 1m/5m → noise
+    'regime':   ('1h',),                              # 1 TF — features TF-invariant
 }
-# 7 models × 7 TFs = 49 combos, ~12–24 h wall clock @ 10 cores
+# 7 keys × ~3.6 TFs avg = 25 (model × TF) tabular combos
+# + OFT (item 1M): microstructure model on L2/L3 events, single canonical TF (1m)
+# Total: ~26 sweep entries; ~6-12 h wall clock @ 10 cores
 ```
 
-Reason for the v3 flip: your direction "retrain and backtest **all
-models on all timeframes**". v2's curated 25-combo map was the safer
-default; you've explicitly asked for the full sweep.
+**Why this is the v3.1 default** (corrected from v3's strict all×all):
+operator clarified 2026-05-09 — *"all 15 models trained on all
+timeframes if applicable based on model logic"*. v3's strict all×all
+ignored the "applicable" clause and would have wasted ~6-12 h of
+compute on combos that converge to noise (TFT @ 1m, scalping @ 1d) or
+that add no information (regime × extra TFs — features are
+TF-invariant). This map encodes the per-model logic:
 
-**Caveats** (these will not crash the sweep — per-trainer try/except
-isolates failures — but the resulting models will be low-quality):
-- `tft @ 1m / 5m`: TFT input_chunk_length=168 → ~3 h history per
-  inference; designed for swing horizons, will likely converge to
-  noise on minute bars. The `_train_loop` skip-on-error path catches
-  this and the sweep keeps moving.
-- `scalping @ 1d / 1w`: scalping = sub-minute mean reversion; on daily
-  bars it just produces a biased trend follower with bad accuracy.
-- `regime @ 1m / 5m / 1h / 4h / 1d / 1w`: GMM clusters are computed on
-  TF-invariant features (vol, ADX, returns z-score); extra TFs add no
-  information, just compute time.
-- `meta @ 1d / 1w`: meta-labeler gates entry signals which exist on
-  5m–4h; 1d/1w meta has no consumer in the bot loop.
+- `tft` only at 15m+ — TFT input_chunk_length=168 → ~3 h history per
+  inference; designed for swing horizons, on minute bars it just fits
+  noise.
+- `scalping` only at 1m/5m — sub-minute mean reversion; on daily bars
+  it produces a biased trend follower with bad accuracy.
+- `regime` only at 1h — GMM clusters use TF-invariant features (vol,
+  ADX, returns z-score); extra TFs add no information.
+- `meta` only at 5m–4h — meta-labeler gates entry signals on those
+  TFs; 1d/1w meta has no consumer in the bot loop.
+- `base` / `trend` / `futures` — every TF where the directional thesis
+  has historical evidence.
 
-If you want the curated 25-combo map back instead, override at
-approval time ("use curated P0.A").
+Per-trainer `try/except` in `_train_loop` still isolates any
+unexpected combo failure, so the sweep can't be brought down by a
+single trainer crash.
+
+**Coverage of the 15 currently-shown dashboard rows**: the curated map
+covers all 14 OHLCV-bar rows (futures × {1d, 4h, 1h, "short"}, trend ×
+{1d, 4h, 1h}, base × {1d, 4h, 1h}, tft × 1h, meta × 1h, regime × 1h,
+scalping × 1m) — and adds 11 new variants (e.g. trend @ 15m, base @ 5m,
+meta @ 4h). The 15th row (OFT, currently `NOT STARTED`) is covered by
+the new item 1M.
+
+The `Futures Short RF @ short` row is a `short`-horizon label variant
+(not a TF) produced by the existing futures trainer; it's preserved by
+the trainer's own logic — no separate sweep entry needed.
+
+Override:
+- `use strict all×all` → 49-combo sweep (v3 default; longer + lower-quality models on the noise combos).
+- `drop X / Y from P0.A` → name specific (key, tf) pairs to skip.
 
 ### P0.B — Multi-TF trading architecture
 **Decision (default, unchanged)**: **cross-TF confirmation gate**.
@@ -146,13 +176,14 @@ for cross-reference; numbering of *steps* (1 … 22) is execution order.
   `/api/control/trade_mode` with `{mode:'mainnet'}` still works
   unchanged.
 
-#### 1A. Update `DEFAULT_PER_KEY_TFS` per P0.A (now strict all×all)
-- Replace current map with the 49-combo all×all map from §1.P0.A.
-- Add comment explaining why all×all over curated.
+#### 1A. Update `DEFAULT_PER_KEY_TFS` per P0.A (curated, v3.1)
+- Replace current map with the 25-combo curated map from §1.P0.A.
+- Add comment explaining the curation logic ("applicable based on
+  model logic") and the override path (`use strict all×all`).
 - **Files**: `src/engine/train_all_models.py`
 - **Effort**: 10 min
 - **Accept**: dry-run import; no syntax error; `_train_loop` iterates
-  7 TFs per key.
+  the per-key TFs from the curated map.
 
 #### 1B. P2.1 — TFT `cannot reindex on duplicate labels` deeper fix
 - `train_tft_model(dry_run=True)` against one symbol; print
@@ -215,6 +246,37 @@ for cross-reference; numbering of *steps* (1 … 22) is execution order.
 - **Accept**: train-then-refresh on `trend @ 4h` finishes <2 min, only
   updates trend×4h heatmap rows; `run_full_backtest()` with no
   filters runs the full sweep.
+
+#### 1M. NEW — OFT (Microstructure) sweep coverage
+- Currently the dashboard surfaces `OFT (Microstructure) — L2/L3 — NOT
+  STARTED` as the 15th model row. The trainer already exists at
+  `src/training/joint_oft_rl.py::train_oft(symbol, timeframe, ...)`
+  and the dashboard's "Train OFT" button can fire it, but the
+  pipeline orchestrator never includes OFT in the all-models sweep.
+- Add OFT to `train_all_models.train_all()`:
+  - Single canonical TF: `'1m'` (microstructure detail at higher TFs
+    averages out — L2/L3 events are sub-minute).
+  - Per-symbol loop is already inside `train_oft`, so train_all just
+    invokes once per symbol from the universe (or for the 3 canonical
+    symbols BTC/SOL/ETH and let the operator extend later).
+  - Wrap in the same `try/except` pattern as other trainers so an OFT
+    failure can't crash the sweep.
+  - Skip-if-fresh resume guard works as long as `models/oft_*_meta.json`
+    is what the trainer writes — verify path and add the meta-age
+    check.
+- Surface on dashboard: ensure `_RESOURCE_KIND['oft'] = 'exclusive'`
+  remains (OFT uses GPU+CPU heavily; can't share a lane with TFT).
+- **Files**: `src/engine/train_all_models.py`,
+  `src/training/joint_oft_rl.py` (read-only — verify entry signature),
+  `src/dashboard/app.py` (read-only — verify resource-kind mapping),
+  `tests/test_dashboard.py` (Phase 71 part 3 — assert OFT in
+  `DEFAULT_PER_KEY_TFS` or in the dispatch table).
+- **Effort**: 1.5 h
+- **Deps**: 1A landed (so the curated map exists to extend).
+- **Accept**: dashboard shows `OFT (Microstructure)` with status
+  `OK` and a fresh `last_trained` after the sweep completes (instead
+  of `NOT STARTED`); training does not collide with TFT or other
+  GPU work via the exclusive resource lane.
 
 #### 1G. P2.4 — 1s archive coverage check (audit only — gates 1H)
 - Per symbol: `gunzip -c data/raw/historical/<sym>_USDT_spot_1s.csv.gz | tail -1`.
@@ -453,49 +515,52 @@ balances. Three coupled steps in `src/dashboard/templates/index.html`:
 
 | # | Step | Phase | Effort | Wait |
 |---|---|---|---|---|
-| 1 | **1K — REAL CASH UI rename** (NEW) | 1 | 15 min | — |
-| 2 | 1A — Update `DEFAULT_PER_KEY_TFS` (now strict all×all) | 1 | 10 min | — |
+| 1 | **1K — REAL CASH UI rename** (NEW) ✅ done | 1 | 15 min | — |
+| 2 | 1A — Update `DEFAULT_PER_KEY_TFS` (curated, v3.1) | 1 | 10 min | — |
 | 3 | 1F — Per-model + per-TF backtest filter | 1 | 2 h | — |
 | 4 | 1B — TFT dedupe deeper fix + dry-run verify | 1 | 1–2 h | — |
 | 5 | **1B′ — TFT regression test (P2.2; locks 1B)** | 1 | 1 h | after 4 |
 | 6 | 1C — Scalping label rebalance (class_weight + SMOTE) | 1 | 2 h | — |
 | 7 | 1G — 1s archive coverage check (audit only) | 1 | 30 min | — |
-| 8 | **1I — Mode-aware Portfolio loader (scope expanded)** | 2 | 2 h | — |
-| 9 | **1L — Per-market Signal & Risk panels** (NEW) | 2 | 1.5 h | — |
-| 10 | 1D — Trade enrichment fields (going-forward) | 3 | 4 h | — |
-| 11 | 1E — Backfill 912 historical trades (best-effort) | 3 | 4 h | after 10 |
-| 12 | 1H — 1s archive refill (only if 7 confirms gap) | 4 | 30 min trigger + 4–8 h | after 7 |
-| 13 | 1J — Backfill button on Data Coverage card | 4 | 4 h | after 12 |
-| 14 | 5A — Cold-start disk cache (parallel-safe) | 5 | 3 h | — |
-| 15 | **2A — Overnight all×all sweep (49 combos) + chained backtest** | 6 | 0 trigger + 13–26 h wall | after 1-14 ✱ |
-| 16 | 2B — Post-retrain accuracy audit | 6 | 30 min | after 15 |
-| 17 | 2C — Trade enrichment backfill validation | 6 | 30 min | — |
-| 18 | 3A — Multi-TF cross-TF confirmation gate | 7 | 2 days | after 15 |
-| 19 | **3B — 1-week paper-trading validation** | 7 | 1 calendar week | after 18 |
-| 20 | 4A — Analytical dashboard build (7 sections) | 7 | 2 weeks | after 15 + 11 |
-| 21 | 5B — FastAPI process separation | 7 | 2–3 days | after 14 |
+| 8 | **1M — OFT (Microstructure) sweep coverage** (NEW v3.1) | 1 | 1.5 h | after 2 |
+| 9 | **1I — Mode-aware Portfolio loader (scope expanded)** | 2 | 2 h | — |
+| 10 | **1L — Per-market Signal & Risk panels** (NEW) | 2 | 1.5 h | — |
+| 11 | 1D — Trade enrichment fields (going-forward) | 3 | 4 h | — |
+| 12 | 1E — Backfill 912 historical trades (best-effort) | 3 | 4 h | after 11 |
+| 13 | 1H — 1s archive refill (only if 7 confirms gap) | 4 | 30 min trigger + 4–8 h | after 7 |
+| 14 | 1J — Backfill button on Data Coverage card | 4 | 4 h | after 13 |
+| 15 | 5A — Cold-start disk cache (parallel-safe) | 5 | 3 h | — |
+| 16 | **2A — Overnight curated sweep (~26 entries) + chained backtest** | 6 | 0 trigger + 7–13 h wall | after 1-15 ✱ |
+| 17 | 2B — Post-retrain accuracy audit | 6 | 30 min | after 16 |
+| 18 | 2C — Trade enrichment backfill validation | 6 | 30 min | — |
+| 19 | 3A — Multi-TF cross-TF confirmation gate | 7 | 2 days | after 16 |
+| 20 | **3B — 1-week paper-trading validation** | 7 | 1 calendar week | after 19 |
+| 21 | 4A — Analytical dashboard build (7 sections) | 7 | 2 weeks | after 16 + 12 |
+| 22 | 5B — FastAPI process separation | 7 | 2–3 days | after 15 |
 
-✱ Step 15 fires once steps 1-14 are green. Steps 16-21 are post-sweep
-follow-up; 19 (1-week wall) and 20 (2-week build) are calendar-bound.
+✱ Step 16 fires once steps 1-15 are green. Steps 17-22 are post-sweep
+follow-up; 20 (1-week wall) and 21 (2-week build) are calendar-bound.
 
-**Total focused dev work for steps 1-14**: ~26-30 h.
-**Realistic calendar (steps 1-15 incl. sweep wall)**: 5-7 days.
-**End-to-end including 19/20 calendar waits**: 4-5 weeks.
+**Total focused dev work for steps 1-15**: ~28-32 h (was ~26-30 h before 1M).
+**Realistic calendar (steps 1-16 incl. sweep wall)**: 4-6 days (curated sweep 7-13 h vs v3's 13-26 h all×all).
+**End-to-end including 20/21 calendar waits**: 4-5 weeks.
 
 ---
 
 ## §4 · Acceptance criteria (full v3 sweep)
 
 After all phases complete, the dashboard must show:
-1. ✅ All 7 ML model rows with fresh `last_trained` (today),
-   populated AUC + WinPrec.
-2. ✅ Per-TF variant rows for every (model × TF) combo that converged
-   — up to 49 rows.
+1. ✅ **All 15 currently-shown model rows** retrained today: every
+   `last_trained` is fresh, AUC + WinPrec populated where applicable.
+   - The `OFT (Microstructure) — NOT STARTED` row flips to `OK`.
+   - The `Scalping RF (1m) — FAILED` row flips to `OK`.
+2. ✅ Per-TF variant rows for every (model × TF) combo in the curated
+   map — ~26 rows total (was ~15; +11 from extending `base` / `trend` /
+   `futures` / `meta` / `tft` to additional applicable TFs).
 3. ✅ Scalping rows: long_acc ≥ 50 %, short_acc ≥ 50 %, no
    class-imbalance warning.
-4. ✅ TFT rows: status `OK` for the TFs that converge (1h/4h/1d
-   expected); error-isolated for the ones that don't (1m/5m/1w);
-   no `cannot reindex` in any logs.
+4. ✅ TFT rows: status `OK` at every TF in the curated map (15m / 1h /
+   4h); no `cannot reindex` in any logs.
 5. ✅ Mode-switch in Performance Overview card: PAPER shows $100 K
    USDT only, no BTC/SOL/ADA bleed; TESTNET shows live exchange
    balance + open positions; REAL CASH (formerly MAINNET) renders
@@ -517,18 +582,19 @@ After all phases complete, the dashboard must show:
 ## §5 · What to reply
 
 **To approve as-is**: reply `approved` — I execute steps 1 → 22 in
-order. The plan halts before step 15 (the overnight sweep) for a
-"ready to fire?" confirmation, since 13–26 h wall clock is a real
-commitment. Anything blocking on a v4 decision (3A confirmation TFs,
-4A dashboard sections, …) I re-confirm at that step.
+order. The plan halts before **step 16** (the overnight sweep) for a
+"ready to fire?" confirmation; curated sweep is 7-13 h wall clock
+(was 13-26 h in v3 strict all×all). Anything blocking on a v4
+decision (3A confirmation TFs, 4A dashboard sections, …) I re-confirm
+at that step.
 
 **To override defaults**: tell me which one. Common overrides:
-- `use curated P0.A` → revert to v2's 25-combo map (faster sweep, no
-  obviously-broken combos).
+- `use strict all×all` → 49-combo sweep (v3 default; longer + lower-quality models on the noise combos).
+- `drop X / Y from P0.A` → name specific (key, tf) pairs to skip.
 - `use multi-TF agent (option 1)` for P0.B.
 - `drop 4A sections X / Y / Z` — listed by number.
 - `skip 1J — I'll trigger backfill manually`.
-- `do steps 1-9 only this week, defer the rest`.
+- `do steps 1-10 only this week, defer the rest`.
 
 **To stop**: reply `abort` — everything stays stopped, no code
 changes.
