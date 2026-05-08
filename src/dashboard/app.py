@@ -4847,7 +4847,7 @@ def api_portfolio():
     out['closed_position_count'] = closed_cnt
     out['trade_mode_label']      = ('testnet — Binance fake-money exchange'
                                     if mode == 'testnet'
-                                    else '⚠ MAINNET — real money')
+                                    else '⚠ REAL CASH — live Binance, real money')
     return jsonify(out)
 
 

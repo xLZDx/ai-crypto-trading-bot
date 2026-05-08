@@ -5050,6 +5050,52 @@ def test_phase70_pr43_dashboard_watchdog():
           'watchdog =' in rs.lower() or 'watchdog =' in rs)
 
 
+def test_phase71_pr46_real_cash_label_rename():
+    """v3 step 1 (1K): MAINNET → REAL CASH UI rename.
+
+    Display strings only — backend wire value 'mainnet' is unchanged
+    (control.json key, balance_real.json filename, ccxt config all
+    keep the original token). The button id, CSS class, and the
+    JS comparison `m === 'mainnet'` must still resolve, otherwise
+    mode-switching breaks."""
+    print('\n[Phase 71 — PR-46 REAL CASH label rename (v3 step 1)]')
+
+    if not os.path.exists(TEMPLATE_PATH):
+        check('template file exists', False, TEMPLATE_PATH)
+        return
+    html = open(TEMPLATE_PATH, encoding='utf-8').read()
+
+    # Display label flipped to REAL CASH on the button + tooltip + status.
+    check('button label reads "⚡ REAL CASH" (not "⚡ MAINNET")',
+          '⚡ REAL CASH' in html and '⚡ MAINNET' not in html)
+    check('button tooltip uses REAL CASH wording',
+          'REAL CASH at risk' in html)
+    check('status mapping shows "REAL CASH — live Binance"',
+          "'⚠ REAL CASH — live Binance, real money'" in html)
+    check('confirm dialog asks "Switch to REAL CASH (live Binance)"',
+          'Switch to REAL CASH (live Binance)' in html)
+
+    # Wire value `mainnet` and supporting selectors must NOT have been
+    # renamed — they're load-bearing in JS and CSS.
+    check('button id `lt-btn-mainnet` preserved (wire value)',
+          'id="lt-btn-mainnet"' in html)
+    check('JS comparison `m === \'mainnet\'` still present',
+          "m === 'mainnet'" in html)
+    check('onclick still calls ltSetMode(\'mainnet\')',
+          "ltSetMode('mainnet')" in html)
+    check('CSS class .lt-mode-btn.active.mainnet still defined',
+          '.lt-mode-btn.active.mainnet' in html)
+
+    # Backend trade_mode_label string surfaced via /api/portfolio
+    # also flipped to REAL CASH so frontend doesn't see two labels.
+    app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
+    if os.path.exists(app_path):
+        app = open(app_path, encoding='utf-8').read()
+        check('app.py /api/portfolio returns "REAL CASH" label (not MAINNET)',
+              '⚠ REAL CASH — live Binance, real money' in app
+              and '⚠ MAINNET — real money' not in app)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -5377,6 +5423,7 @@ def main():
     test_phase68_pr41_orphan_training_reattach_and_collapse_fix()
     test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest()
     test_phase70_pr43_dashboard_watchdog()
+    test_phase71_pr46_real_cash_label_rename()
 
     if not args.offline:
         test_api(args.url)

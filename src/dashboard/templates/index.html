@@ -992,7 +992,7 @@ async function ltLoadMode() {
     if (status) {
       const txt = {paper: 'paper — internal-only booking, no real orders',
                    testnet: 'testnet — Binance fake-money exchange',
-                   mainnet: '⚠ MAINNET — real money'}[m] || m;
+                   mainnet: '⚠ REAL CASH — live Binance, real money'}[m] || m;
       status.textContent = txt;
       status.style.color = m === 'mainnet' ? '#fb7185'
                           : m === 'paper'  ? '#60a5fa'
@@ -1056,10 +1056,12 @@ async function ltSetMode(mode) {
   // mid-flight) used to fire two POSTs and the second response could race
   // ahead of the first, leaving the visible state desynced from disk.
   if (_ltSwitchInFlight) return;
-  // Only mainnet needs a confirm (real money). Paper ↔ testnet should
-  // switch instantly so the operator can compare modes quickly.
+  // Only REAL CASH (mode === 'mainnet') needs a confirm — real money on
+  // every order. Paper ↔ testnet switch instantly so the operator can
+  // compare modes quickly. Wire value is still 'mainnet' (control plane
+  // and balance_real.json key); only the displayed label changed.
   if (mode === 'mainnet') {
-    if (!confirm('⚠ Switch to MAINNET?\n\nReal money will be at risk on every order. Make sure you have:\n  - reviewed strategy_config.json\n  - confirmed position sizing limits\n  - tested in TESTNET first\n\nProceed?')) return;
+    if (!confirm('⚠ Switch to REAL CASH (live Binance)?\n\nReal money will be at risk on every order. Make sure you have:\n  - reviewed strategy_config.json\n  - confirmed position sizing limits\n  - tested in TESTNET first\n\nProceed?')) return;
   }
   _ltSwitchInFlight = true;
   try {
@@ -1253,7 +1255,7 @@ document.addEventListener('DOMContentLoaded', function() {
           </div>
           <button class="lt-mode-btn paper"   id="lt-btn-paper"   onclick="ltSetMode('paper')"   title="Bot consumes live Binance feed and generates signals, but books trades to internal virtual balance only. No real orders sent.">📄 PAPER</button>
           <button class="lt-mode-btn testnet" id="lt-btn-testnet" onclick="ltSetMode('testnet')" title="Bot trades on Binance testnet (real orders, fake money).">🧪 TESTNET</button>
-          <button class="lt-mode-btn mainnet" id="lt-btn-mainnet" onclick="ltSetMode('mainnet')" title="Bot trades on Binance mainnet — real money will be at risk. Requires explicit confirm.">⚡ MAINNET</button>
+          <button class="lt-mode-btn mainnet" id="lt-btn-mainnet" onclick="ltSetMode('mainnet')" title="Bot trades on Binance live exchange — REAL CASH at risk on every order. Requires explicit confirm.">⚡ REAL CASH</button>
           <span id="lt-mode-status" style="font-size:.6rem;color:#64748b;margin-left:8px">loading…</span>
         </div>
         <div class="lt-row">
