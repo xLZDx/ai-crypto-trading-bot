@@ -971,9 +971,76 @@ select.field option{background:#0d1628;color:#e2e8f0}
 
 // ─── Live Trading switch + paper accounting (Overview tab) ──────────────────
 async function ltLoadAll() {
-  // Mode must load first so ltLoadBalance() knows which endpoint to hit.
+  // Mode must load first so ltLoadBalance() + loadPortfolioByMode()
+  // know which endpoint variant / which payload to fetch.
   await ltLoadMode();
   await ltLoadBalance();
+  await loadPortfolioByMode();
+}
+
+// v3.1 step 9 (1I) — mode-aware Performance Overview loader.
+// Fetches /api/portfolio?mode=<current> and writes the seven port-* +
+// bal-wallet-tbody fields directly from the payload, replacing the
+// pre-PR-46 mode-blind path that summed `tradesData` regardless of
+// which mode the operator had selected. The cached payload also gates
+// the legacy mode-blind writes in updateBalancesPanel() and the
+// portfolio-PnL block — those only fire when the payload is missing
+// or out-of-date relative to the mode toggle.
+let _lastPortfolioPayload = null;
+async function loadPortfolioByMode() {
+  try {
+    const mode = _ltCurrentMode || 'testnet';
+    const r = await fetch('/api/portfolio?mode=' + encodeURIComponent(mode));
+    const d = await r.json();
+    if (!d || d.error) {
+      console.warn('loadPortfolioByMode: backend reported', d && d.error);
+      // Don't clobber _lastPortfolioPayload — let legacy path serve as
+      // fallback until the next successful fetch.
+      return;
+    }
+    _lastPortfolioPayload = d;
+
+    const fmt = v => v == null ? '--' : (+v).toLocaleString(undefined, {maximumFractionDigits: 2, minimumFractionDigits: 2});
+    const fmtSign = v => v == null ? '--' : (v >= 0 ? '+' : '') + fmt(v);
+    const setT = (id, val, color) => { const el = document.getElementById(id); if (el) { el.textContent = val; if (color) el.style.color = color; } };
+    const colorPnl_ = v => v > 0 ? '#34d399' : v < 0 ? '#fb7185' : '#94a3b8';
+
+    setT('port-total-capital', d.total_capital  > 0 ? '$' + fmt(d.total_capital)   : '-- USDT');
+    setT('port-free-usdt',     d.free_usdt      > 0 ? '$' + fmt(d.free_usdt)       : '--');
+    setT('port-deployed',      d.in_positions_value > 0 ? '$' + fmt(d.in_positions_value) : '--');
+    setT('port-today-pnl',    fmtSign(d.today_pnl)  + ' USDT', colorPnl_(d.today_pnl  || 0));
+    setT('port-live-pnl',     fmtSign(d.live_pnl),            colorPnl_(d.live_pnl   || 0));
+    setT('port-closed-pnl',   fmtSign(d.closed_pnl),          colorPnl_(d.closed_pnl || 0));
+    const totalPnl = (d.live_pnl || 0) + (d.closed_pnl || 0);
+    setT('port-total-pnl',    fmtSign(totalPnl) + ' USDT',    colorPnl_(totalPnl));
+
+    // Render Balances table dynamically from payload.balances[].
+    // PAPER mode → only USDT shown (no testnet BTC/SOL/ADA bleed).
+    const tbody = document.getElementById('bal-wallet-tbody');
+    if (tbody && Array.isArray(d.balances)) {
+      const dotCol = a => ({USDT:'#22c55e', BTC:'#f7931a', SOL:'#9945ff', ADA:'#0033ad', ETH:'#627eea', BNB:'#f3ba2f', XRP:'#0033ad', DOGE:'#c2a633'}[a] || '#64748b');
+      tbody.innerHTML = d.balances.length === 0
+        ? `<tr><td colspan="4" style="color:#64748b;text-align:center;padding:14px">No balances reported (mode=${mode})</td></tr>`
+        : d.balances.map(b => {
+            const v = b.value != null ? '$' + fmt(b.value) : (b.qty ? '$' + fmt(b.qty) : '--');
+            const p = b.price != null ? '$' + fmt(b.price) : '--';
+            const qd = (b.qty < 0.01) ? 6 : (b.qty < 1) ? 4 : 2;
+            return `<tr>
+              <td><div class="bal-asset"><div class="bal-dot" style="background:${dotCol(b.asset)}"></div><span style="color:#e2e8f0;font-weight:700">${b.asset}</span></div></td>
+              <td style="color:#e2e8f0">${(+b.qty || 0).toFixed(qd)}</td>
+              <td style="color:#34d399">${v}</td>
+              <td style="color:#64748b">${p}</td>
+            </tr>`;
+        }).join('');
+    }
+
+    // Open count goes to risk-open (also legacy display); per-market
+    // breakdown is rendered by updateRiskPanelPerMarket below.
+    if (d.open_position_count != null) {
+      const elO = document.getElementById('risk-open');
+      if (elO) elO.textContent = d.open_position_count;
+    }
+  } catch (e) { console.error('loadPortfolioByMode', e); }
 }
 
 let _ltCurrentMode = 'testnet';
@@ -1074,6 +1141,8 @@ async function ltSetMode(mode) {
     // Mode just changed → refresh the balance from the right backend
     // (paper / testnet / mainnet) so numbers update immediately.
     await ltLoadBalance();
+    // …and refresh the Performance Overview card too (v3.1 step 9 / 1I).
+    await loadPortfolioByMode();
   } catch(e) {
     alert('Trade-mode switch failed: ' + (e.message||e));
   } finally {
@@ -1348,47 +1417,45 @@ document.addEventListener('DOMContentLoaded', function() {
           </div>
         </div>
 
-        <!-- SIGNAL -->
+        <!-- SIGNAL — per-market (v3.1 step 10 / 1L) -->
         <div class="ov-panel">
           <div class="ov-panel-hdr">
-            <span>Signal</span>
-            <span id="signal-badge" class="sig-badge sig-WAITING">WAITING</span>
+            <span>Signal — All Markets</span>
+            <span id="signal-badge" class="sig-badge sig-WAITING" style="display:none">WAITING</span>
           </div>
           <div class="ov-panel-body">
-            <div id="signal-reason" style="font-size:.66rem;color:#94a3b8;font-style:italic;margin-bottom:10px;min-height:26px">Analyzing charts…</div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:9px">
-              <div class="card-sm" style="padding:8px">
-                <div class="section-label">Sentiment</div>
-                <div style="font-size:1rem;font-weight:800;color:#fff;margin-top:3px" id="sig-sentiment">0.00</div>
-              </div>
-              <div class="card-sm" style="padding:8px">
-                <div class="section-label">RSI (14)</div>
-                <div style="font-size:1rem;font-weight:800;color:#fff;margin-top:3px" id="sig-rsi">50.0</div>
-              </div>
+            <div id="signal-by-market" data-test="signal-by-market" style="display:flex;flex-direction:column;gap:6px">
+              <div data-market-row="SPOT"     style="font-size:.6rem;color:#475569">Loading SPOT…</div>
+              <div data-market-row="FUTURES"  style="font-size:.6rem;color:#475569">Loading FUTURES…</div>
+              <div data-market-row="SCALPING" style="font-size:.6rem;color:#475569">Loading SCALPING…</div>
             </div>
-            <div class="section-label" style="margin-bottom:4px">Active Symbol</div>
-            <span id="sig-active-sym" class="chip" style="font-size:.62rem;padding:3px 9px">BTC/USDT</span>
+            <!-- Legacy single-symbol elements kept hidden so any
+                 cross-references continue to resolve. -->
+            <span id="signal-reason" hidden></span>
+            <span id="sig-sentiment" hidden>0.00</span>
+            <span id="sig-rsi" hidden>50.0</span>
+            <span id="sig-active-sym" hidden>BTC/USDT</span>
           </div>
         </div>
 
-        <!-- RISK -->
+        <!-- RISK — per-market (v3.1 step 10 / 1L) -->
         <div class="ov-panel">
-          <div class="ov-panel-hdr">Risk</div>
+          <div class="ov-panel-hdr">Risk — All Markets</div>
           <div class="ov-panel-body">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:9px">
-              <span style="color:#64748b;font-size:.68rem">Volatility</span>
-              <span style="font-size:.95rem;font-weight:800;color:#60a5fa" id="risk-vol">-- %</span>
+            <div id="risk-by-market" data-test="risk-by-market" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px">
+              <div data-market-row="SPOT"     style="font-size:.6rem;color:#475569">Loading SPOT…</div>
+              <div data-market-row="FUTURES"  style="font-size:.6rem;color:#475569">Loading FUTURES…</div>
+              <div data-market-row="SCALPING" style="font-size:.6rem;color:#475569">Loading SCALPING…</div>
             </div>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:9px">
-              <span style="color:#64748b;font-size:.68rem">Trade size</span>
-              <span style="font-size:.95rem;font-weight:800;color:#34d399" id="risk-size">-- USDT</span>
-            </div>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-              <span style="color:#64748b;font-size:.68rem">Open positions</span>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding-top:6px;border-top:1px solid rgba(148,163,184,.08)">
+              <span style="color:#64748b;font-size:.68rem">Total Open Positions</span>
               <span style="font-size:.95rem;font-weight:800;color:#fff" id="risk-open">--</span>
             </div>
+            <!-- Legacy single-symbol IDs kept hidden for compat. -->
+            <span id="risk-vol"  hidden>-- %</span>
+            <span id="risk-size" hidden>-- USDT</span>
             <div style="background:rgba(5,8,22,.5);border:1px solid rgba(148,163,184,.08);border-radius:8px;padding:7px 9px">
-              <div style="font-size:.56rem;color:#475569;line-height:1.5">Risk data is pulled from the current market snapshot in <span style="color:#60a5fa;font-family:'JetBrains Mono'">data/state.json</span>.</div>
+              <div style="font-size:.56rem;color:#475569;line-height:1.5">Per-market data from <span style="color:#60a5fa;font-family:'JetBrains Mono'">state.market_data.{SPOT,FUTURES,SCALPING}</span>; open counts filtered from trades.json by t.market.</div>
             </div>
           </div>
         </div>
@@ -3034,6 +3101,14 @@ function setActiveSym(sym) {
 
 // ─── OVERVIEW UPDATE ─────────────────────────────────────────────────────────
 function updateBalancesPanel(state) {
+  // v3.1 step 9 (1I) — when a fresh /api/portfolio payload exists for
+  // the operator's current mode, defer to it; the loader has already
+  // populated bal-wallet-tbody from payload.balances[]. The legacy
+  // mode-blind writes below would clobber paper-mode balances with
+  // testnet exchange data otherwise.
+  if (_lastPortfolioPayload && _lastPortfolioPayload.mode === _ltCurrentMode) {
+    return;
+  }
   const prices = state.prices || {};
   const setb = (id, v, d) => setText(id, v != null ? (+v).toFixed(d) : '--');
   setb('ov-bal-usdt', state.balance_usdt, 2);
@@ -3098,6 +3173,10 @@ function renderHoldingsRows(prices) {
 }
 
 function updateSignalPanel(sd) {
+  // Legacy single-symbol path — left in place for any code that still
+  // calls it directly. The visible Signal panel is now driven by
+  // updateSignalPanelByMarket() (v3.1 step 10 / 1L); these writes go
+  // to hidden spans for backwards compat.
   const sig = sd.last_signal || 'NONE';
   const badge = $('signal-badge');
   if (badge) { badge.textContent = sig || 'WAITING'; badge.className = 'sig-badge sig-' + sig; }
@@ -3106,13 +3185,98 @@ function updateSignalPanel(sd) {
 }
 
 function updateRiskPanel(sd) {
+  // Legacy single-symbol path — see updateSignalPanel comment above.
   setText('risk-vol',  (sd.volatility != null ? fmt(sd.volatility, 1) : '--') + ' %');
   setText('risk-size', (sd.recommended_trade_size != null ? fmt(sd.recommended_trade_size, 2) : '--') + ' USDT');
+}
+
+// v3.1 step 10 (1L) — per-market Signal & Risk renderers.
+// "Overall Bot Status — All Markets" was previously rendering single-
+// market BTC/USDT SPOT data only. These two functions iterate
+// {SPOT, FUTURES, SCALPING} and render one mini-row per market.
+const _MARKET_COLORS = {
+  SPOT:     '#60a5fa',
+  FUTURES:  '#a78bfa',
+  SCALPING: '#34d399',
+};
+
+function _sigBadgeHTML(sig) {
+  const s = (sig || 'WAITING').toUpperCase();
+  return `<span class="sig-badge sig-${s}" style="font-size:.55rem;padding:2px 6px">${s}</span>`;
+}
+
+function updateSignalPanelByMarket(state) {
+  const cont = document.getElementById('signal-by-market');
+  if (!cont) return;
+  const md = state.market_data || {};
+  const html = ['SPOT', 'FUTURES', 'SCALPING'].map(mkt => {
+    const mktData = md[mkt] || {};
+    const syms = Object.keys(mktData);
+    if (!syms.length) {
+      return `<div data-market-row="${mkt}" style="display:flex;justify-content:space-between;align-items:center;font-size:.62rem;color:#475569;padding:5px 8px;background:rgba(5,8,22,.4);border:1px solid rgba(148,163,184,.08);border-radius:6px"><span style="font-weight:800;color:${_MARKET_COLORS[mkt]}">${mkt}</span><span>no data</span></div>`;
+    }
+    const sym = syms[0];
+    const sd = mktData[sym] || {};
+    const sig = sd.last_signal || 'WAITING';
+    const sent = sd.sentiment != null ? fmt(sd.sentiment, 2) : (state.sentiment_score != null ? fmt(state.sentiment_score, 2) : '--');
+    const rsi = sd.rsi != null ? fmt(sd.rsi, 1) : '--';
+    return `<div data-market-row="${mkt}" style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:.62rem;padding:5px 8px;background:rgba(5,8,22,.4);border:1px solid rgba(148,163,184,.08);border-radius:6px">
+      <span style="font-weight:800;color:${_MARKET_COLORS[mkt]};min-width:70px">${mkt}</span>
+      <span class="chip" style="font-size:.56rem;padding:2px 6px">${sym}</span>
+      ${_sigBadgeHTML(sig)}
+      <span style="color:#94a3b8">Sent ${sent}</span>
+      <span style="color:#94a3b8">RSI ${rsi}</span>
+    </div>`;
+  }).join('');
+  cont.innerHTML = html;
+}
+
+function updateRiskPanelByMarket(state) {
+  const cont = document.getElementById('risk-by-market');
+  if (!cont) return;
+  const md = state.market_data || {};
+  // Per-market open count from tradesData filtered by t.market.
+  const openByMkt = {SPOT: 0, FUTURES: 0, SCALPING: 0};
+  (typeof tradesData !== 'undefined' ? tradesData : []).forEach(t => {
+    if ((t.status || '').toUpperCase() !== 'OPEN') return;
+    const m = (t.market || 'SPOT').toUpperCase();
+    if (m === 'SPOT_SCALPING') openByMkt.SCALPING++;
+    else if (openByMkt[m] !== undefined) openByMkt[m]++;
+  });
+  let totalOpen = 0;
+  const html = ['SPOT', 'FUTURES', 'SCALPING'].map(mkt => {
+    const mktData = md[mkt] || {};
+    const syms = Object.keys(mktData);
+    const sd = syms.length ? (mktData[syms[0]] || {}) : {};
+    const vol = sd.volatility != null ? fmt(sd.volatility, 1) + ' %' : '-- %';
+    const size = sd.recommended_trade_size != null ? fmt(sd.recommended_trade_size, 0) + ' USDT' : '-- USDT';
+    const open = openByMkt[mkt] || 0;
+    totalOpen += open;
+    return `<div data-market-row="${mkt}" style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:.62rem;padding:5px 8px;background:rgba(5,8,22,.4);border:1px solid rgba(148,163,184,.08);border-radius:6px">
+      <span style="font-weight:800;color:${_MARKET_COLORS[mkt]};min-width:70px">${mkt}</span>
+      <span style="color:#94a3b8">Vol <span style="color:#60a5fa;font-weight:700">${vol}</span></span>
+      <span style="color:#94a3b8">Size <span style="color:#34d399;font-weight:700">${size}</span></span>
+      <span style="color:#94a3b8">Open <span style="color:#fff;font-weight:700">${open}</span></span>
+    </div>`;
+  }).join('');
+  cont.innerHTML = html;
+  // The visible Total Open Positions counter (kept outside the per-row
+  // grid) — only overwrite if the API payload didn't already set it.
+  if (!_lastPortfolioPayload || _lastPortfolioPayload.open_position_count == null) {
+    const el = document.getElementById('risk-open');
+    if (el) el.textContent = totalOpen;
+  }
 }
 
 function updateUI(state) {
   updateSidebar(state);
   updateBalancesPanel(state);
+  // v3.1 step 10 (1L) — render per-market Signal & Risk rows (the
+  // visible Performance Overview content). Legacy single-symbol
+  // updateSignalPanel/updateRiskPanel still fire below to keep
+  // hidden compat IDs populated.
+  updateSignalPanelByMarket(state);
+  updateRiskPanelByMarket(state);
   const md = (state.market_data || {})[activeMarket] || {};
   const prices = state.prices || {};
   const selSym = $('ov-sym-select')?.value || Object.keys(md)[0] || 'BTC/USDT';
@@ -3245,6 +3409,13 @@ function focusSym(sym) {
 
 // ─── PNL ─────────────────────────────────────────────────────────────────────
 function updatePnl() {
+  // v3.1 step 9 (1I) — when a fresh /api/portfolio payload exists for
+  // the operator's current mode, defer all the port-* writes to
+  // loadPortfolioByMode(). This legacy path still computes and
+  // writes counters that aren't covered by the API payload (nb-open,
+  // ord-open-count, ord-closed-count) and serves as fallback for
+  // when the API is unreachable.
+  const _payloadFresh = !!(_lastPortfolioPayload && _lastPortfolioPayload.mode === _ltCurrentMode);
   const prices = botState.prices || {};
   let livePnl = 0, closedPnl = 0, todayPnl = 0, openCnt = 0, closedCnt = 0;
   let deployedValue = 0; // current market value of all open positions
@@ -3270,23 +3441,29 @@ function updatePnl() {
   const freeUsdt = +(botState.balance_usdt || 0);
   const totalCapital = freeUsdt + deployedValue;
 
-  const ptEl = $('port-total-pnl');
-  if (ptEl) { ptEl.textContent = (totalPnl>=0?'+':'')+fmt(totalPnl,2)+' USDT'; colorPnl(ptEl, totalPnl); }
-  const pdEl = $('port-today-pnl');
-  if (pdEl) { pdEl.textContent = (todayPnl>=0?'+':'')+fmt(todayPnl,2)+' USDT'; colorPnl(pdEl, todayPnl); }
-  const plEl = $('port-live-pnl');
-  if (plEl) { plEl.textContent = (livePnl>=0?'+':'')+fmt(livePnl,2); colorPnl(plEl, livePnl); }
-  const pcEl = $('port-closed-pnl');
-  if (pcEl) { pcEl.textContent = (closedPnl>=0?'+':'')+fmt(closedPnl,2); colorPnl(pcEl, closedPnl); }
+  // Mode-aware payload wins for the seven port-* fields (v3.1 step 9).
+  // Legacy compute still runs to produce the totals the API doesn't
+  // return (nb-open / ord-open-count / ord-closed-count counters).
+  if (!_payloadFresh) {
+    const ptEl = $('port-total-pnl');
+    if (ptEl) { ptEl.textContent = (totalPnl>=0?'+':'')+fmt(totalPnl,2)+' USDT'; colorPnl(ptEl, totalPnl); }
+    const pdEl = $('port-today-pnl');
+    if (pdEl) { pdEl.textContent = (todayPnl>=0?'+':'')+fmt(todayPnl,2)+' USDT'; colorPnl(pdEl, todayPnl); }
+    const plEl = $('port-live-pnl');
+    if (plEl) { plEl.textContent = (livePnl>=0?'+':'')+fmt(livePnl,2); colorPnl(plEl, livePnl); }
+    const pcEl = $('port-closed-pnl');
+    if (pcEl) { pcEl.textContent = (closedPnl>=0?'+':'')+fmt(closedPnl,2); colorPnl(pcEl, closedPnl); }
 
-  const tcEl = $('port-total-capital');
-  if (tcEl) tcEl.textContent = totalCapital > 0 ? '$'+fmt(totalCapital,2) : '-- USDT';
-  const fuEl = $('port-free-usdt');
-  if (fuEl) fuEl.textContent = freeUsdt > 0 ? '$'+fmt(freeUsdt,2) : '--';
-  const depEl = $('port-deployed');
-  if (depEl) depEl.textContent = deployedValue > 0 ? '$'+fmt(deployedValue,2) : '--';
+    const tcEl = $('port-total-capital');
+    if (tcEl) tcEl.textContent = totalCapital > 0 ? '$'+fmt(totalCapital,2) : '-- USDT';
+    const fuEl = $('port-free-usdt');
+    if (fuEl) fuEl.textContent = freeUsdt > 0 ? '$'+fmt(freeUsdt,2) : '--';
+    const depEl = $('port-deployed');
+    if (depEl) depEl.textContent = deployedValue > 0 ? '$'+fmt(deployedValue,2) : '--';
 
-  if ($('risk-open'))        $('risk-open').textContent        = openCnt;
+    if ($('risk-open')) $('risk-open').textContent = openCnt;
+  }
+
   if ($('nb-open'))          $('nb-open').textContent          = openCnt > 0 ? openCnt : '';
   if ($('ord-open-count'))   $('ord-open-count').textContent   = openCnt;
   if ($('ord-closed-count')) $('ord-closed-count').textContent = closedCnt;
@@ -3669,6 +3846,7 @@ function _strategyHourlyRefresh() {
   try { loadDataCoverage(); } catch(_) {}
   try { pollResampleJobs(); } catch(_) {}
   try { pipelineRefresh(); } catch(_) {}
+  try { loadPortfolioByMode(); } catch(_) {}  // v3.1 step 9 — keep Performance Overview mode-correct
 }
 
 // ── ML Model Cards ────────────────────────────────────────────────────────────

@@ -5406,6 +5406,82 @@ def test_phase71f_v31_oft_sweep_coverage():
           "'oft':      'exclusive'" in app or "'oft': 'exclusive'" in app)
 
 
+def test_phase72_v31_dashboard_mode_aware_and_per_market():
+    """v3.1 steps 9 + 10 (1I + 1L): the Performance Overview card is
+    now mode-aware (loadPortfolioByMode + payload-driven Balances) and
+    its Signal/Risk panels render per-market rows for SPOT / FUTURES /
+    SCALPING instead of the single-symbol BTC/USDT layout."""
+    print('\n[Phase 72 — v3.1 steps 9+10: mode-aware + per-market dashboard]')
+
+    if not os.path.exists(TEMPLATE_PATH):
+        check('template file exists', False, TEMPLATE_PATH)
+        return
+    html = open(TEMPLATE_PATH, encoding='utf-8').read()
+
+    # Step 9 — mode-aware Portfolio loader.
+    check('loadPortfolioByMode() function defined',
+          'async function loadPortfolioByMode()' in html)
+    check('loader fetches /api/portfolio?mode= + _ltCurrentMode',
+          "fetch('/api/portfolio?mode=' + encodeURIComponent(mode))" in html)
+    check('loader caches as _lastPortfolioPayload',
+          '_lastPortfolioPayload = d' in html
+          and 'let _lastPortfolioPayload = null' in html)
+    check('loader writes 7 port-* fields directly from payload',
+          "setT('port-total-capital'" in html
+          and "setT('port-free-usdt'" in html
+          and "setT('port-deployed'" in html
+          and "setT('port-today-pnl'" in html
+          and "setT('port-live-pnl'" in html
+          and "setT('port-closed-pnl'" in html
+          and "setT('port-total-pnl'" in html)
+    check('loader renders bal-wallet-tbody from payload.balances[]',
+          'bal-wallet-tbody' in html and 'd.balances.length === 0' in html)
+
+    check('ltLoadAll() invokes loadPortfolioByMode',
+          'await ltLoadMode();\n  await ltLoadBalance();\n  await loadPortfolioByMode();' in html)
+    check('ltSetMode() invokes loadPortfolioByMode after POST',
+          'await ltLoadMode();' in html and 'await loadPortfolioByMode();' in html)
+    check('hourly auto-refresh invokes loadPortfolioByMode',
+          'try { loadPortfolioByMode(); } catch(_) {}' in html)
+
+    # Legacy mode-blind paths gated when payload is fresh.
+    check('updateBalancesPanel gated by _lastPortfolioPayload + mode match',
+          ('_lastPortfolioPayload && _lastPortfolioPayload.mode === _ltCurrentMode' in html)
+          and '// v3.1 step 9 (1I)' in html)
+    check('updatePnl gated by _payloadFresh check',
+          'const _payloadFresh = !!(_lastPortfolioPayload && _lastPortfolioPayload.mode === _ltCurrentMode);' in html
+          and 'if (!_payloadFresh)' in html)
+
+    # Step 10 — per-market Signal & Risk panels.
+    check('signal panel HTML container has data-test="signal-by-market"',
+          'data-test="signal-by-market"' in html)
+    check('risk panel HTML container has data-test="risk-by-market"',
+          'data-test="risk-by-market"' in html)
+    check('signal panel pre-renders 3 market rows (SPOT / FUTURES / SCALPING)',
+          html.count('data-market-row="SPOT"') >= 2
+          and html.count('data-market-row="FUTURES"') >= 2
+          and html.count('data-market-row="SCALPING"') >= 2)
+    check('updateSignalPanelByMarket() function defined',
+          'function updateSignalPanelByMarket(state)' in html)
+    check('updateRiskPanelByMarket() function defined',
+          'function updateRiskPanelByMarket(state)' in html)
+    check('updateUI() invokes both per-market renderers',
+          'updateSignalPanelByMarket(state);' in html
+          and 'updateRiskPanelByMarket(state);' in html)
+    check('per-market Signal renderer iterates SPOT/FUTURES/SCALPING',
+          "['SPOT', 'FUTURES', 'SCALPING'].map" in html)
+    check('per-market Risk renderer filters tradesData by t.market',
+          'openByMkt[m]' in html and 'SPOT_SCALPING' in html)
+    check('Signal panel header reads "Signal — All Markets"',
+          'Signal — All Markets' in html or 'Signal &mdash; All Markets' in html)
+    check('Risk panel header reads "Risk — All Markets"',
+          'Risk — All Markets' in html or 'Risk &mdash; All Markets' in html)
+    check('legacy single-symbol IDs preserved (hidden) for compat',
+          'id="signal-reason" hidden' in html
+          and 'id="sig-rsi" hidden' in html
+          and 'id="risk-vol"  hidden' in html)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -5739,6 +5815,7 @@ def main():
     test_phase71d_v31_tft_dedupe_regression()
     test_phase71e_v31_scalping_rebalance()
     test_phase71f_v31_oft_sweep_coverage()
+    test_phase72_v31_dashboard_mode_aware_and_per_market()
 
     if not args.offline:
         test_api(args.url)
