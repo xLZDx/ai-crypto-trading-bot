@@ -4742,8 +4742,18 @@ def test_phase60_pr36_training_concurrency_cap():
             p = body.find(needle)
             if p > 0 and (acquire_pos < 0 or p < acquire_pos):
                 acquire_pos = p
-        popen_pos = body.find('subprocess.Popen(')
-        check(f'{label}: acquire() precedes subprocess.Popen()',
+        # The spawn was originally inline subprocess.Popen but PR-40
+        # routes it through _spawn_training_subprocess which sets
+        # detach + log redirection. Either call site must come AFTER
+        # the acquire so the lane is reserved before the subprocess
+        # starts consuming resources.
+        popen_pos = -1
+        for needle in ('subprocess.Popen(',
+                       '_spawn_training_subprocess('):
+            p = body.find(needle)
+            if p > 0 and (popen_pos < 0 or p < popen_pos):
+                popen_pos = p
+        check(f'{label}: acquire() precedes subprocess spawn',
               0 <= acquire_pos < popen_pos)
         check(f'{label}: release() called in finally',
               ('_training_scheduler.release(' in body
@@ -4987,6 +4997,114 @@ def test_phase61_pr37_resource_aware_scheduler():
     check('cpu acquire proceeds after exclusive release', cpu_done['fired'])
 
 
+def test_phase64_pr40_training_survives_dashboard_restart():
+    """Trainer subprocesses are detached + persisted so an in-flight OFT
+    run survives a dashboard restart instead of dying with the parent."""
+    print('\n[Phase 64 — PR-40 training survives dashboard restart]')
+
+    app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
+    with open(app_path, encoding='utf-8') as f:
+        app = f.read()
+
+    check('_TRAINING_JOBS_FILE persistence path defined',
+          '_TRAINING_JOBS_FILE' in app and 'training_jobs.json' in app)
+    check('_persist_training_jobs helper defined',
+          'def _persist_training_jobs' in app)
+    check('_load_training_jobs helper defined',
+          'def _load_training_jobs' in app)
+    check('_reattach_training_subprocess helper defined',
+          'def _reattach_training_subprocess' in app)
+    check('_spawn_training_subprocess uses DETACHED_PROCESS on Windows',
+          'DETACHED_PROCESS' in app and 'CREATE_NEW_PROCESS_GROUP' in app)
+    check('child stdout redirected to per-job log file',
+          "_TRAINING_LOG_DIR" in app and "/ f'{job_id}.log'" in app)
+    check('_record_job calls _persist_training_jobs',
+          '_persist_training_jobs()' in app
+          and app.count('_persist_training_jobs') >= 2)
+    check('child_pid recorded after spawn',
+          'child_pid=proc.pid' in app)
+    check('training-jobs-reload thread armed at module load',
+          "name='training-jobs-reload'" in app
+          or 'training-jobs-reload' in app)
+    check('reattach uses psutil.pid_exists for liveness',
+          'psutil.pid_exists' in app and 'pid_exists(int(pid))' in app)
+
+
+def test_phase65_pr40_pipeline_orchestrator_progress_broadcast():
+    """Frontend synthesizes a virtual allJob from _pipeStatus when the
+    pipeline orchestrator is in train phase but no API job exists, so
+    each Model Training row flips to 'RUNNING as part of Pipeline
+    Orchestrator' instead of looking idle."""
+    print('\n[Phase 65 — PR-40 pipeline orchestrator → row broadcast]')
+
+    tpl_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
+    with open(tpl_path, encoding='utf-8') as f:
+        tpl = f.read()
+
+    # The synthesizer block in pollTrainingJobs.
+    pti = tpl.find('async function pollTrainingJobs')
+    pti_end = tpl.find('\n}\n', pti)
+    body = tpl[pti:pti_end] if pti_end > pti else ''
+    check('pollTrainingJobs declares allJob with let (mutable)',
+          'let allJob =' in body)
+    check("synth path checks _pipeStatus.status === 'running'",
+          "_pipeStatus.status === 'running'" in body
+          and "_pipeStatus.phase === 'train'" in body)
+    check('synth allJob carries progress_label "Pipeline Orchestrator"',
+          'as part of Pipeline Orchestrator' in body)
+    check('broadcast loop uses allJob.progress_label when set',
+          'allJob.progress_label || ' in body)
+
+
+def test_phase66_pr40_strategy_sections_collapsed_default():
+    """All Strategy & ML sections start collapsed; user's expand/collapse
+    choice is persisted to localStorage so it survives F5."""
+    print('\n[Phase 66 — PR-40 strategy sections collapsed by default]')
+
+    tpl_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
+    with open(tpl_path, encoding='utf-8') as f:
+        tpl = f.read()
+
+    # No section in the strategy tab uses the .open / unmarked pattern
+    # for "expanded by default" anymore.
+    check('Strategy & ML section default = collapsed (no ".st-sec open")',
+          'class="st-sec open"' not in tpl)
+    check('All collapsible-section defaults include is-collapsed',
+          'class="card collapsible-section"' not in tpl
+          or tpl.count('class="card collapsible-section"') == 0)
+
+    # Restore + persist helpers exist.
+    check('_restoreStrategySectionStates restores from localStorage',
+          'function _restoreStrategySectionStates' in tpl
+          and 'st-sec-open:' in tpl)
+    check('toggleSection persists open state to localStorage',
+          'function toggleSection' in tpl
+          and "localStorage.setItem('st-sec-open:'" in tpl)
+    check('stToggle persists open state to localStorage',
+          'function stToggle' in tpl
+          and "localStorage.setItem('st-sec-open:'" in tpl)
+
+
+def test_phase67_pr40_loadStrategyFull_renders_directly():
+    """Refresh button on Model Training works: loadStrategyFull no longer
+    relies on renderStrategyTab(botState) (which guards on _stratFull
+    and may early-return). It now calls the four renderers directly."""
+    print('\n[Phase 67 — PR-40 loadStrategyFull renders directly]')
+
+    tpl_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
+    with open(tpl_path, encoding='utf-8') as f:
+        tpl = f.read()
+
+    body_start = tpl.find('async function loadStrategyFull')
+    body_end   = tpl.find('\n}\n', body_start)
+    body = tpl[body_start:body_end] if body_end > body_start else ''
+    for fn in ('_renderMLCards', '_renderTrainingTable',
+               '_renderStratCards', '_renderBtSummary'):
+        check(f'loadStrategyFull calls {fn} directly', fn + '(' in body)
+    check('refresh chip flashes "refreshing…" while in flight',
+          "'refreshing…'" in body)
+
+
 # ─── Runner ───────────────────────────────────────────────────────────────────
 
 def main():
@@ -5077,6 +5195,10 @@ def main():
     test_phase61_pr37_resource_aware_scheduler()
     test_phase62_pr38_training_eta_and_elapsed()
     test_phase63_pr39_strategy_panels_hourly_refresh()
+    test_phase64_pr40_training_survives_dashboard_restart()
+    test_phase65_pr40_pipeline_orchestrator_progress_broadcast()
+    test_phase66_pr40_strategy_sections_collapsed_default()
+    test_phase67_pr40_loadStrategyFull_renders_directly()
 
     if not args.offline:
         test_api(args.url)

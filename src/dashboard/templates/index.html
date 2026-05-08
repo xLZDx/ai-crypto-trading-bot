@@ -1714,7 +1714,7 @@ document.addEventListener('DOMContentLoaded', function() {
         .dcov-legend{display:flex;gap:10px;font-size:.55rem;color:#94a3b8;align-items:center;flex-wrap:wrap}
         .dcov-dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:middle}
       </style>
-      <div class="card collapsible-section" id="st-sec-dcov" style="margin-bottom:10px">
+      <div class="card collapsible-section is-collapsed" id="st-sec-dcov" style="margin-bottom:10px">
         <div class="st-sec-hdr card-header collapsible-hdr" onclick="toggleSection(this)">
           <span class="st-sec-title">Data Coverage (multi-timeframe)</span>
           <span class="chip" id="chip-dcov" style="font-size:.56rem">—</span>
@@ -1759,7 +1759,7 @@ document.addEventListener('DOMContentLoaded', function() {
         .pipe-status-pill.error{background:rgba(251,113,133,.16);color:#fb7185;border:1px solid rgba(251,113,133,.3)}
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}
       </style>
-      <div class="card collapsible-section" id="st-sec-pipe" style="margin-bottom:10px">
+      <div class="card collapsible-section is-collapsed" id="st-sec-pipe" style="margin-bottom:10px">
         <div class="st-sec-hdr card-header collapsible-hdr" onclick="toggleSection(this)">
           <span class="st-sec-title">Pipeline Orchestrator (train → multi-TF backtest)</span>
           <span class="pipe-status-pill idle" id="pipe-pill">idle</span>
@@ -1794,7 +1794,7 @@ document.addEventListener('DOMContentLoaded', function() {
         .bcmp-row b{color:#cbd5e1;font-weight:700}
         .bcmp-hdr{font-size:.78rem;font-weight:800;letter-spacing:.04em;margin-bottom:6px}
       </style>
-      <div class="card collapsible-section" id="st-sec-bcmp" style="margin-bottom:10px">
+      <div class="card collapsible-section is-collapsed" id="st-sec-bcmp" style="margin-bottom:10px">
         <div class="st-sec-hdr card-header collapsible-hdr" onclick="toggleSection(this)">
           <span class="st-sec-title">Pure Rule vs ML-Driven (Aggregate)</span>
           <span class="chip" id="chip-bcmp" style="font-size:.56rem">—</span>
@@ -1835,7 +1835,7 @@ document.addEventListener('DOMContentLoaded', function() {
         .stab-cell.ok{background:rgba(52,211,153,.10);color:#34d399;border-color:rgba(52,211,153,.22)}
         .stab-cell.gold{background:rgba(52,211,153,.22);color:#10b981;border-color:rgba(52,211,153,.4);font-weight:800}
       </style>
-      <div class="card collapsible-section" id="st-sec-stab" style="margin-bottom:10px">
+      <div class="card collapsible-section is-collapsed" id="st-sec-stab" style="margin-bottom:10px">
         <div class="st-sec-hdr card-header collapsible-hdr" onclick="toggleSection(this)">
           <span class="st-sec-title">Stability Heatmap (TF × Strategy)</span>
           <span class="chip" id="chip-stab" style="font-size:.56rem">—</span>
@@ -1873,7 +1873,7 @@ document.addEventListener('DOMContentLoaded', function() {
       </div>
 
       <!-- ── Section: ML Models ─────────────────────────────────────── -->
-      <div class="st-sec open" id="st-sec-ml">
+      <div class="st-sec" id="st-sec-ml">
         <div class="st-sec-hdr" onclick="stToggle('st-sec-ml')">
           <span class="st-sec-title">ML Models</span>
           <span class="chip" id="chip-ml-count" style="font-size:.56rem">Loading…</span>
@@ -1899,7 +1899,7 @@ document.addEventListener('DOMContentLoaded', function() {
         .tr-badge-stale{background:rgba(251,113,133,.12);color:#fb7185;border:1px solid rgba(251,113,133,.3);
           font-size:.5rem;font-weight:700;padding:1px 6px;border-radius:999px}
       </style>
-      <div class="card st-section collapsible-section" id="st-sec-training" style="margin-top:10px">
+      <div class="card st-section collapsible-section is-collapsed" id="st-sec-training" style="margin-top:10px">
         <div class="st-sec-hdr card-header collapsible-hdr" onclick="toggleSection(this)">
           <span class="st-sec-title">Model Training</span>
           <span class="chip" id="chip-training-count" style="font-size:.56rem">Loading…</span>
@@ -1983,7 +1983,7 @@ document.addEventListener('DOMContentLoaded', function() {
       </div>
 
       <!-- ── Section: Strategies ───────────────────────────────────── -->
-      <div class="st-sec open" id="st-sec-strats">
+      <div class="st-sec" id="st-sec-strats">
         <div class="st-sec-hdr" onclick="stToggle('st-sec-strats')">
           <span class="st-sec-title">Strategies</span>
           <span class="chip" id="chip-strat-count" style="font-size:.56rem">Loading…</span>
@@ -1993,7 +1993,7 @@ document.addEventListener('DOMContentLoaded', function() {
       </div>
 
       <!-- ── Section: Quant Signal Matrix ─────────────────────────── -->
-      <div class="st-sec open" id="st-sec-quant">
+      <div class="st-sec" id="st-sec-quant">
         <div class="st-sec-hdr" onclick="stToggle('st-sec-quant')">
           <span class="st-sec-title">Quant Signal Matrix</span>
           <span class="chip" id="chip-quant-count" style="font-size:.56rem">20 pairs</span>
@@ -2008,7 +2008,7 @@ document.addEventListener('DOMContentLoaded', function() {
       </div>
 
       <!-- ── Backtest Comparison Table ─────────────────────────────────── -->
-      <div class="card st-section collapsible-section" id="st-sec-backtest" style="margin-top:10px">
+      <div class="card st-section collapsible-section is-collapsed" id="st-sec-backtest" style="margin-top:10px">
         <div class="st-sec-hdr card-header collapsible-hdr" onclick="toggleSection(this)">
           <span class="st-sec-title">Backtest Comparison</span>
           <span class="chip" id="bt-compare-chip" style="font-size:.56rem">—</span>
@@ -3471,13 +3471,62 @@ function stToggle(id) {
 
 // Click handler for cards built with .card.collapsible-section + an inner
 // .collapsible-hdr. Walks up to the section root and toggles .is-collapsed,
-// which the CSS hooks for both body display and chevron rotation. Used by
-// Backtest Comparison + Model Training.
+// which the CSS hooks for both body display and chevron rotation.
+// Persists the per-section open/collapsed state to localStorage so the
+// operator's last choice survives F5 / dashboard restart.
 function toggleSection(hdrEl) {
   if (!hdrEl) return;
   const sec = hdrEl.closest('.collapsible-section');
-  if (sec) sec.classList.toggle('is-collapsed');
+  if (!sec) return;
+  sec.classList.toggle('is-collapsed');
+  if (sec.id) {
+    try {
+      const open = !sec.classList.contains('is-collapsed');
+      localStorage.setItem('st-sec-open:' + sec.id, open ? '1' : '0');
+    } catch (_) {}
+  }
 }
+
+// Same idea for the older .st-sec / .st-sec.open pattern (ML Models,
+// Strategies, Quant Matrix sections — pre-collapsible-section refactor).
+// Public so the inline onclick handlers in those sections can call it.
+function stToggle(secId) {
+  const sec = document.getElementById(secId);
+  if (!sec) return;
+  sec.classList.toggle('open');
+  try {
+    const open = sec.classList.contains('open');
+    localStorage.setItem('st-sec-open:' + secId, open ? '1' : '0');
+  } catch (_) {}
+}
+window.stToggle = stToggle;
+
+// Restore each section's open/collapsed state from localStorage. Default
+// when no preference is stored: COLLAPSED (operator asked for "all
+// cards collapsed on first open" — they expand only what they want).
+// Called on DOMContentLoaded; idempotent.
+function _restoreStrategySectionStates() {
+  // Newer collapsible-section pattern (Data Coverage, Pipeline, Pure
+  // Rule vs ML, Stability Heatmap, Model Training, Backtest, ML Health
+  // Notes). Default = is-collapsed.
+  document.querySelectorAll('.collapsible-section[id^="st-sec-"]').forEach(sec => {
+    let pref = null;
+    try { pref = localStorage.getItem('st-sec-open:' + sec.id); } catch (_) {}
+    if (pref === '1')      sec.classList.remove('is-collapsed');
+    else if (pref === '0') sec.classList.add('is-collapsed');
+    else                   sec.classList.add('is-collapsed');   // default
+  });
+  // Older .st-sec.open pattern (ML Models, Strategies, Quant Matrix).
+  // Default = no .open class (collapsed).
+  document.querySelectorAll('.st-sec[id^="st-sec-"]').forEach(sec => {
+    let pref = null;
+    try { pref = localStorage.getItem('st-sec-open:' + sec.id); } catch (_) {}
+    if (pref === '1')      sec.classList.add('open');
+    else if (pref === '0') sec.classList.remove('open');
+    else                   sec.classList.remove('open');         // default
+  });
+}
+document.addEventListener('DOMContentLoaded', _restoreStrategySectionStates);
 
 // ─── STRATEGY TAB DATA LOAD ───────────────────────────────────────────────────
 let _stratFull = null;
@@ -3494,6 +3543,14 @@ async function loadStrategyFull() {
   if (_stratLoadInFlight) return;
   _stratLoadInFlight = true;
   _stratLoadAttempts++;
+  // Visible cue while the 4 s /api/strategy/full fetch is in flight,
+  // so clicking ↻ Refresh feels responsive instead of looking dead.
+  const trChip = document.getElementById('chip-training-count');
+  const mlChip = document.getElementById('chip-ml-count');
+  const trChipPrev = trChip ? trChip.textContent : null;
+  const mlChipPrev = mlChip ? mlChip.textContent : null;
+  if (trChip) { trChip.textContent = 'refreshing…'; trChip.style.color = '#fbbf24'; }
+  if (mlChip) { mlChip.textContent = 'refreshing…'; mlChip.style.color = '#fbbf24'; }
   try {
     _stratFull = await apiFetch('/api/strategy/full');
     _stratLoadFailed = false;
@@ -3502,11 +3559,22 @@ async function loadStrategyFull() {
     console.error('loadStrategyFull failed:', e);
   } finally {
     _stratLoadInFlight = false;
+    if (trChip) trChip.style.color = '';
+    if (mlChip) mlChip.style.color = '';
   }
   // Cap retries — show inline error after 3 failures rather than spinning.
   if (_stratFull) {
-    renderStrategyTab(botState);
+    // Re-render directly instead of bouncing through renderStrategyTab
+    // (which guards on !_stratFull and may early-return). This is what
+    // the ↻ Refresh button on Model Training depends on — the four
+    // table renderers must run on every successful fetch.
+    try { _renderMLCards(_stratFull); } catch(_) {}
+    try { _renderTrainingTable(); } catch(_) {}
+    try { _renderStratCards(_stratFull); } catch(_) {}
+    try { _renderBtSummary(_stratFull); } catch(_) {}
   } else if (_stratLoadAttempts < 3) {
+    if (trChip) trChip.textContent = trChipPrev || 'Loading…';
+    if (mlChip) mlChip.textContent = mlChipPrev || 'Loading…';
     setTimeout(loadStrategyFull, 2000);
   } else {
     _renderStrategyTabError();
@@ -4040,7 +4108,24 @@ async function pollTrainingJobs() {
     // Pre-fix: clicking ▶ Retrain ALL spawned a job with model='all' that
     // didn't appear on any row, so the user saw NOTHING happen and kept
     // re-clicking — ending up with N parallel train_all subprocesses.
-    const allJob = active.find(j => j.model === 'all');
+    let allJob = active.find(j => j.model === 'all');
+    // Pipeline orchestrator runs train_all_models() in its own subprocess
+    // (via /api/pipeline/run) — it doesn't go through the dashboard's
+    // _training_jobs registry, so /api/training/jobs returns no allJob.
+    // Synthesize one from the pipeline status so the per-model rows
+    // still flip to RUNNING instead of looking stale.
+    if (!allJob && typeof _pipeStatus !== 'undefined' && _pipeStatus
+        && _pipeStatus.status === 'running' && _pipeStatus.phase === 'train') {
+      allJob = {
+        job_id: 'pipeline:' + (_pipeStatus.pid || 'orch'),
+        model: 'all',
+        status: 'running',
+        progress_label: 'as part of Pipeline Orchestrator',
+        // Carry over started_at if the pipeline status surfaces it so
+        // the elapsed timer on each row works.
+        started_at: _pipeStatus.started_at || null,
+      };
+    }
     // Recently-failed jobs we want to surface for ~2 minutes so the
     // operator can see the FAILED pill with the error reason without
     // having to dig through logs.
@@ -4066,10 +4151,14 @@ async function pollTrainingJobs() {
     // model row that isn't already running its own job — so every row's
     // pill flips to RETRAIN-ALL instead of staying on stale OK.
     if (allJob) {
+      // Use the allJob's own progress_label if the synth path set one
+      // ('as part of Pipeline Orchestrator'), otherwise fall back to
+      // the Retrain ALL wording.
+      const lbl = allJob.progress_label || 'as part of Retrain ALL';
       for (const k of ['base','trend','futures','scalping','tft','oft','meta','regime']) {
         if (!newActive[k]) {
           newActive[k] = allJob.job_id;
-          newJobs[k] = {...allJob, model: k, progress_label: 'as part of Retrain ALL'};
+          newJobs[k] = {...allJob, model: k, progress_label: lbl};
         }
       }
     }

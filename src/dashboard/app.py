@@ -2821,10 +2821,219 @@ def _record_job(job_id: str, **fields) -> None:
             oldest = min(_training_jobs.values(),
                          key=lambda x: x.get('created_at', 0))
             _training_jobs.pop(oldest['job_id'], None)
+    # Persist on every state change so an operator who started OFT
+    # (140 min run) survives an in-flight dashboard restart.
+    try:
+        _persist_training_jobs()
+    except Exception:
+        pass
 
 
 _training_active_procs: dict[str, "subprocess.Popen"] = {}
 _training_active_lock = threading.Lock()
+
+# Persisted training-jobs state. Survives dashboard restarts so an
+# operator who just kicked off OFT (140 min run) doesn't lose visibility
+# when the dashboard process dies for any reason. Each entry is the
+# same record shape as _training_jobs but on disk; we reload at startup
+# and rejoin any subprocess whose pid is still alive.
+_TRAINING_JOBS_FILE = _Path(project_root) / 'data' / 'training_jobs.json'
+_TRAINING_LOG_DIR = _Path(project_root) / 'logs' / 'train'
+
+
+def _persist_training_jobs() -> None:
+    """Atomic write of _training_jobs to disk. Called from _record_job."""
+    try:
+        _TRAINING_JOBS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with _training_jobs_lock:
+            snap = {jid: dict(j) for jid, j in _training_jobs.items()}
+        # Strip the live Popen handle (not JSON-serialisable) and any
+        # transient fields the dict may carry.
+        for j in snap.values():
+            j.pop('_proc', None)
+        from src.utils.safe_json import write_json
+        # safe_json.write_json builds the lockfile path via string concat,
+        # so it can't take a pathlib.Path — pass the stringified form.
+        write_json(str(_TRAINING_JOBS_FILE),
+                   {'jobs': snap, 'saved_at': time.time()})
+    except Exception as exc:
+        logger = __import__('logging').getLogger(__name__)
+        logger.debug('[training] persist failed: %s', exc)
+
+
+def _load_training_jobs() -> None:
+    """Reload persisted jobs at startup. Reconcile each 'running' entry
+    against psutil — if the recorded child_pid is still alive, attach a
+    poller thread to wait for it; if dead, infer completion from the
+    log file tail and mark 'done' / 'lost' accordingly."""
+    if not _TRAINING_JOBS_FILE.exists():
+        return
+    try:
+        from src.utils.safe_json import read_json
+        raw = read_json(str(_TRAINING_JOBS_FILE), default={}) or {}
+        saved = raw.get('jobs') or {}
+    except Exception:
+        return
+    if not isinstance(saved, dict) or not saved:
+        return
+    now = time.time()
+    with _training_jobs_lock:
+        for jid, j in saved.items():
+            if not isinstance(j, dict):
+                continue
+            _training_jobs[jid] = dict(j)
+    # Reconcile in-flight subprocesses. Done outside the lock so the
+    # poller threads can update _training_jobs as they progress.
+    try:
+        import psutil
+    except ImportError:
+        return
+    for jid, j in list(saved.items()):
+        if j.get('status') not in ('running', 'queued', 'starting'):
+            continue
+        pid = j.get('child_pid')
+        if not pid:
+            # No PID recorded — can't reconnect. Mark as lost.
+            _record_job(jid, status='lost', finished_at=now,
+                        errors=['dashboard restart — pid not recorded; '
+                                'subprocess orphaned, check logs/train/'
+                                + jid + '.log'])
+            continue
+        try:
+            alive = psutil.pid_exists(int(pid))
+        except Exception:
+            alive = False
+        if alive:
+            # Subprocess survived the dashboard restart. Spawn a poller
+            # thread to wait for it and write the final status when it
+            # exits.
+            threading.Thread(
+                target=_reattach_training_subprocess,
+                args=(jid, int(pid)),
+                daemon=True,
+                name=f'train-reattach-{jid}',
+            ).start()
+        else:
+            # Subprocess died while the dashboard was down. Snapshot
+            # the log tail so the operator can see what happened.
+            tail = ''
+            log_path = _TRAINING_LOG_DIR / f'{jid}.log'
+            try:
+                if log_path.exists():
+                    with open(log_path, 'rb') as f:
+                        f.seek(max(0, log_path.stat().st_size - 2048))
+                        tail = f.read().decode('utf-8', 'replace')[-1500:]
+            except Exception:
+                pass
+            _record_job(jid, status='lost', finished_at=now,
+                        errors=[f'subprocess pid {pid} died while dashboard '
+                                f'was offline. Log tail:\n{tail}'])
+
+
+def _reattach_training_subprocess(job_id: str, pid: int) -> None:
+    """Wait for an orphaned-but-alive training subprocess to finish,
+    then record the result. Used after dashboard restart picks up a
+    persisted 'running' job whose child is still alive."""
+    try:
+        import psutil
+        try:
+            p = psutil.Process(pid)
+        except psutil.NoSuchProcess:
+            _record_job(job_id, status='done', finished_at=time.time(),
+                        errors=['subprocess exited between persistence '
+                                'load and reattach'])
+            return
+        # Block until the process exits (no timeout — training can run
+        # for hours; the dashboard already had a 1 h cap pre-detach
+        # and that's now enforced inside the subprocess wrapper).
+        try:
+            p.wait()
+        except psutil.NoSuchProcess:
+            pass
+        rc = None
+        try:
+            rc = p.returncode
+        except Exception:
+            pass
+        # Read the log tail for any error message.
+        tail = ''
+        log_path = _TRAINING_LOG_DIR / f'{job_id}.log'
+        try:
+            if log_path.exists():
+                sz = log_path.stat().st_size
+                with open(log_path, 'rb') as f:
+                    f.seek(max(0, sz - 2048))
+                    tail = f.read().decode('utf-8', 'replace')[-1500:]
+        except Exception:
+            pass
+        if rc == 0 or rc is None:
+            _record_job(job_id, status='done', finished_at=time.time(),
+                        successes=1)
+        else:
+            _record_job(job_id, status='error', finished_at=time.time(),
+                        errors=[tail or f'exit code {rc}'])
+    except Exception as exc:
+        _record_job(job_id, status='error', finished_at=time.time(),
+                    errors=[f'{type(exc).__name__}: {exc}'])
+
+
+def _read_training_log_tail(job_id: str, n_bytes: int = 800) -> str:
+    """Return the last n_bytes of the per-job training log file as a
+    UTF-8 string. Used to populate error fields on the job record once
+    the subprocess exits non-zero (we redirect stderr to this file in
+    _spawn_training_subprocess; the old PIPE-based path is gone)."""
+    log_path = _TRAINING_LOG_DIR / f'{job_id}.log'
+    if not log_path.exists():
+        return ''
+    try:
+        sz = log_path.stat().st_size
+        with open(log_path, 'rb') as f:
+            f.seek(max(0, sz - n_bytes))
+            data = f.read()
+        return data.decode('utf-8', 'replace')[-n_bytes:]
+    except Exception:
+        return ''
+
+
+def _spawn_training_subprocess(job_id: str, cmd: list) -> "subprocess.Popen":
+    """Spawn a trainer subprocess detached from the dashboard's console
+    group, with stdout/stderr redirected to a per-job log file. The
+    detach is what lets the subprocess survive a dashboard restart.
+
+    Windows: DETACHED_PROCESS + CREATE_NEW_PROCESS_GROUP + CREATE_BREAKAWAY_FROM_JOB
+    Unix:    start_new_session=True (Python wraps setsid())
+    """
+    _TRAINING_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log_path = _TRAINING_LOG_DIR / f'{job_id}.log'
+    log_fp = open(log_path, 'wb', buffering=0)
+    kw: dict = {
+        'cwd':    project_root,
+        'stdout': log_fp,
+        'stderr': log_fp,
+        'stdin':  subprocess.DEVNULL,
+        'close_fds': True,
+    }
+    if sys.platform == 'win32':
+        # 0x00000008 DETACHED_PROCESS · 0x00000200 CREATE_NEW_PROCESS_GROUP ·
+        # 0x01000000 CREATE_BREAKAWAY_FROM_JOB. Together: child is
+        # NOT in the dashboard's console group and NOT in any inherited
+        # job, so Stop-Process -Force on the dashboard does not
+        # propagate to it.
+        kw['creationflags'] = (
+            getattr(subprocess, 'DETACHED_PROCESS', 0x08)
+            | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0x200)
+            | 0x01000000
+        )
+    else:
+        kw['start_new_session'] = True
+    return subprocess.Popen(cmd, **kw)
+
+
+# Reload persisted training-jobs state at module import time. Done in a
+# daemon thread so we don't slow startup on disk I/O / psutil enumeration.
+threading.Thread(target=_load_training_jobs, daemon=True,
+                 name='training-jobs-reload').start()
+
 
 # Resource-aware scheduler for trainer subprocesses.
 #
@@ -3005,25 +3214,37 @@ def _run_trainer_multi_tf(job_id: str, key: str, n: int,
                     f'fn = getattr(m, {fn_name!r}); fn({kw})',
                 ]
                 try:
-                    proc = subprocess.Popen(cmd, cwd=project_root,
-                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    proc = _spawn_training_subprocess(job_id, cmd)
                     with _training_active_lock:
                         _training_active_procs[job_id] = proc
-                    try:
-                        _stdout, _stderr = proc.communicate(timeout=3600)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                        errors_by_tf.setdefault(tf, []).append(f'iter {i+1} timed out')
-                        continue
+                    # Persist child_pid so a dashboard restart can reattach.
+                    _record_job(job_id, child_pid=proc.pid)
+                    # poll() in a loop instead of communicate() — keeps the
+                    # subprocess detached (its stdout/stderr go to the log
+                    # file, not our pipe) and lets us bail cleanly on
+                    # TimeoutExpired / cancellation without holding the
+                    # subprocess hostage to our process tree.
+                    deadline = time.time() + 3600
+                    while True:
+                        rc = proc.poll()
+                        if rc is not None:
+                            break
+                        if time.time() > deadline:
+                            proc.kill()
+                            errors_by_tf.setdefault(tf, []).append(f'iter {i+1} timed out')
+                            rc = -1
+                            break
+                        time.sleep(2)
                     with _training_active_lock:
                         _training_active_procs.pop(job_id, None)
-                    if proc.returncode == 0:
+                    if rc == 0:
                         successes_by_tf[tf] = successes_by_tf.get(tf, 0) + 1
-                    elif proc.returncode == -9:
+                    elif rc == -9 or rc == 1:
                         cancelled = True
                         errors_by_tf.setdefault(tf, []).append(f'iter {i+1} cancelled')
-                    else:
-                        msg = (_stderr or b'')[-300:].decode('utf-8', 'replace')
+                    elif rc is not None and rc != 0:
+                        # Read tail of log file for the error message.
+                        msg = _read_training_log_tail(job_id, 600)
                         errors_by_tf.setdefault(tf, []).append(msg)
                 except Exception as exc:
                     errors_by_tf.setdefault(tf, []).append(f'{type(exc).__name__}: {exc}')
@@ -3101,27 +3322,38 @@ def _run_trainer_blocking(job_id: str, key: str, n: int,
             ]
             proc = None
             try:
-                proc = subprocess.Popen(
-                    cmd, cwd=project_root,
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                )
+                proc = _spawn_training_subprocess(job_id, cmd)
                 with _training_active_lock:
                     _training_active_procs[job_id] = proc
-                try:
-                    _stdout, _stderr = proc.communicate(timeout=3600)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    errors.append(f'iteration {i+1} timed out (>1h)')
-                    continue
+                _record_job(job_id, child_pid=proc.pid)
+                # Same poll-loop pattern as _run_trainer_multi_tf — see
+                # the comment there for why this replaced communicate().
+                deadline = time.time() + 3600
+                rc = None
+                while True:
+                    rc = proc.poll()
+                    if rc is not None:
+                        break
+                    if time.time() > deadline:
+                        proc.kill()
+                        errors.append(f'iteration {i+1} timed out (>1h)')
+                        rc = -1
+                        break
+                    time.sleep(2)
                 with _training_active_lock:
                     _training_active_procs.pop(job_id, None)
-                if proc.returncode == 0:
+                if rc == 0:
                     successes += 1
-                elif proc.returncode == -9 or proc.returncode == 1 and 'killed' in (_stderr or b'').decode('utf-8', 'replace').lower():
+                elif rc == -9:
                     cancelled = True
                     errors.append(f'iteration {i+1} cancelled by operator')
-                else:
-                    errors.append((_stderr or b'')[-400:].decode('utf-8', 'replace'))
+                elif rc is not None and rc != 0:
+                    tail = _read_training_log_tail(job_id, 800)
+                    if 'killed' in tail.lower():
+                        cancelled = True
+                        errors.append(f'iteration {i+1} cancelled by operator')
+                    else:
+                        errors.append(tail)
             except Exception as exc:
                 errors.append(f'iteration {i+1} crashed: {type(exc).__name__}: {exc}')
                 with _training_active_lock:
