@@ -5212,6 +5212,121 @@ def test_phase71c_v31_backtest_per_model_filter():
         check('helper: empty key → matches all',          helper('Trend_ML', ''))
 
 
+def test_phase71d_v31_tft_dedupe_regression():
+    """v3.1 step 5 (1B′): regression test that locks the 1B fix.
+
+    Builds a synthetic dataframe with duplicate timestamps and
+    irregular gaps (mimicking the legacy/new market_data UNION),
+    calls build_series_bundle(df, freq='1h'), and asserts:
+      - no ValueError raised
+      - three TimeSeries returned with consistent indices
+
+    Reverting either the triple-dedupe or the proper freq mapping
+    in build_series_bundle would make this test fail (which is the
+    point — it's the safety net for future refactors)."""
+    print('\n[Phase 71d — v3.1 step 5: TFT dedupe regression]')
+
+    src_path = os.path.join(BASE_DIR, 'src', 'engine', 'train_tft_model.py')
+    with open(src_path, encoding='utf-8') as f:
+        src = f.read()
+
+    # Static checks: helpers exist, triple dedupe + freq mapping are present.
+    check('_tf_to_pandas_freq() helper defined', 'def _tf_to_pandas_freq(' in src)
+    check('_dedupe_for_darts() helper defined', 'def _dedupe_for_darts(' in src)
+    check('triple dedupe: target_df + past_df + future_df',
+          'target_df = _dedupe_for_darts(df)' in src
+          and 'past_df = _dedupe_for_darts(df)' in src
+          and 'future_df = _dedupe_for_darts(df)' in src)
+    check('train_tft_model uses _tf_to_pandas_freq, not hard-coded 1h/1min',
+          'freq = _tf_to_pandas_freq(timeframe)' in src
+          and 'freq = "1h" if timeframe == "1h" else "1min"' not in src)
+
+    # Live import.
+    import importlib, sys
+    sys.path.insert(0, BASE_DIR)
+    if 'src.engine.train_tft_model' in sys.modules:
+        del sys.modules['src.engine.train_tft_model']
+    try:
+        mod = importlib.import_module('src.engine.train_tft_model')
+    except Exception as exc:
+        check(f'train_tft_model imports', False, str(exc))
+        return
+    check('train_tft_model imports', True)
+
+    # _tf_to_pandas_freq returns expected mappings.
+    expected = {'1m': '1min', '5m': '5min', '15m': '15min',
+                '1h': '1h', '4h': '4h', '1d': '1D', '1w': '1W'}
+    for tf, want in expected.items():
+        got = mod._tf_to_pandas_freq(tf)
+        check(f"_tf_to_pandas_freq('{tf}') -> '{want}' (got '{got}')", got == want)
+
+    # _dedupe_for_darts: synthetic 3-row frame with one duplicate.
+    import pandas as pd
+    df_dup = pd.DataFrame({
+        'timestamp': pd.to_datetime(['2026-05-09 00:00', '2026-05-09 00:00', '2026-05-09 01:00']),
+        'close':    [100.0, 101.0, 102.0],
+    })
+    out = mod._dedupe_for_darts(df_dup)
+    check('_dedupe_for_darts collapses duplicate timestamps', len(out) == 2)
+    check('_dedupe_for_darts keeps last row of duplicates (close=101)',
+          float(out.iloc[0].close) == 101.0)
+
+    # End-to-end: build_series_bundle on a duplicate-laden synthetic frame
+    # must not raise. Skip if darts isn't installed (no value pretending).
+    try:
+        from darts import TimeSeries  # noqa: F401
+        darts_ok = True
+    except Exception:
+        darts_ok = False
+
+    if not darts_ok:
+        check('darts available for end-to-end test', None,
+              'darts not installed — skipping live build_series_bundle call')
+        return
+
+    # 50 rows over 50 hours, with two duplicate timestamps + a 3h gap.
+    import numpy as np
+    base_ts = pd.date_range('2026-05-01 00:00', periods=48, freq='1h').tolist()
+    ts = base_ts[:10] + [base_ts[9]] + base_ts[10:25] + [base_ts[24]] + base_ts[25:]
+    n = len(ts)
+    df_synth = pd.DataFrame({
+        'timestamp':         ts,
+        'close':             np.linspace(100.0, 200.0, n),
+        'return':            np.random.RandomState(0).normal(0, 0.01, n),
+        'volume':            np.linspace(1.0, 5.0, n),
+        'taker_buy_ratio':   np.full(n, 0.55),
+        'avg_trade_size':    np.full(n, 0.1),
+        'ofi':               np.full(n, 0.0),
+        'funding_rate':      np.full(n, 0.0001),
+        'sentiment_score':   np.full(n, 0.0),
+        'asset_id':          np.full(n, 0.0),
+        'hour_sin':          np.sin(2 * np.pi * np.arange(n) / 24.0),
+        'hour_cos':          np.cos(2 * np.pi * np.arange(n) / 24.0),
+        'dow_sin':           np.zeros(n),
+        'dow_cos':           np.ones(n),
+    })
+    raised = None
+    try:
+        target, past_cov, future_cov = mod.build_series_bundle(df_synth, freq='1h')
+    except Exception as exc:
+        raised = exc
+
+    check('build_series_bundle does not raise on duplicate-laden frame',
+          raised is None,
+          f'unexpected exception: {type(raised).__name__}: {raised}' if raised else '')
+
+    if raised is None:
+        # Three TimeSeries with consistent indices — start/end times match.
+        check('target series produced',  hasattr(target, 'time_index'))
+        check('past_covariates produced',  hasattr(past_cov, 'time_index'))
+        check('future_covariates produced', hasattr(future_cov, 'time_index'))
+        if hasattr(target, 'time_index') and hasattr(past_cov, 'time_index'):
+            check('target / past_cov index start matches',
+                  target.time_index[0] == past_cov.time_index[0])
+            check('target / past_cov index end matches',
+                  target.time_index[-1] == past_cov.time_index[-1])
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -5542,6 +5657,7 @@ def main():
     test_phase71_pr46_real_cash_label_rename()
     test_phase71b_v31_curated_tf_map()
     test_phase71c_v31_backtest_per_model_filter()
+    test_phase71d_v31_tft_dedupe_regression()
 
     if not args.offline:
         test_api(args.url)
