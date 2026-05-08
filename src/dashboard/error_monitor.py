@@ -562,20 +562,33 @@ def _probe_processes() -> list[tuple[str, str, str]]:
                      "Trading bot process not started yet (no data/process_ids.json)")]
         pids = json.loads(pid_path.read_text(encoding="utf-8") or "{}")
         bot_pid = pids.get("bot")
-        if not bot_pid:
+        # Liveness check — recorded PID first, then fall back to a cmdline
+        # scan so a bot launched directly (e.g. via Start-Process,
+        # bypassing restart_all) doesn't trigger a false 'DEAD' alarm.
+        # Pre-fix: process_ids.json's PID went stale after any direct
+        # relaunch and the banner kept screaming about a dead bot that
+        # was actually fine.
+        try:
+            import psutil  # type: ignore
+        except ImportError:
+            return faults
+        alive = bool(bot_pid) and psutil.pid_exists(int(bot_pid))
+        if not alive:
+            # Cmdline scan for src/main.py
+            import re as _re
+            pat = _re.compile(r"src[\\/]main\.py")
+            for p in psutil.process_iter(["pid", "name", "cmdline"]):
+                try:
+                    if (p.info.get("name") or "").lower().startswith("python"):
+                        cmd = " ".join(p.info.get("cmdline") or [])
+                        if pat.search(cmd):
+                            alive = True
+                            break
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+        if not alive:
             faults.append(("critical", "process:bot",
-                           "Trading bot PID missing — restart_all.ps1 didn't launch it"))
-        else:
-            try:
-                import psutil  # type: ignore
-                if not psutil.pid_exists(int(bot_pid)):
-                    faults.append(("critical", "process:bot",
-                                   f"Trading bot process {bot_pid} is DEAD — bot loop not running"))
-            except ImportError:
-                # psutil missing — skip the liveness check rather than false-alarm.
-                pass
-            except Exception:
-                pass
+                           "Trading bot is DEAD — bot loop not running"))
     except Exception as exc:
         faults.append(("warning", "process:bot", f"Process probe error: {exc}"))
     return faults
