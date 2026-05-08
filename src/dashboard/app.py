@@ -2740,18 +2740,139 @@ def _record_job(job_id: str, **fields) -> None:
 _training_active_procs: dict[str, "subprocess.Popen"] = {}
 _training_active_lock = threading.Lock()
 
-# Concurrency cap for trainer subprocesses. Each Popen below loads
-# torch/sklearn/pandas (~1-2 GB RSS) and runs flat-out on CPU+GPU. With
-# the 8-way parallel kick on 2026-05-08 the box hit 88% RAM, the dashboard
-# Popen syscall failed inside RPCRT4 and the dashboard process died
-# without a Python traceback. Three concurrent trainings is a reasonable
-# ceiling on a 32 GB / single-GPU host: enough to overlap model warm-up
-# with the next model's training, not enough to OOM the box.
-# Tunable via the AI_TRADER_TRAIN_CONCURRENCY env var if the operator
-# upgrades hardware or wants to throttle further.
+# Resource-aware scheduler for trainer subprocesses.
+#
+# Each model declares whether its training run is CPU-bound (sklearn /
+# HistGBT — torch CPU at most for some preprocessors), GPU-bound (Darts
+# TFT runs neural net on the single CUDA device), or exclusive (OFT
+# joint training saturates both GPU memory AND the CPU dataloader, so
+# it must run alone).
+#
+# Rules:
+#   • ≤ AI_TRADER_TRAIN_CONCURRENCY cpu jobs run at once (default 2).
+#   • ≤ AI_TRADER_GPU_CONCURRENCY    gpu jobs run at once (default 1).
+#   • An exclusive job blocks until cpu_active==0 AND gpu_active==0,
+#     then blocks every new acquire until it finishes.
+#
+# Why this design (not a single Semaphore): on a 32 GB / 1× GPU host,
+# regime+TFT can safely overlap (CPU and GPU are disjoint), but OFT+TFT
+# would OOM the GPU and throw "CUDA out of memory" partway in. The
+# 2026-05-08 incident also showed an undifferentiated cap is fragile —
+# 3 concurrent CPU jobs killed the dashboard via Win32 RPC subprocess
+# failure under memory pressure, so the CPU cap drops to 2.
 import os as _os
-_TRAINING_CONCURRENCY = max(1, int(_os.getenv('AI_TRADER_TRAIN_CONCURRENCY', '3')))
-_training_concurrency_sem = threading.Semaphore(_TRAINING_CONCURRENCY)
+
+_RESOURCE_KIND: dict[str, str] = {
+    # CPU-bound (HistGBT / sklearn-style trainers)
+    'base':     'cpu',
+    'trend':    'cpu',
+    'futures':  'cpu',
+    'scalping': 'cpu',
+    'meta':     'cpu',
+    'regime':   'cpu',
+    # GPU-bound (single-GPU exclusive among GPU jobs, but CPU jobs may run)
+    'tft':      'gpu',
+    # Exclusive (must run alone — saturates GPU + heavy CPU dataloader)
+    'oft':      'exclusive',
+    # `all` sequences every trainer internally → treat as exclusive so
+    # nothing else queues alongside it.
+    'all':      'exclusive',
+}
+
+_TRAINING_CPU_CAP = max(1, int(_os.getenv('AI_TRADER_TRAIN_CONCURRENCY', '2')))
+_TRAINING_GPU_CAP = max(1, int(_os.getenv('AI_TRADER_GPU_CONCURRENCY',   '1')))
+# Kept for backwards-compat with the older Semaphore API and the test
+# suite's static-grep checks.
+_TRAINING_CONCURRENCY = _TRAINING_CPU_CAP
+
+
+class _TrainingScheduler:
+    """Resource-aware acquire/release for trainer subprocesses.
+
+    Three counters guarded by one Condition:
+      cpu_active     — CPU-bound trainers currently running
+      gpu_active     — GPU-bound trainers currently running
+      exclusive_busy — True while an `exclusive` trainer is running
+
+    acquire(kind) blocks until the requested kind fits under the rules
+    (see module docstring above). release(kind) decrements and broadcasts
+    so any waiters can re-evaluate their predicate.
+    """
+
+    def __init__(self, cpu_cap: int, gpu_cap: int):
+        self._cond = threading.Condition()
+        self._cpu_active = 0
+        self._gpu_active = 0
+        self._exclusive_busy = False
+        self.cpu_cap = cpu_cap
+        self.gpu_cap = gpu_cap
+
+    def _can_acquire(self, kind: str) -> bool:
+        if self._exclusive_busy:
+            return False
+        if kind == 'exclusive':
+            return self._cpu_active == 0 and self._gpu_active == 0
+        if kind == 'gpu':
+            return self._gpu_active < self.gpu_cap
+        # default 'cpu' (or any unknown kind — fail safe to CPU lane)
+        return self._cpu_active < self.cpu_cap
+
+    def acquire(self, kind: str) -> None:
+        kind = kind if kind in ('cpu', 'gpu', 'exclusive') else 'cpu'
+        with self._cond:
+            while not self._can_acquire(kind):
+                self._cond.wait()
+            if kind == 'exclusive':
+                self._exclusive_busy = True
+            elif kind == 'gpu':
+                self._gpu_active += 1
+            else:
+                self._cpu_active += 1
+
+    def release(self, kind: str) -> None:
+        kind = kind if kind in ('cpu', 'gpu', 'exclusive') else 'cpu'
+        with self._cond:
+            if kind == 'exclusive':
+                self._exclusive_busy = False
+            elif kind == 'gpu':
+                self._gpu_active = max(0, self._gpu_active - 1)
+            else:
+                self._cpu_active = max(0, self._cpu_active - 1)
+            self._cond.notify_all()
+
+    def snapshot(self) -> dict:
+        with self._cond:
+            return {
+                'cpu_active': self._cpu_active,
+                'gpu_active': self._gpu_active,
+                'exclusive_busy': self._exclusive_busy,
+                'cpu_cap': self.cpu_cap,
+                'gpu_cap': self.gpu_cap,
+            }
+
+
+_training_scheduler = _TrainingScheduler(
+    cpu_cap=_TRAINING_CPU_CAP, gpu_cap=_TRAINING_GPU_CAP,
+)
+
+
+def _resource_kind_for(model_key: str) -> str:
+    return _RESOURCE_KIND.get(model_key, 'cpu')
+
+
+# Legacy alias — some older callers reach for `_training_concurrency_sem`.
+# Wrap the new scheduler so they keep working as a CPU-only sem. The Phase
+# 60 test asserts both .acquire() and .release() are called, so we forward
+# to the scheduler with the CPU lane.
+class _LegacySemAdapter:
+    def acquire(self) -> None:
+        _training_scheduler.acquire('cpu')
+
+    def release(self) -> None:
+        _training_scheduler.release('cpu')
+
+
+_training_concurrency_sem = _LegacySemAdapter()
 
 
 def _run_trainer_multi_tf(job_id: str, key: str, n: int,
@@ -2769,12 +2890,14 @@ def _run_trainer_multi_tf(job_id: str, key: str, n: int,
                     finished_at=time.time())
         return
     module_path, fn_name, accepts_tf = spec
-    # Same concurrency gate as _run_trainer_blocking — queue when full so
-    # an operator firing off N retrains in a row doesn't crash the box.
+    # Same resource-aware gate as _run_trainer_blocking — queue under the
+    # CPU/GPU/exclusive lane appropriate for this model.
+    res_kind = _resource_kind_for(key)
     _record_job(job_id, status='queued', queued_at=time.time(),
                 total=len(tfs) * n, tfs=list(tfs), tf_done=0, current_tf=None,
-                progress_label=f'queued (cap={_TRAINING_CONCURRENCY})')
-    _training_concurrency_sem.acquire()
+                resource_kind=res_kind,
+                progress_label=f'queued ({res_kind} lane)')
+    _training_scheduler.acquire(res_kind)
     try:
         _record_job(job_id, status='running', started_at=time.time(),
                     progress=0, progress_label=None)
@@ -2837,7 +2960,7 @@ def _run_trainer_multi_tf(job_id: str, key: str, n: int,
         with _training_active_lock:
             _training_active_procs.pop(job_id, None)
     finally:
-        _training_concurrency_sem.release()
+        _training_scheduler.release(res_kind)
 
 
 def _run_trainer_blocking(job_id: str, key: str, n: int,
@@ -2859,13 +2982,14 @@ def _run_trainer_blocking(job_id: str, key: str, n: int,
     module_path, fn_name, accepts_tf = spec
     successes, errors = 0, []
     cancelled = False
-    # Wait for a concurrency slot. Mark the job as 'queued' while waiting
-    # so the dashboard pill shows "queued — N ahead" instead of looking
-    # frozen. acquire(blocking=True) is a no-op if the sem is free.
+    # Wait for a resource slot. The scheduler enforces CPU/GPU/exclusive
+    # rules — see _TrainingScheduler. Mark the job as 'queued' while
+    # waiting so the dashboard pill shows what's blocking.
+    res_kind = _resource_kind_for(key)
     _record_job(job_id, status='queued', queued_at=time.time(),
-                total=n, tf=tf,
-                progress_label=f'queued (cap={_TRAINING_CONCURRENCY})')
-    _training_concurrency_sem.acquire()
+                total=n, tf=tf, resource_kind=res_kind,
+                progress_label=f'queued ({res_kind} lane)')
+    _training_scheduler.acquire(res_kind)
     try:
         _record_job(job_id, status='running', started_at=time.time(),
                     progress=0, progress_label=None)
@@ -2917,7 +3041,7 @@ def _run_trainer_blocking(job_id: str, key: str, n: int,
         with _training_active_lock:
             _training_active_procs.pop(job_id, None)
     finally:
-        _training_concurrency_sem.release()
+        _training_scheduler.release(res_kind)
 
 
 @app.route('/api/training/run/<key>', methods=['POST'])
@@ -3032,6 +3156,17 @@ def api_training_active():
         if r.get('status') in ('running', 'queued'):
             out[r.get('model', '')] = r.get('job_id', '')
     return jsonify({'active': out})
+
+
+@app.route('/api/training/scheduler', methods=['GET'])
+def api_training_scheduler():
+    """Expose the resource-aware scheduler snapshot (cpu/gpu counters +
+    caps + exclusive flag) plus the per-model resource kind. Used by the
+    UI to render lane occupancy and explain why a job is queued."""
+    return jsonify({
+        'snapshot':      _training_scheduler.snapshot(),
+        'resource_kind': dict(_RESOURCE_KIND),
+    })
 
 
 @app.route('/api/pipeline/reset', methods=['POST'])

@@ -4718,20 +4718,14 @@ def test_phase60_pr36_training_concurrency_cap():
     with open(app_path, encoding='utf-8') as f:
         app = f.read()
 
-    check('_training_concurrency_sem semaphore defined',
-          '_training_concurrency_sem = threading.Semaphore(' in app)
+    check('concurrency cap defined (scheduler or semaphore)',
+          '_training_scheduler' in app or '_training_concurrency_sem = threading.Semaphore(' in app)
     check('AI_TRADER_TRAIN_CONCURRENCY env var honored',
           "AI_TRADER_TRAIN_CONCURRENCY" in app)
-    check('_run_trainer_blocking acquires the sem',
-          '_training_concurrency_sem.acquire()' in app
-          and app.count('_training_concurrency_sem.acquire()') >= 2)
-    check('_run_trainer_blocking releases the sem in finally',
-          '_training_concurrency_sem.release()' in app
-          and app.count('_training_concurrency_sem.release()') >= 2)
 
-    # Static check: the Popen call sites must each be inside a sem-acquire
-    # block. Cheap proxy — every subprocess.Popen in the trainer area must
-    # come AFTER an acquire() in source order.
+    # Both trainer functions must acquire SOMETHING (scheduler or sem)
+    # and release it in a finally. Accept either API — Phase 61 covers
+    # the resource-aware scheduler in detail.
     blocking_idx = app.find('def _run_trainer_blocking(')
     multi_idx    = app.find('def _run_trainer_multi_tf(')
     for label, start in (('_run_trainer_blocking', blocking_idx),
@@ -4739,16 +4733,132 @@ def test_phase60_pr36_training_concurrency_cap():
         if start < 0:
             check(f'{label} found', False)
             continue
-        # Function body up to next top-level def
         end = app.find('\ndef ', start + 4)
         body = app[start:end] if end > start else app[start:]
-        acquire_pos = body.find('_training_concurrency_sem.acquire()')
-        popen_pos   = body.find('subprocess.Popen(')
-        check(f'{label}: sem.acquire() precedes subprocess.Popen()',
+        # Acquire = either scheduler.acquire(...) or sem.acquire()
+        acquire_pos = -1
+        for needle in ('_training_scheduler.acquire(',
+                       '_training_concurrency_sem.acquire('):
+            p = body.find(needle)
+            if p > 0 and (acquire_pos < 0 or p < acquire_pos):
+                acquire_pos = p
+        popen_pos = body.find('subprocess.Popen(')
+        check(f'{label}: acquire() precedes subprocess.Popen()',
               0 <= acquire_pos < popen_pos)
-        check(f'{label}: status \'queued\' is set before sem acquire',
-              body.find("status='queued'") < acquire_pos
+        check(f'{label}: release() called in finally',
+              ('_training_scheduler.release(' in body
+               or '_training_concurrency_sem.release(' in body)
+              and 'finally:' in body)
+        check(f'{label}: status \'queued\' set before acquire',
+              0 <= body.find("status='queued'") < acquire_pos
               if acquire_pos > 0 else False)
+
+
+def test_phase61_pr37_resource_aware_scheduler():
+    """Trainer scheduler is CPU/GPU/exclusive-aware, not a single Sem.
+
+    Why: the user asked us to overlap CPU trainings with the GPU TFT
+    job (regime + TFT can safely run together — disjoint resources),
+    but keep OFT exclusive (it saturates GPU memory + CPU dataloader).
+    The previous Semaphore(3) didn't distinguish lanes; PR-37 replaces
+    it with a _TrainingScheduler that tracks cpu_active / gpu_active /
+    exclusive_busy under one Condition.
+    """
+    print('\n[Phase 61 — PR-37 resource-aware scheduler]')
+
+    app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
+    with open(app_path, encoding='utf-8') as f:
+        app = f.read()
+
+    check('class _TrainingScheduler defined',
+          'class _TrainingScheduler' in app)
+    check('_RESOURCE_KIND map defined',
+          '_RESOURCE_KIND' in app and "'tft':" in app and "'oft':" in app)
+    check("oft tagged 'exclusive'",
+          "'oft':" in app and re.search(r"'oft':\s*'exclusive'", app) is not None)
+    check("tft tagged 'gpu'",
+          re.search(r"'tft':\s*'gpu'", app) is not None)
+    check("regime/trend/futures tagged 'cpu'",
+          all(re.search(rf"'{k}':\s*'cpu'", app)
+              for k in ('regime', 'trend', 'futures', 'base', 'scalping', 'meta')))
+    check('AI_TRADER_GPU_CONCURRENCY env var honored',
+          'AI_TRADER_GPU_CONCURRENCY' in app)
+    check('/api/training/scheduler endpoint defined',
+          "@app.route('/api/training/scheduler'" in app)
+
+    # Live behavior: load the scheduler class out of app.py (without
+    # importing the whole Flask app — that triggers heavy ML imports).
+    # Compile only the class block by extracting from the source.
+    scheduler_src_start = app.find('class _TrainingScheduler')
+    scheduler_src_end   = app.find('\n\n_training_scheduler = ', scheduler_src_start)
+    if scheduler_src_start < 0 or scheduler_src_end < 0:
+        check('extract scheduler source', False)
+        return
+    src = app[scheduler_src_start:scheduler_src_end]
+    ns: dict = {}
+    import threading as _th
+    ns['threading'] = _th
+    try:
+        exec(src, ns)
+    except Exception as e:
+        check('scheduler source compiles', False, str(e))
+        return
+    Sched = ns['_TrainingScheduler']
+
+    # Case 1: cpu+gpu can run concurrently (regime + TFT)
+    s = Sched(cpu_cap=2, gpu_cap=1)
+    s.acquire('cpu')
+    s.acquire('gpu')
+    snap = s.snapshot()
+    check('cpu+gpu concurrent: cpu_active=1 gpu_active=1',
+          snap['cpu_active'] == 1 and snap['gpu_active'] == 1)
+    s.release('cpu'); s.release('gpu')
+
+    # Case 2: cpu cap respected — third cpu acquire blocks
+    s = Sched(cpu_cap=2, gpu_cap=1)
+    s.acquire('cpu'); s.acquire('cpu')
+    blocked = {'fired': False}
+    def _try_third():
+        s.acquire('cpu')
+        blocked['fired'] = True
+        s.release('cpu')
+    t = _th.Thread(target=_try_third, daemon=True)
+    t.start(); t.join(timeout=0.5)
+    check('cpu_cap=2 blocks third cpu acquire', not blocked['fired'])
+    s.release('cpu')                 # frees one slot
+    t.join(timeout=2.0)
+    check('cpu_cap=2 unblocks after release', blocked['fired'])
+    s.release('cpu')
+
+    # Case 3: exclusive blocks while cpu running
+    s = Sched(cpu_cap=2, gpu_cap=1)
+    s.acquire('cpu')
+    excl_done = {'fired': False}
+    def _try_excl():
+        s.acquire('exclusive')
+        excl_done['fired'] = True
+        s.release('exclusive')
+    t = _th.Thread(target=_try_excl, daemon=True)
+    t.start(); t.join(timeout=0.5)
+    check('exclusive blocks while cpu_active>0', not excl_done['fired'])
+    s.release('cpu')
+    t.join(timeout=2.0)
+    check('exclusive proceeds once cpu drains', excl_done['fired'])
+
+    # Case 4: exclusive blocks all NEW acquires while it's running
+    s = Sched(cpu_cap=2, gpu_cap=1)
+    s.acquire('exclusive')
+    cpu_done = {'fired': False}
+    def _try_cpu():
+        s.acquire('cpu')
+        cpu_done['fired'] = True
+        s.release('cpu')
+    t = _th.Thread(target=_try_cpu, daemon=True)
+    t.start(); t.join(timeout=0.5)
+    check('cpu acquire blocks while exclusive_busy', not cpu_done['fired'])
+    s.release('exclusive')
+    t.join(timeout=2.0)
+    check('cpu acquire proceeds after exclusive release', cpu_done['fired'])
 
 
 # ─── Runner ───────────────────────────────────────────────────────────────────
@@ -4838,6 +4948,7 @@ def main():
     test_phase58_pr28_balance_by_mode()
     test_phase59_pr35_parquet_query_thread_safety()
     test_phase60_pr36_training_concurrency_cap()
+    test_phase61_pr37_resource_aware_scheduler()
 
     if not args.offline:
         test_api(args.url)
