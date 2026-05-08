@@ -4997,6 +4997,62 @@ def test_phase61_pr37_resource_aware_scheduler():
     check('cpu acquire proceeds after exclusive release', cpu_done['fired'])
 
 
+def test_phase68_pr41_orphan_training_reattach_and_collapse_fix():
+    """Three follow-up fixes after PR-40:
+      1. Duplicate stToggle definition was shadowing the working one,
+         so clicking ML Models / Strategies / Quant Matrix headers
+         didn't expand/collapse them. Single canonical definition now.
+      2. Strategy tab activation fires pollTrainingJobs + pipelineRefresh
+         immediately so live training shows within 100 ms instead of
+         waiting up to 10 s for the staggered tick.
+      3. Orphan-training subprocess sweep on dashboard boot: any
+         python.exe matching a known trainer's command line that isn't
+         in our jobs file gets a synthetic 'reattached (orphan)' job
+         entry so the operator can see what's burning GPU/CPU.
+    """
+    print('\n[Phase 68 — PR-41 orphan reattach + collapse fix]')
+
+    tpl_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
+    with open(tpl_path, encoding='utf-8') as f:
+        tpl = f.read()
+    app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
+    with open(app_path, encoding='utf-8') as f:
+        app = f.read()
+
+    # 1. Single stToggle definition (no shadowing).
+    check('single canonical stToggle definition',
+          tpl.count('function stToggle(') == 1)
+    # The canonical stToggle must toggle BOTH .open on the section AND
+    # .st-collapsed on the body — the CSS keys on .st-collapsed for
+    # display:none. Earlier shadow only toggled .open, breaking expand.
+    st_start = tpl.find('function stToggle(')
+    st_end   = tpl.find('\n}\n', st_start)
+    st_body  = tpl[st_start:st_end] if st_end > st_start else ''
+    check('stToggle toggles section.classList.toggle(\'open\')',
+          "classList.toggle('open')" in st_body)
+    check('stToggle toggles body.classList.toggle(\'st-collapsed\')',
+          "classList.toggle('st-collapsed')" in st_body)
+
+    # 2. switchTab('strategy') fires pollTrainingJobs + pipelineRefresh.
+    sw_start = tpl.find('function switchTab(')
+    sw_end   = tpl.find('\n}\n', sw_start)
+    sw_body  = tpl[sw_start:sw_end] if sw_end > sw_start else ''
+    check("switchTab('strategy') fires pollTrainingJobs immediately",
+          "name === 'strategy'" in sw_body and 'pollTrainingJobs()' in sw_body)
+    check("switchTab('strategy') fires pipelineRefresh immediately",
+          'pipelineRefresh()' in sw_body)
+
+    # 3. Orphan-training subprocess sweep at boot.
+    check('_detect_orphan_training_subprocesses helper defined',
+          'def _detect_orphan_training_subprocesses' in app)
+    check('orphan sweep runs at boot via _training_state_recover',
+          '_training_state_recover' in app
+          and '_detect_orphan_training_subprocesses()' in app)
+    check('orphan job tagged with "reattached (orphan from prior boot)"',
+          "'reattached (orphan from prior boot)'" in app
+          or 'reattached (orphan' in app)
+
+
 def test_phase64_pr40_training_survives_dashboard_restart():
     """Trainer subprocesses are detached + persisted so an in-flight OFT
     run survives a dashboard restart instead of dying with the parent."""
@@ -5199,6 +5255,7 @@ def main():
     test_phase65_pr40_pipeline_orchestrator_progress_broadcast()
     test_phase66_pr40_strategy_sections_collapsed_default()
     test_phase67_pr40_loadStrategyFull_renders_directly()
+    test_phase68_pr41_orphan_training_reattach_and_collapse_fix()
 
     if not args.offline:
         test_api(args.url)

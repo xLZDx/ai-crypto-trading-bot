@@ -2875,7 +2875,20 @@ function switchTab(name) {
   if (name === 'overview' && !chartInitialized) { initTVChart(currentChartSym); chartInitialized = true; }
   if (name === 'logs') pollLogs();
   if (name === 'watchlist') renderWatchlist();
-  if (name === 'strategy') { renderStrategyTab(botState); if (!_btRows.length) loadBtComparison(); }
+  if (name === 'strategy') {
+    renderStrategyTab(botState);
+    if (!_btRows.length) loadBtComparison();
+    // Fire live-status pollers IMMEDIATELY so the operator sees current
+    // training and pipeline progress within ~100 ms of opening the tab,
+    // instead of waiting up to 10 s for the staggered tick to roll
+    // around to them. pollTrainingJobs reads /api/training/jobs (fast,
+    // ~30 ms cached) and pipelineRefresh reads /api/pipeline/status
+    // (also fast). Without this, a freshly-opened Strategy tab shows
+    // every row as OK / idle even if a training subprocess has been
+    // running for 5 minutes.
+    try { if (typeof pollTrainingJobs === 'function') pollTrainingJobs(); } catch(_) {}
+    try { if (typeof pipelineRefresh === 'function') pipelineRefresh(); } catch(_) {}
+  }
   if (name === 'monitor') {
     monPollHealth();
     monPollLog();
@@ -3461,13 +3474,24 @@ async function loadModelMeta() {
 }
 
 // ─── SECTION TOGGLE ──────────────────────────────────────────────────────────
+// Single canonical definition. The .st-sec / .st-sec-body pattern needs
+// BOTH classes toggled — the CSS rule .st-sec-body.st-collapsed sets
+// display:none. (A previous PR shadowed this with a partial version
+// that only toggled .open, breaking expand/collapse for ML Models /
+// Strategies / Quant Matrix.) Persist the open state so F5 / dashboard
+// restart preserves the layout.
 function stToggle(id) {
   const sec  = document.getElementById(id);
   const body = sec && sec.querySelector('.st-sec-body');
   if (!sec || !body) return;
   sec.classList.toggle('open');
   body.classList.toggle('st-collapsed');
+  try {
+    const open = sec.classList.contains('open');
+    localStorage.setItem('st-sec-open:' + id, open ? '1' : '0');
+  } catch (_) {}
 }
+window.stToggle = stToggle;
 
 // Click handler for cards built with .card.collapsible-section + an inner
 // .collapsible-hdr. Walks up to the section root and toggles .is-collapsed,
@@ -3487,20 +3511,6 @@ function toggleSection(hdrEl) {
   }
 }
 
-// Same idea for the older .st-sec / .st-sec.open pattern (ML Models,
-// Strategies, Quant Matrix sections — pre-collapsible-section refactor).
-// Public so the inline onclick handlers in those sections can call it.
-function stToggle(secId) {
-  const sec = document.getElementById(secId);
-  if (!sec) return;
-  sec.classList.toggle('open');
-  try {
-    const open = sec.classList.contains('open');
-    localStorage.setItem('st-sec-open:' + secId, open ? '1' : '0');
-  } catch (_) {}
-}
-window.stToggle = stToggle;
-
 // Restore each section's open/collapsed state from localStorage. Default
 // when no preference is stored: COLLAPSED (operator asked for "all
 // cards collapsed on first open" — they expand only what they want).
@@ -3517,13 +3527,20 @@ function _restoreStrategySectionStates() {
     else                   sec.classList.add('is-collapsed');   // default
   });
   // Older .st-sec.open pattern (ML Models, Strategies, Quant Matrix).
-  // Default = no .open class (collapsed).
+  // Default = no .open class (collapsed) AND .st-collapsed on the body
+  // (which is the class the CSS actually keys on for display:none).
   document.querySelectorAll('.st-sec[id^="st-sec-"]').forEach(sec => {
+    const body = sec.querySelector('.st-sec-body');
     let pref = null;
     try { pref = localStorage.getItem('st-sec-open:' + sec.id); } catch (_) {}
-    if (pref === '1')      sec.classList.add('open');
-    else if (pref === '0') sec.classList.remove('open');
-    else                   sec.classList.remove('open');         // default
+    const open = pref === '1';
+    if (open) {
+      sec.classList.add('open');
+      if (body) body.classList.remove('st-collapsed');
+    } else {
+      sec.classList.remove('open');
+      if (body) body.classList.add('st-collapsed');
+    }
   });
 }
 document.addEventListener('DOMContentLoaded', _restoreStrategySectionStates);

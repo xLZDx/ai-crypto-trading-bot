@@ -2930,6 +2930,79 @@ def _load_training_jobs() -> None:
                                 f'was offline. Log tail:\n{tail}'])
 
 
+def _detect_orphan_training_subprocesses() -> None:
+    """Scan all running python.exe subprocesses for trainer-shaped command
+    lines that aren't tracked in _training_jobs. Synthesize a job entry
+    for each so the dashboard shows them and reattaches a poller.
+
+    This rescues subprocesses that were spawned by a previous dashboard
+    instance which didn't yet have the persistence layer (PR-40), or by
+    manual command-line testing — without this they'd burn GPU/CPU
+    invisibly until they finish or the operator notices in Task Manager.
+    """
+    try:
+        import psutil
+    except ImportError:
+        return
+    # Inverse map of trainer module name → model key, lifted from
+    # _TRAINER_DISPATCH so we stay in sync if new trainers are added.
+    module_to_key = {mod: k for k, (mod, _, _) in _TRAINER_DISPATCH.items()}
+    with _training_jobs_lock:
+        tracked_pids = {j.get('child_pid') for j in _training_jobs.values()
+                        if j.get('child_pid')}
+    found = 0
+    now = time.time()
+    for p in psutil.process_iter(['pid', 'name', 'cmdline', 'create_time']):
+        try:
+            if not (p.info.get('name') or '').lower().startswith('python'):
+                continue
+            cmd = ' '.join(p.info.get('cmdline') or [])
+            pid = p.info['pid']
+            if pid in tracked_pids:
+                continue
+            # Match `import <module> as m; ... fn()` — the standard
+            # invocation _spawn_training_subprocess uses.
+            matched_key = None
+            for module_path, key in module_to_key.items():
+                if f'import {module_path}' in cmd and 'fn(' in cmd:
+                    matched_key = key
+                    break
+            if not matched_key:
+                continue
+            # Synthesize a job record. created_at = the subprocess's
+            # actual start time so elapsed_s is accurate from boot.
+            jid = f'orphan-{pid}'
+            created = float(p.info.get('create_time') or now)
+            _record_job(
+                jid,
+                model=matched_key,
+                status='running',
+                created_at=created,
+                queued_at=created,
+                started_at=created,
+                child_pid=pid,
+                resource_kind=_resource_kind_for(matched_key),
+                progress=0,
+                total=1,
+                tf=None,
+                progress_label='reattached (orphan from prior boot)',
+            )
+            # Spawn poller to wait for it like a normal job.
+            threading.Thread(
+                target=_reattach_training_subprocess,
+                args=(jid, pid),
+                daemon=True,
+                name=f'train-orphan-{pid}',
+            ).start()
+            found += 1
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    if found:
+        import logging as _lg
+        _lg.getLogger(__name__).info(
+            '[training] reattached %d orphan training subprocess(es)', found)
+
+
 def _reattach_training_subprocess(job_id: str, pid: int) -> None:
     """Wait for an orphaned-but-alive training subprocess to finish,
     then record the result. Used after dashboard restart picks up a
@@ -3029,9 +3102,18 @@ def _spawn_training_subprocess(job_id: str, cmd: list) -> "subprocess.Popen":
     return subprocess.Popen(cmd, **kw)
 
 
-# Reload persisted training-jobs state at module import time. Done in a
-# daemon thread so we don't slow startup on disk I/O / psutil enumeration.
-threading.Thread(target=_load_training_jobs, daemon=True,
+# Reload persisted training-jobs state at module import time, then sweep
+# for orphan subprocesses (older dashboard instances or manual runs that
+# aren't in our jobs file). Both run in a daemon thread so we don't slow
+# startup on disk I/O / psutil enumeration.
+def _training_state_recover() -> None:
+    try: _load_training_jobs()
+    except Exception: pass
+    try: _detect_orphan_training_subprocesses()
+    except Exception: pass
+
+
+threading.Thread(target=_training_state_recover, daemon=True,
                  name='training-jobs-reload').start()
 
 
