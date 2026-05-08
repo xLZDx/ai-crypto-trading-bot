@@ -13,6 +13,7 @@ Before writing ANY code, always present a written implementation plan and wait f
 - After every code change, add/update test assertions in `tests/test_dashboard.py` and confirm 0 failures.
 - Always create a git commit of the current state before starting any new implementation phase, especially multi-file refactors. Don't bundle unrelated fixes into a migration commit.
 - Gemini model fallback chain: `gemini-3.1-pro-preview` must be first. Update if a newer model releases.
+- **Bash / PowerShell / curl commands are pre-approved.** Don't ask permission to run shell commands — read-only probes, file inspection, log tails, process listings, port scans, training/data triggers, and similar diagnostic or operational commands all run without confirmation. Only ask first for: destructive ops (rm -rf, force-push, drop table), things that touch shared state (publishing to remotes, sending external messages), or actions outside this repo. In short: act like the operator already typed "yes" for the safe stuff.
 
 ## Project Context
 
