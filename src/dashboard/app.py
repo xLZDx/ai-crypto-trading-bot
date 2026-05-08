@@ -4072,18 +4072,32 @@ def _pipeline_status_path() -> str:
 
 
 def _pipeline_proc_alive() -> bool:
-    """Return True if the orchestrator subprocess is still running. Reads
-    the in-process PID first, then falls back to the on-disk status file
-    (so a freshly-restarted dashboard still sees a running pipeline)."""
+    """Return True if a pipeline orchestrator subprocess is running.
+
+    Two-step check (mirrors PR-32's bot DEAD cmdline-scan fallback):
+      1. Recorded PID: fast path. If our last-known PID is alive AND its
+         cmdline confirms it's the orchestrator, return True.
+      2. Cmdline scan: if (1) misses (recorded PID is None / stale /
+         pre-PID-recycle), scan psutil for any python process running
+         `-m src.engine.pipeline_orchestrator`. If found, adopt that
+         PID as the new _pipeline_proc_pid so subsequent calls hit (1).
+
+    Without (2), the dashboard reports the pipeline as DEAD whenever
+    the orchestrator was started outside this dashboard process —
+    e.g. a fresh dashboard boot, a manual relaunch, or the operator
+    kicking it off via PowerShell directly.
+    """
     global _pipeline_proc_pid
+    try:
+        import psutil
+    except ImportError:
+        return False
+    # ── (1) recorded PID fast path ────────────────────────────────────
     pid = _pipeline_proc_pid
     if pid is not None:
         try:
-            import psutil
             if psutil.pid_exists(pid):
                 p = psutil.Process(pid)
-                # Confirm it's actually our orchestrator (avoid PID-recycle
-                # false positives after the dashboard restarts).
                 try:
                     cmd = ' '.join(p.cmdline())
                     if 'pipeline_orchestrator' in cmd:
@@ -4091,10 +4105,23 @@ def _pipeline_proc_alive() -> bool:
                 except (psutil.AccessDenied, psutil.NoSuchProcess):
                     pass
         except Exception:
-            return False
-        # PID stale — clear it.
+            pass
+        # PID stale — fall through to scan.
         with _pipeline_proc_lock:
             _pipeline_proc_pid = None
+    # ── (2) cmdline scan fallback ─────────────────────────────────────
+    try:
+        for p in psutil.process_iter(['pid', 'name', 'cmdline']):
+            if not (p.info.get('name') or '').lower().startswith('python'):
+                continue
+            cmd = p.info.get('cmdline') or []
+            if (len(cmd) >= 3 and cmd[1] == '-m'
+                    and cmd[2] == 'src.engine.pipeline_orchestrator'):
+                with _pipeline_proc_lock:
+                    _pipeline_proc_pid = int(p.info['pid'])
+                return True
+    except Exception:
+        pass
     return False
 
 
@@ -4660,6 +4687,168 @@ def api_balance_refresh():
     with _balance_live_lock:
         _balance_live_cache.clear()
     return jsonify({'ok': True, 'message': 'refresh queued; cached values may take a few seconds to update'})
+
+
+@app.route('/api/portfolio')
+def api_portfolio():
+    """Mode-aware Performance Overview snapshot.
+
+    Returns a single payload the dashboard's Balances / Risk / Portfolio
+    cards can consume directly, populated from the right backing store
+    for the requested mode:
+
+        paper    — data/balance_virtual.json + zero open positions
+        testnet  — live Binance testnet balance + filter trades.json
+        mainnet  — live Binance mainnet balance + filter trades.json
+
+    Replaces the pre-PR-46 path where those cards read from /api/state
+    (mode-blind) and tradesData (also mode-blind), so switching the
+    operator's mode toggle didn't refresh the numbers below.
+
+    Trades.json doesn't yet carry a per-row mode tag (~912 rows
+    untagged), so for non-paper modes we report all closed trades
+    without filtering. Going forward the bot can stamp `mode` on each
+    trade write — once that lands, this endpoint can filter cleanly.
+    """
+    mode = (request.args.get('mode') or '').strip().lower()
+    if not mode:
+        ctrl = read_json('data/control.json', default={}) or {}
+        mode = (ctrl.get('trade_mode') or 'testnet').lower()
+
+    out = {
+        'mode':                  mode,
+        'balances':              [],   # [{asset, qty, value, price}]
+        'total_capital':         0.0,
+        'free_usdt':             0.0,
+        'in_positions_value':    0.0,
+        'live_pnl':              0.0,
+        'closed_pnl':            0.0,
+        'today_pnl':             0.0,
+        'open_position_count':   0,
+        'closed_position_count': 0,
+        'trade_mode_label':      '',
+    }
+
+    if mode == 'paper':
+        # Paper: read the virtual balance directly. No exchange holdings.
+        # Closed PnL comes from balance_virtual's revenue_total (sum of
+        # closed paper-trade pnl). Live PnL = 0 by construction (paper
+        # trades are booked atomically — there are no open positions
+        # carried in balance_virtual.json).
+        try:
+            from src.engine.dual_balance import read_virtual, compute_summary
+            snap = read_virtual() or {}
+            summary = compute_summary() or {}
+        except Exception:
+            snap, summary = {}, {}
+        cash    = float(snap.get('cash_usdt', 0) or 0)
+        equity  = float(snap.get('equity_usdt', 0) or 0)
+        revenue = float(snap.get('revenue_total', 0) or 0)
+        out['balances'] = [{
+            'asset': 'USDT', 'qty': cash, 'value': cash, 'price': 1.0,
+        }]
+        # Surface paper holdings if any exist (the schema supports it
+        # even if today the dict is usually empty).
+        for asset, qty in (snap.get('holdings') or {}).items():
+            try:
+                qty_f = float(qty)
+                out['balances'].append({
+                    'asset': asset, 'qty': qty_f,
+                    'value': qty_f, 'price': None,
+                })
+            except Exception:
+                continue
+        out['total_capital']      = equity
+        out['free_usdt']          = cash
+        out['in_positions_value'] = max(0.0, equity - cash)
+        out['live_pnl']           = 0.0
+        out['closed_pnl']         = revenue
+        out['today_pnl']          = float(snap.get('pnl_24h', 0) or 0)
+        out['trade_mode_label']   = 'paper — internal-only booking, no real orders'
+        return jsonify(out)
+
+    # Live exchange (testnet / mainnet) — use the same helper that
+    # /api/balance/by_mode uses, then merge in trades.json for PnL.
+    try:
+        live = _live_binance_balance(testnet=(mode == 'testnet'))
+    except Exception as exc:
+        return jsonify({**out, 'error': f'{type(exc).__name__}: {exc}'}), 200
+    if not live or live.get('available') is False:
+        out['error'] = live.get('error', 'exchange unavailable') if isinstance(live, dict) else 'exchange unavailable'
+        return jsonify(out), 200
+
+    spot_usdt   = float(live.get('spot_usdt', 0)    or 0)
+    equity      = float(live.get('equity_usdt', 0)  or 0)
+    holdings    = (live.get('balances') or live.get('holdings') or {}) or {}
+    out['free_usdt']          = spot_usdt
+    out['total_capital']      = equity
+    out['in_positions_value'] = max(0.0, equity - spot_usdt)
+    out['balances']           = [{
+        'asset': 'USDT', 'qty': spot_usdt, 'value': spot_usdt, 'price': 1.0,
+    }]
+    if isinstance(holdings, dict):
+        for asset, qty in holdings.items():
+            try:
+                qty_f = float(qty)
+                if qty_f == 0 or asset == 'USDT':
+                    continue
+                out['balances'].append({
+                    'asset': asset, 'qty': qty_f,
+                    'value': None, 'price': None,
+                })
+            except Exception:
+                continue
+
+    # Trades-derived live + closed PnL. Trades.json has no per-row mode
+    # tag yet, so for testnet/mainnet we report all closed trades
+    # (most existing 912 rows are testnet anyway). When the bot starts
+    # stamping `mode` on writes, we can switch to a strict filter here.
+    try:
+        from src.utils.safe_json import read_json as _rj
+        raw = _rj('data/trades.json', default=[]) or []
+        if isinstance(raw, dict):
+            raw = raw.get('trades') or []
+        if not isinstance(raw, list):
+            raw = []
+        # When `mode` IS present on rows, prefer strict filter — that's
+        # the eventual end state once the bot tags every write.
+        tagged = [t for t in raw if isinstance(t, dict) and t.get('mode')]
+        if tagged:
+            tradeset = [t for t in tagged if t.get('mode') == mode]
+        else:
+            tradeset = [t for t in raw if isinstance(t, dict)]
+    except Exception:
+        tradeset = []
+
+    from datetime import datetime as _dt
+    today_ts = _dt.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    open_cnt, closed_cnt = 0, 0
+    live_pnl, closed_pnl, today_pnl = 0.0, 0.0, 0.0
+    for t in tradeset:
+        st = (t.get('status') or '').upper()
+        if st == 'OPEN':
+            open_cnt += 1
+            live_pnl += float(t.get('unrealized_pnl', 0) or 0)
+        elif st == 'CLOSED':
+            closed_cnt += 1
+            p = float(t.get('pnl_usdt', 0) or 0)
+            closed_pnl += p
+            try:
+                close_str = t.get('sell_time') or t.get('closed_at') or ''
+                close_ts = _dt.fromisoformat(str(close_str).replace('Z', '+00:00')).timestamp()
+                if close_ts >= today_ts:
+                    today_pnl += p
+            except Exception:
+                pass
+    out['live_pnl']              = live_pnl
+    out['closed_pnl']            = closed_pnl
+    out['today_pnl']             = today_pnl
+    out['open_position_count']   = open_cnt
+    out['closed_position_count'] = closed_cnt
+    out['trade_mode_label']      = ('testnet — Binance fake-money exchange'
+                                    if mode == 'testnet'
+                                    else '⚠ MAINNET — real money')
+    return jsonify(out)
 
 
 @app.route('/api/balance/by_mode')
