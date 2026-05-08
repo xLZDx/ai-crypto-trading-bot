@@ -46,22 +46,40 @@ from src.utils.hw_config import configure as _hw_configure
 
 
 # Per-key timeframes the multi-TF training pipeline iterates over.
-# Each key gets a list of TFs that make sense for it:
-#   base/trend/futures/meta — directional / signal-quality models; useful at
-#     a range of TFs from intraday to swing.
-#   scalping — locked at 1m (the higher-TF variants would defeat the
-#     purpose; trainer would coerce anyway).
-#   tft / regime — single-TF only here; Darts TFT is expensive to retrain
-#     and the GMM regime classifier is feature-stage, not bar-stage.
+# Curated, "applicable based on model logic" — see PLAN_2026_05_08
+# §1.P0.A for the full reasoning. Each key only lists TFs that match
+# that model's design horizon; combos that converge to noise (TFT @ 1m)
+# or that add no information (regime × extra TFs — features are
+# TF-invariant) are intentionally excluded so the overnight sweep
+# doesn't waste 6-12 h of compute on bad models.
+#
+#   base/trend/futures — directional signals; intraday → swing.
+#   scalping — sub-minute mean reversion only (1m / 5m).
+#   meta     — gates entry signals at 5m–4h; no consumer at 1d/1w.
+#   tft      — input_chunk_length=168 needs ~3 h history per inference;
+#              swing horizons (15m+) only.
+#   regime   — GMM uses TF-invariant features (vol, ADX, returns z);
+#              one canonical TF (1h) is enough.
+#
+# Override: set AI_TRADER_TRAIN_TF_MAP=strict_all_all to fall back to
+# the 49-combo every-key-on-every-TF sweep (lower-quality models on
+# the noise combos but useful for ablation studies).
 DEFAULT_PER_KEY_TFS: dict[str, tuple[str, ...]] = {
-    'base':     ('1h', '4h', '1d'),
-    'trend':    ('1h', '4h', '1d'),
-    'futures':  ('1h', '4h', '1d'),
-    'scalping': ('1m',),
-    'meta':     ('1h',),
-    'tft':      ('1h',),
-    'regime':   ('1h',),
+    'base':     ('5m', '15m', '1h', '4h', '1d'),     # 5 TFs
+    'trend':    ('15m', '1h', '4h', '1d', '1w'),     # 5 TFs
+    'futures':  ('5m', '15m', '1h', '4h', '1d'),     # 5 TFs
+    'scalping': ('1m', '5m'),                         # 2 TFs
+    'meta':     ('5m', '15m', '1h', '4h'),           # 4 TFs
+    'tft':      ('15m', '1h', '4h'),                  # 3 TFs
+    'regime':   ('1h',),                              # 1 TF
 }
+# 25 (model × TF) tabular combos. OFT is added separately by item 1M
+# (microstructure model on L2/L3, single canonical TF).
+
+if os.getenv('AI_TRADER_TRAIN_TF_MAP', '').lower() in ('strict', 'all', 'strict_all_all'):
+    _ALL_TFS = ('1m', '5m', '15m', '1h', '4h', '1d', '1w')
+    DEFAULT_PER_KEY_TFS = {k: _ALL_TFS for k in DEFAULT_PER_KEY_TFS}
+    log.info("AI_TRADER_TRAIN_TF_MAP override: strict all×all (49 combos)")
 
 
 def train_all(per_key_tfs: dict[str, tuple[str, ...]] | None = None):

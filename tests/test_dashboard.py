@@ -5096,6 +5096,57 @@ def test_phase71_pr46_real_cash_label_rename():
               and '⚠ MAINNET — real money' not in app)
 
 
+def test_phase71b_v31_curated_tf_map():
+    """v3.1 step 2 (1A): DEFAULT_PER_KEY_TFS uses the curated 25-combo
+    map ('applicable based on model logic'), with AI_TRADER_TRAIN_TF_MAP
+    env-var override to fall back to strict 49-combo all×all."""
+    print('\n[Phase 71b — v3.1 step 2: curated DEFAULT_PER_KEY_TFS]')
+
+    src = os.path.join(BASE_DIR, 'src', 'engine', 'train_all_models.py')
+    with open(src, encoding='utf-8') as f:
+        code = f.read()
+
+    # Curated entries for each model key.
+    expected = {
+        'base':     ('5m', '15m', '1h', '4h', '1d'),
+        'trend':    ('15m', '1h', '4h', '1d', '1w'),
+        'futures':  ('5m', '15m', '1h', '4h', '1d'),
+        'scalping': ('1m', '5m'),
+        'meta':     ('5m', '15m', '1h', '4h'),
+        'tft':      ('15m', '1h', '4h'),
+        'regime':   ('1h',),
+    }
+    for key, tfs in expected.items():
+        # The literal tuple appears verbatim in the source.
+        # Match the order to catch accidental reorderings.
+        formatted = ', '.join(f"'{t}'" for t in tfs)
+        if len(tfs) == 1:
+            formatted += ','
+        check(f"DEFAULT_PER_KEY_TFS['{key}'] = ({formatted})",
+              f"({formatted})" in code,
+              f"expected tuple ({formatted}) for key '{key}'")
+
+    check('strict all×all override path present (AI_TRADER_TRAIN_TF_MAP)',
+          'AI_TRADER_TRAIN_TF_MAP' in code and "'1w'" in code)
+
+    # Live import — combo counts for both modes.
+    import importlib, sys
+    sys.path.insert(0, BASE_DIR)
+    os.environ.pop('AI_TRADER_TRAIN_TF_MAP', None)
+    if 'src.engine.train_all_models' in sys.modules:
+        del sys.modules['src.engine.train_all_models']
+    mod = importlib.import_module('src.engine.train_all_models')
+    curated = sum(len(v) for v in mod.DEFAULT_PER_KEY_TFS.values())
+    check(f'curated map sums to 25 combos (got {curated})', curated == 25)
+
+    os.environ['AI_TRADER_TRAIN_TF_MAP'] = 'strict'
+    del sys.modules['src.engine.train_all_models']
+    mod = importlib.import_module('src.engine.train_all_models')
+    strict = sum(len(v) for v in mod.DEFAULT_PER_KEY_TFS.values())
+    check(f'strict override sums to 49 combos (got {strict})', strict == 49)
+    os.environ.pop('AI_TRADER_TRAIN_TF_MAP', None)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -5424,6 +5475,7 @@ def main():
     test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest()
     test_phase70_pr43_dashboard_watchdog()
     test_phase71_pr46_real_cash_label_rename()
+    test_phase71b_v31_curated_tf_map()
 
     if not args.offline:
         test_api(args.url)
