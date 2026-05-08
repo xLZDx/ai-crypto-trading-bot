@@ -19,8 +19,12 @@ os.environ.setdefault('CUDA_CACHE_PATH',      os.path.join(_cache, 'cuda'))
 os.environ.setdefault('NUMBA_CACHE_DIR',      os.path.join(_cache, 'numba'))
 os.environ.setdefault('MPLCONFIGDIR',         os.path.join(_cache, 'matplotlib'))
 
-# CPU multithreading — use every logical core
-_n_cpu = str(os.cpu_count() or 20)
+# CPU multithreading — capped so a long overnight run can't pin 100 % CPU
+# and starve the bot loop, dashboard, and watchdog of cycles. The
+# operator can scale up via AI_TRADER_TRAIN_CPU_THREADS if they want
+# every core; default 10 of 14 leaves 4 cores for the rest of the system.
+_total_cpu = os.cpu_count() or 20
+_n_cpu = str(int(os.getenv('AI_TRADER_TRAIN_CPU_THREADS', '10')))
 os.environ.setdefault('OMP_NUM_THREADS',      _n_cpu)
 os.environ.setdefault('MKL_NUM_THREADS',      _n_cpu)
 os.environ.setdefault('OPENBLAS_NUM_THREADS', _n_cpu)
@@ -81,9 +85,34 @@ def train_all(per_key_tfs: dict[str, tuple[str, ...]] | None = None):
     except Exception as e:
         log.warning("Funding rate download failed (will train without): %s", e)
 
+    # Skip-if-fresh — when an overnight run dies at hour 5 of 8 and the
+    # operator re-triggers it, we don't want to redo every model from
+    # scratch. If models/<key>_<tf>_meta.json was written within the last
+    # SKIP_IF_FRESH_S, treat that combo as already trained and move on.
+    # Default 2 h; override via AI_TRADER_TRAIN_SKIP_IF_FRESH_S env var.
+    # Setting it to 0 forces every combo to retrain (manual full sweep).
+    import time as _time
+    SKIP_IF_FRESH_S = int(os.getenv('AI_TRADER_TRAIN_SKIP_IF_FRESH_S', str(2 * 3600)))
+    from src.utils.model_paths import artifact_paths
+
+    def _meta_age_s(key: str, tf: str) -> float | None:
+        try:
+            p = artifact_paths(key, tf).get('meta')
+            if p and p.exists():
+                return _time.time() - p.stat().st_mtime
+        except Exception:
+            pass
+        return None
+
     # Helper: run a trainer for every TF in its list, isolating failures.
     def _train_loop(key: str, fn, label: str):
         for tf in cfg.get(key, ()):
+            age = _meta_age_s(key, tf)
+            if SKIP_IF_FRESH_S > 0 and age is not None and age < SKIP_IF_FRESH_S:
+                log.info(">>> Skipping %s @ %s — meta written %d min ago "
+                         "(within SKIP_IF_FRESH_S=%ds; resume mode)",
+                         label, tf, int(age / 60), SKIP_IF_FRESH_S)
+                continue
             try:
                 log.info(">>> Training %s @ %s ...", label, tf)
                 fn(timeframe=tf)

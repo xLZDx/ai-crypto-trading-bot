@@ -22,7 +22,7 @@ if base_dir not in sys.path:
 from src.analysis.feature_engineering import (
     add_taker_and_trade_features, add_rsi, add_macd,
     add_bollinger_bands, add_roc, add_time_features, resample_1s_to_1m,
-    add_ofi, add_vwap, add_keltner
+    add_ofi, add_vwap, add_keltner, add_atr,
 )
 from src.analysis.fractional_diff import add_fractional_diff
 from src.analysis.triple_barrier import triple_barrier_labels_vectorized, label_stats
