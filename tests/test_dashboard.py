@@ -4754,6 +4754,60 @@ def test_phase60_pr36_training_concurrency_cap():
               if acquire_pos > 0 else False)
 
 
+def test_phase63_pr39_strategy_panels_hourly_refresh():
+    """Strategy & ML panels (ML Models, Model Training, Pure Rule vs ML,
+    Stability Heatmap, Data Coverage, Pipeline Orchestrator) refresh
+    only on F5 / manual button / hourly auto-tick — not on every 5 s
+    pollState beat. Operator wanted the polling load on the
+    minutes-to-hours data to match its real change cadence."""
+    print('\n[Phase 63 — PR-39 strategy panels hourly auto-refresh]')
+
+    tpl_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
+    with open(tpl_path, encoding='utf-8') as f:
+        tpl = f.read()
+
+    # The hourly refresh helper exists.
+    check('_strategyHourlyRefresh function defined',
+          'function _strategyHourlyRefresh' in tpl)
+
+    # It calls all 6 loaders.
+    body_start = tpl.find('function _strategyHourlyRefresh')
+    body_end   = tpl.find('\n}\n', body_start)
+    body = tpl[body_start:body_end] if body_end > body_start else ''
+    for fn in ('loadStrategyFull', 'loadBucketCompare', 'loadStabilityHeatmap',
+               'loadDataCoverage', 'pollResampleJobs', 'pipelineRefresh'):
+        check(f'_strategyHourlyRefresh calls {fn}', fn in body)
+
+    # Hourly setInterval armed (3600 * 1000 ms = 3,600,000 ms).
+    check('hourly setInterval armed',
+          'setInterval(_strategyHourlyRefresh, 3600 * 1000)' in tpl
+          or 'setInterval(_strategyHourlyRefresh, 3600000)' in tpl)
+
+    # Initial fire on page load (so F5 triggers a refresh).
+    check('initial fire on DOMContentLoaded',
+          'setTimeout(_strategyHourlyRefresh' in tpl)
+
+    # renderStrategyTab no longer fires the load* loaders (the bug we fixed).
+    rst_start = tpl.find('function renderStrategyTab(state)')
+    rst_end   = tpl.find('\n}\n', rst_start)
+    rst_body  = tpl[rst_start:rst_end] if rst_end > rst_start else ''
+    for fn in ('loadBucketCompare', 'loadStabilityHeatmap',
+               'loadDataCoverage', 'pollResampleJobs'):
+        check(f'renderStrategyTab no longer calls {fn}',
+              fn + '(' not in rst_body)
+
+    # pipelineRefresh removed from the staggered tick.
+    stagger_start = tpl.find('_STAGGERED_POLLERS')
+    stagger_end   = tpl.find('];', stagger_start)
+    stagger_body  = tpl[stagger_start:stagger_end] if stagger_end > stagger_start else ''
+    check('pipelineRefresh removed from _STAGGERED_POLLERS',
+          'pipelineRefresh()' not in stagger_body)
+
+    # pollTrainingJobs is STILL in the staggered tick (drives ETA).
+    check('pollTrainingJobs still in _STAGGERED_POLLERS (drives ETA)',
+          'pollTrainingJobs()' in stagger_body)
+
+
 def test_phase62_pr38_training_eta_and_elapsed():
     """Training jobs response carries elapsed_s / eta_s / typical_s
     so the dashboard row can render '5s · ~29m left' beneath the
@@ -5022,6 +5076,7 @@ def main():
     test_phase60_pr36_training_concurrency_cap()
     test_phase61_pr37_resource_aware_scheduler()
     test_phase62_pr38_training_eta_and_elapsed()
+    test_phase63_pr39_strategy_panels_hourly_refresh()
 
     if not args.offline:
         test_api(args.url)

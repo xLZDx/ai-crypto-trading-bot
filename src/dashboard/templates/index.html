@@ -3537,10 +3537,35 @@ function renderStrategyTab(state) {
   _renderTrainingTable();
   _renderStratCards(_stratFull);
   _renderBtSummary(_stratFull);
-  loadBucketCompare();      // pure-vs-ML aggregate
-  loadStabilityHeatmap();   // TF × Strategy heatmap
-  loadDataCoverage();       // data inventory matrix
-  pollResampleJobs();       // surface any in-flight resample
+  // Network loaders moved out of this hot path — they used to fire on
+  // every pollState tick (5 s) which thrashed the dashboard with
+  // bucket_compare / stability / coverage / resample fetches even
+  // when the underlying data hadn't changed in hours. Now those
+  // fetches happen on:
+  //   • page load / F5  (handled in _strategyHourlyRefresh below)
+  //   • manual ↻ REFRESH button click on each card
+  //   • the hourly auto-refresh tick
+  // renderStrategyTab now just re-renders from cached state.
+}
+
+
+// Hourly background refresh of the slow Strategy & ML cards. The list
+// matches the operator's request — six panels whose data changes on
+// minutes-to-hours timescales, not seconds:
+//   • ML Models / Model Training  — driven by loadStrategyFull
+//   • Pure Rule vs ML-Driven      — loadBucketCompare
+//   • Stability Heatmap (TF × S)  — loadStabilityHeatmap
+//   • Data Coverage (multi-TF)    — loadDataCoverage + pollResampleJobs
+//   • Pipeline Orchestrator       — pipelineRefresh (idle snapshot)
+// The Active-training poller (pollTrainingJobs) keeps its 5 s cadence
+// because it drives the elapsed/ETA sub-line on running rows.
+function _strategyHourlyRefresh() {
+  try { loadStrategyFull(); } catch(_) {}
+  try { loadBucketCompare(); } catch(_) {}
+  try { loadStabilityHeatmap(); } catch(_) {}
+  try { loadDataCoverage(); } catch(_) {}
+  try { pollResampleJobs(); } catch(_) {}
+  try { pipelineRefresh(); } catch(_) {}
 }
 
 // ── ML Model Cards ────────────────────────────────────────────────────────────
@@ -5632,7 +5657,16 @@ document.addEventListener('DOMContentLoaded', () => {
     () => { if (activeTab === 'monitor' && typeof clusterPoll==='function') try { clusterPoll(); } catch(_){} },
     () => { if (activeTab === 'simulator')    try { simPoll(); } catch(_){} },
     () => { if (activeTab === 'strategy' && typeof pollTrainingJobs==='function') try { pollTrainingJobs(); } catch(_){} },
-    () => { if (activeTab === 'strategy' && typeof pipelineRefresh==='function') try { pipelineRefresh(); } catch(_){} },
+    // pipelineRefresh removed from staggered tick — it fired every 10s
+    // even when the orchestrator was idle. The slow Strategy panels
+    // (Pipeline Orchestrator / Pure Rule vs ML / Stability / Coverage /
+    // ML Models / Model Training) refresh on:
+    //   • page load / F5  (DOMContentLoaded → _strategyHourlyRefresh)
+    //   • manual ↻ REFRESH button on each card
+    //   • the hourly setInterval below
+    // pipelineRefresh self-arms its own 8 s _pipeTimer when it sees
+    // status==='running', so an active orchestrator still gets fast
+    // polling for its progress bar.
     () => { try { pollErrors(); } catch(_){} },           // banner — tab-agnostic
     () => { try { pollState(); } catch(_){} },             // bot-state — tab-agnostic
   ];
@@ -5641,6 +5675,12 @@ document.addEventListener('DOMContentLoaded', () => {
     try { _STAGGERED_POLLERS[_staggerIdx](); } catch(_) {}
     _staggerIdx = (_staggerIdx + 1) % _STAGGERED_POLLERS.length;
   }, 1000);
+
+  // Hourly auto-refresh of the slow Strategy panels (see
+  // _strategyHourlyRefresh comment). Fire once at boot so F5 / page
+  // reload populates everything immediately, then every 60 min.
+  setTimeout(_strategyHourlyRefresh, 1500);
+  setInterval(_strategyHourlyRefresh, 3600 * 1000);
 });
 
 // ── Monitor tab ────────────────────────────────────────────────────────────
