@@ -46,8 +46,8 @@ from src.analysis.feature_engineering import (
     add_rsi, add_macd, add_bollinger_bands, add_roc, add_atr,
     add_ofi, add_vwap, add_funding_zscore, add_liquidity_proximity,
     add_donchian, add_keltner, add_time_features, add_taker_and_trade_features,
-    _compute_regime_features
 )
+from src.analysis.regime_classifier import _compute_regime_features
 from src.analysis.fractional_diff import add_fractional_diff
 from src.analysis.triple_barrier import triple_barrier_labels_vectorized
 
