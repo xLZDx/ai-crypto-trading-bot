@@ -1963,8 +1963,8 @@ document.addEventListener('DOMContentLoaded', function() {
                   <th class="tr-th" data-col="accuracy_walk_forward" onclick="trSort('accuracy_walk_forward')" style="text-align:right;padding:5px 6px" title="Mean accuracy across walk-forward OOS folds. Most honest. ≥52% robust.">WF Acc% <span class="tr-chev"></span></th>
                   <th class="tr-th" data-col="long_accuracy"  onclick="trSort('long_accuracy')"  style="text-align:right;padding:5px 6px" title="Precision when model predicts long. Big spread vs Bear = class imbalance.">Bull WR% <span class="tr-chev"></span></th>
                   <th class="tr-th" data-col="short_accuracy" onclick="trSort('short_accuracy')" style="text-align:right;padding:5px 6px" title="Precision when model predicts short.">Bear WR% <span class="tr-chev"></span></th>
-                  <th class="tr-th" data-col="auc_roc"        onclick="trSort('auc_roc')"        style="text-align:right;padding:5px 6px" title="ROC-AUC for binary classifiers (meta-labeler). ≥0.55 ok · ≥0.60 great · 0.50 random.">AUC <span class="tr-chev"></span></th>
-                  <th class="tr-th" data-col="win_precision"  onclick="trSort('win_precision')"  style="text-align:right;padding:5px 6px" title="Meta-labeler: when label=1, % actually wins. ≥50% useful.">Win Prec% <span class="tr-chev"></span></th>
+                  <th class="tr-th" data-col="auc_roc"        onclick="trSort('auc_roc')"        style="text-align:right;padding:5px 6px" title="ROC-AUC — only meaningful for probabilistic binary classifiers (meta-labeler). Directional HistGBT/RF rows (regime/base/trend/futures/scalping) report Acc Test% + WF Acc% instead — those columns are the right quality signal there. Empty here is by design, not missing data. ≥0.55 ok · ≥0.60 great · 0.50 random.">AUC <span class="tr-chev"></span></th>
+                  <th class="tr-th" data-col="win_precision"  onclick="trSort('win_precision')"  style="text-align:right;padding:5px 6px" title="Meta-labeler precision at the gate threshold (when meta says 'take this trade', what fraction win). Same rule as AUC — only the meta-labeler row populates this; directional models use Bull/Bear WR%. ≥50% useful.">Win Prec% <span class="tr-chev"></span></th>
                   <th class="tr-th" data-col="n_samples"      onclick="trSort('n_samples')"      style="text-align:right;padding:5px 6px" title="Total training rows. ≥100k tabular · ≥1M neural.">Samples <span class="tr-chev"></span></th>
                   <th class="tr-th" data-col="n_features"     onclick="trSort('n_features')"     style="text-align:right;padding:5px 6px" title="Input feature count. Watch features-to-samples ratio.">Feats <span class="tr-chev"></span></th>
                   <th class="tr-th" data-col="n_iterations"   onclick="trSort('n_iterations')"   style="text-align:right;padding:5px 6px" title="Boosting rounds (RF/HGBT) or epochs (TFT/OFT). Early-stop is healthier than max.">Iter <span class="tr-chev"></span></th>
@@ -3725,6 +3725,19 @@ function _renderTrainingTable() {
   const accCol = v => v == null ? '#475569' : v >= 55 ? '#34d399' : v >= 50 ? '#fbbf24' : '#fb7185';
   const aucCol = v => v == null ? '#475569' : v >= 0.6 ? '#34d399' : v >= 0.55 ? '#fbbf24' : '#fb7185';
   const bigNum = v => v == null ? '—' : Number(v).toLocaleString();
+  // Format seconds as "1h 23m" / "12m 04s" / "47s". Used for elapsed
+  // and ETA on the Status cell of actively-training rows.
+  const _trFmtDuration = (s) => {
+    if (s == null || isNaN(s) || s < 0) return null;
+    s = Math.round(s);
+    if (s < 60) return s + 's';
+    if (s < 3600) {
+      const m = Math.floor(s / 60), r = s % 60;
+      return `${m}m ${r.toString().padStart(2,'0')}s`;
+    }
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    return `${h}h ${m.toString().padStart(2,'0')}m`;
+  };
 
   tbody.innerHTML = filtered.map(m => {
     const todayBadge = m.runs_today
@@ -3773,13 +3786,37 @@ function _renderTrainingTable() {
     }
     const stColor = {ok:'#34d399',run:'#fbbf24',err:'#fb7185',stp:'#94a3b8',na:'#475569'}[st.cls] || '#475569';
     const stBg    = {ok:'rgba(52,211,153,.15)',run:'rgba(251,191,36,.18)',err:'rgba(251,113,133,.16)',stp:'rgba(148,163,184,.12)',na:'rgba(71,85,105,.12)'}[st.cls] || 'rgba(71,85,105,.12)';
+    // Elapsed / ETA sub-line shown beneath the Status pill for active jobs.
+    // Backend (api_training_jobs → _annotate_job_timing) decorates each
+    // running row with elapsed_s + eta_s + typical_s. queued rows get
+    // queued_for_s. The pill stays unchanged; the sub-line gives the
+    // operator a "is this on track?" signal at a glance.
+    let timingSub = '';
+    if (activeJob) {
+      const el = activeJob.elapsed_s, eta = activeJob.eta_s,
+            qf = activeJob.queued_for_s, typ = activeJob.typical_s;
+      const elFmt = _trFmtDuration(el);
+      const etaFmt = _trFmtDuration(eta);
+      const qfFmt = _trFmtDuration(qf);
+      const typFmt = _trFmtDuration(typ);
+      if (activeJob.status === 'queued' && qfFmt) {
+        const tip = typFmt ? `Typical run: ~${typFmt}` : '';
+        timingSub = `<div style="margin-top:2px;font-size:.5rem;color:#94a3b8;font-family:'JetBrains Mono'" title="${esc(tip)}">queued ${qfFmt}</div>`;
+      } else if (elFmt) {
+        // ETA missing = either no historical data (typical_s unknown)
+        // or run is past the typical duration (eta_s = 0).
+        const etaPart = etaFmt && etaFmt !== '0s' ? ` · ~${etaFmt} left` : (typFmt ? ' · overdue' : '');
+        const tip = typFmt ? `Typical: ~${typFmt} on this hardware` : 'No prior runs to estimate ETA';
+        timingSub = `<div style="margin-top:2px;font-size:.5rem;color:#fbbf24;font-family:'JetBrains Mono'" title="${esc(tip)}">${elFmt}${etaPart}</div>`;
+      }
+    }
     // Description: short blurb sourced from _MODEL_DESCRIPTIONS
     const desc = (typeof _MODEL_DESCRIPTIONS !== 'undefined') ? (_MODEL_DESCRIPTIONS[m.key] || '') : '';
     return `<tr data-model-key="${esc(m.key)}">
       <td style="color:#e2e8f0;font-weight:700">${m.icon||''} ${esc(m.label||m.key)}${warnMark}</td>
       <td style="color:#94a3b8">${esc(m.market||'—')}</td>
       <td style="color:#94a3b8">${esc(m.timeframe||'—')}</td>
-      <td style="text-align:center"><span title="${esc(st.tip)}" style="display:inline-block;font-size:.55rem;font-weight:800;letter-spacing:.04em;padding:2px 7px;border-radius:999px;background:${stBg};color:${stColor};border:1px solid ${stColor}55${st.cls==='run'?';animation:pulse 1.5s ease-in-out infinite':''}">${st.txt}</span></td>
+      <td style="text-align:center"><span title="${esc(st.tip)}" style="display:inline-block;font-size:.55rem;font-weight:800;letter-spacing:.04em;padding:2px 7px;border-radius:999px;background:${stBg};color:${stColor};border:1px solid ${stColor}55${st.cls==='run'?';animation:pulse 1.5s ease-in-out infinite':''}">${st.txt}</span>${timingSub}</td>
       <td style="text-align:right;color:${m.runs_today?'#34d399':(m.age_s>7*86400?'#fb7185':'#94a3b8')}">${_trRelTime(m.age_s)}</td>
       <td style="text-align:right">${todayBadge}</td>
       <td style="text-align:right;color:#94a3b8">≥ ${m.total_runs_min||0}</td>

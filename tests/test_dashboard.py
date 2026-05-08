@@ -4754,6 +4754,78 @@ def test_phase60_pr36_training_concurrency_cap():
               if acquire_pos > 0 else False)
 
 
+def test_phase62_pr38_training_eta_and_elapsed():
+    """Training jobs response carries elapsed_s / eta_s / typical_s
+    so the dashboard row can render '5s · ~29m left' beneath the
+    RUNNING pill. Frontend reads these field names verbatim."""
+    print('\n[Phase 62 — PR-38 elapsed + ETA on training rows]')
+
+    app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
+    with open(app_path, encoding='utf-8') as f:
+        app = f.read()
+
+    check('_TYPICAL_DURATIONS map present',
+          '_TYPICAL_DURATIONS' in app and "'tft':" in app and "'oft':" in app)
+    check('_annotate_job_timing decorator present',
+          'def _annotate_job_timing' in app)
+    check('api_training_jobs annotates rows',
+          '_annotate_job_timing(' in app)
+    check('_record_completed_duration updates rolling avg',
+          'def _record_completed_duration' in app
+          and '_record_completed_duration(' in app)
+
+    # Spot-check the decorator's contract — should set elapsed_s + eta_s
+    # only when status==running and never go negative for eta_s.
+    import time as _t
+    ns: dict = {'time': _t, 'threading': __import__('threading')}
+    # Extract _TYPICAL_DURATIONS + helper + decorator. We exec the
+    # whole block as one program so the closures see _TYPICAL_DURATIONS.
+    start = app.find('# Typical training durations')
+    end = app.find('@app.route(\'/api/training/jobs\'', start)
+    if start < 0 or end < 0:
+        check('extract decorator source', False); return
+    src = app[start:end]
+    # Strip the type annotation prefix to get a valid module-level
+    # assignment that exec() will install in the shared namespace.
+    src = src.replace('_TYPICAL_DURATIONS: dict[str, float] = ',
+                      '_TYPICAL_DURATIONS = ', 1)
+    src = src.replace('_TYPICAL_HISTORY: dict[str, list[float]] = ',
+                      '_TYPICAL_HISTORY = ', 1)
+    try:
+        exec(src, ns)
+    except Exception as e:
+        check('extracted decorator compiles', False, str(e))
+        return
+    annotate = ns['_annotate_job_timing']
+    now = _t.time()
+
+    # Running job halfway through typical duration
+    j = annotate({'model': 'regime', 'status': 'running',
+                  'started_at': now - 600})
+    check('running row gets elapsed_s', j.get('elapsed_s') is not None and j['elapsed_s'] >= 600)
+    check('running row gets eta_s (clamped to 0+)',
+          j.get('eta_s') is not None and j['eta_s'] >= 0)
+    check('typical_s carried through', j.get('typical_s') == 30 * 60)
+
+    # Overdue running job — eta clamps to 0, never negative
+    j = annotate({'model': 'regime', 'status': 'running',
+                  'started_at': now - 99999})
+    check('overdue row eta_s clamps to 0', j.get('eta_s') == 0.0)
+
+    # Queued job — gets queued_for_s, no elapsed/eta
+    j = annotate({'model': 'tft', 'status': 'queued',
+                  'queued_at': now - 12})
+    check('queued row gets queued_for_s', j.get('queued_for_s') is not None and j['queued_for_s'] >= 12)
+    check('queued row gets typical_s for the operator preview',
+          j.get('typical_s') == 60 * 60)
+
+    # Finished job — elapsed_s carried, no eta
+    j = annotate({'model': 'regime', 'status': 'done',
+                  'started_at': now - 1234, 'finished_at': now})
+    check('finished row keeps elapsed_s', j.get('elapsed_s') is not None and j['elapsed_s'] >= 1234)
+    check('finished row has no eta_s', 'eta_s' not in j)
+
+
 def test_phase61_pr37_resource_aware_scheduler():
     """Trainer scheduler is CPU/GPU/exclusive-aware, not a single Sem.
 
@@ -4949,6 +5021,7 @@ def main():
     test_phase59_pr35_parquet_query_thread_safety()
     test_phase60_pr36_training_concurrency_cap()
     test_phase61_pr37_resource_aware_scheduler()
+    test_phase62_pr38_training_eta_and_elapsed()
 
     if not args.offline:
         test_api(args.url)
