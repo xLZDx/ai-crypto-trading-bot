@@ -2711,7 +2711,11 @@ _TRAINER_DISPATCH = {
     'futures':  ('src.engine.train_futures_model',   'train_futures_model',  True),
     'scalping': ('src.engine.train_scalping_model',  'train_scalping_model', True),
     'tft':      ('src.engine.train_tft_model',       'train_tft_model',      True),
-    'oft':      ('src.training.oft_trainer',         'main',                 False),
+    # OFT entry point lives in joint_oft_rl (oft_trainer.py is the library
+    # module — it exposes OFTTrainer/OFTTrainerConfig classes but no main()).
+    # Pre-fix the trainer dispatch tried to call oft_trainer.main() and
+    # bailed with AttributeError every time the user clicked Train.
+    'oft':      ('src.training.joint_oft_rl',         'main',                 False),
     'meta':     ('src.engine.train_meta_labeler',    'train_meta_labeler',   True),
     # Regime classifier has its own standalone trainer.
     'regime':   ('src.analysis.regime_classifier',   'train_regime_classifier', False),
