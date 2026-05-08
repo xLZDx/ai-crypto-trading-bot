@@ -742,13 +742,25 @@ _ALL_MULTI_PROBES = [
 ]
 
 
-def scan_status_surfaces() -> dict[str, dict[str, Any]]:
-    """Probe every status surface. Surface entries auto-heal as soon as
-    a probe returns None (we drop them from _state in the same pass).
-    Returns a snapshot of just the surface entries (for tests)."""
-    now = time.time()
-    bad: list[tuple[str, str, str]] = []  # (kind, sig_suffix, sample)
+# Surface-scan singleton + TTL cache. Pre-fix: 10+ concurrent Flask
+# threads each called scan_status_surfaces() and ran all 10 probes in
+# parallel — 100 simultaneous psutil/HTTP/file ops choked on the GIL
+# and the dashboard hit 138 threads with 60 s timeouts on
+# /api/errors/recent and /api/monitor/services. Now we cap probe
+# fan-out at 1× cadence by coalescing concurrent callers.
+_SURFACE_TTL_S = 15.0
+_surface_cache: dict = {"snapshot": {}, "ts": 0.0}
+_surface_cache_lock = threading.Lock()
+# Lock guarding the actual probe pass. acquire(blocking=False) lets
+# late callers fall through to the cached snapshot instead of piling
+# up behind an in-flight scan.
+_surface_scan_lock = threading.Lock()
 
+
+def _run_all_probes() -> list[tuple[str, str, str]]:
+    """Run every status probe and collect (kind, sig_suffix, sample)
+    tuples for any non-OK result. Pure read; no shared state mutation."""
+    bad: list[tuple[str, str, str]] = []
     for _name, fn in _ALL_PROBES:
         try:
             r = fn()
@@ -763,63 +775,100 @@ def scan_status_surfaces() -> dict[str, dict[str, Any]]:
                 bad.append(r)
         except Exception as exc:
             logger.debug("[error_monitor] multi-probe %s failed: %s", _name, exc)
+    return bad
 
-    surface_file = "monitor/health"
-    bad_keys: set[str] = set()
-    surface_snapshot: dict[str, dict[str, Any]] = {}
 
-    with _state_lock:
-        for kind, sig_suffix, sample in bad:
-            sig = _SURFACE_PREFIX + sig_suffix
-            # Wipe a stale entry that may exist under a different severity
-            # (e.g. WARNING → CRITICAL upgrade) before writing the new one.
-            for other_kind in ("critical", "warning"):
-                if other_kind != kind:
-                    other_key = f"{other_kind}::{surface_file}::{sig}"
-                    _state.pop(other_key, None)
+def scan_status_surfaces() -> dict[str, dict[str, Any]]:
+    """Probe every status surface. Surface entries auto-heal as soon as
+    a probe returns None (we drop them from _state in the same pass).
+    Returns a snapshot of just the surface entries (for tests).
 
-            key = f"{kind}::{surface_file}::{sig}"
-            # Same CLEAR ALL cool-off semantics as scan() — surface probes
-            # would otherwise re-add the just-dismissed entry on the very
-            # next poll because the underlying status surface is still
-            # reporting the same fault.
-            if _is_suppressed(key, now):
-                continue
-            bad_keys.add(key)
-            e = _state.get(key)
-            if e is None:
-                if len(_state) >= MAX_ENTRIES:
-                    oldest = min(_state.items(),
-                                 key=lambda kv: kv[1].get("first_seen", 0))
-                    _state.pop(oldest[0], None)
-                e = {
-                    "kind":       kind,
-                    "file":       surface_file,
-                    "signature":  sig,
-                    "sample":     sample[:300],
-                    "source":     "surface",
-                    "first_seen": now,
-                    "last_seen":  now,
-                    "count":      1,
-                }
-                _state[key] = e
-            else:
-                e["last_seen"] = now
-                e["count"]     = int(e.get("count", 0)) + 1
-                e["sample"]    = sample[:300]
-            surface_snapshot[key] = dict(e)
+    Concurrency strategy:
+      • If the cached snapshot is < _SURFACE_TTL_S old, return it
+        directly (no probes run).
+      • Otherwise try to acquire the scan lock non-blocking. If another
+        thread is already scanning, return the cached (stale) snapshot
+        rather than waiting — better an outdated answer than a 60 s
+        request hang.
+      • If we got the lock, do a fresh scan, update _state + cache."""
+    now = time.time()
+    with _surface_cache_lock:
+        cache_age = now - (_surface_cache.get("ts") or 0)
+        if cache_age < _SURFACE_TTL_S and _surface_cache.get("snapshot") is not None:
+            return dict(_surface_cache["snapshot"])
 
-        # Auto-heal: drop surface entries we no longer flag as bad.
-        # A surface entry is identified by its signature carrying _SURFACE_PREFIX.
-        stale = [
-            k for k, e in _state.items()
-            if e.get("source") == "surface" and k not in bad_keys
-        ]
-        for k in stale:
-            _state.pop(k, None)
+    if not _surface_scan_lock.acquire(blocking=False):
+        # Another thread is mid-scan — return the cached snapshot
+        # (possibly empty on cold start, possibly stale; either way
+        # the caller gets an immediate response).
+        with _surface_cache_lock:
+            return dict(_surface_cache.get("snapshot") or {})
 
-    _save_state()
-    return surface_snapshot
+    try:
+        bad = _run_all_probes()
+
+        surface_file = "monitor/health"
+        bad_keys: set[str] = set()
+        surface_snapshot: dict[str, dict[str, Any]] = {}
+
+        with _state_lock:
+            for kind, sig_suffix, sample in bad:
+                sig = _SURFACE_PREFIX + sig_suffix
+                # Wipe a stale entry that may exist under a different severity
+                # (e.g. WARNING → CRITICAL upgrade) before writing the new one.
+                for other_kind in ("critical", "warning"):
+                    if other_kind != kind:
+                        other_key = f"{other_kind}::{surface_file}::{sig}"
+                        _state.pop(other_key, None)
+
+                key = f"{kind}::{surface_file}::{sig}"
+                # Same CLEAR ALL cool-off semantics as scan() — surface probes
+                # would otherwise re-add the just-dismissed entry on the very
+                # next poll because the underlying status surface is still
+                # reporting the same fault.
+                if _is_suppressed(key, now):
+                    continue
+                bad_keys.add(key)
+                e = _state.get(key)
+                if e is None:
+                    if len(_state) >= MAX_ENTRIES:
+                        oldest = min(_state.items(),
+                                     key=lambda kv: kv[1].get("first_seen", 0))
+                        _state.pop(oldest[0], None)
+                    e = {
+                        "kind":       kind,
+                        "file":       surface_file,
+                        "signature":  sig,
+                        "sample":     sample[:300],
+                        "source":     "surface",
+                        "first_seen": now,
+                        "last_seen":  now,
+                        "count":      1,
+                    }
+                    _state[key] = e
+                else:
+                    e["last_seen"] = now
+                    e["count"]     = int(e.get("count", 0)) + 1
+                    e["sample"]    = sample[:300]
+                surface_snapshot[key] = dict(e)
+
+            # Auto-heal: drop surface entries we no longer flag as bad.
+            # A surface entry is identified by its signature carrying _SURFACE_PREFIX.
+            stale = [
+                k for k, e in _state.items()
+                if e.get("source") == "surface" and k not in bad_keys
+            ]
+            for k in stale:
+                _state.pop(k, None)
+
+        _save_state()
+        # Cache the freshly-built snapshot for the next _SURFACE_TTL_S.
+        with _surface_cache_lock:
+            _surface_cache["snapshot"] = dict(surface_snapshot)
+            _surface_cache["ts"] = time.time()
+        return surface_snapshot
+    finally:
+        _surface_scan_lock.release()
 
 
 def get_active(severity: str | None = None,

@@ -763,12 +763,21 @@ def monitor_health():
     return jsonify(out)
 
 
-@app.route('/api/monitor/services')
-def monitor_services():
-    """Probe non-process services: QuestDB, DuckDB, Simulator, ZMQ broker,
-    Parquet store, Realtime feed. Returns a {key: {label, up, detail, error, hint}}
-    dict. Each probe is wrapped in a tight try/except + small timeout so a
-    single hung dependency cannot stall the dashboard."""
+# TTL cache for /api/monitor/services. Pre-fix: every poll re-ran 7
+# probes (rglob 7K parquet files + stat-sum 50 GB + DuckDB connect +
+# psutil + HTTP). With dashboard polling every few seconds × 138 hung
+# threads, this contributed to the lock-storm that wedged the dashboard
+# on 2026-05-08. Cache for 30 s — service health doesn't change faster
+# than that anyway, and the operator's eye can't refresh a card faster.
+_monitor_services_cache: dict = {'value': None, 'ts': 0.0}
+_monitor_services_cache_ttl = 30.0
+_monitor_services_lock = threading.Lock()
+
+
+def _build_monitor_services_snapshot() -> dict:
+    """Run every service probe and return the {key: status} dict.
+    Pure read; no shared state mutation. Called by monitor_services()
+    behind a TTL gate so concurrent dashboard polls don't fan-out."""
     import socket
     import urllib.request
     import urllib.error
@@ -912,6 +921,40 @@ def monitor_services():
     except Exception as e:
         out['realtime'] = {'label': 'Realtime Feed (Binance L2)', 'up': False, 'error': str(e)}
 
+    return out
+
+
+def _refresh_monitor_services_async():
+    """Background-thread refresh of the monitor-services snapshot. Same
+    pattern as _refresh_db_status_async — keeps the cache warm without
+    blocking the route on a slow probe pass."""
+    def _job():
+        try:
+            value = _build_monitor_services_snapshot()
+            with _monitor_services_lock:
+                _monitor_services_cache['value'] = value
+                _monitor_services_cache['ts'] = time.time()
+        except Exception as exc:
+            with _monitor_services_lock:
+                _monitor_services_cache['value'] = {'_error': str(exc)}
+                _monitor_services_cache['ts'] = time.time()
+    threading.Thread(target=_job, daemon=True, name='monitor-services-refresh').start()
+
+
+@app.route('/api/monitor/services')
+def monitor_services():
+    """ParquetClient store / DuckDB / Simulator / ZMQ / FastAPI / Realtime
+    feed status. TTL-cached (30 s) — see _monitor_services_cache_ttl."""
+    with _monitor_services_lock:
+        cached = _monitor_services_cache.get('value')
+        cache_age = time.time() - (_monitor_services_cache.get('ts') or 0)
+    if cached is None or cache_age > _monitor_services_cache_ttl:
+        _refresh_monitor_services_async()
+    if cached is None:
+        # First call — return a placeholder so the chip doesn't hang.
+        return jsonify({'_warming': True})
+    out = dict(cached)
+    out['_cache_age_s'] = round(cache_age, 1)
     return jsonify(out)
 
 
@@ -2174,13 +2217,20 @@ def simulator_available_data():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/monitor/downloader/status')
-def monitor_downloader_status():
-    """
-    Returns the state of both data folders — stat() only, never reads file contents.
-      - data/raw/historical/  — pre-2026 archive (1s spot files)
-      - data/raw/             — current data (1m/1h/1d + recent 1s)
-    """
+# TTL cache for /api/monitor/downloader/status. Pre-fix: every poll did
+# two full psutil.process_iter() scans (one for archive, one for
+# watchlist) plus iterdir() over data/raw + data/raw/historical. With
+# 100+ python subprocesses around (training, bot, agents) on this host,
+# psutil.process_iter took 5-18 s. Cache for 10 s so the operator's
+# refresh button still feels live without burning psutil twice per click.
+_dl_status_cache: dict = {'value': None, 'ts': 0.0}
+_dl_status_cache_ttl = 10.0
+_dl_status_lock = threading.Lock()
+
+
+def _build_downloader_status_snapshot() -> dict:
+    """Pure read of the downloader state — fs scan + 2× psutil.
+    Wrapped by the TTL-cached route so concurrent polls fan in."""
     import json as _json
 
     watchlist = read_json('data/watchlist.json', default=['BTC/USDT','ETH/USDT','SOL/USDT','ADA/USDT'])
@@ -2218,19 +2268,24 @@ def monitor_downloader_status():
         if f'{safe}_1m.csv.gz' not in curr_files:
             missing_current_1m.append(sym)
 
-    # Check if each downloader is running
-    def _svc_running(script_frag):
-        try:
-            import psutil
-            for p in psutil.process_iter(['cmdline']):
-                if script_frag in ' '.join(p.info.get('cmdline') or []):
-                    return True
-        except Exception:
-            pass
-        return False
-
-    archive_running  = _svc_running('binance_archive_downloader')
-    watchlist_running = _svc_running('watchlist_downloader')
+    # Single psutil scan (was two). Pre-fix: _svc_running was called
+    # twice (archive + watchlist), each iterating ALL python processes
+    # on the box — under load (100+ training subprocs) this took 5-18 s
+    # PER request. Now we walk once and check both substrings.
+    archive_running = False
+    watchlist_running = False
+    try:
+        import psutil
+        for p in psutil.process_iter(['cmdline']):
+            cmd = ' '.join(p.info.get('cmdline') or [])
+            if not archive_running and 'binance_archive_downloader' in cmd:
+                archive_running = True
+            if not watchlist_running and 'watchlist_downloader' in cmd:
+                watchlist_running = True
+            if archive_running and watchlist_running:
+                break
+    except Exception:
+        pass
 
     # Load saved folder state
     state_path = _PROJECT_ROOT / 'data' / 'downloader_state.json'
@@ -2254,7 +2309,7 @@ def monitor_downloader_status():
     except Exception:
         pass
 
-    return jsonify({
+    return {
         'historical': {
             'dir': str(hist_dir),
             'file_count': len(hist_files),
@@ -2269,7 +2324,38 @@ def monitor_downloader_status():
             'running': watchlist_running,
         },
         'saved_state': saved_state,
-    })
+    }
+
+
+def _refresh_dl_status_async():
+    def _job():
+        try:
+            value = _build_downloader_status_snapshot()
+            with _dl_status_lock:
+                _dl_status_cache['value'] = value
+                _dl_status_cache['ts'] = time.time()
+        except Exception as exc:
+            with _dl_status_lock:
+                _dl_status_cache['value'] = {'_error': str(exc)}
+                _dl_status_cache['ts'] = time.time()
+    threading.Thread(target=_job, daemon=True, name='dl-status-refresh').start()
+
+
+@app.route('/api/monitor/downloader/status')
+def monitor_downloader_status():
+    """Returns the state of both data folders. TTL-cached (10 s) — see
+    _dl_status_cache_ttl. Pre-fix this route did two psutil.process_iter()
+    scans per request and took 5-18 s under load."""
+    with _dl_status_lock:
+        cached = _dl_status_cache.get('value')
+        cache_age = time.time() - (_dl_status_cache.get('ts') or 0)
+    if cached is None or cache_age > _dl_status_cache_ttl:
+        _refresh_dl_status_async()
+    if cached is None:
+        return jsonify({'_warming': True})
+    out = dict(cached)
+    out['_cache_age_s'] = round(cache_age, 1)
+    return jsonify(out)
 
 
 @app.route('/api/monitor/downloader/migrate', methods=['POST'])
@@ -2951,12 +3037,21 @@ def _run_trainer_multi_tf(job_id: str, key: str, n: int,
         final_status = ('cancelled' if cancelled else
                         'done' if total_err == 0 else
                         'partial' if total_succ > 0 else 'error')
+        finished_at = time.time()
         _record_job(job_id, status=final_status,
                     successes=total_succ,
                     successes_by_tf=successes_by_tf,
                     errors_by_tf={k: v[-2:] for k, v in errors_by_tf.items()},
                     current_tf=None,
-                    finished_at=time.time())
+                    finished_at=finished_at)
+        # Update the per-key rolling-average duration so future ETA
+        # estimates reflect this hardware. Only record successes — failed
+        # / cancelled runs are noisy datapoints that would skew the avg.
+        with _training_jobs_lock:
+            entry = _training_jobs.get(job_id) or {}
+        started_at = entry.get('started_at') or 0
+        if final_status == 'done' and started_at > 0:
+            _record_completed_duration(key, finished_at - started_at)
         with _training_active_lock:
             _training_active_procs.pop(job_id, None)
     finally:
@@ -3035,9 +3130,17 @@ def _run_trainer_blocking(job_id: str, key: str, n: int,
         final_status = ('cancelled' if cancelled else
                         'done' if not errors else
                         'partial' if successes else 'error')
+        finished_at = time.time()
         _record_job(job_id, status=final_status,
                     successes=successes, errors=errors[-3:],
-                    finished_at=time.time())
+                    finished_at=finished_at)
+        # Same rolling-average update as multi-tf path; only record
+        # successful single-iteration runs.
+        with _training_jobs_lock:
+            entry = _training_jobs.get(job_id) or {}
+        started_at = entry.get('started_at') or 0
+        if final_status == 'done' and started_at > 0:
+            _record_completed_duration(key, finished_at - started_at)
         with _training_active_lock:
             _training_active_procs.pop(job_id, None)
     finally:
@@ -3220,9 +3323,73 @@ def api_training_run_all():
     return jsonify({'ok': True, 'job_id': job_id, 'model': 'all', 'n': 1})
 
 
+# Typical training durations (seconds) per model key. Seeded from the
+# 2026-05-08 measured run set (most numbers are wall-clock from runs that
+# ran with 0-2 other trainings sharing CPU/GPU). The map auto-updates
+# below as jobs finish — running average over the last 5 completions per
+# key, so the operator's UI estimate self-corrects on this hardware.
+_TYPICAL_DURATIONS: dict[str, float] = {
+    'regime':   30 * 60,        # RF on 776K samples
+    'base':     30 * 60,        # HistGBT on 635K samples (writes btc_rf_*)
+    'trend':    27 * 60,        # HistGBT on 615K
+    'futures':  25 * 60,        # HistGBT on 504K
+    'scalping': 30 * 60,        # HistGBT on 4.5M (1m candles)
+    'meta':     12 * 60,        # meta-labeler on 1.14M
+    'tft':      60 * 60,        # Darts neural, GPU
+    'oft':     140 * 60,        # joint OFT, 5-fold purged kfold (May 4 run)
+    'all':     180 * 60,        # train_all_models sequential
+}
+_TYPICAL_HISTORY: dict[str, list[float]] = {}
+_TYPICAL_LOCK = threading.Lock()
+
+
+def _record_completed_duration(key: str, duration_s: float) -> None:
+    """Update _TYPICAL_DURATIONS with a rolling average of recent runs."""
+    if not key or duration_s <= 0 or duration_s > 6 * 3600:
+        return
+    with _TYPICAL_LOCK:
+        hist = _TYPICAL_HISTORY.setdefault(key, [])
+        hist.append(duration_s)
+        if len(hist) > 5:
+            del hist[0]
+        _TYPICAL_DURATIONS[key] = sum(hist) / len(hist)
+
+
+def _annotate_job_timing(j: dict) -> dict:
+    """Decorate a job dict with elapsed_s / eta_s fields. Pure read; the
+    underlying job entry is not mutated. ETA uses the typical duration
+    map; if a job is past the typical estimate, eta is reported as 0
+    (rather than negative) so the UI shows '… overdue' without confusing
+    arithmetic."""
+    out = dict(j)
+    started_at = j.get('started_at') or 0
+    queued_at  = j.get('queued_at')  or 0
+    finished   = j.get('finished_at')
+    status     = j.get('status', '')
+    now = time.time()
+    if status in ('running', 'queued') and not finished:
+        if status == 'running' and started_at > 0:
+            elapsed = max(0.0, now - started_at)
+            out['elapsed_s'] = round(elapsed, 1)
+            typ = _TYPICAL_DURATIONS.get(j.get('model', ''))
+            if typ:
+                out['eta_s'] = round(max(0.0, typ - elapsed), 1)
+                out['typical_s'] = round(typ, 1)
+        elif status == 'queued' and queued_at > 0:
+            out['queued_for_s'] = round(max(0.0, now - queued_at), 1)
+            typ = _TYPICAL_DURATIONS.get(j.get('model', ''))
+            if typ:
+                out['typical_s'] = round(typ, 1)
+    elif finished and started_at > 0:
+        out['elapsed_s'] = round(max(0.0, finished - started_at), 1)
+    return out
+
+
 @app.route('/api/training/jobs', methods=['GET'])
 def api_training_jobs():
-    """Most-recent N training jobs, newest first. Used by the status pill."""
+    """Most-recent N training jobs, newest first. Each row carries
+    elapsed_s + eta_s when running so the UI can show "3m 12s · ~7m left"
+    without re-deriving the arithmetic on the client."""
     try:
         limit = int(request.args.get('limit', 20))
     except (TypeError, ValueError):
@@ -3230,7 +3397,8 @@ def api_training_jobs():
     with _training_jobs_lock:
         rows = list(_training_jobs.values())
     rows.sort(key=lambda x: x.get('created_at', 0), reverse=True)
-    return jsonify({'jobs': rows[:limit], 'total': len(rows)})
+    annotated = [_annotate_job_timing(r) for r in rows[:limit]]
+    return jsonify({'jobs': annotated, 'total': len(rows)})
 
 
 # ─── Data coverage + 1s→higher-TF resample endpoints ────────────────────────
