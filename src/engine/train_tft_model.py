@@ -98,6 +98,15 @@ def build_series_bundle(df: pd.DataFrame, freq: str):
             "Darts is required for TFT training. Install project dependencies first."
         ) from exc
 
+    # Dedupe — darts.TimeSeries.from_dataframe + fill_missing_dates calls
+    # pandas reindex(), which raises "cannot reindex on an axis with duplicate
+    # labels" if the same timestamp appears twice. Duplicates leak in via the
+    # market_data UNION (new ParquetClient store + legacy data/parquet/) when
+    # the two stores overlap. Keep the last row per timestamp (most recent
+    # value of each metric) and re-sort.
+    df = (df.sort_values("timestamp")
+            .drop_duplicates(subset=["timestamp"], keep="last")
+            .reset_index(drop=True))
     target = TimeSeries.from_dataframe(df, time_col="timestamp", value_cols="close", fill_missing_dates=True, freq=freq)
     past_cov_cols = ["return", "volume", "taker_buy_ratio", "avg_trade_size", "ofi", "funding_rate"]
     if "sentiment_score" in df.columns:
