@@ -90,6 +90,44 @@ def engineer_frame(df: pd.DataFrame, asset_id: int, freq: str, symbol: str = "")
     return df.dropna(subset=["close"])
 
 
+def _tf_to_pandas_freq(tf: str) -> str:
+    """Map our canonical TF tokens to pandas asfreq strings.
+
+    The previous one-line `freq = "1h" if timeframe=="1h" else "1min"` was
+    a 1B-fix root cause: passing timeframe='4h' silently used '1min' freq,
+    which `df.asfreq('1min').ffill()` expanded into 240× rows per 4h bar
+    and then mis-aligned with darts' fill_missing_dates path, producing
+    "cannot reindex on an axis with duplicate labels" downstream.
+    """
+    return {
+        '1m':  '1min',
+        '5m':  '5min',
+        '15m': '15min',
+        '30m': '30min',
+        '1h':  '1h',
+        '2h':  '2h',
+        '4h':  '4h',
+        '1d':  '1D',
+        '1w':  '1W',
+    }.get(tf, '1h')
+
+
+def _dedupe_for_darts(df: pd.DataFrame, time_col: str = "timestamp") -> pd.DataFrame:
+    """Return a copy of df with unique ascending timestamps.
+
+    darts.TimeSeries.from_dataframe with fill_missing_dates=True calls
+    pandas reindex(), which raises "cannot reindex on an axis with
+    duplicate labels" if the same timestamp appears twice. Duplicates
+    leak in via the market_data UNION (new ParquetClient store + legacy
+    data/parquet/) when the two stores overlap; this guard is also
+    defensive against any intermediate mutation between the three
+    from_dataframe() calls in build_series_bundle().
+    """
+    return (df.sort_values(time_col)
+              .drop_duplicates(subset=[time_col], keep="last")
+              .reset_index(drop=True))
+
+
 def build_series_bundle(df: pd.DataFrame, freq: str):
     try:
         from darts import TimeSeries
@@ -98,28 +136,32 @@ def build_series_bundle(df: pd.DataFrame, freq: str):
             "Darts is required for TFT training. Install project dependencies first."
         ) from exc
 
-    # Dedupe — darts.TimeSeries.from_dataframe + fill_missing_dates calls
-    # pandas reindex(), which raises "cannot reindex on an axis with duplicate
-    # labels" if the same timestamp appears twice. Duplicates leak in via the
-    # market_data UNION (new ParquetClient store + legacy data/parquet/) when
-    # the two stores overlap. Keep the last row per timestamp (most recent
-    # value of each metric) and re-sort.
-    df = (df.sort_values("timestamp")
-            .drop_duplicates(subset=["timestamp"], keep="last")
-            .reset_index(drop=True))
-    target = TimeSeries.from_dataframe(df, time_col="timestamp", value_cols="close", fill_missing_dates=True, freq=freq)
+    # Triple dedupe — once at the top is the primary line of defence, and
+    # then immediately before each of the three from_dataframe() calls
+    # (target / past_covariates / future_covariates) so any intermediate
+    # mutation can't reintroduce duplicates. Each call gets its own clean
+    # frame — drop_duplicates returns a new DataFrame so this is cheap.
+    df = _dedupe_for_darts(df)
+
+    target_df = _dedupe_for_darts(df)
+    target = TimeSeries.from_dataframe(target_df, time_col="timestamp",
+                                       value_cols="close",
+                                       fill_missing_dates=True, freq=freq)
+
     past_cov_cols = ["return", "volume", "taker_buy_ratio", "avg_trade_size", "ofi", "funding_rate"]
     if "sentiment_score" in df.columns:
         past_cov_cols.append("sentiment_score")
+    past_df = _dedupe_for_darts(df)
     past_covariates = TimeSeries.from_dataframe(
-        df,
+        past_df,
         time_col="timestamp",
         value_cols=past_cov_cols,
         fill_missing_dates=True,
         freq=freq,
     )
+    future_df = _dedupe_for_darts(df)
     future_covariates = TimeSeries.from_dataframe(
-        df,
+        future_df,
         time_col="timestamp",
         value_cols=["hour_sin", "hour_cos", "dow_sin", "dow_cos", "asset_id"],
         fill_missing_dates=True,
@@ -158,7 +200,7 @@ def train_tft_model(
     history_days: int = 365 * 2,
     dry_run: bool = False,
 ):
-    freq = "1h" if timeframe == "1h" else "1min"
+    freq = _tf_to_pandas_freq(timeframe)
     symbols = load_symbols()
     series_bundle = []
     dry_run_summary: dict[str, int] = {}
