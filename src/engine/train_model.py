@@ -236,6 +236,12 @@ def train_model(timeframe: str = '1h'):
     long_acc = report.get('1', {}).get('precision', 0.0) * 100
     short_acc = report.get('0', {}).get('precision', 0.0) * 100
     n_iter = getattr(base_clf, 'n_iter_', 500)
+    # PR-44: AUC + win-precision so the dashboard's AUC / Win Prec%
+    # columns aren't blank for everything except the meta-labeler.
+    try:
+        proba_test = calibrated.predict_proba(X_test)[:, 1]
+    except Exception:
+        proba_test = None
 
     log.info("Base Model | Accuracy: %.2f%% | Long: %.2f%% | Short: %.2f%% | Iters: %d",
              accuracy * 100, long_acc, short_acc, n_iter)
@@ -266,6 +272,9 @@ def train_model(timeframe: str = '1h'):
         "symbols": symbols, "timeframe": timeframe,
         "last_trained": datetime.now(timezone.utc).isoformat()
     }
+    if proba_test is not None:
+        from src.utils.model_metrics import merge_metrics_into_meta
+        merge_metrics_into_meta(meta, y_test, proba_test)
     write_json(str(paths['meta']), meta)
     if paths['is_canonical']:
         joblib.dump(calibrated, paths['legacy_model'])
