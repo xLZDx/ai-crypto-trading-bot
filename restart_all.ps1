@@ -370,6 +370,31 @@ if ($wdRunning) {
 }
 Write-Host "[5.96/6] Dashboard Watchdog ready." -ForegroundColor Green
 
+# Step 5.97: Training Sweep Watchdog — keeps the overnight curated sweep
+# alive (v3.1). Polls /api/pipeline/status every 60s; respawns the
+# orchestrator only when the payload is unchanged for 10+ min AND no
+# pipeline_orchestrator process is visible (skip-if-fresh resume picks up
+# where the dead attempt died). Never kills in-progress training (per
+# operator memory `feedback_dont_relaunch_inflight_training`). Circuit
+# breaker: 8 respawns in 6h → trips, requires manual state clear.
+Write-Host ""
+Write-Host "[5.97/6] Starting Training Sweep Watchdog (auto-respawn on stall)..." -ForegroundColor Yellow
+$swRunning = Get-WmiObject Win32_Process -Filter "Name='python.exe'" 2>$null |
+    Where-Object { $_.CommandLine -match 'training_sweep_watchdog' }
+if ($swRunning) {
+    Write-Host "  Training Sweep Watchdog already running (PID $($swRunning.ProcessId)) - skipping." -ForegroundColor DarkCyan
+    $procSweepWatchdog = Get-Process -Id $swRunning.ProcessId -ErrorAction SilentlyContinue
+} else {
+    $newSwPid = Start-Detached -CommandLine "`"$venvPython`" -m scripts.training_sweep_watchdog" -LogFile "$root\logs\training_sweep_watchdog.log"
+    if ($newSwPid) {
+        $procSweepWatchdog = [PSCustomObject]@{ Id = $newSwPid }
+        Write-Host "  Training Sweep Watchdog started (PID $newSwPid, detached)"
+    } else {
+        $procSweepWatchdog = $null
+    }
+}
+Write-Host "[5.97/6] Training Sweep Watchdog ready." -ForegroundColor Green
+
 # Step 6: Save PIDs
 Write-Host ""
 Write-Host "[6/6] Saving process IDs..." -ForegroundColor Yellow

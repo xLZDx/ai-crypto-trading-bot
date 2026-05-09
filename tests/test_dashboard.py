@@ -5693,6 +5693,87 @@ def test_phase75_v31_backfill_button_endpoint():
           'streams; doesn' in app or 'streamed to disk' in app)
 
 
+def test_phase76_v31_training_sweep_watchdog_and_cold_cache():
+    """v3.1 — overnight reliability: training_sweep_watchdog daemon
+    auto-respawns a stalled sweep + cold_cache persists ETA-relevant
+    state across dashboard restarts."""
+    print('\n[Phase 76 — v3.1: training_sweep_watchdog + cold_cache]')
+
+    # 1) Sweep watchdog file + key behaviours.
+    wd_path = os.path.join(BASE_DIR, 'scripts', 'training_sweep_watchdog.py')
+    check('scripts/training_sweep_watchdog.py exists', os.path.exists(wd_path))
+    if not os.path.exists(wd_path):
+        return
+    wd = open(wd_path, encoding='utf-8').read()
+
+    check('polls /api/pipeline/status', "STATUS_URL" in wd and 'pipeline/status' in wd)
+    check('triggers respawn via /api/pipeline/run', '/api/pipeline/run' in wd)
+    check('detects stall by payload-unchanged + no orchestrator process',
+          '_is_stalled' in wd and 'idle_for >= STALL_S' in wd
+          and '_orchestrator_alive()' in wd)
+    check('cmdline-scan fallback for orchestrator liveness',
+          'src.engine.pipeline_orchestrator' in wd)
+    check('circuit breaker trips after RESTART_LIMIT respawns',
+          'RESTART_LIMIT' in wd and "s['tripped'] = True" in wd)
+    check('persists state to data/training_sweep_watchdog_state.json',
+          'training_sweep_watchdog_state.json' in wd)
+    check('atomic state write (.tmp + os.replace)',
+          'os.replace' in wd and 'with_suffix' in wd)
+    check('all env-var-tunable knobs present',
+          all(e in wd for e in ('AI_TRADER_SWEEP_WATCH_POLL_S',
+                                'AI_TRADER_SWEEP_WATCH_STALL_S',
+                                'AI_TRADER_SWEEP_WATCH_LIMIT',
+                                'AI_TRADER_SWEEP_WATCH_WINDOW_S')))
+    check('does NOT kill in-progress training (only respawns when dead)',
+          'NEVER kills an actively-progressing sweep' in wd)
+
+    # 2) restart_all.ps1 wires it in.
+    rs = open(os.path.join(BASE_DIR, 'restart_all.ps1'), encoding='utf-8').read()
+    check('restart_all.ps1 launches training_sweep_watchdog',
+          'scripts.training_sweep_watchdog' in rs and '5.97' in rs)
+
+    # 3) cold_cache module + integration.
+    cc_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'cold_cache.py')
+    check('src/dashboard/cold_cache.py exists', os.path.exists(cc_path))
+    if not os.path.exists(cc_path):
+        return
+    cc = open(cc_path, encoding='utf-8').read()
+    check('cold_cache exposes save / load / age_seconds / list_keys',
+          all(f'def {n}(' in cc for n in ('save', 'load', 'age_seconds', 'list_keys')))
+    check('cold_cache writes atomically (tmp + os.replace)',
+          'os.replace' in cc)
+    check('cold_cache respects D: drive policy (PROJECT_ROOT/data/cache/cold)',
+          "'data' / 'cache' / 'cold'" in cc)
+
+    app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'), encoding='utf-8').read()
+    check('app.py loads typical_durations from cold_cache on import',
+          "_cold_cache.load('typical_durations'" in app)
+    check('_record_completed_duration persists to cold_cache',
+          "_cc.save('typical_durations'" in app
+          and "_cc.save('typical_history'" in app)
+
+    # Live exercise of cold_cache round-trip.
+    import importlib, sys
+    sys.path.insert(0, BASE_DIR)
+    if 'src.dashboard.cold_cache' in sys.modules:
+        del sys.modules['src.dashboard.cold_cache']
+    cc_mod = importlib.import_module('src.dashboard.cold_cache')
+    test_payload = {'test_key': 1234, 'now': True}
+    cc_mod.save('phase76_test', test_payload)
+    got = cc_mod.load('phase76_test', default=None)
+    check('cold_cache round-trip: load returns saved value', got == test_payload)
+    age = cc_mod.age_seconds('phase76_test')
+    check('cold_cache age_seconds > 0 after recent save',
+          age is not None and 0 <= age < 60)
+    keys = cc_mod.list_keys()
+    check('list_keys includes the freshly-saved entry', 'phase76_test' in keys)
+    # Cleanup
+    try:
+        (cc_mod.COLD_DIR / 'phase76_test.json').unlink()
+    except Exception:
+        pass
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -6031,6 +6112,7 @@ def main():
     test_phase73b_v31_trade_enrichment_backfill()
     test_phase74_v31_health_column_and_fleet_aggregate()
     test_phase75_v31_backfill_button_endpoint()
+    test_phase76_v31_training_sweep_watchdog_and_cold_cache()
 
     if not args.offline:
         test_api(args.url)

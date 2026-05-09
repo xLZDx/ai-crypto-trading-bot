@@ -3771,9 +3771,38 @@ _TYPICAL_DURATIONS: dict[str, float] = {
 _TYPICAL_HISTORY: dict[str, list[float]] = {}
 _TYPICAL_LOCK = threading.Lock()
 
+# v3.1 step 15 (5A) — load persisted self-tuned values from data/cache/cold/
+# at import time. The rolling-avg map self-corrects as jobs finish; without
+# this restore, every dashboard restart resets to the hand-seeded numbers
+# and the operator's ETA accuracy drops for several training cycles.
+try:
+    from src.dashboard import cold_cache as _cold_cache
+    _persisted_typ = _cold_cache.load('typical_durations', default=None,
+                                       max_age_s=30 * 86400)
+    if isinstance(_persisted_typ, dict):
+        for _k, _v in _persisted_typ.items():
+            try:
+                _v = float(_v)
+                if 1 < _v < 6 * 3600:
+                    _TYPICAL_DURATIONS[_k] = _v
+            except (TypeError, ValueError):
+                continue
+    # Persisted history (so the rolling avg keeps shape, not just current value).
+    _persisted_hist = _cold_cache.load('typical_history', default=None,
+                                        max_age_s=30 * 86400)
+    if isinstance(_persisted_hist, dict):
+        for _k, _vlist in _persisted_hist.items():
+            if isinstance(_vlist, list):
+                _TYPICAL_HISTORY[_k] = [float(x) for x in _vlist if isinstance(x, (int, float))][-5:]
+except Exception:
+    pass
+
 
 def _record_completed_duration(key: str, duration_s: float) -> None:
-    """Update _TYPICAL_DURATIONS with a rolling average of recent runs."""
+    """Update _TYPICAL_DURATIONS with a rolling average of recent runs.
+    Persists to data/cache/cold/typical_durations.json + _history.json on
+    each update so a dashboard restart doesn't reset the self-tuned values
+    (v3.1 step 15)."""
     if not key or duration_s <= 0 or duration_s > 6 * 3600:
         return
     with _TYPICAL_LOCK:
@@ -3782,6 +3811,13 @@ def _record_completed_duration(key: str, duration_s: float) -> None:
         if len(hist) > 5:
             del hist[0]
         _TYPICAL_DURATIONS[key] = sum(hist) / len(hist)
+        # Cold-cache snapshot — best-effort, never blocks the caller.
+        try:
+            from src.dashboard import cold_cache as _cc
+            _cc.save('typical_durations', dict(_TYPICAL_DURATIONS))
+            _cc.save('typical_history', {k: list(v) for k, v in _TYPICAL_HISTORY.items()})
+        except Exception:
+            pass
 
 
 def _annotate_job_timing(j: dict) -> dict:
