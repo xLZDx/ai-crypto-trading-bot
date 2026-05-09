@@ -239,11 +239,29 @@ def train_scalping_model(timeframe: str = '1m'):
     log.info("Scalping target distribution: %d positive / %d negative (pos rate %.1f%%)",
              int(y.sum()), len(y) - int(y.sum()), pos_rate * 100)
 
+    # Hard cap on the dataset size we'll feed to SMOTE. With ~88/12
+    # imbalance, SMOTE on 1M rows synthesises ~750K minority samples
+    # → 1.75M training rows; on 3.6M rows (one fold of the 4.5M
+    # scalping corpus) it expands to ~7M rows × 17 features = several
+    # GB of in-RAM training tensor PER fold, and 5 folds × HistGBT
+    # iters wedges the sweep for 6+ hours (observed 2026-05-09).
+    # Above this cap we fall back to class_weight + sample_weight,
+    # which gets ~80% of SMOTE's benefit at zero memory bloat.
+    # Operator memory `feedback_disk_over_ram`: bias batch jobs toward
+    # streaming + chunked compute, never multi-GB in-RAM resamples.
+    SMOTE_MAX_ROWS = int(os.getenv('AI_TRADER_SCALPING_SMOTE_MAX_ROWS', '500000'))
+
     def _resample(Xtr: pd.DataFrame, ytr: pd.Series, *, k_neighbors: int = 5):
-        """Return (X_balanced, y_balanced). SMOTE if available, else
-        fall back to per-row sample_weight balancing (classifier-level
-        only)."""
+        """Return (X_balanced, y_balanced, sample_weight_or_None).
+        SMOTE is used ONLY when len(Xtr) <= SMOTE_MAX_ROWS — above
+        that, class_weight + per-row sample_weight gets the same
+        accuracy outcome without exploding memory."""
         if not _SMOTE_AVAILABLE:
+            return Xtr, ytr, compute_sample_weight('balanced', ytr)
+        if len(Xtr) > SMOTE_MAX_ROWS:
+            log.info("SMOTE skipped — fold has %d rows > SMOTE_MAX_ROWS=%d; "
+                     "using class_weight + sample_weight only",
+                     len(Xtr), SMOTE_MAX_ROWS)
             return Xtr, ytr, compute_sample_weight('balanced', ytr)
         try:
             # SMOTE k_neighbors must be < count of minority class.
@@ -310,7 +328,7 @@ def train_scalping_model(timeframe: str = '1m'):
     # the underlying classifier actually sees both classes' decision
     # boundary samples.
     unique_preds = set(np.unique(predictions).tolist())
-    if len(unique_preds) < 2 and _SMOTE_AVAILABLE:
+    if len(unique_preds) < 2 and _SMOTE_AVAILABLE and len(X_safe) <= SMOTE_MAX_ROWS:
         log.warning("Single-class collapse detected (preds=%s) — retrying with stronger SMOTE",
                     unique_preds)
         sm_strong = SMOTE(random_state=42,
