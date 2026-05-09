@@ -6052,6 +6052,59 @@ def test_phase81_v4_b5_prime_unified_card_ui():
     check("sweep endpoint returns sweep_id + count",     "'sweep_id':   sweep_id" in app)
 
 
+def test_phase82_v4_component_health_module_style_launches():
+    """v4 fix 2026-05-09 — Component Health card showing wrong statuses:
+    - 'Trading Bot Running' was the dormant Start-Process wrapper (0% CPU,
+      0 MB), not the real worker (1.6 GB doing work)
+    - 'Dashboard Stopped' even though dashboard was serving the page
+    - 'ML Training Stopped' even though pipeline_orchestrator was running
+
+    Same class of bug as the bot-DEAD false-alarm: the cmdline regex
+    matches script-style launches (python src/X.py) but not module-style
+    (python -m src.X). Plus a service-alias system so 'training' service
+    detects the orchestrator process, not just the legacy script filename."""
+    print('\n[Phase 82 — v4 fix: component health probes match module-style launches]')
+
+    app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'), encoding='utf-8').read()
+
+    # Bot regex now matches both forms.
+    check('bot regex matches both src/main.py AND -m src.main',
+          r"r'src[\\\\/]main\\.py|-m\\s+src\\.main\\b'" in app
+          or r'r\'src[\\/]main\.py|-m\s+src\.main\b\'' in app
+          or 'src[\\\\/]main\\.py|-m\\s+src\\.main' in app)
+    # Dashboard regex now matches both forms too.
+    check('dash regex matches both dashboard/app.py AND -m src.dashboard.app',
+          r"src[\\/]dashboard[\\/]app\.py|-m\s+src\.dashboard\.app\b" in app)
+
+    # Best-PID picker prefers worker over wrapper (higher CPU, then RSS).
+    check('component-health picks highest-CPU+RSS PID (worker, not wrapper)',
+          'def _pick_best_pid(' in app
+          and 'prefer_higher_cpu' in app
+          and '_rss(pid)' in app)
+
+    # ML Training cmdline aliases include pipeline_orchestrator.
+    check('training service detected via pipeline_orchestrator cmdline',
+          '_SERVICE_CMDLINE_ALIASES' in app
+          and "'training': [" in app
+          and "'pipeline_orchestrator'," in app
+          and "'-m src.engine.pipeline_orchestrator'," in app)
+
+    # Service detection iterates the alias list, not just the legacy filename.
+    check('alias iteration replaces single-needle detection',
+          'aliases = _SERVICE_CMDLINE_ALIASES.get(svc_key)' in app
+          and 'for needle in aliases:' in app)
+
+    # Even when recorded PID is alive, the cmdline scan still runs to
+    # prefer the real worker over the dormant wrapper.
+    check('cmdline scan runs even when recorded PID is alive (wrapper-vs-worker fix)',
+          'Always run the cmdline scan' in app
+          and 'recorded one might be the dormant wrapper' in app)
+
+    # Comment block documents the institutional/false-DEAD context.
+    check('inline comments document the false-Stopped failure mode',
+          'false alarm' in app or "false-DEAD" in app or 'persistent DEAD/Stopped false alarm' in app)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -6396,6 +6449,7 @@ def main():
     test_phase79_v31_stability_heatmap_legend_blue_rename()
     test_phase80_v4_b0_training_rules_registry_and_api()
     test_phase81_v4_b5_prime_unified_card_ui()
+    test_phase82_v4_component_health_module_style_launches()
 
     if not args.offline:
         test_api(args.url)

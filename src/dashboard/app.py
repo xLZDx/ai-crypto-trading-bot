@@ -704,26 +704,76 @@ def monitor_health():
     # process_ids.json's PIDs went stale after any direct relaunch and
     # the Component Health card kept showing 'Stopped' for things that
     # were obviously alive (the user was looking at the dashboard!).
+    #
+    # 2026-05-09 fix: regex now matches BOTH `python src/main.py`
+    # (script-style) AND `python -m src.main` (module-style) — the
+    # latter was the cause of the persistent DEAD/Stopped false alarm
+    # since I launched the bot + orchestrator via Start-Process with
+    # the -m form. Same fix already in error_monitor._probe_processes;
+    # this one is the matching dashboard endpoint.
+    #
+    # Also: when MULTIPLE matching processes exist (dormant Start-Process
+    # wrapper + actual worker), pick the one with HIGHER CPU% — that's
+    # the real worker, not the shell wrapper. Without this, the card
+    # showed PID 29528 with 0% CPU / 0 MB even though the actual bot
+    # PID 65256 was burning 1.6 GB of working set.
     _CMDLINE_SCAN = {
-        'bot':  r'src[\\/]main\.py',
-        'dash': r'src[\\/]dashboard[\\/]app\.py',
+        'bot':  r'src[\\/]main\.py|-m\s+src\.main\b',
+        'dash': r'src[\\/]dashboard[\\/]app\.py|-m\s+src\.dashboard\.app\b',
     }
+    def _pick_best_pid(pat, prefer_higher_cpu: bool = True):
+        """Find all python procs whose cmdline matches `pat` and return
+        the one with the highest CPU% (the real worker, not the wrapper)."""
+        candidates: list[tuple[int, float]] = []
+        try:
+            import psutil
+            for p in psutil.process_iter(['pid', 'name', 'cmdline']):
+                try:
+                    if not (p.info.get('name') or '').lower().startswith('python'):
+                        continue
+                    cmd = ' '.join(p.info.get('cmdline') or [])
+                    if pat.search(cmd):
+                        try:
+                            cpu_pct = p.cpu_percent(interval=0.0)
+                        except Exception:
+                            cpu_pct = 0.0
+                        candidates.append((p.info['pid'], cpu_pct))
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+        except Exception:
+            return None
+        if not candidates:
+            return None
+        if prefer_higher_cpu:
+            # Sort by CPU desc; if tied (e.g. both at 0% on first probe),
+            # prefer the one with higher RSS — wrappers have ~1 MB, real
+            # workers have hundreds of MB.
+            try:
+                import psutil
+                def _rss(pid):
+                    try:
+                        return psutil.Process(pid).memory_info().rss
+                    except Exception:
+                        return 0
+                candidates.sort(key=lambda x: (x[1], _rss(x[0])), reverse=True)
+            except Exception:
+                candidates.sort(key=lambda x: x[1], reverse=True)
+        return candidates[0][0]
+
     for key, label in [('bot', 'Trading Bot'), ('dash', 'Dashboard')]:
         pid = pids.get(key)
         alive = _pid_alive(pid)
-        if not alive and key in _CMDLINE_SCAN:
+        # Always run the cmdline scan — even if recorded PID is alive,
+        # the recorded one might be the dormant wrapper (Start-Process
+        # parent) while the actual worker has a different PID.
+        if key in _CMDLINE_SCAN:
             try:
-                import psutil, re as _re
+                import re as _re
                 pat = _re.compile(_CMDLINE_SCAN[key])
-                for p in psutil.process_iter(['pid', 'name', 'cmdline']):
-                    try:
-                        if (p.info.get('name') or '').lower().startswith('python'):
-                            cmd = ' '.join(p.info.get('cmdline') or [])
-                            if pat.search(cmd):
-                                pid = p.info['pid']; alive = True
-                                break
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        continue
+                best = _pick_best_pid(pat)
+                if best:
+                    pid = best
+                    alive = True
             except Exception:
                 pass
         entry = {'label': label, 'running': alive, 'pid': pid, 'managed': False}
@@ -732,17 +782,41 @@ def monitor_health():
         out[key] = entry
 
     # Services managed by this dashboard (started via /api/monitor/start)
-    # Also detect externally-launched processes by scanning cmdlines
+    # Also detect externally-launched processes by scanning cmdlines.
+    #
+    # 2026-05-09 fix: 'training' service was scanning for `train_all_models.py`
+    # script filename, but real training launches as `python -m src.engine.
+    # pipeline_orchestrator` (the orchestrator imports + calls train_all
+    # in-process). The script-name scan never matched, so ML Training
+    # showed 'Stopped' even when training was actively running. Same
+    # class of bug as the bot DEAD false-alarm. Aliases broaden the
+    # detection to ALSO scan for the orchestrator + worker cmdlines for
+    # services where the actual process name differs from the legacy
+    # script filename.
+    _SERVICE_CMDLINE_ALIASES = {
+        'training': [
+            'pipeline_orchestrator',                 # main path: orchestrator runs train_all
+            'train_all_models.py',                    # legacy script-style invocation
+            '-m src.engine.pipeline_orchestrator',    # explicit module-style
+        ],
+        # Other services keep the default script-name scan via _EXTERNAL_SCRIPTS.
+    }
     with _managed_lock:
         for svc_key, svc in _SERVICES.items():
             proc = _managed.get(svc_key)
             running = proc is not None and proc.poll() is None
             pid = proc.pid if running else None
-            # Also check if script is running externally (e.g. via launch_training.ps1)
+            # Also check if script is running externally (e.g. via launch_training.ps1
+            # or a direct `python -m ...` Start-Process).
             if not running:
-                ext_pid = _find_external_pid(_EXTERNAL_SCRIPTS.get(svc_key, ''))
-                if ext_pid:
-                    running, pid = True, ext_pid
+                aliases = _SERVICE_CMDLINE_ALIASES.get(svc_key) or [_EXTERNAL_SCRIPTS.get(svc_key, '')]
+                for needle in aliases:
+                    if not needle:
+                        continue
+                    ext_pid = _find_external_pid(needle)
+                    if ext_pid:
+                        running, pid = True, ext_pid
+                        break
             entry = {'label': svc['label'], 'running': running, 'pid': pid, 'managed': proc is not None and proc.poll() is None}
             if running:
                 entry.update(_proc_stats(pid))
