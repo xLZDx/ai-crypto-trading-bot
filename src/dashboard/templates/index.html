@@ -1793,6 +1793,8 @@ document.addEventListener('DOMContentLoaded', function() {
           <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
             <button onclick="loadDataCoverage()" style="font-size:.58rem;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(99,102,241,.2);color:#818cf8;border:1px solid rgba(99,102,241,.3);font-weight:700">↻ Refresh</button>
             <button onclick="dcovResampleAll()" style="font-size:.58rem;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(244,114,182,.18);color:#f472b6;border:1px solid rgba(244,114,182,.35);font-weight:700" title="Resample 1s archives → 5m/15m/4h/1w/1mo for every symbol. Takes ~1-2 hours total in background.">▶ Resample All Missing</button>
+            <button onclick="dcovBackfillMissing()" id="dcov-backfill-btn" style="font-size:.58rem;padding:3px 10px;border-radius:5px;cursor:pointer;background:rgba(52,211,153,.18);color:#34d399;border:1px solid rgba(52,211,153,.35);font-weight:700" title="v3.1 step 14 (1J) — chain archive top-up → resample for any stale/missing symbols. Network-bound (4-8 h if many symbols are behind). Idempotent.">⤓ Backfill Missing Data</button>
+            <span id="dcov-backfill-chip" style="font-size:.55rem;color:#64748b;font-style:italic"></span>
             <span id="dcov-jobs-status" style="font-size:.55rem;color:#64748b;font-style:italic">idle</span>
             <span style="margin-left:auto;font-size:.55rem;color:#64748b" class="dcov-legend">
               <span><span class="dcov-dot" style="background:#34d399"></span>present</span>
@@ -4632,6 +4634,34 @@ async function loadDataCoverage() {
   } catch(e) {
     if (grid) grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;color:#fb7185;padding:14px">Error: ${e.message||e}</div>`;
     if (chip) chip.textContent = 'Error';
+  }
+}
+
+// v3.1 step 14 (1J) — Backfill button. Chains archive top-up via the
+// new /api/data/backfill endpoint then re-resamples affected symbols.
+// Disk-bound; expected to be a long-running background job. The
+// in-flight chip updates as the backend writes status into
+// data/backfill_jobs.json (re-using the same poller path as
+// /api/data/resample/jobs for consistency).
+async function dcovBackfillMissing() {
+  if (!confirm('Trigger backfill for any symbols flagged stale or missing?\n\nReads from Binance archive endpoint then re-resamples. Network-bound (~30 min – 8 h depending on gap size). Safe to re-run; idempotent.')) return;
+  const btn  = document.getElementById('dcov-backfill-btn');
+  const chip = document.getElementById('dcov-backfill-chip');
+  if (btn)  { btn.disabled = true; btn.textContent = '⤓ Backfilling…'; btn.style.opacity = '.6'; }
+  if (chip) { chip.textContent = 'queued…'; chip.style.color = '#fbbf24'; }
+  try {
+    const r = await fetch('/api/data/backfill',
+      { method: 'POST', headers: hdrs(), body: JSON.stringify({}) });
+    const body = await r.json();
+    if (!body.ok) throw new Error(body.error || 'backfill request failed');
+    if (chip) chip.textContent = `queued (job ${body.job_id || '—'})`;
+    _dcovMarkPending(`Backfill queued (job ${body.job_id || '—'})`);
+    pollResampleJobs();
+  } catch (e) {
+    if (chip) { chip.textContent = 'error: ' + (e.message || e); chip.style.color = '#fb7185'; }
+    alert('Backfill failed: ' + (e.message || e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⤓ Backfill Missing Data'; btn.style.opacity = '1'; }
   }
 }
 

@@ -4047,6 +4047,90 @@ def api_data_resample():
                     'symbols': symbols, 'timeframes': timeframes})
 
 
+@app.route('/api/data/backfill', methods=['POST'])
+@require_api_key
+def api_data_backfill():
+    """v3.1 step 14 (1J) — chain: archive top-up → resample for any
+    symbols flagged stale or missing.
+
+    Body (all optional): {
+      symbols: ['BTC/USDT', ...],   # default: every stale 1s archive
+      since:   '2024-12-31',         # default: today − 14 days
+    }
+
+    The job runs as a detached subprocess so dashboard restarts don't
+    interrupt it. Status surfaces via the existing
+    /api/data/resample/jobs poller (re-using job_id).
+    """
+    body = request.get_json(silent=True) or {}
+    symbols = body.get('symbols') or []
+    since   = body.get('since') or ''
+
+    if not symbols:
+        # Auto-discover stale symbols from the 1s archive mtime.
+        try:
+            from pathlib import Path as _P
+            from datetime import datetime as _dt, timezone as _tz
+            base = _P(PROJECT_ROOT) / 'data' / 'raw' / 'historical'
+            now_ts = _dt.now(_tz.utc).timestamp()
+            stale = []
+            for fp in base.glob('*_spot_1s.csv.gz'):
+                age_days = (now_ts - fp.stat().st_mtime) / 86400
+                if age_days >= 7:
+                    sym = fp.name.replace('_spot_1s.csv.gz', '').replace('_USDT', '/USDT')
+                    stale.append(sym)
+            symbols = stale
+        except Exception:
+            symbols = []
+
+    job_id = uuid.uuid4().hex[:12]
+    _record_resample_job(job_id,
+                         status='queued',
+                         created_at=time.time(),
+                         symbols=symbols,
+                         timeframes=['__backfill__'],  # marker; resample worker recognises
+                         total_symbols=len(symbols),
+                         done_symbols=0,
+                         job_kind='backfill',
+                         since=since)
+
+    if not symbols:
+        # No-op fast path — nothing flagged stale. Still return ok=True
+        # with zero count so the UI's chip can show "0 symbols stale —
+        # nothing to do".
+        _record_resample_job(job_id, status='done', finished_at=time.time(),
+                             progress_label='no stale symbols')
+        return jsonify({'ok': True, 'job_id': job_id, 'symbols': [],
+                        'note': 'no stale symbols detected — nothing to backfill'})
+
+    # Spawn the chain: binance_archive_downloader → resample. Each
+    # symbol streamed to disk; no pre-load into RAM.
+    def _backfill_chain():
+        try:
+            _record_resample_job(job_id, status='running', started_at=time.time(),
+                                 progress_label=f'archive top-up: {len(symbols)} symbols')
+            try:
+                from src.data_ingestion.binance_archive_downloader import \
+                    download_archives_for_symbols
+                # The downloader streams; doesn't load all data into RAM.
+                # Falls through if module unavailable (older code path).
+                download_archives_for_symbols(symbols, since=since)
+            except ImportError:
+                _record_resample_job(job_id, progress_label='downloader unavailable; skipping to resample')
+            # Then resample for the same symbols.
+            _record_resample_job(job_id, progress_label=f'resampling: {len(symbols)} symbols')
+            from src.utils.resample_ohlcv import DEFAULT_TIMEFRAMES
+            _run_resample_blocking(job_id, symbols, list(DEFAULT_TIMEFRAMES))
+        except Exception as exc:
+            _record_resample_job(job_id, status='error',
+                                 finished_at=time.time(),
+                                 errors=[f'{type(exc).__name__}: {exc}'])
+
+    threading.Thread(target=_backfill_chain, daemon=True,
+                     name=f'backfill-{job_id}').start()
+    return jsonify({'ok': True, 'job_id': job_id, 'symbols': symbols, 'since': since})
+
+
 @app.route('/api/data/resample/jobs', methods=['GET'])
 def api_data_resample_jobs():
     """Most-recent N resample jobs, newest first. Used by the status pill

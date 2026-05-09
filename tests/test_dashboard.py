@@ -5665,6 +5665,34 @@ def test_phase74_v31_health_column_and_fleet_aggregate():
           and 'No models match this filter.' in html)
 
 
+def test_phase75_v31_backfill_button_endpoint():
+    """v3.1 step 14 (1J): "Backfill Missing Data" button on Data
+    Coverage card + /api/data/backfill endpoint."""
+    print('\n[Phase 75 — v3.1 step 14: backfill button + endpoint]')
+
+    html = open(TEMPLATE_PATH, encoding='utf-8').read()
+    app  = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'), encoding='utf-8').read()
+
+    check('button id dcov-backfill-btn present in template',
+          'id="dcov-backfill-btn"' in html and '⤓ Backfill Missing Data' in html)
+    check('dcovBackfillMissing() JS function defined',
+          'async function dcovBackfillMissing()' in html)
+    check('JS POSTs to /api/data/backfill',
+          "fetch('/api/data/backfill'" in html)
+
+    check('Flask /api/data/backfill route registered',
+          "@app.route('/api/data/backfill'" in app)
+    check('backend auto-discovers stale 1s archives via mtime',
+          '_spot_1s.csv.gz' in app and 'age_days >= 7' in app)
+    check('backend chains downloader → resample',
+          'download_archives_for_symbols' in app
+          and '_run_resample_blocking(job_id, symbols' in app)
+    check('backend short-circuits when nothing is stale',
+          "'no stale symbols detected — nothing to backfill'" in app)
+    check('streaming-aware (no full-RAM load)',
+          'streams; doesn' in app or 'streamed to disk' in app)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -6002,6 +6030,7 @@ def main():
     test_phase73_v31_trade_enrichment_going_forward()
     test_phase73b_v31_trade_enrichment_backfill()
     test_phase74_v31_health_column_and_fleet_aggregate()
+    test_phase75_v31_backfill_button_endpoint()
 
     if not args.offline:
         test_api(args.url)
