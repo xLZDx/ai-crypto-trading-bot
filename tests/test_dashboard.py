@@ -5867,29 +5867,38 @@ def test_phase78_v31_bot_dead_false_alarm_module_style_launch():
         check(f"  cmdline {cmd!r:55s} -> match={got} (want {want})", got == want)
 
 
-def test_phase79_v31_stability_heatmap_legend_emerald_rename():
-    """v3.1 cosmetic fix 2026-05-09 — Stability Heatmap legend tier
-    "Gold = excellent" renders in #10b981 emerald, visually too close
-    to the "Green = good" #34d399 tier. Rename the user-facing label
-    to "Emerald" so operator can distinguish; keep internal `gold` JS
-    key unchanged (5 tier-classifier sites still use the keyword)."""
-    print('\n[Phase 79 — v3.1 fix: heatmap legend Gold → Emerald]')
+def test_phase79_v31_stability_heatmap_legend_blue_rename():
+    """v3.1 cosmetic fix 2026-05-09 — Stability Heatmap excellent-tier
+    rendering recoloured from emerald to dark blue (legend + CSS class
+    + JS cell maps coherent) so it's distinguishable from Green/Yellow.
+    Internal `gold` JS key preserved for the 5 tier classifiers."""
+    print('\n[Phase 79 — v3.1 fix: heatmap excellent-tier → Blue]')
     html = open(TEMPLATE_PATH, encoding='utf-8').read()
 
-    check('legend uses "Emerald = excellent"',
-          'Emerald</span> = excellent' in html
-          and '<span style="color:#10b981">Emerald</span>' in html)
-    check('legend no longer says "Gold = excellent"',
-          'Gold</span> = excellent' not in html)
+    check('legend uses "Blue = excellent"',
+          'Blue</span> = excellent' in html
+          and '<span style="color:#3b82f6">Blue</span>' in html)
+    check('legend no longer says "Gold = excellent" or "Emerald"',
+          'Gold</span> = excellent' not in html
+          and 'Emerald</span> = excellent' not in html)
 
-    # Internal JS keys still use `gold` — 5 classifier sites + cellBg/cellFg.
+    # Internal JS key `gold` still drives 5 tier classifiers.
     check('internal `gold` tier key preserved (5 classifier sites)',
-          html.count("'gold' :") + html.count("'gold':") >= 2  # cellBg + cellFg
-          and html.count("? 'gold'") >= 5)  # five tier classifiers
-    check('cellFg `gold` still maps to #10b981',
-          "gold:'#10b981'" in html)
-    check('cellBg `gold` still maps to translucent emerald',
-          "gold:'rgba(52,211,153,.22)'" in html)
+          html.count("? 'gold'") >= 5)
+    check('cellFg["gold"] maps to dark blue #3b82f6',
+          "gold:'#3b82f6'" in html)
+    check('cellBg["gold"] maps to translucent blue rgba(37,99,235,.22)',
+          "gold:'rgba(37,99,235,.22)'" in html)
+    check('.stab-cell.gold CSS uses blue background + #3b82f6 text',
+          'rgba(37,99,235,.22);color:#3b82f6' in html)
+
+    # Flask template auto-reload enabled so future edits go live.
+    app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
+               encoding='utf-8').read()
+    check("Flask TEMPLATES_AUTO_RELOAD = True",
+          "app.config['TEMPLATES_AUTO_RELOAD'] = True" in app)
+    check("Jinja env auto_reload = True (belt + braces)",
+          'app.jinja_env.auto_reload = True' in app)
 
 
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
@@ -6233,7 +6242,7 @@ def main():
     test_phase76_v31_training_sweep_watchdog_and_cold_cache()
     test_phase77_v31_pertf_train_button_dispatch_fix()
     test_phase78_v31_bot_dead_false_alarm_module_style_launch()
-    test_phase79_v31_stability_heatmap_legend_emerald_rename()
+    test_phase79_v31_stability_heatmap_legend_blue_rename()
 
     if not args.offline:
         test_api(args.url)
