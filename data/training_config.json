@@ -1,0 +1,7 @@
+{
+  "_doc": "Training config — survives across restarts and watchdog-triggered respawns. Edit and any new orchestrator picks it up. Set skip_if_fresh_s=0 to force a full re-train.",
+  "skip_if_fresh_s": 172800,
+  "skip_if_fresh_human": "48 hours — bumped 2026-05-09 to preserve today's overnight sweep work across any crash + respawn",
+  "scalping_smote_max_rows": 500000,
+  "_updated_at": "2026-05-09T20:45:00Z"
+}

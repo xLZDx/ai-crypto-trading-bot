@@ -107,10 +107,34 @@ def train_all(per_key_tfs: dict[str, tuple[str, ...]] | None = None):
     # operator re-triggers it, we don't want to redo every model from
     # scratch. If models/<key>_<tf>_meta.json was written within the last
     # SKIP_IF_FRESH_S, treat that combo as already trained and move on.
-    # Default 2 h; override via AI_TRADER_TRAIN_SKIP_IF_FRESH_S env var.
+    #
+    # Resolution order (v3.1 fix 2026-05-09 — operator wanted today's work
+    # preserved across crashes / watchdog respawns):
+    #   1. data/training_config.json `skip_if_fresh_s` field — survives
+    #      restarts, can be edited without re-spawning anything.
+    #   2. AI_TRADER_TRAIN_SKIP_IF_FRESH_S env var.
+    #   3. Default 48 h (was 2 h pre-fix; bumped because watchdog-triggered
+    #      respawns from the dashboard don't inherit env vars set when
+    #      I manually launched the orchestrator with a custom value, so
+    #      a crash 13+ h into an overnight sweep would silently re-train
+    #      everything completed earlier in the day with the old default).
     # Setting it to 0 forces every combo to retrain (manual full sweep).
     import time as _time
-    SKIP_IF_FRESH_S = int(os.getenv('AI_TRADER_TRAIN_SKIP_IF_FRESH_S', str(2 * 3600)))
+    import json as _json_skip
+    _cfg_skip_s = None
+    try:
+        _cfg_path = os.path.join(project_root, 'data', 'training_config.json')
+        if os.path.exists(_cfg_path):
+            with open(_cfg_path, 'r', encoding='utf-8') as _f:
+                _cfg = _json_skip.load(_f) or {}
+            v = _cfg.get('skip_if_fresh_s')
+            if isinstance(v, (int, float)) and v >= 0:
+                _cfg_skip_s = int(v)
+    except Exception:
+        _cfg_skip_s = None
+    SKIP_IF_FRESH_S = (_cfg_skip_s if _cfg_skip_s is not None
+                       else int(os.getenv('AI_TRADER_TRAIN_SKIP_IF_FRESH_S',
+                                          str(48 * 3600))))
     from src.utils.model_paths import artifact_paths
 
     def _meta_age_s(key: str, tf: str) -> float | None:
