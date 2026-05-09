@@ -154,7 +154,21 @@ def _execute_task(task: dict) -> dict:
 
     logger.info("[Worker] Running task: %s / %s / %s", model_type, symbol, timeframe)
 
-    # Map model_type → training function
+    # v4 Phase B2 (2026-05-09) — invoke master's actual trainer modules
+    # via the SMB-mounted code share, not the worker's simplified RF
+    # wrapper. This is what makes the worker a peer-equal node to master:
+    # same training logic, same artifact format, same meta JSON shape.
+    # Falls back to the legacy generic-RF handlers if the master trainer
+    # import fails (e.g. missing dep on the worker venv).
+    if config.get("use_master_trainer", True):
+        master_result = _invoke_master_trainer(model_type, timeframe, symbol, config)
+        if master_result is not None:
+            return master_result
+        logger.warning("[Worker] master-trainer dispatch failed for %s — falling back to generic RF",
+                       model_type)
+
+    # Legacy generic-RF handlers (kept as fallback so a worker-side
+    # import bug doesn't take the worker offline).
     handlers = {
         "btc_rf":        _train_random_forest,
         "trend":         _train_sklearn_model,
@@ -168,6 +182,106 @@ def _execute_task(task: dict) -> dict:
     }
     handler = handlers.get(model_type, _train_sklearn_model)
     return handler(task)
+
+
+# ─── v4 Phase B2 — master-trainer dispatch ─────────────────────────────────────
+
+# Map of cluster task `model_type` → (master module, function name). The
+# master function MUST accept a `timeframe=` kwarg and read its symbol
+# universe from the project config; that's the existing contract for
+# every trainer in src/engine/. Workers running this dispatch must have
+# PYTHONPATH=Z:\ (mounted master share) so `from src.engine...` resolves
+# to master's code, not stale worker-local copies.
+_MASTER_TRAINER_DISPATCH = {
+    "base":          ("src.engine.train_model",          "train_model"),
+    "btc_rf":        ("src.engine.train_model",          "train_model"),       # legacy alias
+    "trend":         ("src.engine.train_trend_model",    "train_trend_model"),
+    "futures":       ("src.engine.train_futures_model",  "train_futures_model"),
+    "futures_short": ("src.engine.train_futures_model",  "train_futures_model"),  # legacy alias
+    "scalping":      ("src.engine.train_scalping_model", "train_scalping_model"),
+    "meta":          ("src.engine.train_meta_labeler",   "train_meta_labeler"),
+    "meta_labeler":  ("src.engine.train_meta_labeler",   "train_meta_labeler"),  # legacy alias
+    "tft":           ("src.engine.train_tft_model",      "train_tft_model"),
+    "regime":        ("src.analysis.regime_classifier",  "train_regime_classifier"),
+    "oft":           ("src.training.joint_oft_rl",       "train_oft"),
+}
+
+
+def _invoke_master_trainer(model_type: str, timeframe: str, symbol: str,
+                           config: dict) -> dict | None:
+    """Import master's trainer module and call it with the task's timeframe.
+    Returns a result dict with metrics, or None if the import / call
+    failed and the caller should fall back to the legacy handler."""
+    spec = _MASTER_TRAINER_DISPATCH.get(model_type)
+    if not spec:
+        logger.info("[Worker] no master trainer registered for model_type=%r — using legacy handler", model_type)
+        return None
+    mod_name, fn_name = spec
+    import importlib, time as _time, json as _json
+    t0 = _time.time()
+    try:
+        mod = importlib.import_module(mod_name)
+        fn  = getattr(mod, fn_name)
+    except Exception as exc:
+        logger.warning("[Worker] master trainer import failed (%s.%s): %s", mod_name, fn_name, exc)
+        return None
+    # Some trainers (oft, regime) don't accept timeframe — call accordingly.
+    try:
+        if model_type in ("oft",):
+            # train_oft(symbol, timeframe, ...) — special signature
+            result = fn(symbol, timeframe)
+        elif model_type in ("regime",):
+            # train_regime_classifier() — no kwargs
+            result = fn()
+        else:
+            result = fn(timeframe=timeframe)
+    except Exception as exc:
+        logger.exception("[Worker] master trainer raised: %s.%s(timeframe=%r): %s",
+                         mod_name, fn_name, timeframe, exc)
+        return {
+            "status":  "failed",
+            "error":   f"master_trainer_exception: {type(exc).__name__}: {exc}",
+            "model":   model_type,
+            "timeframe": timeframe,
+            "symbol":  symbol,
+            "duration_s": round(_time.time() - t0, 2),
+            "trainer_path": f"{mod_name}.{fn_name}",
+        }
+    duration = _time.time() - t0
+    # Read the meta JSON the trainer just wrote to extract metrics —
+    # standard contract: every trainer writes models/<key>_<tf>_meta.json
+    # (or models/<key>_meta.json for canonical TF + special models like
+    # regime, meta_labeler).
+    metrics = {}
+    try:
+        from src.utils.model_paths import artifact_paths, KEYS as _MODEL_KEYS
+        # Map task model_type to a canonical key the model_paths helper
+        # knows about (futures_short → futures, btc_rf → base, etc.).
+        canon = {"futures_short": "futures", "btc_rf": "base",
+                 "meta_labeler": "meta"}.get(model_type, model_type)
+        if canon in _MODEL_KEYS:
+            paths = artifact_paths(canon, timeframe)
+            meta_path = paths.get("meta")
+            if meta_path and meta_path.exists():
+                metrics = _json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception:
+        # Metrics-read failure isn't fatal — trainer succeeded, just no metric surface.
+        pass
+    return {
+        "status":      "done",
+        "model":       model_type,
+        "timeframe":   timeframe,
+        "symbol":      symbol,
+        "duration_s":  round(duration, 2),
+        "trainer_path": f"{mod_name}.{fn_name}",
+        "via":         "master_trainer",
+        "metrics":     {
+            "accuracy":              metrics.get("accuracy"),
+            "walk_forward_mean_acc": metrics.get("walk_forward_mean_acc"),
+            "auc_roc":               metrics.get("auc_roc"),
+            "n_samples":             metrics.get("n_samples"),
+        } if metrics else {},
+    }
 
 
 def _load_data(data_path: str, symbol: str, timeframe: str):
