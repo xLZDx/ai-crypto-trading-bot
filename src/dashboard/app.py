@@ -3858,6 +3858,129 @@ def _annotate_job_timing(j: dict) -> dict:
     return out
 
 
+# ─── v4 Phase B5 — training rules registry HTTP API ───────────────────────────
+# Operator-facing endpoints so the dashboard's TRAINING & BACKTEST card can
+# read + edit data/training_rules.json without code changes. Three endpoints:
+#   GET  /api/training/rules            → current rules content + matrix
+#   POST /api/training/rules            → save edited rules (validated)
+#   GET  /api/training/preview          → planned (model, tf) list for
+#                                          a hypothetical sweep, with ETA
+
+@app.route('/api/training/rules', methods=['GET'])
+def api_training_rules():
+    """Return the canonical training rules registry + a flat matrix the
+    UI can render directly. The UI calls this on load + after any save."""
+    try:
+        from src.training import training_rules as _r
+        _r.reload()
+        # Build a matrix for the UI: per (model, tf) tuple, status + reason
+        # so cells render with accurate tooltips even on skip/experimental.
+        cells = []
+        for model in _r.all_models():
+            for tf in _r.TF_ORDER:
+                status = _r.cell_status(model, tf)
+                cells.append({
+                    'model':   model,
+                    'tf':      tf,
+                    'status':  status,
+                    'reason':  _r.skip_reason(model, tf) if status == 'skip' else '',
+                })
+        from pathlib import Path as _P
+        raw = _P(PROJECT_ROOT) / 'data' / 'training_rules.json'
+        rules_obj = json.loads(raw.read_text(encoding='utf-8')) if raw.exists() else {}
+        return jsonify({
+            'ok':         True,
+            'tf_order':   list(_r.TF_ORDER),
+            'models':     _r.all_models(),
+            'matrix':     cells,
+            'rules':      rules_obj,
+            'sweep_eta':  {
+                'default_combo_count':       len(_r.planned_combos()),
+                'with_experimental_count':   len(_r.planned_combos(include_experimental=True)),
+                'sequential_minutes':        _r.estimated_total_minutes(_r.planned_combos()),
+                'parallel_2_workers_min':    _r.estimated_parallel_minutes(_r.planned_combos(), 2),
+                'parallel_4_workers_min':    _r.estimated_parallel_minutes(_r.planned_combos(), 4),
+            },
+        })
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
+
+
+@app.route('/api/training/rules', methods=['POST'])
+@require_api_key
+def api_training_rules_save():
+    """Persist edited rules atomically. Body: full rules JSON object
+    (same shape as data/training_rules.json). Validates required keys
+    + that every model has an applicable_tfs / experimental_tfs / skip_tfs
+    list before writing — bad input doesn't corrupt the rules file."""
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict) or 'models' not in body:
+        return jsonify({'ok': False, 'error': 'expected {"models": {...}, ...}'}), 400
+    models = body.get('models') or {}
+    if not isinstance(models, dict) or not models:
+        return jsonify({'ok': False, 'error': 'models must be a non-empty object'}), 400
+    for k, blk in models.items():
+        for req_field in ('applicable_tfs', 'experimental_tfs', 'skip_tfs'):
+            if req_field not in blk or not isinstance(blk[req_field], list):
+                return jsonify({'ok': False,
+                                'error': f'model {k!r} missing list field {req_field!r}'}), 400
+        if 'resource_kind' not in blk or blk['resource_kind'] not in ('cpu', 'gpu', 'exclusive'):
+            return jsonify({'ok': False,
+                            'error': f'model {k!r} resource_kind must be cpu/gpu/exclusive'}), 400
+    body['_updated_at'] = datetime.now(_tz.utc).isoformat()
+    from pathlib import Path as _P
+    raw = _P(PROJECT_ROOT) / 'data' / 'training_rules.json'
+    tmp = raw.with_suffix('.tmp')
+    tmp.write_text(json.dumps(body, indent=2), encoding='utf-8')
+    os.replace(tmp, raw)
+    # Reload the in-process cache so the next /api/training/rules GET
+    # returns the freshly-saved data without a process restart.
+    try:
+        from src.training import training_rules as _r
+        _r.reload()
+    except Exception:
+        pass
+    return jsonify({'ok': True, 'updated_at': body['_updated_at']})
+
+
+@app.route('/api/training/preview', methods=['GET'])
+def api_training_preview():
+    """Preview which (model, tf) combos a sweep would actually run, given
+    operator overrides. Used by the UI's "Run Sweep" button to show
+    operator the plan before submission. Query params:
+       include_experimental=true|false
+       force_train=base:1w,trend:1m   (comma list of model:tf)
+       force_skip=tft:4h
+    """
+    inc_exp = request.args.get('include_experimental', 'false').lower() in ('1', 'true', 'yes')
+    def _parse(arg: str) -> list:
+        out = []
+        for tok in arg.split(',') if arg else []:
+            tok = tok.strip()
+            if ':' in tok:
+                m, t = tok.split(':', 1)
+                out.append([m.strip(), t.strip()])
+        return out
+    ft = _parse(request.args.get('force_train', ''))
+    fs = _parse(request.args.get('force_skip', ''))
+    try:
+        from src.training import training_rules as _r
+        _r.reload()
+        plan = _r.planned_combos(force_train=ft, force_skip=fs,
+                                  include_experimental=inc_exp)
+        return jsonify({
+            'ok':              True,
+            'plan':            plan,
+            'count':           len(plan),
+            'sequential_min':  _r.estimated_total_minutes(plan),
+            'parallel_min': {
+                str(n): _r.estimated_parallel_minutes(plan, n) for n in (1, 2, 4)
+            },
+        })
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
+
+
 @app.route('/api/training/jobs', methods=['GET'])
 def api_training_jobs():
     """Most-recent N training jobs, newest first. Each row carries

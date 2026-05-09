@@ -5901,6 +5901,107 @@ def test_phase79_v31_stability_heatmap_legend_blue_rename():
           'app.jinja_env.auto_reload = True' in app)
 
 
+def test_phase80_v4_b0_training_rules_registry_and_api():
+    """v4 Phase B0 + Phase B5 backend — training rules registry module
+    + HTTP API for the dashboard rules editor card.
+
+    Covers:
+    - data/training_rules.json schema (8 models, applicable/experimental/skip lists)
+    - src/training/training_rules.py public API
+    - /api/training/rules GET + POST + /api/training/preview routes
+    """
+    print('\n[Phase 80 — v4 B0+B5 backend: training rules registry]')
+
+    # 1. Rules JSON file structure
+    rules_path = os.path.join(BASE_DIR, 'data', 'training_rules.json')
+    check('data/training_rules.json exists', os.path.exists(rules_path))
+    if not os.path.exists(rules_path):
+        return
+    with open(rules_path, encoding='utf-8') as f:
+        rules = json.load(f)
+    check('rules has _version field', '_version' in rules)
+    check('rules has models block',   isinstance(rules.get('models'), dict))
+    check('rules has global block',   isinstance(rules.get('global'), dict))
+
+    expected_keys = {'base', 'trend', 'futures', 'scalping', 'meta', 'tft', 'regime', 'oft'}
+    actual = set(rules.get('models', {}).keys())
+    check(f'all 8 model keys present (got {sorted(actual)})', expected_keys.issubset(actual))
+
+    for k in expected_keys:
+        blk = rules['models'].get(k, {})
+        for f in ('applicable_tfs', 'experimental_tfs', 'skip_tfs',
+                  'resource_kind', 'est_minutes_per_run', 'params', 'skip_reason'):
+            check(f'  model {k!r} has field {f!r}', f in blk)
+        check(f'  model {k!r} resource_kind valid',
+              blk.get('resource_kind') in ('cpu', 'gpu', 'exclusive'))
+
+    # 2. Python API
+    import importlib, sys
+    sys.path.insert(0, BASE_DIR)
+    if 'src.training.training_rules' in sys.modules:
+        del sys.modules['src.training.training_rules']
+    rmod = importlib.import_module('src.training.training_rules')
+
+    check('rules module has all_models()',          callable(rmod.all_models))
+    check('rules module has applicable_tfs()',      callable(rmod.applicable_tfs))
+    check('rules module has experimental_tfs()',    callable(rmod.experimental_tfs))
+    check('rules module has skip_tfs()',            callable(rmod.skip_tfs))
+    check('rules module has cell_status()',         callable(rmod.cell_status))
+    check('rules module has should_train()',        callable(rmod.should_train))
+    check('rules module has skip_reason()',         callable(rmod.skip_reason))
+    check('rules module has matrix()',              callable(rmod.matrix))
+    check('rules module has planned_combos()',      callable(rmod.planned_combos))
+    check('rules module has estimated_total_minutes()',
+          callable(rmod.estimated_total_minutes))
+    check('rules module has estimated_parallel_minutes()',
+          callable(rmod.estimated_parallel_minutes))
+    check('rules module has reload()',              callable(rmod.reload))
+    check('TF_ORDER covers 1m..1mo',
+          rmod.TF_ORDER == ('1m','5m','15m','1h','4h','1d','1w','1mo'))
+
+    # Test some specific cells per the canonical matrix
+    check('cell_status(scalping, 1m) = applicable', rmod.cell_status('scalping', '1m') == 'applicable')
+    check('cell_status(scalping, 1h) = skip',       rmod.cell_status('scalping', '1h') == 'skip')
+    check('cell_status(tft, 15m) = applicable',     rmod.cell_status('tft', '15m') == 'applicable')
+    check('cell_status(tft, 1m) = skip',            rmod.cell_status('tft', '1m') == 'skip')
+    check('cell_status(tft, 1d) = experimental',    rmod.cell_status('tft', '1d') == 'experimental')
+    check('cell_status(regime, 1h) = applicable',   rmod.cell_status('regime', '1h') == 'applicable')
+    check('cell_status(regime, 5m) = skip',         rmod.cell_status('regime', '5m') == 'skip')
+
+    # planned_combos
+    plan = rmod.planned_combos()
+    check(f'default plan has 26 combos (got {len(plan)})', len(plan) == 26)
+    plan_exp = rmod.planned_combos(include_experimental=True)
+    check(f'with experimental: 30 combos (got {len(plan_exp)})', len(plan_exp) == 30)
+
+    # ETA estimates
+    eta_seq = rmod.estimated_total_minutes(plan)
+    eta_par2 = rmod.estimated_parallel_minutes(plan, 2)
+    check(f'sequential ETA > parallel-2 ETA ({eta_seq} > {eta_par2})', eta_seq > eta_par2)
+
+    # Override matrix
+    m = rmod.matrix(force_train=[('scalping', '1d')], force_skip=[('base', '1h')])
+    overrides = [(mod, tf, st) for mod, tf, st in m if st in ('force_train', 'force_skip')]
+    check('override matrix surfaces force_train + force_skip',
+          ('scalping', '1d', 'force_train') in overrides
+          and ('base', '1h', 'force_skip') in overrides)
+
+    # 3. Backend HTTP routes registered (file-level grep)
+    app_src = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'), encoding='utf-8').read()
+    check("/api/training/rules GET registered",
+          "@app.route('/api/training/rules', methods=['GET'])" in app_src)
+    check("/api/training/rules POST registered",
+          "@app.route('/api/training/rules', methods=['POST'])" in app_src)
+    check("/api/training/preview GET registered",
+          "@app.route('/api/training/preview'" in app_src)
+    check("rules-save endpoint validates resource_kind",
+          'resource_kind must be cpu/gpu/exclusive' in app_src)
+    check("rules-save endpoint atomic write (.tmp + os.replace)",
+          'tmp.write_text' in app_src and 'os.replace(tmp, raw)' in app_src)
+    check("rules-save endpoint reloads in-process cache",
+          '_r.reload()' in app_src)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -6243,6 +6344,7 @@ def main():
     test_phase77_v31_pertf_train_button_dispatch_fix()
     test_phase78_v31_bot_dead_false_alarm_module_style_launch()
     test_phase79_v31_stability_heatmap_legend_blue_rename()
+    test_phase80_v4_b0_training_rules_registry_and_api()
 
     if not args.offline:
         test_api(args.url)
