@@ -5555,6 +5555,47 @@ def test_phase73_v31_trade_enrichment_going_forward():
         _os.unlink(tmp.name)
 
 
+def test_phase73b_v31_trade_enrichment_backfill():
+    """v3.1 step 12 (1E): scripts/backfill_trade_enrichment.py exists,
+    runs against data/trades.json, and produces a same-length output
+    at data/trades_enriched.json with mode + exit_reason populated on
+    the closed-trade rows."""
+    print('\n[Phase 73b — v3.1 step 12: historical trade backfill]')
+
+    script = os.path.join(BASE_DIR, 'scripts', 'backfill_trade_enrichment.py')
+    check('backfill_trade_enrichment.py exists', os.path.exists(script))
+
+    out_path = os.path.join(BASE_DIR, 'data', 'trades_enriched.json')
+    if not os.path.exists(out_path):
+        check('data/trades_enriched.json produced', False,
+              'expected after running scripts.backfill_trade_enrichment')
+        return
+    check('data/trades_enriched.json produced', True)
+
+    with open(out_path, encoding='utf-8') as f:
+        enriched = json.load(f)
+    check('enriched is a list', isinstance(enriched, list))
+    check(f'enriched contains rows ({len(enriched)})', len(enriched) > 0)
+
+    if not enriched:
+        return
+
+    sample = enriched[0]
+    for k in ('mode', 'regime_at_entry', 'model_confidence',
+              'mfe_pct', 'mae_pct', 'slippage_pct', 'exit_reason'):
+        check(f'enriched row exposes "{k}"', k in sample)
+
+    # Coverage targets: mode and exit_reason should be near-100% on
+    # closed trades; MFE/MAE may be lower (depends on legacy
+    # highest_price availability).
+    n = len(enriched)
+    mode_pct = sum(1 for t in enriched if t.get('mode')) / n * 100
+    er_pct   = sum(1 for t in enriched if (t.get('status') or '').upper() != 'OPEN'
+                                          and t.get('exit_reason')) / max(1, sum(1 for t in enriched if (t.get('status') or '').upper() != 'OPEN')) * 100
+    check(f'mode populated >=99% (got {mode_pct:.1f}%)',          mode_pct >= 99.0)
+    check(f'exit_reason on closed trades >=95% (got {er_pct:.1f}%)', er_pct >= 95.0)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -5890,6 +5931,7 @@ def main():
     test_phase71f_v31_oft_sweep_coverage()
     test_phase72_v31_dashboard_mode_aware_and_per_market()
     test_phase73_v31_trade_enrichment_going_forward()
+    test_phase73b_v31_trade_enrichment_backfill()
 
     if not args.offline:
         test_api(args.url)
