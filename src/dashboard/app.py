@@ -3943,6 +3943,100 @@ def api_training_rules_save():
     return jsonify({'ok': True, 'updated_at': body['_updated_at']})
 
 
+@app.route('/api/cluster/sweep', methods=['POST'])
+@require_api_key
+def api_cluster_sweep():
+    """v4 Phase B5 — submit a rules-aware sweep to the local cluster.
+
+    Reads training_rules.json, applies operator overrides from the request
+    body, expands the planned_combos list, and POSTs each (model, tf)
+    combo as a cluster task to localhost:7700.
+
+    Body (all optional):
+        force_train:           [["base","1w"], ["scalping","15m"], ...]
+        force_skip:            [["tft","4h"], ...]
+        include_experimental:  bool (default False)
+        symbols:               list — overrides the default symbol universe
+                               for THIS sweep only
+
+    Returns: {ok, sweep_id, task_ids, count, eta_min}
+    """
+    body = request.get_json(silent=True) or {}
+    ft  = body.get('force_train') or []
+    fs  = body.get('force_skip') or []
+    inc = bool(body.get('include_experimental', False))
+    syms_override = body.get('symbols')
+
+    try:
+        from src.training import training_rules as _r
+        _r.reload()
+        plan = _r.planned_combos(force_train=ft, force_skip=fs,
+                                  include_experimental=inc)
+        symbols = syms_override or _r.symbols()
+        if not plan:
+            return jsonify({'ok': False, 'error': 'plan is empty after overrides'}), 400
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'rules-load: {type(exc).__name__}: {exc}'}), 500
+
+    sweep_id = uuid.uuid4().hex[:12]
+    submitted: list[str] = []
+    failed: list[dict] = []
+    cluster_url = os.getenv('AI_TRADER_CLUSTER_URL', 'http://192.168.0.105:7700')
+
+    import urllib.request as _req
+    for (model_key, tf) in plan:
+        # Per-symbol fan-out only for OFT (tick-level microstructure). All
+        # other trainers iterate symbols internally, so one task covers
+        # the whole universe.
+        if model_key == 'oft':
+            for sym in symbols:
+                spec = {
+                    'model_type': model_key, 'timeframe': tf, 'symbol': sym,
+                    'data_path': '', 'output_path': '',
+                    'config': {'use_master_trainer': True, 'sweep_id': sweep_id},
+                }
+                _try_submit(cluster_url, spec, submitted, failed)
+        else:
+            spec = {
+                'model_type': model_key, 'timeframe': tf, 'symbol': 'ALL',
+                'data_path': '', 'output_path': '',
+                'config': {'use_master_trainer': True, 'sweep_id': sweep_id,
+                           'symbols': symbols},
+            }
+            _try_submit(cluster_url, spec, submitted, failed)
+
+    eta_par2 = _r.estimated_parallel_minutes(plan, 2)
+    return jsonify({
+        'ok':         True,
+        'sweep_id':   sweep_id,
+        'task_ids':   submitted,
+        'count':      len(submitted),
+        'failed':     failed,
+        'eta_min':    eta_par2,
+        'plan':       plan,
+        'symbols':    symbols,
+    })
+
+
+def _try_submit(cluster_url: str, spec: dict, submitted: list, failed: list) -> None:
+    """Helper for api_cluster_sweep — POSTs one task spec, appends to
+    submitted list on success, failed list on error."""
+    try:
+        body = json.dumps(spec).encode('utf-8')
+        import urllib.request as _req
+        rq = _req.Request(f'{cluster_url}/api/cluster/submit', data=body,
+                          method='POST',
+                          headers={'Content-Type': 'application/json'})
+        with _req.urlopen(rq, timeout=10) as r:
+            d = json.loads(r.read().decode('utf-8'))
+            if d.get('ok'):
+                submitted.append(d['task_id'])
+            else:
+                failed.append({'spec': spec, 'error': d.get('error', 'unknown')})
+    except Exception as exc:
+        failed.append({'spec': spec, 'error': f'{type(exc).__name__}: {exc}'})
+
+
 @app.route('/api/training/preview', methods=['GET'])
 def api_training_preview():
     """Preview which (model, tf) combos a sweep would actually run, given

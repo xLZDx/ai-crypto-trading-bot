@@ -2625,6 +2625,59 @@ document.addEventListener('DOMContentLoaded', function() {
         </div>
       </div>
 
+      <!-- ── v4 UNIFIED Training & Backtest card ───────────────────── -->
+      <!-- Combines: fleet overview · rules matrix · planned-sweep ETA ·  -->
+      <!-- one-click "Run Sweep" button. Operator can edit data/training_ -->
+      <!-- rules.json directly to flip cells; this card shows the result.  -->
+      <div class="ms-section" id="train-bt-section" style="margin-top:12px">
+        <div class="ms-section-hdr" onclick="(()=>{ const b=document.getElementById('train-bt-section-body'),s=document.getElementById('train-bt-section'); if(!b)return; const o=s.classList.toggle('ms-open'); b.classList.toggle('ms-collapsed',!o); if(o) loadFleetCard(); })()">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:.72rem;font-weight:700;color:#e2e8f0;text-transform:uppercase;letter-spacing:.06em">Training &amp; Backtest <span style="font-weight:400;color:#64748b">· Unified</span></span>
+            <span class="chip" id="fleet-summary-chip" style="font-size:.58rem;color:#64748b">Loading…</span>
+            <span class="chip" id="fleet-eta-chip"     style="font-size:.58rem;color:#94a3b8;background:rgba(99,102,241,.10);border-color:rgba(99,102,241,.3)">—</span>
+          </div>
+          <span class="ms-chevron-main">▼</span>
+        </div>
+        <div class="ms-section-body ms-collapsed" id="train-bt-section-body">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+            <button onclick="loadFleetCard()" class="btn btn-ghost btn-sm">↻ Refresh</button>
+            <button onclick="runUnifiedSweep()" class="btn btn-blue btn-sm" id="btn-run-sweep">🚀 Run Sweep</button>
+            <label style="display:flex;align-items:center;gap:6px;font-size:.62rem;color:#94a3b8;cursor:pointer">
+              <input type="checkbox" id="sweep-include-experimental"> include ⚠ experimental cells
+            </label>
+            <span id="sweep-status-chip" style="font-size:.58rem;color:#64748b;font-style:italic;align-self:center">idle</span>
+          </div>
+          <div id="fleet-card-error" style="display:none;padding:7px 10px;margin-bottom:10px;background:rgba(251,113,133,.12);border:1px solid rgba(251,113,133,.35);border-radius:6px;color:#fb7185;font-size:.62rem"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+            <!-- Left: rules matrix -->
+            <div>
+              <div style="font-size:.6rem;color:#94a3b8;font-weight:700;letter-spacing:.06em;margin-bottom:6px;text-transform:uppercase">Model × Timeframe Coverage</div>
+              <div id="rules-matrix-host" style="overflow-x:auto;font-size:.6rem">
+                <div style="color:#64748b;padding:14px;text-align:center">Loading rules…</div>
+              </div>
+              <div style="margin-top:6px;font-size:.55rem;color:#64748b;line-height:1.55">
+                <span style="color:#34d399;font-weight:700">●</span> applicable ·
+                <span style="color:#fbbf24;font-weight:700">●</span> experimental ·
+                <span style="color:#475569;font-weight:700">●</span> skip — hover for reason
+              </div>
+              <div style="margin-top:6px;font-size:.55rem;color:#475569;line-height:1.55">
+                Edit <code style="background:rgba(0,0,0,.3);padding:1px 5px;border-radius:3px">data/training_rules.json</code> on master to flip cells. Changes apply on next sweep — no code change needed.
+              </div>
+            </div>
+            <!-- Right: fleet -->
+            <div>
+              <div style="font-size:.6rem;color:#94a3b8;font-weight:700;letter-spacing:.06em;margin-bottom:6px;text-transform:uppercase">Fleet &amp; Active Tasks</div>
+              <div id="fleet-workers-host" style="margin-bottom:10px">
+                <div style="color:#64748b;font-size:.62rem">Loading fleet…</div>
+              </div>
+              <div id="fleet-tasks-host" style="font-size:.62rem">
+                <div style="color:#64748b">No active tasks</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- ── Training Cluster ──────────────────────────────────────── -->
       <div class="ms-section" id="cluster-section" style="margin-top:12px">
         <div class="ms-section-hdr" onclick="(()=>{ const b=document.getElementById('cluster-section-body'),s=document.getElementById('cluster-section'); if(!b)return; const o=s.classList.toggle('ms-open'); b.classList.toggle('ms-collapsed',!o); })()">
@@ -3855,6 +3908,8 @@ function _strategyHourlyRefresh() {
   try { pollResampleJobs(); } catch(_) {}
   try { pipelineRefresh(); } catch(_) {}
   try { loadPortfolioByMode(); } catch(_) {}  // v3.1 step 9 — keep Performance Overview mode-correct
+  // v4 Phase B5' — unified Training & Backtest card
+  try { if (document.getElementById('train-bt-section')?.classList.contains('ms-open')) loadFleetCard(); } catch(_) {}
 }
 
 // ── ML Model Cards ────────────────────────────────────────────────────────────
@@ -6807,6 +6862,179 @@ async function renderLocalTrainingProgress() {
   }
 
   el.innerHTML = activeBlock + modelGrid;
+}
+
+
+// ── v4 Phase B5' — Unified Training & Backtest card (rules-aware) ─────────
+// Reads /api/training/rules + /api/cluster/status, renders the model × TF
+// matrix, fleet workers, and active tasks. Updated on operator-clicked
+// refresh + when the section is opened.
+const _SWEEP_TF_ORDER = ['1m','5m','15m','1h','4h','1d','1w','1mo'];
+let _fleetCardData = null;
+let _sweepInFlight = false;
+
+async function loadFleetCard() {
+  const errEl = document.getElementById('fleet-card-error');
+  if (errEl) errEl.style.display = 'none';
+  try {
+    const [rules, cluster] = await Promise.all([
+      fetch('/api/training/rules').then(r => r.json()).catch(() => null),
+      fetch('http://192.168.0.105:7700/api/cluster/status').then(r => r.json()).catch(() => null),
+    ]);
+    _fleetCardData = { rules, cluster };
+    _renderRulesMatrix(rules);
+    _renderFleetWorkers(cluster);
+    _renderFleetTasks(cluster);
+    _renderFleetSummary(rules, cluster);
+  } catch (e) {
+    if (errEl) {
+      errEl.style.display = 'block';
+      errEl.textContent = `Fleet card load failed: ${e.message || e}`;
+    }
+  }
+}
+
+function _renderFleetSummary(rules, cluster) {
+  const sumEl = document.getElementById('fleet-summary-chip');
+  const etaEl = document.getElementById('fleet-eta-chip');
+  if (sumEl) {
+    const w = (cluster && cluster.workers_online) || 0;
+    const idle = (cluster && cluster.workers_idle) || 0;
+    const busy = (cluster && cluster.workers_busy) || 0;
+    sumEl.textContent = `${w} workers · ${busy} busy · ${idle} idle`;
+    sumEl.style.color = w > 0 ? (busy > 0 ? '#fbbf24' : '#34d399') : '#fb7185';
+  }
+  if (etaEl && rules && rules.sweep_eta) {
+    const e = rules.sweep_eta;
+    const w = Math.max(1, (cluster && cluster.workers_online) || 1);
+    const par = w >= 4 ? e.parallel_4_workers_min : (w >= 2 ? e.parallel_2_workers_min : e.sequential_minutes);
+    const h = (par / 60).toFixed(1);
+    etaEl.textContent = `${e.default_combo_count} combos · ~${h}h on ${w}w`;
+  }
+}
+
+function _renderRulesMatrix(rules) {
+  const host = document.getElementById('rules-matrix-host');
+  if (!host) return;
+  if (!rules || !rules.ok) {
+    host.innerHTML = `<div style="color:#fb7185;padding:14px;text-align:center;font-size:.62rem">Rules unavailable</div>`;
+    return;
+  }
+  const tfs = rules.tf_order || _SWEEP_TF_ORDER;
+  const cellLookup = {};   // {model: {tf: {status, reason}}}
+  for (const c of rules.matrix || []) {
+    if (!cellLookup[c.model]) cellLookup[c.model] = {};
+    cellLookup[c.model][c.tf] = c;
+  }
+  const dot = (status) => {
+    if (status === 'applicable')   return '<span style="color:#34d399;font-weight:800">●</span>';
+    if (status === 'experimental') return '<span style="color:#fbbf24;font-weight:800">●</span>';
+    if (status === 'skip')         return '<span style="color:#475569;font-weight:800">●</span>';
+    return '<span style="color:#1f2937">○</span>';
+  };
+  let html = `<table style="border-collapse:collapse;width:100%">
+    <thead><tr style="border-bottom:1px solid rgba(148,163,184,.2)">
+      <th style="text-align:left;padding:4px 6px;color:#94a3b8;font-size:.55rem;text-transform:uppercase;letter-spacing:.06em">Model</th>
+      ${tfs.map(t => `<th style="text-align:center;padding:4px 4px;color:#94a3b8;font-size:.55rem">${t}</th>`).join('')}
+    </tr></thead><tbody>`;
+  for (const m of (rules.models || [])) {
+    const blk = (rules.rules && rules.rules.models && rules.rules.models[m]) || {};
+    const lbl = blk.label || m;
+    const rk = blk.resource_kind || 'cpu';
+    const rkColor = rk === 'gpu' ? '#a78bfa' : rk === 'exclusive' ? '#fb923c' : '#60a5fa';
+    html += `<tr style="border-bottom:1px solid rgba(148,163,184,.06)"><td style="padding:4px 6px;color:#e2e8f0;font-weight:700;font-size:.6rem;white-space:nowrap">
+      ${esc(lbl)} <span style="color:${rkColor};font-size:.5rem">${rk}</span></td>`;
+    for (const tf of tfs) {
+      const cell = (cellLookup[m] || {})[tf] || { status: 'unknown', reason: '' };
+      const reason = cell.reason || (cell.status === 'experimental' ? 'experimental — opt in via checkbox' : '');
+      html += `<td style="text-align:center;padding:4px 4px" title="${esc(m)} @ ${esc(tf)} — ${esc(cell.status)}${reason ? ': ' + esc(reason) : ''}">${dot(cell.status)}</td>`;
+    }
+    html += `</tr>`;
+  }
+  html += `</tbody></table>`;
+  host.innerHTML = html;
+}
+
+function _renderFleetWorkers(cluster) {
+  const host = document.getElementById('fleet-workers-host');
+  if (!host) return;
+  if (!cluster || !cluster.workers) {
+    host.innerHTML = `<div style="color:#64748b;font-size:.62rem">cluster offline</div>`;
+    return;
+  }
+  if (!cluster.workers.length) {
+    host.innerHTML = `<div style="color:#fb7185;font-size:.62rem;padding:8px;background:rgba(251,113,133,.08);border:1px solid rgba(251,113,133,.25);border-radius:6px">No workers online — start one with: <code style="background:rgba(0,0,0,.4);padding:1px 5px;border-radius:3px">python -m src.training.distributed.worker --master http://192.168.0.105:7700</code></div>`;
+    return;
+  }
+  host.innerHTML = cluster.workers.map(w => {
+    const busy = !!w.current_task;
+    const dot = busy ? '#fbbf24' : '#34d399';
+    const cudaTxt = w.cuda_available ? `${w.gpu_name || 'GPU'} (${(w.gpu_vram_gb||0).toFixed(1)} GB)` : 'CPU only';
+    return `<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;margin-bottom:4px;background:rgba(5,8,22,.5);border:1px solid rgba(148,163,184,.12);border-radius:6px;font-size:.6rem">
+      <span style="width:7px;height:7px;border-radius:50%;background:${dot};flex-shrink:0"></span>
+      <span style="color:#e2e8f0;font-weight:700">${esc(w.hostname || w.worker_id || 'worker')}</span>
+      <span style="color:#64748b">${esc(w.ip || '')}</span>
+      <span style="color:#94a3b8;margin-left:auto">${esc(cudaTxt)}</span>
+      <span style="color:${busy?'#fbbf24':'#475569'};font-weight:700;font-size:.55rem">${busy?'BUSY':'IDLE'}</span>
+    </div>`;
+  }).join('');
+}
+
+function _renderFleetTasks(cluster) {
+  const host = document.getElementById('fleet-tasks-host');
+  if (!host) return;
+  // Pull /api/cluster/tasks separately — the status endpoint only shows a sample.
+  fetch('http://192.168.0.105:7700/api/cluster/tasks')
+    .then(r => r.json())
+    .then(tasks => {
+      const active = (tasks || []).filter(t => t.status === 'running' || t.status === 'queued')
+                                   .slice(0, 8);
+      if (!active.length) {
+        host.innerHTML = `<div style="color:#475569;padding:6px 0">No active tasks</div>`;
+        return;
+      }
+      host.innerHTML = `<div style="font-size:.55rem;color:#94a3b8;font-weight:700;letter-spacing:.06em;margin-bottom:4px;text-transform:uppercase">Active (${active.length})</div>` +
+        active.map(t => {
+          const tag = t.status === 'running' ? '#fbbf24' : '#94a3b8';
+          return `<div style="display:flex;gap:6px;padding:3px 6px;margin-bottom:2px;background:rgba(5,8,22,.4);border-radius:4px">
+            <span style="color:${tag};font-weight:700;font-size:.55rem;min-width:50px">${esc(t.status||'?')}</span>
+            <span style="color:#e2e8f0">${esc(t.model_type||'?')} @ ${esc(t.timeframe||'?')}</span>
+            <span style="color:#64748b">${esc((t.symbol||'').slice(0,12))}</span>
+          </div>`;
+        }).join('');
+    })
+    .catch(() => {
+      host.innerHTML = `<div style="color:#475569">tasks endpoint offline</div>`;
+    });
+}
+
+async function runUnifiedSweep() {
+  if (_sweepInFlight) return;
+  const btn = document.getElementById('btn-run-sweep');
+  const status = document.getElementById('sweep-status-chip');
+  const incExpEl = document.getElementById('sweep-include-experimental');
+  const incExp = incExpEl && incExpEl.checked;
+  if (!confirm(`Submit a sweep over the planned (model × TF) matrix${incExp ? ' INCLUDING experimental cells' : ''}?\n\nTasks fan out across the cluster. Master + worker laptops both pick up work.`)) return;
+  _sweepInFlight = true;
+  if (btn) btn.disabled = true;
+  if (status) { status.textContent = 'submitting…'; status.style.color = '#fbbf24'; }
+  try {
+    const r = await fetch('/api/cluster/sweep', {
+      method: 'POST',
+      headers: hdrs(),
+      body: JSON.stringify({ include_experimental: !!incExp }),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'sweep failed');
+    if (status) { status.textContent = `${d.count} tasks queued · ETA ~${(d.eta_min/60).toFixed(1)}h`; status.style.color = '#34d399'; }
+    setTimeout(loadFleetCard, 1500);  // refresh fleet view
+  } catch (e) {
+    if (status) { status.textContent = `error: ${e.message || e}`; status.style.color = '#fb7185'; }
+    alert(`Sweep submission failed: ${e.message || e}`);
+  } finally {
+    if (btn) btn.disabled = false;
+    _sweepInFlight = false;
+  }
 }
 
 

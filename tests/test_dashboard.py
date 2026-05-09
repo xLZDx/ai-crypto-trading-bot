@@ -6002,6 +6002,56 @@ def test_phase80_v4_b0_training_rules_registry_and_api():
           '_r.reload()' in app_src)
 
 
+def test_phase81_v4_b5_prime_unified_card_ui():
+    """v4 Phase B5' — unified TRAINING & BACKTEST card on the dashboard.
+    Reads /api/training/rules + /api/cluster/status, renders model × TF
+    matrix + fleet workers + active tasks, plus a 'Run Sweep' button
+    that POSTs /api/cluster/sweep."""
+    print('\n[Phase 81 — v4 B5′: unified training & backtest card]')
+
+    if not os.path.exists(TEMPLATE_PATH):
+        check('template file exists', False)
+        return
+    html = open(TEMPLATE_PATH, encoding='utf-8').read()
+
+    # Card structure
+    check('train-bt-section present',                  'id="train-bt-section"' in html)
+    check('Training & Backtest header present',         'Training &amp; Backtest <span style="font-weight:400;color:#64748b">' in html)
+    check('fleet-summary-chip present',                 'id="fleet-summary-chip"' in html)
+    check('fleet-eta-chip present',                     'id="fleet-eta-chip"' in html)
+    check('rules-matrix-host present',                  'id="rules-matrix-host"' in html)
+    check('fleet-workers-host present',                 'id="fleet-workers-host"' in html)
+    check('fleet-tasks-host present',                   'id="fleet-tasks-host"' in html)
+    check('Run Sweep button present',                   'onclick="runUnifiedSweep()"' in html)
+    check('include-experimental checkbox present',      'id="sweep-include-experimental"' in html)
+
+    # JS functions
+    check('loadFleetCard() defined',                    'async function loadFleetCard()' in html)
+    check('_renderRulesMatrix() defined',               'function _renderRulesMatrix(' in html)
+    check('_renderFleetWorkers() defined',              'function _renderFleetWorkers(' in html)
+    check('_renderFleetTasks() defined',                'function _renderFleetTasks(' in html)
+    check('runUnifiedSweep() defined',                  'async function runUnifiedSweep()' in html)
+
+    # API integration
+    check('JS calls /api/training/rules',               "fetch('/api/training/rules')" in html)
+    check('JS calls /api/cluster/status',               "/api/cluster/status" in html)
+    check('JS POSTs /api/cluster/sweep',                "fetch('/api/cluster/sweep'" in html)
+    check('JS calls /api/cluster/tasks for active list', "/api/cluster/tasks" in html)
+
+    # Hourly refresh wires loadFleetCard
+    check('hourly refresh calls loadFleetCard',         'loadFleetCard();' in html and "ms-open" in html)
+
+    # Sweep status chip (idle / queued / error states)
+    check('sweep-status-chip present',                  'id="sweep-status-chip"' in html)
+
+    # /api/cluster/sweep endpoint registered (backend)
+    app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'), encoding='utf-8').read()
+    check("/api/cluster/sweep POST registered",          "@app.route('/api/cluster/sweep'" in app)
+    check("sweep endpoint reads training rules",         'from src.training import training_rules as _r' in app)
+    check("sweep endpoint OFT fans out per symbol",      "if model_key == 'oft':" in app)
+    check("sweep endpoint returns sweep_id + count",     "'sweep_id':   sweep_id" in app)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -6345,6 +6395,7 @@ def main():
     test_phase78_v31_bot_dead_false_alarm_module_style_launch()
     test_phase79_v31_stability_heatmap_legend_blue_rename()
     test_phase80_v4_b0_training_rules_registry_and_api()
+    test_phase81_v4_b5_prime_unified_card_ui()
 
     if not args.offline:
         test_api(args.url)
