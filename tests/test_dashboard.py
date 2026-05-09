@@ -5596,6 +5596,75 @@ def test_phase73b_v31_trade_enrichment_backfill():
     check(f'exit_reason on closed trades >=95% (got {er_pct:.1f}%)', er_pct >= 95.0)
 
 
+def test_phase74_v31_health_column_and_fleet_aggregate():
+    """v3.1 — composite Model Health column + fleet aggregate footer.
+
+    Operator request 2026-05-09: "add one more column that will analyze
+    the data across all columns and show the final aggregate results
+    on training model tab".
+
+    Health column rolls every signal column for one row into a
+    weighted 0-100 score with letter grade (A/B/C/D/F) and color.
+    Fleet aggregate footer averages across all visible rows."""
+    print('\n[Phase 74 — v3.1: Model Health column + fleet aggregate]')
+
+    if not os.path.exists(TEMPLATE_PATH):
+        check('template file exists', False, TEMPLATE_PATH)
+        return
+    html = open(TEMPLATE_PATH, encoding='utf-8').read()
+
+    # Header column added between Target and Description.
+    check('Health column header added (data-col="health_score")',
+          'data-col="health_score"' in html and '>Health <span class="tr-chev"></span></th>' in html)
+    check('Health header tooltip explains formula',
+          ('WF Acc% (35)' in html or 'WF Acc%' in html)
+          and ('AUC (20' in html or 'AUC' in html)
+          and 'A≥80' in html)
+
+    # Composite scoring helper.
+    check('_computeHealthScore() helper defined',
+          'function _computeHealthScore(m)' in html)
+    check('helper weights WF / Acc / AUC / WinP / Balance / Freshness',
+          all(("key: '" + k + "'") in html for k in ('WF', 'Acc', 'AUC', 'WinP', 'Bal', 'Fresh')))
+    check('helper applies penalties (warning -30, error -20)',
+          'score -= 30' in html and 'score -= 20' in html)
+    check('helper returns letter grade A/B/C/D/F',
+          ("score >= 80 ? 'A'" in html
+           and "score >= 65 ? 'B'" in html
+           and "score >= 50 ? 'C'" in html
+           and "score >= 35 ? 'D'" in html))
+
+    # Per-row annotation.
+    check('_renderTrainingTable annotates m.health_score before sort',
+          'm.health_score = h.score' in html
+          and 'all.forEach(m => {' in html)
+
+    # Row template renders the badge.
+    check('row template includes Health badge cell',
+          'm._health_grade' in html and 'm._health_color' in html)
+    check('row tr carries data-health-score + data-health-grade attrs',
+          'data-health-score=' in html and 'data-health-grade=' in html)
+
+    # Fleet aggregate footer.
+    check('<tfoot id="training-tfoot"> exists',
+          '<tfoot id="training-tfoot">' in html)
+    check('Fleet aggregate row populated with averages + grade tally',
+          'FLEET AGGREGATE' in html
+          and 'FLEET HEALTH' in html
+          and 'training-tfoot-aggregate' in html
+          and 'fleet-health-badge' in html)
+    check('aggregate counts trained-today / failed / not-started',
+          'Trained today:' in html and 'Failed/warn:' in html and 'Not started:' in html)
+    check('aggregate breaks down by grade A/B/C/D/F',
+          ('A:<b' in html and 'B:<b' in html and 'C:<b' in html
+           and 'D:<b' in html and 'F:<b' in html))
+
+    # Empty-state colspan was bumped from 20 → 21 (Health column added).
+    check('empty-state colspan bumped to 21',
+          'colspan="21"' in html
+          and 'No models match this filter.' in html)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -5932,6 +6001,7 @@ def main():
     test_phase72_v31_dashboard_mode_aware_and_per_market()
     test_phase73_v31_trade_enrichment_going_forward()
     test_phase73b_v31_trade_enrichment_backfill()
+    test_phase74_v31_health_column_and_fleet_aggregate()
 
     if not args.offline:
         test_api(args.url)

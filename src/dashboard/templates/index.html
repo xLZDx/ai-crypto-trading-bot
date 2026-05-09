@@ -2046,13 +2046,19 @@ document.addEventListener('DOMContentLoaded', function() {
                   <th class="tr-th" data-col="n_iterations"   onclick="trSort('n_iterations')"   style="text-align:right;padding:5px 6px" title="Boosting rounds (RF/HGBT) or epochs (TFT/OFT). Early-stop is healthier than max.">Iter <span class="tr-chev"></span></th>
                   <th class="tr-th" data-col="symbols_count"  onclick="trSort('symbols_count')"  style="text-align:right;padding:5px 6px" title="Number of distinct symbols this model was trained on.">Syms <span class="tr-chev"></span></th>
                   <th class="tr-th" data-col="target"         onclick="trSort('target')"         style="text-align:left;padding:5px 6px" title="Label / target the model predicts.">Target <span class="tr-chev"></span></th>
+                  <th class="tr-th" data-col="health_score"   onclick="trSort('health_score')"   style="text-align:right;padding:5px 6px" title="Composite 0-100 score that aggregates EVERY signal column for this row: WF Acc% (35), Acc Test% (15), AUC (20 if present), Win Prec% (15 if present), Bull/Bear class balance (10), freshness (10). Penalized for accuracy_warning / last_error / NOT STARTED. Grade: A≥80 · B≥65 · C≥50 · D≥35 · F<35. Hover for per-component breakdown.">Health <span class="tr-chev"></span></th>
                   <th style="text-align:left;padding:5px 6px;color:#94a3b8;font-weight:700;letter-spacing:.02em;font-size:.6rem" title="One-line description of what this model does.">Description</th>
                   <th style="text-align:right;padding:5px 6px;color:#94a3b8;font-weight:700;letter-spacing:.02em;font-size:.6rem" title="Trigger this trainer N times. TF picker selects which timeframe (default = canonical for that model).">Action</th>
                 </tr>
               </thead>
               <tbody id="training-tbody">
-                <tr><td colspan="20" style="text-align:center;color:#475569;padding:12px">Loading…</td></tr>
+                <tr><td colspan="21" style="text-align:center;color:#475569;padding:12px">Loading…</td></tr>
               </tbody>
+              <!-- v3.1 fleet aggregate footer — populated by
+                   _renderTrainingTable() with the average Health
+                   score, A/B/C/D/F class counts, and trained-today
+                   total across all currently-visible rows. -->
+              <tfoot id="training-tfoot"></tfoot>
             </table>
           </div>
         </div>
@@ -3955,12 +3961,87 @@ function _trRelTime(s) {
   return Math.round(s/86400/30) + 'mo ago';
 }
 
+// v3.1 — composite Model Health score. Aggregates every signal column
+// for one row into a single 0-100 number with letter grade + color +
+// per-component breakdown. Displayed in the "Health" column added
+// per the operator request 2026-05-09.
+//
+// Weights (rebased proportionally when a metric is missing):
+//   WF Acc%      35  — primary out-of-sample signal, capped 50%→60%
+//   Acc Test%    15  — in-sample, same cap
+//   AUC          20  — only when classifier emits proba (meta-labeler today; more after sweep)
+//   Win Prec%    15  — meta-labeler precision at gate
+//   Class bal.   10  — |bull-bear|<10 = full credit, <25 = half, else 0
+//   Freshness    10  — runs_today=1 full credit, <7d half, else 0
+// Penalties applied at end:
+//   accuracy_warning      −30
+//   last_error            −20
+//   NOT STARTED          → 0
+function _computeHealthScore(m) {
+  if (!m) return { score: null, grade: '—', color: '#475569', tip: 'No data' };
+  const parts = [];
+  const clamp01 = v => Math.max(0, Math.min(1, v));
+
+  if (m.accuracy_walk_forward != null) {
+    parts.push({ key: 'WF', val: clamp01((m.accuracy_walk_forward - 50) / 10), weight: 35 });
+  }
+  if (m.accuracy_test != null) {
+    parts.push({ key: 'Acc', val: clamp01((m.accuracy_test - 50) / 10), weight: 15 });
+  }
+  if (m.auc_roc != null) {
+    parts.push({ key: 'AUC', val: clamp01((m.auc_roc - 0.5) / 0.15), weight: 20 });
+  }
+  if (m.win_precision != null) {
+    parts.push({ key: 'WinP', val: clamp01((m.win_precision - 50) / 15), weight: 15 });
+  }
+  if (!m.directionless && m.long_accuracy != null && m.short_accuracy != null
+      && (m.long_accuracy > 0 || m.short_accuracy > 0)) {
+    const spread = Math.abs(m.long_accuracy - m.short_accuracy);
+    parts.push({ key: 'Bal', val: spread < 10 ? 1 : spread < 25 ? 0.5 : 0, weight: 10 });
+  }
+  if (m.age_s != null) {
+    parts.push({ key: 'Fresh', val: m.runs_today ? 1 : (m.age_s < 7 * 86400 ? 0.6 : 0), weight: 10 });
+  }
+
+  if (!parts.length) {
+    // NOT STARTED — no metrics at all.
+    return { score: 0, grade: 'F', color: '#475569', tip: 'No metrics yet — model never trained' };
+  }
+  const totalW = parts.reduce((s, p) => s + p.weight, 0);
+  let score = parts.reduce((s, p) => s + p.val * p.weight, 0) / totalW * 100;
+
+  if (m.accuracy_warning) score -= 30;
+  if (m.last_error)       score -= 20;
+  if (!m.model_exists && m.age_s == null) score = 0;
+  score = Math.max(0, Math.min(100, score));
+
+  const grade = score >= 80 ? 'A' : score >= 65 ? 'B' : score >= 50 ? 'C' : score >= 35 ? 'D' : 'F';
+  const color = score >= 75 ? '#34d399'
+              : score >= 55 ? '#fbbf24'
+              : score >= 35 ? '#fb923c'
+              :               '#fb7185';
+  const tip = parts.map(p => `${p.key}: ${(p.val * 100).toFixed(0)}%`).join(' · ')
+            + (m.accuracy_warning ? ' · −30 warning' : '')
+            + (m.last_error ? ' · −20 error' : '');
+  return { score, grade, color, tip };
+}
+
 function _renderTrainingTable() {
   const tbody = $('training-tbody');
   const chip  = $('chip-training-count');
   if (!tbody) return;
   const all = (_stratFull && _stratFull.ml_models) || [];
   const agg = (_stratFull && _stratFull.aggregate) || {};
+
+  // Annotate every row with its composite health_score so trSort
+  // can use it like any other numeric column.
+  all.forEach(m => {
+    const h = _computeHealthScore(m);
+    m.health_score = h.score;
+    m._health_grade = h.grade;
+    m._health_color = h.color;
+    m._health_tip = h.tip;
+  });
 
   // Filter by quick pill + search.
   const filtered = all.filter(m => {
@@ -4006,7 +4087,9 @@ function _renderTrainingTable() {
   }
 
   if (!filtered.length) {
-    tbody.innerHTML = `<tr><td colspan="20" style="text-align:center;color:#475569;padding:14px">No models match this filter.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="21" style="text-align:center;color:#475569;padding:14px">No models match this filter.</td></tr>`;
+    const tfoot0 = $('training-tfoot');
+    if (tfoot0) tfoot0.innerHTML = '';
     return;
   }
 
@@ -4118,7 +4201,7 @@ function _renderTrainingTable() {
     }
     // Description: short blurb sourced from _MODEL_DESCRIPTIONS
     const desc = (typeof _MODEL_DESCRIPTIONS !== 'undefined') ? (_MODEL_DESCRIPTIONS[m.key] || '') : '';
-    return `<tr data-model-key="${esc(m.key)}">
+    return `<tr data-model-key="${esc(m.key)}" data-health-score="${m.health_score==null?'':m.health_score.toFixed(1)}" data-health-grade="${m._health_grade||''}">
       <td style="color:#e2e8f0;font-weight:700">${m.icon||''} ${esc(m.label||m.key)}${warnMark}</td>
       <td style="color:#94a3b8">${esc(m.market||'—')}</td>
       <td style="color:#94a3b8">${esc(m.timeframe||'—')}</td>
@@ -4137,6 +4220,18 @@ function _renderTrainingTable() {
       <td style="text-align:right;color:#94a3b8">${m.n_iterations||'—'}</td>
       <td style="text-align:right;color:#94a3b8">${m.symbols_count||0}</td>
       <td style="color:#64748b;font-size:.58rem">${esc(m.target||'—')}</td>
+      <td style="text-align:right">${(() => {
+        // v3.1 Health column — composite of every signal column.
+        const sc = (m.health_score == null) ? null : m.health_score;
+        if (sc == null) return '<span style="color:#475569">—</span>';
+        const col = m._health_color || '#94a3b8';
+        const gr  = m._health_grade || '—';
+        const tip = m._health_tip   || '';
+        return `<span title="${esc(tip)}" style="display:inline-flex;align-items:center;gap:5px;font-family:'JetBrains Mono';font-weight:800;font-size:.62rem;padding:2px 8px;border-radius:999px;background:${col}22;color:${col};border:1px solid ${col}55">
+          <span>${sc.toFixed(0)}</span>
+          <span style="opacity:.75">${gr}</span>
+        </span>`;
+      })()}</td>
       <td style="color:#94a3b8;font-size:.55rem;line-height:1.35;max-width:220px" title="${esc(desc)}">${esc(desc)}</td>
       <td style="text-align:right;white-space:nowrap">
         <select id="tr-tf-${esc(m.key)}"
@@ -4166,6 +4261,47 @@ function _renderTrainingTable() {
       </td>
     </tr>`;
   }).join('');
+
+  // ── v3.1 Fleet aggregate footer ────────────────────────────────────
+  // Single row at the bottom showing the average Health score across
+  // every visible model + a per-grade tally. Counts trained-today,
+  // failures, "not started" rows so the operator has one-glance fleet
+  // status without scrolling.
+  const tfoot = $('training-tfoot');
+  if (tfoot) {
+    const scores = filtered.map(m => m.health_score).filter(s => s != null);
+    const avg = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
+    const grades = {A:0, B:0, C:0, D:0, F:0};
+    filtered.forEach(m => { if (m._health_grade && grades[m._health_grade] != null) grades[m._health_grade]++; });
+    const today = filtered.filter(m => m.runs_today === 1).length;
+    const failed = filtered.filter(m => m.accuracy_warning || m.last_error).length;
+    const notStarted = filtered.filter(m => !m.model_exists && m.age_s == null).length;
+    const fleetCol = avg >= 75 ? '#34d399' : avg >= 55 ? '#fbbf24' : avg >= 35 ? '#fb923c' : '#fb7185';
+    const fleetGrade = avg >= 80 ? 'A' : avg >= 65 ? 'B' : avg >= 50 ? 'C' : avg >= 35 ? 'D' : 'F';
+    tfoot.innerHTML = `<tr id="training-tfoot-aggregate" style="border-top:2px solid rgba(148,163,184,.18);background:rgba(13,20,40,.55)">
+      <td colspan="11" style="padding:8px 6px;font-size:.65rem;color:#cbd5e1;font-weight:700">
+        <span style="color:#94a3b8;letter-spacing:.04em">FLEET AGGREGATE — ${filtered.length} models</span>
+        <span style="margin-left:14px">Trained today: <b style="color:#34d399">${today}</b></span>
+        <span style="margin-left:10px">Failed/warn: <b style="color:${failed?'#fb7185':'#94a3b8'}">${failed}</b></span>
+        <span style="margin-left:10px">Not started: <b style="color:${notStarted?'#fbbf24':'#94a3b8'}">${notStarted}</b></span>
+      </td>
+      <td colspan="6" style="padding:8px 6px;font-size:.6rem;color:#94a3b8;text-align:right;font-family:'JetBrains Mono'">
+        A:<b style="color:#34d399">${grades.A}</b>
+        · B:<b style="color:#a3e635">${grades.B}</b>
+        · C:<b style="color:#fbbf24">${grades.C}</b>
+        · D:<b style="color:#fb923c">${grades.D}</b>
+        · F:<b style="color:#fb7185">${grades.F}</b>
+      </td>
+      <td style="text-align:left;padding:8px 6px;font-size:.62rem;color:${fleetCol};font-weight:800" title="Mean health across all visible rows. Aggregates WF/Acc/AUC/WinPrec/balance/freshness per row, then averages. v3.1 column.">FLEET HEALTH</td>
+      <td style="text-align:right;padding:8px 6px">
+        <span id="fleet-health-badge" style="display:inline-flex;align-items:center;gap:5px;font-family:'JetBrains Mono';font-weight:800;font-size:.7rem;padding:3px 10px;border-radius:999px;background:${fleetCol}22;color:${fleetCol};border:1px solid ${fleetCol}55">
+          <span>${avg.toFixed(0)}</span>
+          <span style="opacity:.75">${fleetGrade}</span>
+        </span>
+      </td>
+      <td colspan="2"></td>
+    </tr>`;
+  }
 }
 
 // Short one-liner per model — surfaces in the Description column.
