@@ -5831,6 +5831,42 @@ def test_phase77_v31_pertf_train_button_dispatch_fix():
           '(tfSel && tfSel.value) || derivedTf' in tpl)
 
 
+def test_phase78_v31_bot_dead_false_alarm_module_style_launch():
+    """v3.1 fix 2026-05-09 — false-DEAD alert when bot launched via
+    `python -m src.main` (module-style) instead of `python src/main.py`
+    (script-style). The cmdline-fallback regex in error_monitor.py only
+    matched the script form, so any direct `Start-Process python -m
+    src.main` invocation made monitor/health spam "Trading bot is
+    DEAD" for hours while the bot was actually fine."""
+    print('\n[Phase 78 — v3.1 fix: bot DEAD false-alarm on -m src.main launches]')
+
+    src = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'error_monitor.py'),
+               encoding='utf-8').read()
+    check('cmdline regex matches both src/main.py AND -m src.main',
+          r'src[\\/]main\.py|-m\s+src\.main\b' in src)
+    check('comment documents both launch styles',
+          'script-style' in src and 'module-style' in src)
+    check('comment cites the false-DEAD incident',
+          'false-DEAD' in src or 'false_DEAD' in src
+          or 'screaming "DEAD"' in src)
+
+    # Live: simulate a -m src.main cmdline against the regex.
+    import re
+    pat = re.compile(r"src[\\/]main\.py|-m\s+src\.main\b")
+    samples = [
+        ('python.exe -m src.main',                            True),
+        ('"D:/venv/python.exe" -m src.main',                  True),
+        ('python src/main.py --no-interactive',               True),
+        ('python src\\main.py',                               True),
+        ('python -m src.training.joint_oft_rl',               False),
+        ('python -m src.engine.pipeline_orchestrator',        False),
+        ('python src/dashboard/app.py',                       False),
+    ]
+    for cmd, want in samples:
+        got = bool(pat.search(cmd))
+        check(f"  cmdline {cmd!r:55s} -> match={got} (want {want})", got == want)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -6171,6 +6207,7 @@ def main():
     test_phase75_v31_backfill_button_endpoint()
     test_phase76_v31_training_sweep_watchdog_and_cold_cache()
     test_phase77_v31_pertf_train_button_dispatch_fix()
+    test_phase78_v31_bot_dead_false_alarm_module_style_launch()
 
     if not args.offline:
         test_api(args.url)

@@ -574,9 +574,17 @@ def _probe_processes() -> list[tuple[str, str, str]]:
             return faults
         alive = bool(bot_pid) and psutil.pid_exists(int(bot_pid))
         if not alive:
-            # Cmdline scan for src/main.py
+            # Cmdline scan — match BOTH launch styles:
+            #   • script-style:  python src/main.py   (matches src[/\\]main\.py)
+            #   • module-style:  python -m src.main   (matches '-m src.main')
+            # Pre-fix the module-style was a false-DEAD: launching the
+            # bot directly with `Start-Process python -m src.main` had a
+            # cmdline like "python.exe -m src.main" with no path
+            # separator, so the legacy regex never hit and the monitor
+            # banner kept screaming "DEAD" for hours while the bot was
+            # actually processing ticks fine.
             import re as _re
-            pat = _re.compile(r"src[\\/]main\.py")
+            pat = _re.compile(r"src[\\/]main\.py|-m\s+src\.main\b")
             for p in psutil.process_iter(["pid", "name", "cmdline"]):
                 try:
                     if (p.info.get("name") or "").lower().startswith("python"):

@@ -1,0 +1,20 @@
+{
+  "dash": 33888,
+  "training": 35956,
+  "realtime": 60840,
+  "bot": 29528,
+  "orderbook": 31444,
+  "debug": 7104,
+  "orch": 27272,
+  "fastapi": [
+    22808,
+    33848
+  ],
+  "monitor": 13696,
+  "mcp": 0,
+  "watchlist": [
+    25228,
+    56364
+  ],
+  "training_sweep_watchdog": 65884
+}
