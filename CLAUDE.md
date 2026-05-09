@@ -5,7 +5,9 @@
 Before writing ANY code, always present a written implementation plan and wait for explicit user approval.
 - Describe: what files change, what new files are created, the approach taken, and any key decisions.
 - Do NOT start implementing until the user says "approved", "go ahead", "yes", or equivalent.
-- Once a plan is approved, implementation and automated testing can proceed without per-step approval.
+- **Answering clarifying questions is NOT approval.** When the user replies to a plan with answers to "(1) (2) (3)" style questions, that's clarification, not authorization. Re-state the resolved plan and ASK for explicit approval before any tool call that creates/edits files. Only "approved", "go ahead", "yes", "implement", or equivalent counts.
+- **All sub-phases of an approved plan ARE auto-approved.** Once approval is given for a multi-layer plan, every layer/sub-step inside that plan can proceed without re-asking. The gate is on the PLAN boundary, not each step within it.
+- If the user adds NEW scope mid-conversation (new requirements, new layers), treat the expanded plan as un-approved and re-confirm. Original approval only covers original scope.
 
 ## Workflow Rules
 

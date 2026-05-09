@@ -6064,45 +6064,271 @@ def test_phase82_v4_component_health_module_style_launches():
     (python -m src.X). Plus a service-alias system so 'training' service
     detects the orchestrator process, not just the legacy script filename."""
     print('\n[Phase 82 — v4 fix: component health probes match module-style launches]')
+    print('  (NOTE: regex/best-PID logic moved to src/utils/process_health.py'
+          ' on 2026-05-10 as Layer 1 of the orchestration plan; Phase 82'
+          ' now checks the centralised module + that app.py delegates to it.'
+          ' Phase 83 covers the migration in full.)')
 
     app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'), encoding='utf-8').read()
+    ph  = open(os.path.join(BASE_DIR, 'src', 'utils', 'process_health.py'), encoding='utf-8').read()
 
-    # Bot regex now matches both forms.
-    check('bot regex matches both src/main.py AND -m src.main',
-          r"r'src[\\\\/]main\\.py|-m\\s+src\\.main\\b'" in app
-          or r'r\'src[\\/]main\.py|-m\s+src\.main\b\'' in app
-          or 'src[\\\\/]main\\.py|-m\\s+src\\.main' in app)
-    # Dashboard regex now matches both forms too.
-    check('dash regex matches both dashboard/app.py AND -m src.dashboard.app',
-          r"src[\\/]dashboard[\\/]app\.py|-m\s+src\.dashboard\.app\b" in app)
+    # Bot regex now matches both forms — lives in process_health.
+    check('bot regex matches both src/main.py AND -m src.main (in process_health)',
+          r'src[\\/]main\.py|-m\s+src\.main\b' in ph)
+    # Dashboard regex now matches both forms too — also in process_health.
+    check('dash regex matches both dashboard/app.py AND -m src.dashboard.app (in process_health)',
+          r'src[\\/]dashboard[\\/]app\.py|-m\s+src\.dashboard\.app\b' in ph)
 
-    # Best-PID picker prefers worker over wrapper (higher CPU, then RSS).
-    check('component-health picks highest-CPU+RSS PID (worker, not wrapper)',
-          'def _pick_best_pid(' in app
-          and 'prefer_higher_cpu' in app
-          and '_rss(pid)' in app)
+    # Best-PID picker prefers worker over wrapper via RSS (in process_health).
+    check('process_health picks highest-RSS PID (worker, not wrapper)',
+          'rss > best.rss_bytes' in ph
+          or ('rss_bytes' in ph and 'best' in ph))
 
-    # ML Training cmdline aliases include pipeline_orchestrator.
-    check('training service detected via pipeline_orchestrator cmdline',
-          '_SERVICE_CMDLINE_ALIASES' in app
-          and "'training': [" in app
-          and "'pipeline_orchestrator'," in app
-          and "'-m src.engine.pipeline_orchestrator'," in app)
+    # ML Training cmdline scan includes pipeline_orchestrator + legacy script + module form.
+    check('training_orch pattern covers pipeline_orchestrator + module form + legacy script',
+          'pipeline_orchestrator' in ph
+          and r'-m\s+src\.engine\.pipeline_orchestrator\b' in ph
+          and 'train_all_models' in ph)
 
-    # Service detection iterates the alias list, not just the legacy filename.
-    check('alias iteration replaces single-needle detection',
-          'aliases = _SERVICE_CMDLINE_ALIASES.get(svc_key)' in app
-          and 'for needle in aliases:' in app)
+    # Dashboard delegates to process_health instead of running its own scan.
+    check('app.py monitor_health imports process_health',
+          'from src.utils import process_health' in app)
+    check('app.py uses one-pass all_known_processes for fleet snapshot',
+          '_ph.all_known_processes()' in app)
 
-    # Even when recorded PID is alive, the cmdline scan still runs to
-    # prefer the real worker over the dormant wrapper.
-    check('cmdline scan runs even when recorded PID is alive (wrapper-vs-worker fix)',
-          'Always run the cmdline scan' in app
-          and 'recorded one might be the dormant wrapper' in app)
+    # Comment block documents the institutional/false-DEAD context — in process_health.
+    check('process_health docstring documents the false-Stopped failure mode',
+          'false alarm' in ph.lower() or 'dead' in ph.lower() or 'wrapper' in ph.lower())
 
-    # Comment block documents the institutional/false-DEAD context.
-    check('inline comments document the false-Stopped failure mode',
-          'false alarm' in app or "false-DEAD" in app or 'persistent DEAD/Stopped false alarm' in app)
+
+def test_phase83_centralised_process_health_module():
+    """Layer 1 of the kafka-style orchestration plan (2026-05-10):
+    consolidate the four duplicated cmdline-scan implementations into a
+    single src/utils/process_health.py module. Pre-migration the same
+    regex contract was copy-pasted across four files (dashboard
+    monitor_health, error_monitor._probe_processes, _pipeline_proc_alive,
+    training_sweep_watchdog._orchestrator_alive); three of them broke
+    independently when launch styles changed (script-style vs `-m` form).
+
+    Phase 83 verifies:
+      P1. process_health.py exists and exposes the canonical KIND_*
+          constants + find_process / all_known_processes / proc_stats.
+      P2. All four call sites import + delegate to process_health
+          instead of running their own psutil scan.
+      P3. The module's regex covers BOTH launch styles for the kinds
+          we know to launch in module-form (bot, dash, training_orch).
+      P4. find_process picks highest-RSS match (real worker over
+          dormant Start-Process wrapper)."""
+    print('\n[Phase 83 — centralised process_health module]')
+
+    ph_path = os.path.join(BASE_DIR, 'src', 'utils', 'process_health.py')
+    check('src/utils/process_health.py exists', os.path.exists(ph_path))
+    with open(ph_path, encoding='utf-8') as f:
+        ph = f.read()
+
+    # P1 — canonical surface area
+    check('exposes KIND_BOT constant',              'KIND_BOT' in ph)
+    check('exposes KIND_DASH constant',             'KIND_DASH' in ph)
+    check('exposes KIND_TRAIN_ORCH constant',       'KIND_TRAIN_ORCH' in ph)
+    check('exposes KIND_CLUSTER_ORCH constant',     'KIND_CLUSTER_ORCH' in ph)
+    check('exposes KIND_WORKER constant',           'KIND_WORKER' in ph)
+    check('exposes KIND_TRAIN_SUPERVISOR constant', 'KIND_TRAIN_SUPERVISOR' in ph)
+    check('exposes KIND_BT_SUPERVISOR constant',    'KIND_BT_SUPERVISOR' in ph)
+    check('exposes KIND_MASTER_AGENT constant',     'KIND_MASTER_AGENT' in ph)
+    check('exports find_process function',          'def find_process(' in ph)
+    check('exports all_known_processes function',   'def all_known_processes(' in ph)
+    check('exports proc_stats function',            'def proc_stats(' in ph)
+    check('exports is_alive helper',                'def is_alive(' in ph)
+    check('exports ProcessInfo dataclass',          'class ProcessInfo' in ph)
+
+    # P3 — patterns cover both launch styles for the multi-form kinds
+    check('bot pattern matches both src/main.py AND -m src.main',
+          r'src[\\/]main\.py|-m\s+src\.main\b' in ph)
+    check('dash pattern matches both dashboard/app.py AND -m src.dashboard.app',
+          r'src[\\/]dashboard[\\/]app\.py|-m\s+src\.dashboard\.app\b' in ph)
+    check('training_orch pattern includes pipeline_orchestrator + module form + legacy',
+          'pipeline_orchestrator' in ph
+          and r'-m\s+src\.engine\.pipeline_orchestrator\b' in ph
+          and 'train_all_models' in ph)
+    check('cluster_orch pattern targets distributed.orchestrator',
+          r'-m\s+src\.training\.distributed\.orchestrator\b' in ph)
+    check('worker pattern targets distributed.worker',
+          r'-m\s+src\.training\.distributed\.worker\b' in ph)
+
+    # P4 — wrapper-vs-worker tie-break uses RSS, not CPU
+    check('find_process picks highest-RSS match',
+          ('rss > best.rss_bytes' in ph) or ('rss_bytes' in ph and 'best' in ph))
+    check('comments explain wrapper-vs-worker reasoning',
+          'wrapper' in ph.lower() and 'worker' in ph.lower())
+
+    # P2 — call sites delegate, no local cmdline scans left
+    app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
+    with open(app_path, encoding='utf-8') as f:
+        app = f.read()
+    em_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'error_monitor.py')
+    with open(em_path, encoding='utf-8') as f:
+        em = f.read()
+    wd_path = os.path.join(BASE_DIR, 'scripts', 'training_sweep_watchdog.py')
+    with open(wd_path, encoding='utf-8') as f:
+        wd = f.read()
+
+    check('app.py monitor_health imports process_health',
+          'from src.utils import process_health' in app)
+    check('app.py uses all_known_processes for one-pass scan',
+          '_ph.all_known_processes()' in app)
+    check('app.py monitor_health no longer defines _CMDLINE_SCAN dict',
+          '_CMDLINE_SCAN = {' not in app)
+    check('app.py monitor_health no longer defines _pick_best_pid',
+          'def _pick_best_pid(' not in app)
+    check('app.py _pipeline_proc_alive delegates to process_health',
+          '_ph.find_process(_ph.KIND_TRAIN_ORCH)' in app)
+
+    check('error_monitor _probe_processes uses process_health',
+          'from src.utils import process_health' in em
+          and 'find_process(_ph.KIND_BOT)' in em)
+    check('error_monitor no longer scans psutil.process_iter directly',
+          'psutil.process_iter' not in em
+          or em.count('psutil.process_iter') == 0)
+
+    check('training_sweep_watchdog uses process_health',
+          'from src.utils import process_health' in wd
+          and '_ph.KIND_TRAIN_ORCH' in wd)
+    check('training_sweep_watchdog no longer scans psutil.process_iter directly',
+          'psutil.process_iter' not in wd)
+
+
+def test_phase84_orchestration_topics_pubsub():
+    """Layer 6 of the orchestration plan (2026-05-10): a kafka-inspired
+    file-based pub-sub at src/orchestration/topics.py. Each topic is one
+    directory under data/topics/ with daily-rotated JSONL log files and
+    per-consumer offset trackers.
+
+    Phase 84 verifies:
+      P1. Module + canonical topic constants exist.
+      P2. Topic.append/tail/commit round-trips correctly.
+      P3. Multiple consumers tail independently (offsets don't share).
+      P4. Day rollover: a consumer parked on an older date catches up.
+      P5. Stats reports bytes + lines per topic for dashboard rendering.
+    """
+    print('\n[Phase 84 — orchestration topics file-based pub-sub]')
+
+    tp_path = os.path.join(BASE_DIR, 'src', 'orchestration', 'topics.py')
+    check('src/orchestration/topics.py exists', os.path.exists(tp_path))
+    check('src/orchestration/__init__.py exists',
+          os.path.exists(os.path.join(BASE_DIR, 'src', 'orchestration', '__init__.py')))
+
+    # P1 — canonical constants
+    from src.orchestration import topics as _topics
+    check('exports TOPIC_TRAINING_REQUESTS',    hasattr(_topics, 'TOPIC_TRAINING_REQUESTS'))
+    check('exports TOPIC_TRAINING_EVENTS',      hasattr(_topics, 'TOPIC_TRAINING_EVENTS'))
+    check('exports TOPIC_TRAINING_CHECKPOINTS', hasattr(_topics, 'TOPIC_TRAINING_CHECKPOINTS'))
+    check('exports TOPIC_BACKTEST_REQUESTS',    hasattr(_topics, 'TOPIC_BACKTEST_REQUESTS'))
+    check('exports TOPIC_BACKTEST_EVENTS',      hasattr(_topics, 'TOPIC_BACKTEST_EVENTS'))
+    check('exports TOPIC_SERVICE_HEARTBEATS',   hasattr(_topics, 'TOPIC_SERVICE_HEARTBEATS'))
+    check('exports TOPIC_SERVICE_ALERTS',       hasattr(_topics, 'TOPIC_SERVICE_ALERTS'))
+    check('KNOWN_TOPICS lists all 7 canonical topics',
+          len(_topics.KNOWN_TOPICS) == 7)
+    check('exports Topic class',          hasattr(_topics, 'Topic'))
+    check('exports topic() helper',       callable(getattr(_topics, 'topic', None)))
+    check('exports all_topic_stats()',    callable(getattr(_topics, 'all_topic_stats', None)))
+    check('Topic has append/tail/commit/stats',
+          all(hasattr(_topics.Topic, m) for m in ('append', 'tail', 'commit', 'stats')))
+
+    # Redirect TOPICS_DIR at a tmp path so we don't pollute data/topics/
+    # with test fixtures.
+    import tempfile, shutil
+    from pathlib import Path as _Path
+    tmpdir = _Path(tempfile.mkdtemp(prefix='topics_test_'))
+    orig_dir = _topics.TOPICS_DIR
+    # The cache is keyed by name only; clear it so a fresh Topic uses tmpdir.
+    _topics.TOPICS_DIR = tmpdir
+    _topics._topic_cache.clear()
+    try:
+        TOPIC = _topics.TOPIC_SERVICE_HEARTBEATS
+        t = _topics.topic(TOPIC)
+
+        # P2 — append → tail round-trip
+        off1 = t.append({'kind': 'bot',  'pid': 100, 'rss_mb': 500})
+        off2 = t.append({'kind': 'dash', 'pid': 200, 'rss_mb':  80})
+        off3 = t.append({'kind': 'orch', 'pid': 300, 'rss_mb': 200})
+        check('append returns monotonically increasing offsets',
+              off1 < off2 < off3)
+
+        # Fresh consumer reads everything from start.
+        entries_a = list(t.tail('consumer-A', batch=10))
+        check('fresh consumer sees all 3 appended entries',
+              len(entries_a) == 3)
+        check('entry payload survives JSON round-trip',
+              entries_a[0].payload['kind'] == 'bot'
+              and entries_a[1].payload['pid'] == 200
+              and entries_a[2].payload['rss_mb'] == 200)
+        check('entry exposes byte_offset for commit',
+              all(hasattr(e, 'byte_offset') and e.byte_offset > 0 for e in entries_a))
+        check('entry exposes date in YYYYMMDD format',
+              all(isinstance(e.date, str) and len(e.date) == 8 for e in entries_a))
+
+        # Commit AFTER processing the third entry — next tail should be empty.
+        last = entries_a[-1]
+        t.commit('consumer-A', last.date, last.byte_offset)
+        entries_a_again = list(t.tail('consumer-A', batch=10))
+        check('after commit, repeat tail yields no duplicates',
+              len(entries_a_again) == 0)
+
+        # New append, same consumer picks it up.
+        t.append({'kind': 'worker', 'pid': 400})
+        entries_a_new = list(t.tail('consumer-A', batch=10))
+        check('consumer resumes from committed offset',
+              len(entries_a_new) == 1
+              and entries_a_new[0].payload['kind'] == 'worker')
+
+        # P3 — independent consumers
+        entries_b = list(t.tail('consumer-B', batch=10))
+        check('second consumer sees ALL 4 entries (independent offset)',
+              len(entries_b) == 4)
+        # consumer-A only sees the new one
+        # (already verified above by entries_a_new == 1)
+
+        # batch caps the yield size
+        entries_b_capped = list(t.tail('consumer-B', batch=2))
+        check('batch limit respected',
+              len(entries_b_capped) == 2)
+
+        # P4 — day rollover catch-up
+        # Manually drop a synthetic older log file + park consumer-C on it.
+        old_date = '20260101'
+        old_path = tmpdir / TOPIC / f'log-{old_date}.jsonl'
+        old_path.parent.mkdir(parents=True, exist_ok=True)
+        old_path.write_text('{"kind":"old1"}\n{"kind":"old2"}\n', encoding='utf-8')
+        # consumer-C has never seen this topic — gets default offset
+        # (earliest date on disk). With our injected old log, that's
+        # 20260101 byte 0 → consumer-C should read old1, old2, then today's.
+        entries_c = list(t.tail('consumer-C', batch=10))
+        old_payloads = [e.payload.get('kind') for e in entries_c]
+        check('consumer parked on older date catches up across day boundary',
+              'old1' in old_payloads and 'old2' in old_payloads
+              and any(p in ('bot', 'dash', 'orch', 'worker') for p in old_payloads))
+
+        # P5 — stats
+        st = t.stats()
+        check('Topic.stats reports name + nonzero bytes + nonzero lines',
+              st.name == TOPIC and st.bytes_total > 0 and st.lines_total > 0)
+        check('Topic.stats reports days_present',
+              st.days_present >= 2)   # today + injected old date
+        check('Topic.stats reports last_append_ts as float',
+              isinstance(st.last_append_ts, float) and st.last_append_ts > 0)
+
+        all_stats = _topics.all_topic_stats()
+        check('all_topic_stats returns one entry per KNOWN_TOPIC',
+              len(all_stats) == len(_topics.KNOWN_TOPICS))
+        check('all_topic_stats includes the seeded topic',
+              any(s.name == TOPIC and s.bytes_total > 0 for s in all_stats))
+    finally:
+        _topics.TOPICS_DIR = orig_dir
+        _topics._topic_cache.clear()
+        try:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+        except Exception:
+            pass
 
 
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():

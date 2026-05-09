@@ -113,25 +113,20 @@ def _fetch_status() -> dict[str, Any] | None:
 
 
 def _orchestrator_alive() -> bool:
-    """Cmdline-scan fallback (PR-32 pattern) for the pipeline orchestrator
-    subprocess. True iff a python process running
-    `src.engine.pipeline_orchestrator` exists."""
+    """True iff a python process running the pipeline orchestrator exists.
+
+    Migrated 2026-05-10 to use src.utils.process_health (single source
+    of truth across dashboard / error_monitor / watchdog). If psutil
+    is unavailable, returns True so we don't trigger respawns blind.
+    """
     try:
-        import psutil
+        from src.utils import process_health as _ph
     except ImportError:
         return True  # can't tell — assume alive, don't trigger respawns
-    for p in psutil.process_iter(['pid', 'name', 'cmdline']):
-        try:
-            name = (p.info.get('name') or '').lower()
-            if not name.startswith('python'):
-                continue
-            cmd = p.info.get('cmdline') or []
-            if (len(cmd) >= 3 and cmd[1] == '-m'
-                    and cmd[2] == 'src.engine.pipeline_orchestrator'):
-                return True
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
-    return False
+    try:
+        return _ph.find_process(_ph.KIND_TRAIN_ORCH) is not None
+    except Exception:
+        return True  # err on the side of not respawning
 
 
 def _respawn_sweep(s: dict[str, Any]) -> bool:

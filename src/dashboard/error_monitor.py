@@ -551,50 +551,29 @@ def _probe_realtime() -> tuple[str, str, str] | None:
 
 
 def _probe_processes() -> list[tuple[str, str, str]]:
-    """Read data/process_ids.json and verify the bot process is alive.
-    Dashboard process is implicit (we're running in it). Returns a list
-    so a single probe can emit multiple faults."""
+    """Verify the bot process is alive. Dashboard process is implicit
+    (we're running in it). Returns a list so a single probe can emit
+    multiple faults.
+
+    Migrated 2026-05-10 to use src.utils.process_health — single source
+    of truth for cmdline detection across dashboard, error_monitor,
+    pipeline_proc_alive, watchdog. Pre-migration, three independent
+    copies of the regex existed and broke independently when launch
+    styles changed.
+    """
     faults: list[tuple[str, str, str]] = []
     try:
-        pid_path = PROJECT_ROOT / "data" / "process_ids.json"
-        if not pid_path.exists():
-            return [("warning", "process:bot",
-                     "Trading bot process not started yet (no data/process_ids.json)")]
-        pids = json.loads(pid_path.read_text(encoding="utf-8") or "{}")
-        bot_pid = pids.get("bot")
-        # Liveness check — recorded PID first, then fall back to a cmdline
-        # scan so a bot launched directly (e.g. via Start-Process,
-        # bypassing restart_all) doesn't trigger a false 'DEAD' alarm.
-        # Pre-fix: process_ids.json's PID went stale after any direct
-        # relaunch and the banner kept screaming about a dead bot that
-        # was actually fine.
-        try:
-            import psutil  # type: ignore
-        except ImportError:
-            return faults
-        alive = bool(bot_pid) and psutil.pid_exists(int(bot_pid))
-        if not alive:
-            # Cmdline scan — match BOTH launch styles:
-            #   • script-style:  python src/main.py   (matches src[/\\]main\.py)
-            #   • module-style:  python -m src.main   (matches '-m src.main')
-            # Pre-fix the module-style was a false-DEAD: launching the
-            # bot directly with `Start-Process python -m src.main` had a
-            # cmdline like "python.exe -m src.main" with no path
-            # separator, so the legacy regex never hit and the monitor
-            # banner kept screaming "DEAD" for hours while the bot was
-            # actually processing ticks fine.
-            import re as _re
-            pat = _re.compile(r"src[\\/]main\.py|-m\s+src\.main\b")
-            for p in psutil.process_iter(["pid", "name", "cmdline"]):
-                try:
-                    if (p.info.get("name") or "").lower().startswith("python"):
-                        cmd = " ".join(p.info.get("cmdline") or [])
-                        if pat.search(cmd):
-                            alive = True
-                            break
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
-        if not alive:
+        from src.utils import process_health as _ph
+        info = _ph.find_process(_ph.KIND_BOT)
+        if info is None:
+            # Pre-launch state vs hard DEAD: if process_ids.json doesn't
+            # exist yet, the bot just hasn't been started — warning, not
+            # critical. After it's been started at least once, missing →
+            # critical because the operator expects it alive.
+            pid_path = PROJECT_ROOT / "data" / "process_ids.json"
+            if not pid_path.exists():
+                return [("warning", "process:bot",
+                         "Trading bot process not started yet (no data/process_ids.json)")]
             faults.append(("critical", "process:bot",
                            "Trading bot is DEAD — bot loop not running"))
     except Exception as exc:

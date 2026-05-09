@@ -705,74 +705,26 @@ def monitor_health():
     # the Component Health card kept showing 'Stopped' for things that
     # were obviously alive (the user was looking at the dashboard!).
     #
-    # 2026-05-09 fix: regex now matches BOTH `python src/main.py`
-    # (script-style) AND `python -m src.main` (module-style) — the
-    # latter was the cause of the persistent DEAD/Stopped false alarm
-    # since I launched the bot + orchestrator via Start-Process with
-    # the -m form. Same fix already in error_monitor._probe_processes;
-    # this one is the matching dashboard endpoint.
-    #
-    # Also: when MULTIPLE matching processes exist (dormant Start-Process
-    # wrapper + actual worker), pick the one with HIGHER CPU% — that's
-    # the real worker, not the shell wrapper. Without this, the card
-    # showed PID 29528 with 0% CPU / 0 MB even though the actual bot
-    # PID 65256 was burning 1.6 GB of working set.
-    _CMDLINE_SCAN = {
-        'bot':  r'src[\\/]main\.py|-m\s+src\.main\b',
-        'dash': r'src[\\/]dashboard[\\/]app\.py|-m\s+src\.dashboard\.app\b',
-    }
-    def _pick_best_pid(pat, prefer_higher_cpu: bool = True):
-        """Find all python procs whose cmdline matches `pat` and return
-        the one with the highest RSS (the real worker, not the dormant
-        Start-Process wrapper).
+    # Detection migrated to src/utils/process_health.py (2026-05-10) —
+    # single source of truth for cmdline scan + RSS-based wrapper-vs-worker
+    # tie-breaking. Pre-migration, four files (this one, error_monitor,
+    # _pipeline_proc_alive, training_sweep_watchdog) each had their own
+    # regex copy and three of them broke independently when launch styles
+    # changed. process_health handles BOTH `python src/main.py` and
+    # `python -m src.main` and returns the highest-RSS match (real worker
+    # beats dormant Start-Process wrapper).
+    from src.utils import process_health as _ph
+    _fleet = _ph.all_known_processes()  # one psutil scan, all kinds at once
 
-        Optimised 2026-05-09: sort by RSS only (fast: single
-        memory_info() call per match) instead of cpu_percent (which
-        added ~5s/request when iterating 18+ python processes on this
-        machine). RSS reliably distinguishes wrapper (~1 MB) from real
-        worker (100+ MB) without the CPU-sampling overhead."""
-        candidates: list[tuple[int, int]] = []   # (pid, rss_bytes)
-        try:
-            import psutil
-            for p in psutil.process_iter(['pid', 'name', 'cmdline']):
-                try:
-                    if not (p.info.get('name') or '').lower().startswith('python'):
-                        continue
-                    cmd = ' '.join(p.info.get('cmdline') or [])
-                    if pat.search(cmd):
-                        try:
-                            rss = p.memory_info().rss
-                        except Exception:
-                            rss = 0
-                        candidates.append((p.info['pid'], rss))
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
-        except Exception:
-            return None
-        if not candidates:
-            return None
-        # Highest RSS wins — workers are large, wrappers are tiny.
-        candidates.sort(key=lambda x: x[1], reverse=True)
-        return candidates[0][0]
-
-    for key, label in [('bot', 'Trading Bot'), ('dash', 'Dashboard')]:
-        pid = pids.get(key)
-        alive = _pid_alive(pid)
-        # Always run the cmdline scan — even if recorded PID is alive,
-        # the recorded one might be the dormant wrapper (Start-Process
-        # parent) while the actual worker has a different PID.
-        if key in _CMDLINE_SCAN:
-            try:
-                import re as _re
-                pat = _re.compile(_CMDLINE_SCAN[key])
-                best = _pick_best_pid(pat)
-                if best:
-                    pid = best
-                    alive = True
-            except Exception:
-                pass
+    for key, label, kind in [
+        ('bot',  'Trading Bot', _ph.KIND_BOT),
+        ('dash', 'Dashboard',   _ph.KIND_DASH),
+    ]:
+        info = _fleet.get(kind)
+        pid = info.pid if info else pids.get(key)
+        alive = info is not None or _pid_alive(pid)
         entry = {'label': label, 'running': alive, 'pid': pid, 'managed': False}
-        if alive:
+        if alive and pid:
             entry.update(_proc_stats(pid))
         out[key] = entry
 
@@ -788,30 +740,31 @@ def monitor_health():
     # detection to ALSO scan for the orchestrator + worker cmdlines for
     # services where the actual process name differs from the legacy
     # script filename.
-    _SERVICE_CMDLINE_ALIASES = {
-        'training': [
-            'pipeline_orchestrator',                 # main path: orchestrator runs train_all
-            'train_all_models.py',                    # legacy script-style invocation
-            '-m src.engine.pipeline_orchestrator',    # explicit module-style
-        ],
-        # Other services keep the default script-name scan via _EXTERNAL_SCRIPTS.
+    # 'training' uses process_health (handles all 3 cmdline variants in
+    # one pattern). Other services keep _EXTERNAL_SCRIPTS script-name
+    # scan since they're legacy single-form launches.
+    _SVC_TO_PH_KIND = {
+        'training': _ph.KIND_TRAIN_ORCH,
     }
     with _managed_lock:
         for svc_key, svc in _SERVICES.items():
             proc = _managed.get(svc_key)
             running = proc is not None and proc.poll() is None
             pid = proc.pid if running else None
-            # Also check if script is running externally (e.g. via launch_training.ps1
-            # or a direct `python -m ...` Start-Process).
             if not running:
-                aliases = _SERVICE_CMDLINE_ALIASES.get(svc_key) or [_EXTERNAL_SCRIPTS.get(svc_key, '')]
-                for needle in aliases:
-                    if not needle:
-                        continue
-                    ext_pid = _find_external_pid(needle)
-                    if ext_pid:
-                        running, pid = True, ext_pid
-                        break
+                # process_health path for kinds we know
+                ph_kind = _SVC_TO_PH_KIND.get(svc_key)
+                if ph_kind is not None:
+                    info = _fleet.get(ph_kind)
+                    if info:
+                        running, pid = True, info.pid
+                # Legacy script-name fallback
+                if not running:
+                    needle = _EXTERNAL_SCRIPTS.get(svc_key, '')
+                    if needle:
+                        ext_pid = _find_external_pid(needle)
+                        if ext_pid:
+                            running, pid = True, ext_pid
             entry = {'label': svc['label'], 'running': running, 'pid': pid, 'managed': proc is not None and proc.poll() is None}
             if running:
                 entry.update(_proc_stats(pid))
@@ -4490,54 +4443,26 @@ def _pipeline_status_path() -> str:
 def _pipeline_proc_alive() -> bool:
     """Return True if a pipeline orchestrator subprocess is running.
 
-    Two-step check (mirrors PR-32's bot DEAD cmdline-scan fallback):
-      1. Recorded PID: fast path. If our last-known PID is alive AND its
-         cmdline confirms it's the orchestrator, return True.
-      2. Cmdline scan: if (1) misses (recorded PID is None / stale /
-         pre-PID-recycle), scan psutil for any python process running
-         `-m src.engine.pipeline_orchestrator`. If found, adopt that
-         PID as the new _pipeline_proc_pid so subsequent calls hit (1).
+    Migrated 2026-05-10 to use src.utils.process_health (single source
+    of truth). The previous in-place implementation duplicated the
+    cmdline scan and was the third copy of the same broken regex
+    contract. process_health.find_process(KIND_TRAIN_ORCH) handles all
+    cmdline variants (script-style, `-m src.engine.pipeline_orchestrator`,
+    legacy `train_all_models.py`) in one place.
 
-    Without (2), the dashboard reports the pipeline as DEAD whenever
-    the orchestrator was started outside this dashboard process —
-    e.g. a fresh dashboard boot, a manual relaunch, or the operator
-    kicking it off via PowerShell directly.
+    We still memoise the discovered PID into _pipeline_proc_pid so other
+    callers that read that global (e.g. for diagnostic logging) see a
+    consistent value.
     """
     global _pipeline_proc_pid
-    try:
-        import psutil
-    except ImportError:
-        return False
-    # ── (1) recorded PID fast path ────────────────────────────────────
-    pid = _pipeline_proc_pid
-    if pid is not None:
-        try:
-            if psutil.pid_exists(pid):
-                p = psutil.Process(pid)
-                try:
-                    cmd = ' '.join(p.cmdline())
-                    if 'pipeline_orchestrator' in cmd:
-                        return True
-                except (psutil.AccessDenied, psutil.NoSuchProcess):
-                    pass
-        except Exception:
-            pass
-        # PID stale — fall through to scan.
+    from src.utils import process_health as _ph
+    info = _ph.find_process(_ph.KIND_TRAIN_ORCH)
+    if info is not None:
         with _pipeline_proc_lock:
-            _pipeline_proc_pid = None
-    # ── (2) cmdline scan fallback ─────────────────────────────────────
-    try:
-        for p in psutil.process_iter(['pid', 'name', 'cmdline']):
-            if not (p.info.get('name') or '').lower().startswith('python'):
-                continue
-            cmd = p.info.get('cmdline') or []
-            if (len(cmd) >= 3 and cmd[1] == '-m'
-                    and cmd[2] == 'src.engine.pipeline_orchestrator'):
-                with _pipeline_proc_lock:
-                    _pipeline_proc_pid = int(p.info['pid'])
-                return True
-    except Exception:
-        pass
+            _pipeline_proc_pid = info.pid
+        return True
+    with _pipeline_proc_lock:
+        _pipeline_proc_pid = None
     return False
 
 
