@@ -25,6 +25,14 @@ from src.utils.safe_json import read_json, write_json
 
 load_dotenv()
 app = Flask(__name__)
+# Pick up template edits without a full dashboard restart. Default Flask
+# only auto-reloads templates when debug=True; we run in production-like
+# mode (no debug) so without this flag the Jinja env caches the parsed
+# index.html for the dashboard process's lifetime, and operator-facing
+# UI fixes don't show up until the watchdog respawns. Cheap to enable
+# (mtime check per render). v3.1 fix 2026-05-09.
+app.config['TEMPLATES_AUTO_RELOAD'] = True
+app.jinja_env.auto_reload = True
 
 # ─── Gemini model health cache ────────────────────────────────────────────────
 # Paid / most capable models first; free-tier as fallback when paid unavailable.

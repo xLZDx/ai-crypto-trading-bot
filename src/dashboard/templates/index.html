@@ -1904,7 +1904,7 @@ document.addEventListener('DOMContentLoaded', function() {
         .stab-cell.bad{background:rgba(251,113,133,.13);color:#fb7185;border-color:rgba(251,113,133,.25)}
         .stab-cell.warn{background:rgba(251,191,36,.10);color:#fbbf24;border-color:rgba(251,191,36,.22)}
         .stab-cell.ok{background:rgba(52,211,153,.10);color:#34d399;border-color:rgba(52,211,153,.22)}
-        .stab-cell.gold{background:rgba(52,211,153,.22);color:#10b981;border-color:rgba(52,211,153,.4);font-weight:800}
+        .stab-cell.gold{background:rgba(37,99,235,.22);color:#3b82f6;border-color:rgba(59,130,246,.45);font-weight:800}
       </style>
       <div class="card collapsible-section is-collapsed" id="st-sec-stab" style="margin-bottom:10px">
         <div class="st-sec-hdr card-header collapsible-hdr" onclick="toggleSection(this)">
@@ -1928,7 +1928,7 @@ document.addEventListener('DOMContentLoaded', function() {
           <div style="background:rgba(15,23,42,.5);border:1px solid rgba(52,211,153,.15);border-radius:7px;padding:7px 11px;margin-bottom:8px;font-size:.55rem;color:#94a3b8;line-height:1.6">
             <b style="color:#cbd5e1">How to read this:</b>
             Each row = one strategy. Each column = one timeframe. Cell colour = how good that strategy performs at that TF on the selected metric.
-            <span style="color:#10b981">Emerald</span> = excellent · <span style="color:#34d399">Green</span> = good · <span style="color:#fbbf24">Yellow</span> = marginal · <span style="color:#fb7185">Red</span> = bad · — = no data (re-run multi-TF backtest to populate).
+            <span style="color:#3b82f6">Blue</span> = excellent · <span style="color:#34d399">Green</span> = good · <span style="color:#fbbf24">Yellow</span> = marginal · <span style="color:#fb7185">Red</span> = bad · — = no data (re-run multi-TF backtest to populate).
             The <span class="best-badge">★ TF</span> badge marks the most stable timeframe per strategy — <b>that's where the bot should run that strategy</b>.
             Rows are sorted by best-TF score descending so winners stay at top.
           </div>
@@ -4929,10 +4929,10 @@ function _renderStabilityHeatmap() {
       return v >= 1.5 ? 'gold' : v >= 1.1 ? 'ok' : v >= 0.9 ? 'warn' : 'bad';
     return 'empty';
   }
-  const cellBg = {gold:'rgba(52,211,153,.22)', ok:'rgba(52,211,153,.10)',
+  const cellBg = {gold:'rgba(37,99,235,.22)',   ok:'rgba(52,211,153,.10)',
                   warn:'rgba(251,191,36,.10)',  bad:'rgba(251,113,133,.13)',
                   empty:'rgba(5,8,22,.35)'};
-  const cellFg = {gold:'#10b981', ok:'#34d399', warn:'#fbbf24', bad:'#fb7185', empty:'#475569'};
+  const cellFg = {gold:'#3b82f6', ok:'#34d399', warn:'#fbbf24', bad:'#fb7185', empty:'#475569'};
   function fmt(metric, v) {
     if (v == null) return '—';
     if (metric === 'wf_consistency_avg') return Math.round(v*100) + '%';
