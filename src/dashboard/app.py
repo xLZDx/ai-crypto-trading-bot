@@ -723,8 +723,15 @@ def monitor_health():
     }
     def _pick_best_pid(pat, prefer_higher_cpu: bool = True):
         """Find all python procs whose cmdline matches `pat` and return
-        the one with the highest CPU% (the real worker, not the wrapper)."""
-        candidates: list[tuple[int, float]] = []
+        the one with the highest RSS (the real worker, not the dormant
+        Start-Process wrapper).
+
+        Optimised 2026-05-09: sort by RSS only (fast: single
+        memory_info() call per match) instead of cpu_percent (which
+        added ~5s/request when iterating 18+ python processes on this
+        machine). RSS reliably distinguishes wrapper (~1 MB) from real
+        worker (100+ MB) without the CPU-sampling overhead."""
+        candidates: list[tuple[int, int]] = []   # (pid, rss_bytes)
         try:
             import psutil
             for p in psutil.process_iter(['pid', 'name', 'cmdline']):
@@ -734,30 +741,18 @@ def monitor_health():
                     cmd = ' '.join(p.info.get('cmdline') or [])
                     if pat.search(cmd):
                         try:
-                            cpu_pct = p.cpu_percent(interval=0.0)
+                            rss = p.memory_info().rss
                         except Exception:
-                            cpu_pct = 0.0
-                        candidates.append((p.info['pid'], cpu_pct))
+                            rss = 0
+                        candidates.append((p.info['pid'], rss))
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
         except Exception:
             return None
         if not candidates:
             return None
-        if prefer_higher_cpu:
-            # Sort by CPU desc; if tied (e.g. both at 0% on first probe),
-            # prefer the one with higher RSS — wrappers have ~1 MB, real
-            # workers have hundreds of MB.
-            try:
-                import psutil
-                def _rss(pid):
-                    try:
-                        return psutil.Process(pid).memory_info().rss
-                    except Exception:
-                        return 0
-                candidates.sort(key=lambda x: (x[1], _rss(x[0])), reverse=True)
-            except Exception:
-                candidates.sort(key=lambda x: x[1], reverse=True)
+        # Highest RSS wins — workers are large, wrappers are tiny.
+        candidates.sort(key=lambda x: x[1], reverse=True)
         return candidates[0][0]
 
     for key, label in [('bot', 'Trading Bot'), ('dash', 'Dashboard')]:
