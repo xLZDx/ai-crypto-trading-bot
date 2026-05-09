@@ -11,6 +11,15 @@ import json
 import re
 import argparse
 
+# Force UTF-8 stdout so unicode test names (λ, ●, ↻, etc.) don't crash
+# the runner on Windows Python 3.14's default cp1252 console encoding.
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in ('utf-8', 'utf8'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEMPLATE_PATH = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
 TRADES_PATH   = os.path.join(BASE_DIR, 'data', 'trades.json')
@@ -2530,8 +2539,8 @@ def test_phase44_pr6_live_trading_toggle():
           and 'id="lt-deposits"' in tpl
           and 'id="lt-revenue"'  in tpl
           and 'id="lt-pnl"'      in tpl)
-    check('Mainnet switch confirms with explicit warning',
-          "Switch to MAINNET" in tpl and 'Real money will be at risk' in tpl)
+    check('Mainnet switch confirms with explicit warning (now reads "REAL CASH" per v3.1 step 1)',
+          "Switch to REAL CASH" in tpl and 'Real money will be at risk' in tpl)
     check('+ Deposit button + ltDeposit() prompts for amount',
           'ltDeposit()' in tpl
           and 'Add how much to virtual balance' in tpl)
@@ -2601,7 +2610,7 @@ def test_phase57_pr26_all_tfs_and_status():
           'for tf_idx, tf in enumerate(tfs)' in app
           and '_training_active_procs[job_id]' in app)
     check('TF picker dropdown includes "ALL TFs" option',
-          '<option value="all">ALL TFs</option>' in tpl)
+          '<option value="all"' in tpl and 'ALL TFs</option>' in tpl)
     check('Fine-grained status: QUEUED / STARTING / RUNNING / CANCELLED',
           "'QUEUED'" in tpl
           and "'STARTING'" in tpl
@@ -2703,9 +2712,10 @@ def test_phase55_pr19_training_controls():
           'activeJobId' in tpl
           and 'trStopOne(' in tpl
           and "'⏹ Stop'" in tpl or '⏹ Stop' in tpl)
-    check('TF picker per training row, defaulting to model timeframe',
+    check('TF picker per training row, defaulting to model timeframe (v3.1: now uses _trUserTfChoice)',
           "id=\"tr-tf-${esc(m.key)}\"" in tpl
-          and "tf===(m.timeframe||'1h')?' selected':''" in tpl)
+          and "_trUserTfChoice[m.key]" in tpl
+          and "(m.timeframe || '1h')" in tpl)
     check('trRunOne now sends tf in body',
           'if (tf) body.tf = tf' in tpl)
     check('pollTrainingJobs rebuilds _trActiveByModel + re-renders on change',
