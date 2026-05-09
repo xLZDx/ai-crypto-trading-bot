@@ -1,0 +1,30 @@
+{
+  "phase": "A_MONITOR_SWEEP",
+  "approved_at": "2026-05-09T13:30:00Z",
+  "approved_defaults": {
+    "phase_d_tf_map": "strict_all_all",
+    "phase_d_universe": 20,
+    "phase_d_strategies": "all_27_in_registry",
+    "between_models_behavior": "auto_continue",
+    "intra_model_parallelism_cap": null
+  },
+  "phases": {
+    "A_MONITOR_SWEEP":           "wait for current pipeline sweep to finish or stall+respawn; transition when status=done & all metas fresh",
+    "A_DONE":                    "write completion summary; transition to B1",
+    "B1_SNAPSHOT_EXISTING":      "dump current pipeline-card + cluster-card HTML/JS hooks to a markdown reference; transition to B2",
+    "B2_REFACTOR_PIPELINE":      "rewrite pipeline_orchestrator.train_all to submit cluster tasks instead of in-process trainer calls; transition to B3",
+    "B3_MASTER_SELF_REGISTER":   "make master register itself as cluster node 'LOCAL_RAZER'; transition to B4",
+    "B4_UNIFIED_CARD_HTML":      "build new TRAINING & BACKTEST card HTML+CSS replacing both legacy cards; transition to B5",
+    "B5_UNIFIED_CARD_JS":        "wire JS — fleet table, task list, sweep button, progress bar; transition to B6",
+    "B6_DELETE_LEGACY":          "remove old Training Cluster + Pipeline Orchestrator card HTML; transition to B7",
+    "B7_TESTS":                  "Phase 80 regression test (~25 assertions); transition to C1",
+    "C1_SWEEP_COORDINATOR":      "write SweepCoordinator class for serial-model + parallel-within-model flow; transition to C2",
+    "C2_OPERATOR_CONTROLS":      "add UI controls: model order, skip checkbox, parallelism cap, pause-after-model; transition to D",
+    "D_KICKOFF":                 "trigger first full Phase-D sweep with strict all×all + 20 symbols + auto-continue; transition to D_MONITOR",
+    "D_MONITOR":                 "ongoing — monitor the new flow with the existing 30-min loop; report progress per model completion",
+    "DONE":                      "all phases complete; report and exit loop"
+  },
+  "transitions_log": [],
+  "last_check_ts": null,
+  "last_check_decision": null
+}
