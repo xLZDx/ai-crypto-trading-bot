@@ -160,7 +160,15 @@ def resolve_meta_for_inference(key: str, tf: str | None = None) -> Path | None:
 def list_per_tf_artifacts(key: str) -> list[tuple[str, Path, Path]]:
     """Scan models/ and return [(tf, model_path, meta_path)] for every
     per-TF artifact present for this key. Used by the dashboard to enumerate
-    multi-TF model variants without hardcoding the TF list."""
+    multi-TF model variants without hardcoding the TF list.
+
+    Skip the legacy/canonical filename — for `futures` the legacy name is
+    `futures_short_model.joblib`, which the prefix+suffix matcher would
+    otherwise pull out as a phantom "tf=short" variant and the dashboard
+    would render it as a per-TF row whose key (`futures_short`) isn't in
+    _TRAINER_DISPATCH. Operator clicks Train on that row → backend returns
+    "unknown model key: futures_short". Bug fix 2026-05-09.
+    """
     _check_key(key)
     out: list[tuple[str, Path, Path]] = []
     if not MODELS_DIR.exists():
@@ -168,18 +176,38 @@ def list_per_tf_artifacts(key: str) -> list[tuple[str, Path, Path]]:
     ext = _EXT[key]
     prefix = f"{key}_"
     suffix = f"_model{ext}"
+    legacy_name = LEGACY_MODEL_NAME[key]
     for p in MODELS_DIR.iterdir():
         if not p.is_file():
             continue
         n = p.name
+        if n == legacy_name:
+            # Canonical/legacy file — represented separately by the
+            # canonical row in app.py's _ML loop. Don't double-count.
+            continue
         if not (n.startswith(prefix) and n.endswith(suffix)):
             continue
         tf = n[len(prefix):-len(suffix)]
         if not tf:
             continue
+        # Skip TF tokens that aren't valid bar timeframes — guards
+        # against any other future filename collision.
+        if not _looks_like_tf(tf):
+            continue
         meta = MODELS_DIR / f"{key}_{tf}_meta.json"
         out.append((tf, p, meta))
     return sorted(out, key=lambda r: r[0])
+
+
+_VALID_TF_TOKENS = frozenset({
+    '1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h',
+    '1d', '3d', '1w', '1mo',
+})
+
+
+def _looks_like_tf(token: str) -> bool:
+    """True iff token matches a canonical bar-timeframe pattern."""
+    return token in _VALID_TF_TOKENS
 
 
 # CLI smoke: `python -m src.utils.model_paths base 4h`

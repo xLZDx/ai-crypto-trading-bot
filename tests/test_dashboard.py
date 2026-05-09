@@ -5784,6 +5784,53 @@ def test_phase76_v31_training_sweep_watchdog_and_cold_cache():
         pass
 
 
+def test_phase77_v31_pertf_train_button_dispatch_fix():
+    """v3.1 bugfix 2026-05-09 — clicking Train on a per-TF variant row
+    (Futures Short RF @ short, Base RF @ 4h, Trend RF @ 1d, etc.) was
+    POSTing rowKey='futures_short' / 'base_4h' / 'trend_1d' to
+    /api/training/run/<rowKey>, which the trainer dispatch rejected as
+    "unknown model key". Two fixes:
+
+      A) list_per_tf_artifacts() now skips the legacy/canonical
+         filename (futures_short_model.joblib was the offending
+         pseudo-variant) plus enforces a TF-token shape check.
+      B) trRunOne() splits rowKey into canonical_key + tf override
+         using either the row's parent_key field or a regex fallback,
+         so per-TF rows POST /api/training/run/<canonical> + body.tf.
+    """
+    print('\n[Phase 77 — v3.1 fix: per-TF Train button dispatch]')
+
+    # A) list_per_tf_artifacts skips legacy filename + enforces TF shape.
+    src = open(os.path.join(BASE_DIR, 'src', 'utils', 'model_paths.py'),
+               encoding='utf-8').read()
+    check('list_per_tf_artifacts skips legacy_name', 'n == legacy_name' in src)
+    check('list_per_tf_artifacts enforces TF token shape',
+          '_looks_like_tf' in src and "_VALID_TF_TOKENS" in src)
+
+    import importlib, sys
+    sys.path.insert(0, BASE_DIR)
+    if 'src.utils.model_paths' in sys.modules:
+        del sys.modules['src.utils.model_paths']
+    mp = importlib.import_module('src.utils.model_paths')
+    fut = mp.list_per_tf_artifacts('futures')
+    tfs = [r[0] for r in fut]
+    check(f'list_per_tf_artifacts("futures") does NOT yield "short" (got {tfs})',
+          'short' not in tfs)
+    for tf in tfs:
+        check(f'  tf {tf!r} matches valid TF pattern', mp._looks_like_tf(tf))
+
+    # B) trRunOne splits rowKey into canonical + derivedTf.
+    tpl = open(TEMPLATE_PATH, encoding='utf-8').read()
+    check('trRunOne uses _stratFull.ml_models lookup for parent_key',
+          'row.parent_key || rowKey' in tpl)
+    check('trRunOne has prefix-split fallback for known model keys',
+          "const KNOWN = ['base','trend','futures','scalping','meta','tft','oft','regime']" in tpl)
+    check('trRunOne validates TF suffix shape (regex)',
+          '/^(?:\\d+m|\\d+h|\\d+d|\\d+w|1mo)$/.test(candidate)' in tpl)
+    check('trRunOne derived TF used as fallback when picker empty',
+          '(tfSel && tfSel.value) || derivedTf' in tpl)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -6123,6 +6170,7 @@ def main():
     test_phase74_v31_health_column_and_fleet_aggregate()
     test_phase75_v31_backfill_button_endpoint()
     test_phase76_v31_training_sweep_watchdog_and_cold_cache()
+    test_phase77_v31_pertf_train_button_dispatch_fix()
 
     if not args.offline:
         test_api(args.url)

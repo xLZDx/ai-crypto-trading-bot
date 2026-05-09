@@ -4349,11 +4349,36 @@ window._trRecordTfChoice = _trRecordTfChoice;
 window._trRecordNChoice = _trRecordNChoice;
 
 // ── Manual training triggers ─────────────────────────────────────────────────
-async function trRunOne(key) {
-  const sel = document.getElementById('tr-n-' + key);
-  const tfSel = document.getElementById('tr-tf-' + key);
+async function trRunOne(rowKey) {
+  // v3.1 fix 2026-05-09 — per-TF variant rows (key='base_4h', 'futures_1d',
+  // 'trend_1w' etc.) MUST be split into the canonical model key + tf
+  // override before POSTing, otherwise /api/training/run/<rowKey> bails
+  // with "unknown model key: base_4h". The row's parent_key is
+  // populated on the server side; we look it up here from
+  // _stratFull.ml_models. Falls back to the prefix-split heuristic so
+  // future model additions don't reintroduce the regression.
+  const all = (_stratFull && _stratFull.ml_models) || [];
+  const row = all.find(m => m && m.key === rowKey) || {};
+  let key = row.parent_key || rowKey;
+  let derivedTf = row.tf || '';
+  if (!row.parent_key) {
+    const KNOWN = ['base','trend','futures','scalping','meta','tft','oft','regime'];
+    for (const c of KNOWN) {
+      if (rowKey.startsWith(c + '_') && rowKey !== c) {
+        const candidate = rowKey.slice(c.length + 1);
+        // Only split if the suffix looks like a TF (not a label horizon).
+        if (/^(?:\d+m|\d+h|\d+d|\d+w|1mo)$/.test(candidate)) {
+          key = c;
+          derivedTf = candidate;
+          break;
+        }
+      }
+    }
+  }
+  const sel   = document.getElementById('tr-n-'  + rowKey) || document.getElementById('tr-n-'  + key);
+  const tfSel = document.getElementById('tr-tf-' + rowKey) || document.getElementById('tr-tf-' + key);
   const n = sel ? parseInt(sel.value, 10) || 1 : 1;
-  const tf = tfSel ? tfSel.value : '';
+  const tf = (tfSel && tfSel.value) || derivedTf;
   const tfLabel = tf === 'all' ? 'ALL TFs' : (tf || 'default TF');
   if (!confirm(`Train model "${key}" @ ${tfLabel} ${n} time${n>1?'s':''}? Each iteration runs the full trainer in a subprocess (can take 1–30 min depending on the model).`)) return;
 
