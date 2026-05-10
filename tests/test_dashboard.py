@@ -7623,6 +7623,89 @@ def test_phase95_xgb_early_stop_eval_set_fix_and_backtest_column():
           and 'setTimeout(pollBacktestCells' in tpl)
 
 
+def test_phase96_orphan_detector_direct_script_form_plus_ps_native_fix():
+    """Phase 96 — three blockers reported by operator on 2026-05-10:
+
+    Blocker #1: XGBoost early-stopping ValueError reappeared in trainer
+    log at 20:56:36, even though Phase 95 fix shipped at 20:58:29.
+    Diagnosis (test, not speculation): the running training process
+    (PID 10392) started at 20:44:26 — 14 minutes BEFORE the fix
+    landed. Python doesn't hot-reload modules. The wrapper in memory
+    is the pre-fix version. NOT a code bug; just process-restart
+    needed. No code change required for #1; assertion below confirms
+    the on-disk fix is still in place (regression guard).
+
+    Blocker #2: dashboard Model Training tab does not surface active
+    trainers launched via launch_training.ps1. Root cause: the orphan
+    detector at app.py:_detect_orphan_training_subprocesses only
+    matched the inline `import <module>; fn()` form
+    (_spawn_training_subprocess's invocation), missing the direct
+    `python -u src/engine/train_*.py` form. Fix: also match script
+    filename → model_key from _TRAINER_DISPATCH.
+
+    Blocker #3: launch_training.ps1 emits NativeCommandError noise
+    every time Python writes to stderr (which the standard logging
+    config does on every line). Cosmetic, but pollutes operator
+    output and would mask real errors. Fix: ErrorActionPreference
+    Continue + PS7 PSNativeCommandUseErrorActionPreference=false +
+    script-block wrap around the native python call.
+    """
+    print('\n[Phase 96 — orphan detector + PS native command stderr]')
+
+    app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
+    with open(app_path, encoding='utf-8') as f:
+        app = f.read()
+    ps_path = os.path.join(BASE_DIR, 'launch_training.ps1')
+    with open(ps_path, encoding='utf-8') as f:
+        ps = f.read()
+    gpu_path = os.path.join(BASE_DIR, 'src', 'utils', 'gpu_classifier.py')
+    with open(gpu_path, encoding='utf-8') as f:
+        gpu = f.read()
+
+    # ── #1: regression guard — Phase 95 fix still on disk ──────────────
+    check('regression guard: gpu_classifier wrapper still auto-creates eval_set on early_stopping',
+          'self._early_stopping and eval_set is None' in gpu
+          and 'X_arr[:-n_val]' in gpu
+          and 'X_arr[-n_val:]' in gpu)
+
+    # ── #2: orphan detector covers BOTH inline and direct-script forms ─
+    det_start = app.find('def _detect_orphan_training_subprocesses')
+    det_end   = app.find('\ndef _reattach_training_subprocess', det_start + 1)
+    det_body  = app[det_start:det_end] if det_end > det_start else app[det_start:]
+    check('orphan detector still covers form 1 (import <module>; fn())',
+          "f'import {module_path}'" in det_body
+          and "'fn(' in cmd" in det_body)
+    check('orphan detector ALSO covers form 2 (direct python -u <script>.py)',
+          'script_to_key' in det_body
+          and 'leaf = module_path.rsplit' in det_body
+          and "f'{leaf}.py'" in det_body)
+    check('form-2 match guards against accidentally hitting python -c',
+          "' -c' not in cmd" in det_body)
+    check('form-2 only fires when form-1 didn\'t match (no double-classify)',
+          # Verified by ordering: form-1 sets matched_key, then 'if not matched_key' guards form-2.
+          det_body.find('if f\'import {module_path}\' in cmd') < det_body.find('if not matched_key:'))
+    check('comment cites launch_training.ps1 as the originating cause',
+          'launch_training.ps1' in det_body)
+
+    # ── #3: launch_training.ps1 hardened against NativeCommandError ────
+    check('launch_training.ps1 sets ErrorActionPreference=Continue',
+          "$ErrorActionPreference = 'Continue'" in ps)
+    check('launch_training.ps1 disables PS7 native-command-error-action coupling',
+          'PSNativeCommandUseErrorActionPreference' in ps
+          and '$false' in ps)
+    check('PS7 setting guarded by Test-Path so PS5.1 doesn\'t error',
+          'Test-Path Variable:PSNativeCommandUseErrorActionPreference' in ps)
+    check('python invocation wrapped in script-block (suppresses stderr-as-exception)',
+          '& {\n    & $python -u' in ps
+          or '& {\r\n    & $python -u' in ps)
+    check('script-block redirects stderr inside the wrapper (2>&1)',
+          '2>&1' in ps)
+    check('exit code forwarded so CI / schedulers see real success/failure',
+          'exit $LASTEXITCODE' in ps)
+    check('comment cites the NativeCommandError root cause',
+          'NativeCommandError' in ps)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -7981,6 +8064,7 @@ def main():
     test_phase93_worker_live_load_and_remote_restart()
     test_phase94_distributed_backtest_per_cell()
     test_phase95_xgb_early_stop_eval_set_fix_and_backtest_column()
+    test_phase96_orphan_detector_direct_script_form_plus_ps_native_fix()
 
     if not args.offline:
         test_api(args.url)

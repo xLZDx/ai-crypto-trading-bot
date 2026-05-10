@@ -2977,6 +2977,17 @@ def _detect_orphan_training_subprocesses() -> None:
     # Inverse map of trainer module name → model key, lifted from
     # _TRAINER_DISPATCH so we stay in sync if new trainers are added.
     module_to_key = {mod: k for k, (mod, _, _) in _TRAINER_DISPATCH.items()}
+    # 2026-05-10 fix — also match the DIRECT-SCRIPT invocation form, e.g.
+    # `python -u src/engine/train_all_models.py` from launch_training.ps1.
+    # Without this, every trainer launched via the operator's shell
+    # script (rather than the dashboard's ▶ Train button) is invisible
+    # to the orphan detector — burning CPU + producing artifacts the
+    # Model Training tab never reflects.
+    script_to_key: dict[str, str] = {}
+    for key, (module_path, _fn, _bool) in _TRAINER_DISPATCH.items():
+        # 'src.engine.train_xyz' → 'train_xyz.py'
+        leaf = module_path.rsplit('.', 1)[-1]
+        script_to_key[f'{leaf}.py'] = key
     with _training_jobs_lock:
         tracked_pids = {j.get('child_pid') for j in _training_jobs.values()
                         if j.get('child_pid')}
@@ -2990,13 +3001,22 @@ def _detect_orphan_training_subprocesses() -> None:
             pid = p.info['pid']
             if pid in tracked_pids:
                 continue
-            # Match `import <module> as m; ... fn()` — the standard
-            # invocation _spawn_training_subprocess uses.
+            # Match form 1: `import <module> as m; ... fn()` — what
+            # _spawn_training_subprocess uses internally.
             matched_key = None
             for module_path, key in module_to_key.items():
                 if f'import {module_path}' in cmd and 'fn(' in cmd:
                     matched_key = key
                     break
+            # Match form 2: `python -u .../<trainer_script>.py` — what
+            # launch_training.ps1 + manual CLI testing produces. We look
+            # for the script filename as a token in the cmdline so we
+            # don't accidentally match dashboard's own python -c form.
+            if not matched_key:
+                for script_name, key in script_to_key.items():
+                    if script_name in cmd and ' -c' not in cmd:
+                        matched_key = key
+                        break
             if not matched_key:
                 continue
             # Synthesize a job record. created_at = the subprocess's
