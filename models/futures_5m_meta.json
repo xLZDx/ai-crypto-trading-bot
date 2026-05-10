@@ -1,14 +1,14 @@
 {
     "model": "Futures Short (HistGBT + Calibrated)",
-    "accuracy": 51.11157693696212,
-    "long_accuracy": 50.8163819641456,
-    "short_accuracy": 51.25746061812821,
-    "n_samples": 6010823,
-    "n_train": 4808658,
-    "n_test": 601083,
+    "accuracy": 51.11749871915151,
+    "long_accuracy": 50.915153760652096,
+    "short_accuracy": 51.210234963637156,
+    "n_samples": 6011632,
+    "n_train": 4809305,
+    "n_test": 601164,
     "n_features": 17,
     "n_iterations": 400,
-    "walk_forward_mean_acc": 51.46,
+    "walk_forward_mean_acc": 51.43,
     "target": "triple_barrier_short_win",
     "symbols": [
         "BTC_USDT",
@@ -33,10 +33,10 @@
         "SUI_USDT"
     ],
     "timeframe": "5m",
-    "last_trained": "2026-05-09T01:39:33.100360+00:00",
-    "auc_roc": 0.5134247343495278,
-    "win_precision": 60.046728971962615,
-    "win_rate_pct": 50.571551682546335,
-    "n_high_conf": 428,
+    "last_trained": "2026-05-10T10:53:03.537541+00:00",
+    "auc_roc": 0.5141110853245754,
+    "win_precision": 57.655954631379956,
+    "win_rate_pct": 50.542281307596596,
+    "n_high_conf": 1058,
     "threshold": 0.6
 }

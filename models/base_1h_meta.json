@@ -1,14 +1,14 @@
 {
     "model": "Base (HistGBT + Calibrated)",
-    "accuracy": 50.000749996250015,
-    "long_accuracy": 50.2580927384077,
-    "short_accuracy": 49.866459698221746,
-    "n_samples": 666668,
-    "n_train": 533334,
-    "n_test": 66667,
+    "accuracy": 49.862093776232165,
+    "long_accuracy": 50.50720376359894,
+    "short_accuracy": 49.417780477926286,
+    "n_samples": 667111,
+    "n_train": 533688,
+    "n_test": 66712,
     "n_features": 33,
     "n_iterations": 500,
-    "walk_forward_mean_acc": 52.72,
+    "walk_forward_mean_acc": 52.69,
     "walk_forward_std_acc": 0.73,
     "target": "triple_barrier_long_win",
     "symbols": [
@@ -34,10 +34,10 @@
         "SUI_USDT"
     ],
     "timeframe": "1h",
-    "last_trained": "2026-05-09T01:12:14.014364+00:00",
-    "auc_roc": 0.502469786440714,
-    "win_precision": 59.67741935483871,
-    "win_rate_pct": 50.1762491187544,
-    "n_high_conf": 248,
+    "last_trained": "2026-05-10T09:44:17.379619+00:00",
+    "auc_roc": 0.5038394123276076,
+    "win_precision": 51.28205128205128,
+    "win_rate_pct": 50.551624895071356,
+    "n_high_conf": 39,
     "threshold": 0.6
 }

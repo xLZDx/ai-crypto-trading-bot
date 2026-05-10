@@ -156,7 +156,28 @@
             "errors": [
                 "orchestrator exit code 4294967295"
             ]
+        },
+        "bf86ac949f88": {
+            "job_id": "bf86ac949f88",
+            "model": "all",
+            "n": 1,
+            "status": "error",
+            "created_at": 1778379843.9420295,
+            "queued_at": 1778379844.7677824,
+            "total": 1,
+            "tf": null,
+            "resource_kind": "exclusive",
+            "progress_label": null,
+            "started_at": 1778379845.611017,
+            "progress": 1,
+            "child_pid": 64372,
+            "successes": 0,
+            "errors": [
+                "iteration 1 timed out (>1h)",
+                "5-10 06:05:40,311 - INFO - SMOTE skipped � fold has 5661242 rows > SMOTE_MAX_ROWS=500000; using class_weight + sample_weight only\r\nD:\\test 2\\AI trading assistance\\venv\\Lib\\site-packages\\sklearn\\calibration.py:330: FutureWarning: The `cv='prefit'` option is deprecated in 1.6 and will be removed in 1.8. You can use CalibratedClassifierCV(FrozenEstimator(estimator)) instead.\r\n  warnings.warn(\r\n2026-05-10 06:10:32,317 - INFO - Scalping Model | Accuracy: 52.40% | Long: 52.98% | Short: 51.94% | Iters: 400\r\n2026-05-10 06:10:32,952 - INFO - Model saved -> D:\\test 2\\AI trading assistance\\models\\scalping_1m_model.joblib\r\n2026-05-10 06:10:33,678 - INFO - Also wrote legacy artifacts -> scalping_model.joblib / scalping_model_meta.json\r\n2026-05-10 06:10:34,518 - INFO - >>> Training TFT Model @ 15m ...\r\n"
+            ],
+            "finished_at": 1778383448.5661993
         }
     },
-    "saved_at": 1778316063.0756245
+    "saved_at": 1778383448.5668263
 }

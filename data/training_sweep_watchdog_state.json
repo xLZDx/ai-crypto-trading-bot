@@ -1,6 +1,6 @@
 {
   "restarts": [],
   "tripped": false,
-  "last_status_ts": 1778362920.4794593,
-  "last_status_payload_hash": "{\"backtest\": null, \"elapsed_s\": 0.0, \"finished_at\": null, \"last_event\": null, \"phase\": \"train\", \"process_alive\": true, \"started_at\": \"2026-05-09T21:41:39.812236+00:00\", \"status\": \"running\", \"train\": {\"error\": null, \"finished_at\": null, \"ok\": false, \"started_at\": \"2026-05-09T21:41:40.699978+00:00\"}}"
+  "last_status_ts": 1778417869.791266,
+  "last_status_payload_hash": "{\"process_alive\": true}"
 }

@@ -1,20 +1,29 @@
 {
-  "dash": 11804,
-  "training": 35956,
-  "realtime": 60840,
-  "bot": 65256,
-  "orderbook": 31444,
-  "debug": 7104,
-  "orch": 27272,
-  "fastapi": [
-    22808,
-    33848
+  "monitor": 38468,
+  "bot": 39612,
+  "realtime": [
+    1120,
+    31812
   ],
-  "monitor": 13696,
+  "watchdog": [
+    34200,
+    34240
+  ],
   "mcp": 0,
-  "watchlist": [
-    25228,
-    56364
+  "training": 38456,
+  "orderbook": [
+    33840,
+    33924
   ],
-  "training_sweep_watchdog": 65884
+  "debug": 8000,
+  "watchlist": [
+    25784,
+    31172
+  ],
+  "orch": 21496,
+  "dash": 36720,
+  "fastapi": [
+    28276,
+    30008
+  ]
 }

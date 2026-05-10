@@ -2,11 +2,11 @@
   "n_components": 3,
   "n_components_active": 4,
   "weights": [
-    0.1123214703652074,
-    0.3140976255062868,
-    0.2417022247753865,
-    0.0066307392473650565,
-    0.3252479401057542
+    0.11230710593073982,
+    0.31411643161246217,
+    0.32521033126275184,
+    0.24173873417578276,
+    0.006627397018263366
   ],
   "regimes": {
     "0": "RANGING",
@@ -15,14 +15,14 @@
   },
   "label_map": {
     "1": 0,
-    "2": 1,
-    "4": 2,
+    "3": 1,
+    "2": 2,
     "0": 2,
-    "3": 0
+    "4": 0
   },
-  "n_samples": 814998,
+  "n_samples": 815098,
   "model_path": "D:\\test 2\\AI trading assistance\\models\\regime_classifier.joblib",
-  "last_trained": "2026-05-09T22:48:18.286935+00:00",
+  "last_trained": "2026-05-10T06:05:18.404787+00:00",
   "model_type": "BayesianGaussianMixture",
   "weight_concentration_prior": 0.01,
   "accuracy_note": "Unsupervised BayesianGMM \u2014 no labelled accuracy",

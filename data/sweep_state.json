@@ -1,0 +1,220 @@
+{
+  "sweep_id": "20260510_103854",
+  "started_at": "2026-05-10T10:38:54.013917+00:00",
+  "finished_at": null,
+  "status": "running",
+  "current_model": "meta",
+  "current_model_idx": 4,
+  "models": {
+    "base": {
+      "status": "done",
+      "tfs": {
+        "5m": {
+          "status": "skipped_fresh",
+          "task_id": "",
+          "retries": 0,
+          "error": ""
+        },
+        "15m": {
+          "status": "skipped_fresh",
+          "task_id": "",
+          "retries": 0,
+          "error": ""
+        },
+        "1h": {
+          "status": "skipped_fresh",
+          "task_id": "",
+          "retries": 0,
+          "error": ""
+        },
+        "4h": {
+          "status": "skipped_fresh",
+          "task_id": "",
+          "retries": 0,
+          "error": ""
+        },
+        "1d": {
+          "status": "skipped_fresh",
+          "task_id": "",
+          "retries": 0,
+          "error": ""
+        }
+      }
+    },
+    "futures": {
+      "status": "done",
+      "tfs": {
+        "5m": {
+          "status": "done",
+          "task_id": "dd10dac3-8dd",
+          "retries": 0,
+          "error": ""
+        },
+        "15m": {
+          "status": "skipped_fresh",
+          "task_id": "",
+          "retries": 0,
+          "error": ""
+        },
+        "1h": {
+          "status": "skipped_fresh",
+          "task_id": "",
+          "retries": 0,
+          "error": ""
+        },
+        "4h": {
+          "status": "skipped_fresh",
+          "task_id": "",
+          "retries": 0,
+          "error": ""
+        },
+        "1d": {
+          "status": "skipped_fresh",
+          "task_id": "",
+          "retries": 0,
+          "error": ""
+        }
+      }
+    },
+    "meta": {
+      "status": "running",
+      "tfs": {
+        "5m": {
+          "status": "submitted",
+          "task_id": "a7f1d986-fb2",
+          "retries": 1,
+          "error": "Worker rejected: 409"
+        },
+        "15m": {
+          "status": "submitted",
+          "task_id": "3215f522-6b5",
+          "retries": 1,
+          "error": "Worker rejected: 409"
+        },
+        "1h": {
+          "status": "submitted",
+          "task_id": "a39dde86-581",
+          "retries": 1,
+          "error": "Worker rejected: 409"
+        },
+        "4h": {
+          "status": "done",
+          "task_id": "7a4ca8ba-293",
+          "retries": 1,
+          "error": ""
+        }
+      }
+    },
+    "oft": {
+      "status": "pending",
+      "tfs": {
+        "1m": {
+          "status": "submitted",
+          "task_id": "38481221-4f8",
+          "retries": 0,
+          "error": ""
+        }
+      }
+    },
+    "regime": {
+      "status": "pending",
+      "tfs": {
+        "1h": {
+          "status": "pending",
+          "task_id": "",
+          "retries": 0,
+          "error": ""
+        }
+      }
+    },
+    "scalping": {
+      "status": "done",
+      "tfs": {
+        "1m": {
+          "status": "skipped_fresh",
+          "task_id": "",
+          "retries": 0,
+          "error": ""
+        },
+        "5m": {
+          "status": "failed_permanently",
+          "task_id": "423e0d53-51e",
+          "retries": 1,
+          "error": "Worker rejected: 409"
+        }
+      }
+    },
+    "tft": {
+      "status": "pending",
+      "tfs": {
+        "15m": {
+          "status": "submitted",
+          "task_id": "c118223b-fcf",
+          "retries": 0,
+          "error": ""
+        },
+        "1h": {
+          "status": "submitted",
+          "task_id": "d8dfd7e3-b1e",
+          "retries": 0,
+          "error": ""
+        },
+        "4h": {
+          "status": "submitted",
+          "task_id": "55ba743a-1f2",
+          "retries": 0,
+          "error": ""
+        }
+      }
+    },
+    "trend": {
+      "status": "done",
+      "tfs": {
+        "15m": {
+          "status": "skipped_fresh",
+          "task_id": "",
+          "retries": 0,
+          "error": ""
+        },
+        "1h": {
+          "status": "skipped_fresh",
+          "task_id": "",
+          "retries": 0,
+          "error": ""
+        },
+        "4h": {
+          "status": "skipped_fresh",
+          "task_id": "",
+          "retries": 0,
+          "error": ""
+        },
+        "1d": {
+          "status": "skipped_fresh",
+          "task_id": "",
+          "retries": 0,
+          "error": ""
+        },
+        "1w": {
+          "status": "skipped_fresh",
+          "task_id": "",
+          "retries": 0,
+          "error": ""
+        }
+      }
+    }
+  },
+  "tasks_submitted": 10,
+  "tasks_done": 2,
+  "tasks_failed": 1,
+  "tasks_skipped_fresh": 15,
+  "tasks_failed_permanently": [
+    "scalping@5m"
+  ],
+  "next_phase": "training",
+  "backtest": {
+    "status": "pending",
+    "started_at": null,
+    "finished_at": null,
+    "error": ""
+  }
+}

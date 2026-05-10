@@ -454,5 +454,29 @@
     "start": "2026-05-18T03:52:58+00:00",
     "end": "2026-05-19T13:12:58+00:00",
     "window_bars": 2000
+  },
+  {
+    "type": "COMPOSITE",
+    "symbol": "SOL_USDT",
+    "timeframe": "1m",
+    "start": "2029-01-09T04:04:21+00:00",
+    "end": "2029-01-10T13:24:21+00:00",
+    "window_bars": 2000
+  },
+  {
+    "type": "FUNDING_SQUEEZE",
+    "symbol": "ADA_USDT",
+    "timeframe": "1m",
+    "start": "2025-02-03T00:00:00+00:00",
+    "end": "2025-02-04T09:20:00+00:00",
+    "window_bars": 2000
+  },
+  {
+    "type": "FUNDING_SQUEEZE",
+    "symbol": "SOL_USDT",
+    "timeframe": "1m",
+    "start": "2025-02-03T00:00:00+00:00",
+    "end": "2025-02-04T09:20:00+00:00",
+    "window_bars": 2000
   }
 ]

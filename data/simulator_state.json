@@ -3,21 +3,21 @@
   "config": {
     "symbol": "BTC_USDT",
     "timeframe": "1m",
-    "speed": 1000.0,
+    "speed": 5000,
     "scenario": "AUTO",
     "start_date": null,
     "end_date": null
   },
   "scenario": {
-    "type": "VOLATILE",
-    "symbol": "ETH_USDT",
+    "type": "FUNDING_SQUEEZE",
+    "symbol": "SOL_USDT",
     "timeframe": "1m",
-    "start": "2026-05-18T03:52:58+00:00",
-    "end": "2026-05-19T13:12:58+00:00",
+    "start": "2025-02-03T00:00:00+00:00",
+    "end": "2025-02-04T09:20:00+00:00",
     "window_bars": 2000
   },
-  "bars_emitted": 0,
-  "current_ts": "",
-  "bars_per_sec": 0.0,
+  "bars_emitted": 2001,
+  "current_ts": "2025-02-04T04:53:00+00:00",
+  "bars_per_sec": 866.4,
   "error": ""
 }
