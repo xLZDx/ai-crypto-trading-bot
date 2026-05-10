@@ -175,7 +175,7 @@
       "depends_on": []
     },
     "regime": {
-      "type": "gmm_classifier",
+      "type": "bayesian_gmm_classifier",
       "label": "Regime Classifier (GMM)",
       "description": "Bayesian GMM â€” classifies bars into bull/bear/sideways regime",
       "applicable_tfs": [

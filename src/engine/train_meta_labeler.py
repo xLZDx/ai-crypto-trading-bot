@@ -29,9 +29,10 @@ import sys
 import numpy as np
 import pandas as pd
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier  # kept for type compat
 from sklearn.metrics import accuracy_score, classification_report, roc_auc_score
 from sklearn.utils.class_weight import compute_sample_weight
+from src.utils.gpu_classifier import make_classifier  # 2026-05-10 GPU migration
 import joblib
 from src.utils.purged_kfold import PurgedKFold
 
@@ -215,8 +216,8 @@ def train_meta_labeler(timeframe: str = '1h'):
     pct_embargo = (2.0 * 24) / len(X)
     cv = PurgedKFold(n_splits=5, t1=t1_series, pct_embargo=pct_embargo)
     for _fi, (tr_idx, te_idx) in enumerate(cv.split(X)):
-        _wf_clf = HistGradientBoostingClassifier(
-            random_state=42, max_iter=200, max_depth=4,
+        _wf_clf = make_classifier(
+            random_state=42, n_estimators=200, max_depth=4,
             learning_rate=0.05, l2_regularization=0.3, class_weight='balanced'
         )
         weights = compute_sample_weight('balanced', y.iloc[tr_idx])
@@ -228,8 +229,8 @@ def train_meta_labeler(timeframe: str = '1h'):
     _wf_std_acc  = float(np.std(_wf_fold_accs))  * 100 if _wf_fold_accs else 0.0
     log.info("Meta-labeler WF mean accuracy: %.2f%% ± %.2f%%", _wf_mean_acc, _wf_std_acc)
 
-    base_clf = HistGradientBoostingClassifier(
-        random_state=42, max_iter=300, max_depth=4,
+    base_clf = make_classifier(
+        random_state=42, n_estimators=300, max_depth=4,
         learning_rate=0.05, l2_regularization=0.3,
         early_stopping=True, class_weight='balanced'
     )

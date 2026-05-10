@@ -6787,6 +6787,96 @@ def test_phase88_orchestrator_task_progress_watchdog():
           and worker2_now.get("status") == "busy")
 
 
+def test_phase89_gpu_classifier_wrapper_and_trainer_migration():
+    """GPU classifier migration (2026-05-10): all 5 tabular trainers
+    (base/trend/futures/scalping/meta) now go through make_classifier()
+    which returns XGBoost-on-CUDA when GPU is available, sklearn HistGBT
+    fallback otherwise. The dual-lane spawn sets CUDA_VISIBLE_DEVICES=''
+    on cpu-lane workers so they silently fall back to HistGBT.
+
+    Phase 89 covers:
+      P1. src/utils/gpu_classifier.py exists with make_classifier() and
+          internal _XGBClassifierWrapper.
+      P2. _cuda_available() respects CUDA_VISIBLE_DEVICES='' override.
+      P3. make_classifier() returns XGBClassifier wrapper when GPU
+          available, HistGBT when not (functional smoke test).
+      P4. All 5 trainers import make_classifier and instantiate via it
+          (no direct HistGradientBoostingClassifier construction left).
+      P5. XGBoost wrapper exposes fit / predict / predict_proba /
+          classes_ (sklearn-compatible surface).
+      P6. class_weight='balanced' is honoured by the XGB wrapper via
+          per-row sample weights when caller doesn't pass them."""
+    print('\n[Phase 89 — GPU classifier wrapper + trainer migration]')
+
+    gpu_path = os.path.join(BASE_DIR, 'src', 'utils', 'gpu_classifier.py')
+    check('src/utils/gpu_classifier.py exists', os.path.exists(gpu_path))
+    with open(gpu_path, encoding='utf-8') as f:
+        gpu = f.read()
+
+    # P1 — surface area
+    check('exposes make_classifier()',           'def make_classifier(' in gpu)
+    check('internal _XGBClassifierWrapper class', 'class _XGBClassifierWrapper' in gpu)
+    check('_cuda_available() helper',             'def _cuda_available(' in gpu)
+    check('_xgboost_available() helper',          'def _xgboost_available(' in gpu)
+    check('_use_gpu_backend() helper',            'def _use_gpu_backend(' in gpu)
+
+    # P2 — CUDA_VISIBLE_DEVICES override respected
+    check('_cuda_available checks CUDA_VISIBLE_DEVICES env',
+          'CUDA_VISIBLE_DEVICES' in gpu)
+
+    # P5 — XGB wrapper surface
+    check('XGB wrapper has fit method',           'def fit(self, X, y' in gpu)
+    check('XGB wrapper has predict_proba',        'def predict_proba(self' in gpu)
+    check('XGB wrapper has predict',              'def predict(self, X)' in gpu)
+    check('XGB wrapper exposes classes_',         '@property' in gpu and 'def classes_' in gpu)
+
+    # P6 — class_weight balanced via compute_sample_weight in XGB path
+    check('XGB wrapper computes sample_weight when class_weight=balanced',
+          'compute_sample_weight("balanced", y)' in gpu
+          and 'self._class_weight == "balanced"' in gpu)
+
+    # XGBoost-specific config
+    check('XGB params: tree_method=hist + device=cuda',
+          '"tree_method":   "hist"' in gpu and '"device":        "cuda"' in gpu)
+
+    # P4 — all 5 trainers migrated
+    for trainer in ('train_model.py', 'train_trend_model.py',
+                    'train_futures_model.py', 'train_scalping_model.py',
+                    'train_meta_labeler.py'):
+        path = os.path.join(BASE_DIR, 'src', 'engine', trainer)
+        with open(path, encoding='utf-8') as f:
+            t = f.read()
+        check(f'{trainer}: imports make_classifier',
+              'from src.utils.gpu_classifier import make_classifier' in t)
+        # No direct HistGradientBoostingClassifier(...) construction left.
+        # The import line stays for back-compat type hints; we forbid
+        # only the call form.
+        import re as _re
+        # Match "HistGradientBoostingClassifier(" at start of an
+        # instantiation, not the bare import. The migrated code uses
+        # make_classifier(...) instead.
+        constructor_calls = _re.findall(r'HistGradientBoostingClassifier\(', t)
+        check(f'{trainer}: no direct HistGradientBoostingClassifier() call',
+              len(constructor_calls) == 0)
+
+    # P3 — functional smoke: make_classifier returns something fittable
+    import importlib, sys, numpy as _np
+    if 'src.utils.gpu_classifier' in sys.modules:
+        del sys.modules['src.utils.gpu_classifier']
+    mod = importlib.import_module('src.utils.gpu_classifier')
+    clf = mod.make_classifier(n_estimators=10, max_depth=3, learning_rate=0.1,
+                              l2_regularization=0.1, class_weight='balanced',
+                              random_state=42)
+    X = _np.random.rand(80, 4).astype('float32')
+    y = (X[:, 0] > 0.5).astype(int)
+    clf.fit(X, y)
+    proba = clf.predict_proba(X)
+    check('make_classifier returns a fittable classifier',
+          proba.shape == (80, 2))
+    check('predicted probabilities are in [0, 1]',
+          (proba >= 0).all() and (proba <= 1).all())
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's

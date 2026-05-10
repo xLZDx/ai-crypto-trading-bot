@@ -5,7 +5,8 @@ import logging
 import numpy as np
 import pandas as pd
 import gc
-from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier  # kept for type compat
+from src.utils.gpu_classifier import make_classifier  # 2026-05-10 GPU migration
 try:
     from imblearn.over_sampling import SMOTE
     _SMOTE_AVAILABLE = True
@@ -283,8 +284,8 @@ def train_scalping_model(timeframe: str = '1m'):
     cv = PurgedKFold(n_splits=5, t1=t1_series, pct_embargo=pct_embargo)
     fold_accs = []
     for i, (tr, te) in enumerate(cv.split(X)):
-        clf = HistGradientBoostingClassifier(
-            random_state=42, max_iter=400, max_depth=5,
+        clf = make_classifier(
+            random_state=42, n_estimators=400, max_depth=5,
             learning_rate=0.05, early_stopping=True, class_weight='balanced'
         )
         X_tr_bal, y_tr_bal, w_tr = _resample(X.iloc[tr], y.iloc[tr])
@@ -300,8 +301,8 @@ def train_scalping_model(timeframe: str = '1m'):
 
     n = len(X)
     calib_split = int(n * 0.80)
-    base_clf = HistGradientBoostingClassifier(
-        random_state=42, max_iter=400, max_depth=5,
+    base_clf = make_classifier(
+        random_state=42, n_estimators=400, max_depth=5,
         learning_rate=0.05, early_stopping=True, class_weight='balanced'
     )
     calib_start_time = combined_df.index[calib_split]
@@ -336,8 +337,8 @@ def train_scalping_model(timeframe: str = '1m'):
                           sampling_strategy=1.0)
         try:
             X_safe_bal2, y_safe_bal2 = sm_strong.fit_resample(X_safe, y_safe)
-            base_clf2 = HistGradientBoostingClassifier(
-                random_state=42, max_iter=600, max_depth=6,
+            base_clf2 = make_classifier(
+                random_state=42, n_estimators=600, max_depth=6,
                 learning_rate=0.04, early_stopping=True, class_weight='balanced'
             )
             base_clf2.fit(X_safe_bal2, y_safe_bal2)

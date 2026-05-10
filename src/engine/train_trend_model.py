@@ -4,8 +4,9 @@ import json
 import logging
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier  # kept for type compat
 from sklearn.calibration import CalibratedClassifierCV
+from src.utils.gpu_classifier import make_classifier  # 2026-05-10 GPU migration
 from sklearn.metrics import accuracy_score, classification_report
 from sklearn.utils.class_weight import compute_sample_weight
 import joblib
@@ -154,8 +155,8 @@ def train_trend_model(timeframe: str = '1h'):
     cv = PurgedKFold(n_splits=5, t1=t1_series, pct_embargo=pct_embargo)
     fold_accs = []
     for i, (tr, te) in enumerate(cv.split(X)):
-        clf = HistGradientBoostingClassifier(
-            random_state=42, max_iter=500, max_depth=5,
+        clf = make_classifier(
+            random_state=42, n_estimators=500, max_depth=5,
             learning_rate=0.02, early_stopping=True, l2_regularization=0.5, class_weight='balanced'
         )
         weights = compute_sample_weight('balanced', y.iloc[tr])
@@ -168,8 +169,8 @@ def train_trend_model(timeframe: str = '1h'):
 
     n = len(X)
     calib_split = int(n * 0.80)
-    base_clf = HistGradientBoostingClassifier(
-        random_state=42, max_iter=500, max_depth=5,
+    base_clf = make_classifier(
+        random_state=42, n_estimators=500, max_depth=5,
         learning_rate=0.02, early_stopping=True, l2_regularization=0.5, class_weight='balanced'
     )
     calib_start_time = combined_df.index[calib_split]

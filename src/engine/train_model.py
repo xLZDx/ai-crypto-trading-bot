@@ -4,8 +4,13 @@ import json
 import logging
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier  # kept for type compat
 from sklearn.calibration import CalibratedClassifierCV
+# 2026-05-10 GPU migration: tabular trainers now go through make_classifier
+# which returns XGBoost-on-CUDA when GPU is available, sklearn HistGBT
+# fallback otherwise. Worker is configured via dual-lane spawn so the
+# cpu-lane worker has CUDA_VISIBLE_DEVICES='' and silently uses HistGBT.
+from src.utils.gpu_classifier import make_classifier
 from sklearn.metrics import accuracy_score, classification_report
 from sklearn.utils.class_weight import compute_sample_weight
 import joblib
@@ -196,8 +201,8 @@ def train_model(timeframe: str = '1h'):
     cv = PurgedKFold(n_splits=5, t1=t1_series, pct_embargo=pct_embargo)
     fold_accuracies = []
     for fold_i, (train_idx, test_idx) in enumerate(cv.split(X)):
-        base_clf = HistGradientBoostingClassifier(
-            random_state=42, max_iter=500, max_depth=6,
+        base_clf = make_classifier(
+            random_state=42, n_estimators=500, max_depth=6,
             learning_rate=0.03, l2_regularization=0.5,
             early_stopping=True, class_weight='balanced'
         )
@@ -214,8 +219,8 @@ def train_model(timeframe: str = '1h'):
     log.info("Training final model with isotonic probability calibration...")
     n = len(X)
     calib_split = int(n * 0.80)
-    base_clf = HistGradientBoostingClassifier(
-        random_state=42, max_iter=500, max_depth=6,
+    base_clf = make_classifier(
+        random_state=42, n_estimators=500, max_depth=6,
         learning_rate=0.03, l2_regularization=0.5,
         early_stopping=True, class_weight='balanced'
     )
