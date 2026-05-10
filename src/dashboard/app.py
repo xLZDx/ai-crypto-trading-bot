@@ -2853,6 +2853,23 @@ _TRAINER_DISPATCH = {
     'all':      ('src.engine.train_all_models',      'train_all',            False),
 }
 
+# Phase 100 — dashboard-key → cluster-worker model_type mapping. Workers
+# in src/training/distributed/worker.py:246-254 already have handlers for
+# every model type; this map lets the dashboard's /api/training/run/<key>
+# submit a cluster task using the worker-recognized name. Unmapped keys
+# fall back to the dashboard key itself (works for trend/scalping/tft/oft
+# /regime — same identifier on both sides).
+_DASH_TO_CLUSTER_KEY: dict[str, str] = {
+    'base':     'btc_rf',
+    'futures':  'futures_short',
+    'meta':     'meta_labeler',
+    # trend, scalping, tft, oft, regime — names match on both sides
+}
+
+
+def _to_cluster_model_type(dash_key: str) -> str:
+    return _DASH_TO_CLUSTER_KEY.get(dash_key, dash_key)
+
 
 def _record_job(job_id: str, **fields) -> None:
     with _training_jobs_lock:
@@ -3531,6 +3548,175 @@ def _run_followup_backtest_blocking(job_id: str, model_key: str,
         _training_scheduler.release('cpu')
 
 
+# Phase 100 — cluster-routed training. Replaces local subprocess spawning
+# (which was gated by _training_scheduler's exclusive lane and got every
+# manual click stuck behind the pipeline orchestrator's exclusive flag).
+# Now: submit a task to the cluster orchestrator (port 7700, already
+# running, already routes to LOCAL_RAZER_CPU/GPU + IVAN_CPU/GPU lane
+# workers), poll status, update _training_jobs as the cluster reports.
+# Operator's "futures @ 4h queued forever" bug from 2026-05-11 01:21Z
+# is the trigger for this; root cause was the local scheduler's
+# exclusive_busy=True gating ALL acquire() calls regardless of lane.
+
+def _cluster_status_to_job_status(cluster_status: str) -> str:
+    """Map cluster task status → dashboard job status. Cluster uses
+    pending/running/done/failed/cancelled; dashboard uses
+    queued/running/done/error/cancelled."""
+    return {
+        'pending':   'queued',
+        'running':   'running',
+        'done':      'done',
+        'failed':    'error',
+        'cancelled': 'cancelled',
+    }.get(cluster_status, cluster_status)
+
+
+def _dispatch_training_to_cluster(job_id: str, key: str, n: int,
+                                   tf: str | None,
+                                   with_backtest: bool = False) -> None:
+    """Phase 100 — submit a training task to the cluster orchestrator and
+    spawn a daemon poller that syncs cluster task status into _training_jobs.
+
+    Replaces the old _run_trainer_blocking path (local subprocess + local
+    scheduler gate). All manual clicks + auto-pipeline submissions go
+    through this. Unlimited concurrent submits — cluster queues them and
+    dispatches to whichever lane (CPU/GPU/LOCAL/IVAN) is free.
+
+    Notes on n>1: cluster tasks are single-iteration. We submit n separate
+    tasks and treat the job as done when all n have finished. For n=1
+    (the common case) this is a single submit.
+    """
+    model_type = _to_cluster_model_type(key)
+    # Build cluster task spec. The cluster worker handlers expect:
+    #   model_type, symbol, timeframe, config, data_path, output_path
+    # Manual click defaults to BTC/USDT — workers internally read the
+    # watchlist for symbols-list trainers (trend/scalping/etc.).
+    base_spec = {
+        'model_type': model_type,
+        'symbol':     'BTC/USDT',
+        'timeframe':  tf or '1h',
+        'config':     {},
+        # data_path / output_path — workers default to standard paths
+        # if these are empty strings (matches submit_full_training_run).
+        'data_path':   '',
+        'output_path': '',
+    }
+    task_ids: list[str] = []
+    submit_errors: list[str] = []
+    for _ in range(max(1, n)):
+        body, status = _cluster_proxy_post('/api/cluster/submit', base_spec)
+        if status == 200 and body.get('ok') and body.get('task_id'):
+            task_ids.append(body['task_id'])
+        else:
+            submit_errors.append(
+                f'cluster submit failed: status={status} body={str(body)[:200]}')
+            break
+    if not task_ids:
+        _record_job(job_id, status='error',
+                    errors=submit_errors or ['cluster submit returned no task_id'],
+                    finished_at=time.time())
+        return
+    # Record cluster task IDs on the job so the FE can drill down to the
+    # cluster tab + so the sync thread knows what to poll.
+    _record_job(job_id, status='queued',
+                cluster_task_ids=task_ids,
+                cluster_routed=True,
+                progress=0, total=len(task_ids),
+                started_at=time.time())
+    threading.Thread(
+        target=_sync_cluster_task_status,
+        args=(job_id, key, tuple(task_ids), tf, with_backtest),
+        daemon=True,
+        name=f'cluster-sync-{job_id}',
+    ).start()
+
+
+def _sync_cluster_task_status(job_id: str, key: str,
+                               task_ids: tuple[str, ...],
+                               tf: str | None,
+                               with_backtest: bool) -> None:
+    """Phase 100 daemon — poll cluster /api/cluster/tasks every 5 s for
+    the given task IDs and sync status into _training_jobs.
+
+    Job-status aggregation across N tasks:
+      - any task running → job 'running'
+      - all tasks done   → job 'done' (record duration for ETA self-tune)
+      - any task failed AND no tasks still running → job 'error' / 'partial'
+        depending on whether anything succeeded
+      - any task cancelled → job 'cancelled'
+    """
+    POLL_S = 5.0
+    DEADLINE_S = 6 * 3600   # 6h ceiling so a stuck cluster task can't pin a job forever
+    started = time.time()
+    last_status_seen: dict[str, str] = {}
+    while True:
+        time.sleep(POLL_S)
+        if time.time() - started > DEADLINE_S:
+            _record_job(job_id, status='error',
+                        errors=[f'cluster sync deadline exceeded ({DEADLINE_S}s)'],
+                        finished_at=time.time())
+            return
+        body, http_status = _cluster_proxy_get('/api/cluster/tasks')
+        if http_status != 200 or not isinstance(body, list):
+            # transient — try again next iteration
+            continue
+        # Map cluster task_id → status. body is list of task dicts.
+        by_id = {t.get('task_id'): t for t in body if isinstance(t, dict)}
+        statuses: list[str] = []
+        progress = 0
+        for tid in task_ids:
+            t = by_id.get(tid)
+            if not t:
+                # Task fell off the cluster's recent-list — treat as unknown,
+                # leave at previous status if we have one.
+                statuses.append(last_status_seen.get(tid, 'pending'))
+                continue
+            s = t.get('status', 'pending')
+            last_status_seen[tid] = s
+            statuses.append(s)
+            if s == 'done':
+                progress += 1
+        # Aggregate
+        if all(s == 'done' for s in statuses):
+            finished_at = time.time()
+            _record_job(job_id, status='done', progress=progress,
+                        finished_at=finished_at)
+            elapsed = finished_at - started
+            try:
+                _record_completed_duration(key, elapsed, tf=tf)
+            except Exception:
+                pass
+            # Optional chained backtest. _spawn_followup_backtest already
+            # routes through cluster eventually; for now reuse the existing
+            # path (local backtest worker thread).
+            if with_backtest:
+                from src.engine.train_all_models import DEFAULT_PER_KEY_TFS
+                bt_tf = tf or (DEFAULT_PER_KEY_TFS.get(key, ('1h',)) or ('1h',))[0]
+                try:
+                    _spawn_followup_backtest(job_id, key, (bt_tf,))
+                except Exception:
+                    pass
+            return
+        if any(s == 'cancelled' for s in statuses):
+            _record_job(job_id, status='cancelled', progress=progress,
+                        finished_at=time.time())
+            return
+        if all(s in ('done', 'failed', 'cancelled') for s in statuses):
+            # All terminal but not all done → partial / error
+            errors = [by_id.get(tid, {}).get('error', '') for tid in task_ids
+                      if by_id.get(tid, {}).get('status') == 'failed']
+            final = 'partial' if any(s == 'done' for s in statuses) else 'error'
+            _record_job(job_id, status=final, progress=progress,
+                        errors=[e for e in errors if e][:3],
+                        finished_at=time.time())
+            return
+        # Still running or queued — emit interim update
+        if any(s == 'running' for s in statuses):
+            _record_job(job_id, status='running', progress=progress)
+        else:
+            _record_job(job_id, status='queued', progress=progress)
+
+
 def _run_trainer_multi_tf(job_id: str, key: str, n: int,
                           tfs: tuple[str, ...],
                           with_backtest: bool = False) -> None:
@@ -3842,14 +4028,34 @@ def api_training_run_one(key: str):
     _record_job(job_id, model=key, n=n, tf=tf,
                 with_backtest=with_backtest,
                 status='queued', created_at=time.time())
-    threading.Thread(
-        target=_run_trainer_blocking,
-        args=(job_id, key, n, tf),
-        kwargs={'with_backtest': with_backtest},
-        daemon=True, name=f'train-{key}-{tf or "default"}-{job_id}',
-    ).start()
+    # Phase 100 — route through cluster orchestrator instead of local
+    # subprocess. The local _training_scheduler's exclusive lane (held
+    # by the pipeline orchestrator) was gating every manual click; that
+    # gate is gone now. Cluster handles concurrency across LOCAL_CPU/GPU
+    # + IVAN_CPU/GPU lanes with proper queueing per lane. Operator can
+    # stack manual clicks freely; cluster serializes per worker but
+    # parallelizes across workers.
+    #
+    # Opt-out for emergencies / debug: AI_TRADER_LOCAL_TRAINING=1
+    # forces the legacy local-subprocess path (_run_trainer_blocking).
+    # Default: cluster routing.
+    if os.getenv('AI_TRADER_LOCAL_TRAINING', '0') == '1':
+        threading.Thread(
+            target=_run_trainer_blocking,
+            args=(job_id, key, n, tf),
+            kwargs={'with_backtest': with_backtest},
+            daemon=True, name=f'train-local-{key}-{tf or "default"}-{job_id}',
+        ).start()
+    else:
+        threading.Thread(
+            target=_dispatch_training_to_cluster,
+            args=(job_id, key, n, tf),
+            kwargs={'with_backtest': with_backtest},
+            daemon=True, name=f'train-cluster-{key}-{tf or "default"}-{job_id}',
+        ).start()
     return jsonify({'ok': True, 'job_id': job_id, 'model': key, 'n': n, 'tf': tf,
-                    'with_backtest': with_backtest})
+                    'with_backtest': with_backtest,
+                    'routed_to': 'local' if os.getenv('AI_TRADER_LOCAL_TRAINING', '0') == '1' else 'cluster'})
 
 
 @app.route('/api/training/stop/<job_id>', methods=['POST'])

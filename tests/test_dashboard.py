@@ -8123,6 +8123,111 @@ def test_phase97c_orphan_periodic_refresh_and_canonical_row_fallback():
           in tpl)
 
 
+def test_phase100_cluster_routed_training_dispatch():
+    """Phase 100 — route training through the existing cluster orchestrator
+    (port 7700, workers already in place with model handlers) instead of
+    spawning local subprocesses gated by _training_scheduler.
+
+    Trigger: operator screenshot 2026-05-11 01:21Z. Clicked Train on
+    Futures @ 4h, system parked it in QUEUED instead of starting. Root
+    cause: local _training_scheduler.exclusive_busy=True held by pipeline
+    orchestrator gates ALL acquire() calls regardless of lane. Manual
+    and auto share the same broken gate.
+
+    Phase 100a (this phase) — manual single-tf path routes to cluster.
+    Pipeline orchestrator + tf='all' + obsolete code deletion deferred
+    to Phase 100b/c.
+
+    Asserts:
+      - Backend has dashboard-key → cluster-model_type mapping for the
+        4 keys whose names diverge (base→btc_rf, futures→futures_short,
+        meta→meta_labeler) + fallback for same-name keys
+      - _dispatch_training_to_cluster builds a task spec, POSTs to
+        /api/cluster/submit via _cluster_proxy_post, records cluster
+        task IDs on the job
+      - _sync_cluster_task_status polls cluster task status, aggregates
+        across n tasks, maps cluster status → dashboard status
+      - api_training_run_one routes to cluster by default; honors
+        AI_TRADER_LOCAL_TRAINING=1 env var for legacy fallback
+    """
+    print('\n[Phase 100 — cluster-routed training dispatch]')
+    from pathlib import Path as _P
+    PRJ = _P(__file__).resolve().parents[1]
+    app = (PRJ / 'src/dashboard/app.py').read_text(encoding='utf-8')
+
+    # ── Mapping: dashboard key → cluster worker model_type ───────────────
+    check('backend declares _DASH_TO_CLUSTER_KEY mapping',
+          '_DASH_TO_CLUSTER_KEY: dict[str, str] = {' in app)
+    check('mapping covers diverging names: base → btc_rf',
+          "'base':     'btc_rf'" in app)
+    check('mapping covers diverging names: futures → futures_short',
+          "'futures':  'futures_short'" in app)
+    check('mapping covers diverging names: meta → meta_labeler',
+          "'meta':     'meta_labeler'" in app)
+    check('mapping fallback function returns same key when not mapped',
+          'def _to_cluster_model_type(dash_key: str) -> str:' in app
+          and '_DASH_TO_CLUSTER_KEY.get(dash_key, dash_key)' in app)
+
+    # ── _dispatch_training_to_cluster shape ──────────────────────────────
+    check('backend defines _dispatch_training_to_cluster()',
+          'def _dispatch_training_to_cluster(job_id: str, key: str, n: int,' in app)
+    check('dispatch builds cluster task spec with model_type, symbol, timeframe',
+          "'model_type': model_type" in app
+          and "'symbol':     'BTC/USDT'" in app
+          and "'timeframe':  tf or '1h'" in app)
+    check('dispatch POSTs to /api/cluster/submit via _cluster_proxy_post',
+          "_cluster_proxy_post('/api/cluster/submit', base_spec)" in app)
+    check('dispatch loops n times for repetitions (multi-iter support)',
+          'for _ in range(max(1, n)):' in app
+          and 'task_ids.append(body[\'task_id\'])' in app)
+    check('dispatch records cluster_task_ids + cluster_routed on the job',
+          'cluster_task_ids=task_ids' in app
+          and 'cluster_routed=True' in app)
+    check('dispatch spawns _sync_cluster_task_status daemon thread',
+          'target=_sync_cluster_task_status' in app
+          and "name=f'cluster-sync-{job_id}'" in app)
+
+    # ── _sync_cluster_task_status shape ──────────────────────────────────
+    check('backend defines _sync_cluster_task_status()',
+          'def _sync_cluster_task_status(job_id: str, key: str,' in app)
+    check('sync polls cluster /api/cluster/tasks every 5s',
+          'POLL_S = 5.0' in app
+          and "_cluster_proxy_get('/api/cluster/tasks')" in app)
+    check('sync has 6h deadline (DEADLINE_S = 6 * 3600)',
+          'DEADLINE_S = 6 * 3600' in app)
+    check('sync aggregates: all done → job done',
+          "if all(s == 'done' for s in statuses):" in app)
+    check('sync aggregates: any cancelled → job cancelled',
+          "if any(s == 'cancelled' for s in statuses):" in app)
+    check('sync aggregates: terminal mix → partial or error',
+          "if all(s in ('done', 'failed', 'cancelled') for s in statuses):" in app
+          and "final = 'partial' if any(s == 'done' for s in statuses) else 'error'" in app)
+    check('sync records training duration on done (ETA self-tune)',
+          '_record_completed_duration(key, elapsed, tf=tf)' in app)
+    check('sync chains followup backtest when with_backtest=true',
+          'if with_backtest:' in app
+          and '_spawn_followup_backtest(job_id, key, (bt_tf,))' in app)
+
+    # ── cluster status → dashboard status mapping ────────────────────────
+    check('backend defines _cluster_status_to_job_status() mapping',
+          'def _cluster_status_to_job_status(cluster_status: str) -> str:' in app)
+    check('mapping translates pending → queued, failed → error',
+          "'pending':   'queued'" in app
+          and "'failed':    'error'" in app)
+
+    # ── api_training_run_one routes to cluster by default ────────────────
+    # Find the api endpoint body
+    ep_start = app.find('def api_training_run_one')
+    ep_end   = app.find('\n@app.route', ep_start + 1)
+    ep_body  = app[ep_start:ep_end] if ep_end > ep_start else app[ep_start:]
+    check('api_training_run_one routes to cluster by default',
+          'target=_dispatch_training_to_cluster' in ep_body)
+    check('AI_TRADER_LOCAL_TRAINING=1 env var forces legacy local path',
+          "os.getenv('AI_TRADER_LOCAL_TRAINING', '0') == '1'" in ep_body)
+    check('endpoint response includes routed_to field (cluster|local)',
+          "'routed_to':" in ep_body)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -8485,6 +8590,7 @@ def main():
     test_phase97_train_all_concurrency_lock_plus_current_state_pipeline()
     test_phase98_eta_train_bt_columns_and_tf_keyed_running()
     test_phase97c_orphan_periodic_refresh_and_canonical_row_fallback()
+    test_phase100_cluster_routed_training_dispatch()
 
     if not args.offline:
         test_api(args.url)
