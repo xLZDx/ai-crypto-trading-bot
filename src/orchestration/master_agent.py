@@ -60,6 +60,14 @@ LOCAL_HOSTNAME        = socket.gethostname()
 # to nuke them on a 5-second blip.
 WORKER_OFFLINE_GRACE_S = 90
 
+# Bug-fix 2026-05-10 — phantom-zombie detection requires the phantom
+# state to persist for at least PHANTOM_CONFIRM_S before declaring
+# zombie. Catches transient cases (orchestrator just restarted, fresh
+# worker registering, direct /task POST that hasn't propagated to the
+# cluster's task table yet). The first smoke_test of the session was
+# killed at ~60s by the over-eager original detection.
+PHANTOM_CONFIRM_S      = 120        # 2 cycles at POLL_S=60
+
 # Local worker spec: (lane, port, name).
 LOCAL_WORKER_SPECS = (
     ("cpu", 7701, "LOCAL_RAZER_CPU"),
@@ -86,6 +94,18 @@ class MasterAgent:
         self._running = False
         self._restart_counts: dict[str, int] = {}      # name → respawn count
         self._last_seen_idle: dict[str, float] = {}    # node_id → ts when first seen non-busy
+        # Bug-fix 2026-05-10 (after Phase 90 commit 49dda74): the
+        # original phantom detection killed any worker reporting
+        # current_task that wasn't in the cluster's task table. That
+        # misfires for legitimate cases:
+        #   - direct /task POST (bypasses cluster's submit endpoint)
+        #   - cluster orchestrator restart (in-memory task table cleared
+        #     while workers still hold task IDs from before)
+        # Fix: require the phantom state to persist across N consecutive
+        # scan cycles before declaring zombie. Tracks first-seen-phantom
+        # timestamp per node_id; only kills if observed phantom across
+        # at least PHANTOM_CONFIRM_CYCLES scans.
+        self._phantom_first_seen: dict[str, float] = {}
 
     # ── Process management primitives ───────────────────────────────────
 
@@ -220,6 +240,8 @@ class MasterAgent:
         if tasks is None or not isinstance(tasks, list):
             return
         task_lookup = {t.get("task_id"): t for t in tasks}
+        now = time.time()
+        seen_phantom_this_cycle: set[str] = set()
         for worker in st.get("workers", []):
             if not worker.get("online"):
                 continue
@@ -228,13 +250,33 @@ class MasterAgent:
             tid = worker.get("current_task", "")
             if not tid:
                 continue
+            node_id = worker.get("node_id", "")
             task = task_lookup.get(tid)
             if task is None:
-                self._heal_zombie(worker, reason="phantom_task_id", task_id=tid)
+                # PHANTOM — task_id not in cluster table. Could be
+                # transient (orchestrator just restarted / direct /task
+                # POST). Require state to persist for PHANTOM_CONFIRM_S
+                # before killing.
+                seen_phantom_this_cycle.add(node_id)
+                first_seen = self._phantom_first_seen.setdefault(node_id, now)
+                if now - first_seen >= PHANTOM_CONFIRM_S:
+                    self._heal_zombie(worker, reason="phantom_task_id_persisted",
+                                       task_id=tid)
+                else:
+                    logger.info("[master_agent] %s phantom task_id=%s observed for %ds "
+                                "(< %ds confirm window) — waiting",
+                                worker.get("name"), tid[:11],
+                                int(now - first_seen), PHANTOM_CONFIRM_S)
             else:
                 tstatus = task.get("status", "")
                 if tstatus in ("failed", "cancelled", "done"):
+                    # Dead-task zombies are unambiguous — kill immediately.
                     self._heal_zombie(worker, reason=f"task_status={tstatus}", task_id=tid)
+        # Reset the phantom timer for any node that's no longer phantom
+        # (task showed up in the cluster table, or worker became idle).
+        for nid in list(self._phantom_first_seen.keys()):
+            if nid not in seen_phantom_this_cycle:
+                del self._phantom_first_seen[nid]
 
     def _heal_zombie(self, worker: dict, reason: str, task_id: str) -> None:
         host = worker.get("hostname", "")

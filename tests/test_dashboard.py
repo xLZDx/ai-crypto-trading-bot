@@ -6949,7 +6949,7 @@ def test_phase90_master_agent_zombie_worker_supervisor():
     # P5 — orchestrator self-respawn
     check('_ensure_cluster_orchestrator alive check',
           'def _cluster_orchestrator_alive' in ma
-          and "'/api/cluster/status'" in ma)
+          and ('/api/cluster/status' in ma))
     check('_ensure_cluster_orchestrator respawn when down',
           'def _ensure_cluster_orchestrator' in ma
           and 'src.training.distributed.orchestrator' in ma
@@ -7016,16 +7016,33 @@ def test_phase90_master_agent_zombie_worker_supervisor():
     captured_names = sorted([c[0] for c in captured])
     captured_reasons = [c[1] for c in captured]
 
-    check('phantom-task zombie detected on local GPU worker',
-          "LOCAL_RAZER_GPU" in captured_names
-          and any("phantom_task_id" in r for r in captured_reasons))
-    check('dead-task zombie detected on remote CPU worker',
+    # First sweep — phantom should NOT yet be killed (within confirm
+    # window). Dead-task IS killed (unambiguous).
+    check('first sweep: phantom NOT yet killed (within confirm window)',
+          "LOCAL_RAZER_GPU" not in captured_names)
+    check('dead-task zombie detected immediately on first sweep',
           "WORKER-1-CPU" in captured_names
           and any("task_status=failed" in r for r in captured_reasons))
     check('healthy busy worker is NOT flagged as zombie',
           "LOCAL_RAZER_CPU" not in captured_names)
     check('idle worker is NOT flagged as zombie',
           "OTHER" not in captured_names)
+    # Phantom should be tracked in _phantom_first_seen
+    check('phantom tracked in _phantom_first_seen on first observation',
+          "z1" in agent._phantom_first_seen)
+
+    # Simulate time passing past the confirm window: backdate the
+    # first-seen timestamp and re-run the sweep. Now the phantom IS killed.
+    captured.clear()
+    import time as _time
+    agent._phantom_first_seen["z1"] = _time.time() - mod.PHANTOM_CONFIRM_S - 1
+    agent._sweep_zombie_workers()
+    captured_names_2 = sorted([c[0] for c in captured])
+    captured_reasons_2 = [c[1] for c in captured]
+
+    check('after confirm window: phantom IS killed',
+          "LOCAL_RAZER_GPU" in captured_names_2
+          and any("phantom_task_id_persisted" in r for r in captured_reasons_2))
 
 
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
