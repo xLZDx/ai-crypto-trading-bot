@@ -1,0 +1,237 @@
+{
+  "ExecutionAgent": {
+    "status": "idle",
+    "current_task": "Waiting for next cycle",
+    "last_heartbeat": "2026-05-10T00:29:51.516442+00:00",
+    "last_heartbeat_ts": 1778372991.516468,
+    "interval_sec": 60.0,
+    "history": [
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778372691.091973,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778372751.25237,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778372751.262461,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778372811.271501,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778372811.284382,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778372871.304011,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778372871.31651,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778372931.331282,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778372931.347267,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778372991.507104,
+        "status": "running"
+      }
+    ]
+  },
+  "StrategySimulatorAgent": {
+    "status": "idle",
+    "current_task": "Waiting for next cycle",
+    "last_heartbeat": "2026-05-10T00:30:00.368787+00:00",
+    "last_heartbeat_ts": 1778373000.368807,
+    "interval_sec": 5.0,
+    "history": [
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778372968.683549,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778372974.70829,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778372975.060095,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778372980.971473,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778372981.474188,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778372987.169662,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778372987.774799,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778372993.470452,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778372994.073183,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778372999.710936,
+        "status": "running"
+      }
+    ]
+  },
+  "ContinuousTrainerAgent": {
+    "status": "idle",
+    "current_task": "Waiting for next cycle",
+    "last_heartbeat": "2026-05-10T00:29:44.893339+00:00",
+    "last_heartbeat_ts": 1778372984.893363,
+    "interval_sec": 30.0,
+    "history": [
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778372819.247605,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778372850.350397,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778372850.583566,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778372880.911379,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778372882.8293,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778372915.003845,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778372916.939867,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778372950.393469,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778372952.468173,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778372984.363838,
+        "status": "running"
+      }
+    ]
+  },
+  "RiskAgent": {
+    "status": "idle",
+    "current_task": "Waiting for next cycle",
+    "last_heartbeat": "2026-05-10T00:26:32.741118+00:00",
+    "last_heartbeat_ts": 1778372792.741165,
+    "interval_sec": 300.0,
+    "history": [
+      {
+        "task": "Executing cycle",
+        "ts": 1778372491.904624,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778372491.916306,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778372792.730567,
+        "status": "running"
+      }
+    ]
+  },
+  "ScalpingAgent": {
+    "status": "idle",
+    "current_task": "Waiting for next cycle",
+    "last_heartbeat": "2026-05-10T00:29:02.890320+00:00",
+    "last_heartbeat_ts": 1778372942.890346,
+    "interval_sec": 60.0,
+    "history": [
+      {
+        "task": "Executing cycle",
+        "ts": 1778372497.432186,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778372570.596283,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778372630.60866,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778372692.601166,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778372752.611631,
+        "status": "running"
+      }
+    ]
+  }
+}

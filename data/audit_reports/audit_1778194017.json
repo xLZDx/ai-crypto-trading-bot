@@ -1,0 +1,45 @@
+{
+  "ok": false,
+  "trades_checked": 5,
+  "signals_indexed": 0,
+  "models_indexed": 16,
+  "orphan_orders": 5,
+  "untraced_signals": 0,
+  "missing_artifacts": 0,
+  "pre_train_trades": 0,
+  "findings": [
+    {
+      "kind": "orphan_order",
+      "strategy": "Scalping_Short",
+      "ts": null,
+      "trade_id": "11417be0-fe75-4736-9a80-c035d009909a"
+    },
+    {
+      "kind": "orphan_order",
+      "strategy": "Scalping_Short",
+      "ts": null,
+      "trade_id": "e5f94207-b53f-4acd-a7d1-63a19eaaa446"
+    },
+    {
+      "kind": "orphan_order",
+      "strategy": "Scalping_Short",
+      "ts": null,
+      "trade_id": "2c1348c2-7631-43f6-bf53-360fea076a08"
+    },
+    {
+      "kind": "orphan_order",
+      "strategy": "Scalping_Short",
+      "ts": null,
+      "trade_id": "f27999c8-d592-435d-bde3-3c931faccd7a"
+    },
+    {
+      "kind": "orphan_order",
+      "strategy": "Scalping_Short",
+      "ts": null,
+      "trade_id": "1a19198d-7575-41d7-9c3a-33b9bb999672"
+    }
+  ],
+  "more_findings": 0,
+  "started_at": "2026-05-07T22:46:57.338542+00:00",
+  "elapsed_s": 0.119
+}

@@ -1,0 +1,15 @@
+{
+    "status": "running",
+    "phase": "train",
+    "started_at": "2026-05-09T21:41:39.812236+00:00",
+    "finished_at": null,
+    "elapsed_s": 0.0,
+    "train": {
+        "started_at": "2026-05-09T21:41:40.699978+00:00",
+        "ok": false,
+        "finished_at": null,
+        "error": null
+    },
+    "backtest": null,
+    "last_event": null
+}

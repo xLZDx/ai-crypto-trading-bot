@@ -1,0 +1,501 @@
+strategy,symbol,n_trades,total_pnl_usdt,win_rate_pct,sharpe,sortino,calmar,max_drawdown_pct,profit_factor,group
+B_GARCH Volatility Position Sizing,BNB_USDT,1043,10397.47,50.0,1.043,0.252,1.003,-8.76,1.34,B_New
+A_RSI Mean Reversion,HBAR_USDT,88,1992.32,62.5,1.018,0.096,0.929,-3.01,2.38,A_Original
+A_MACD Momentum,SHIB_USDT,2141,4969.29,34.9,0.984,0.655,1.02,-8.29,1.17,A_Original
+B_MACD Centerline Cross + Divergence,DOGE_USDT,2730,9611.84,50.6,0.961,0.597,1.101,-9.43,1.25,B_New
+A_Ensemble A (RSI+MACD+BB),SHIB_USDT,2605,3566.67,38.7,0.958,0.412,0.721,-8.78,1.13,A_Original
+B_Base RF Model,SHIB_USDT,761,3714.31,51.1,0.895,0.16,0.612,-10.72,1.24,B_New
+A_Bollinger Band Reversion,HBAR_USDT,893,3562.78,64.1,0.875,0.123,0.394,-12.02,1.19,A_Original
+B_MACD Centerline Cross + Divergence,ICP_USDT,2048,3478.91,52.9,0.87,0.329,0.565,-10.95,1.13,B_New
+B_VWAP Reversion,ICP_USDT,2151,3258.31,68.0,0.857,0.163,0.67,-8.72,1.11,B_New
+B_MACD Centerline Cross + Divergence,HBAR_USDT,2753,7308.66,52.7,0.85,0.442,1.268,-6.85,1.19,B_New
+B_GARCH Volatility Position Sizing,SOL_USDT,682,5321.24,49.4,0.849,0.197,0.55,-14.1,1.21,B_New
+B_OFI Momentum,SHIB_USDT,1508,4034.17,42.0,0.843,0.314,0.734,-9.61,1.17,B_New
+B_MACD Centerline Cross + Divergence,XRP_USDT,3250,5187.55,51.2,0.833,0.319,0.52,-10.33,1.15,B_New
+A_Bollinger Band Reversion,SHIB_USDT,658,2230.41,66.4,0.832,0.103,0.654,-6.32,1.22,A_Original
+B_Ichimoku Cloud,AVAX_USDT,1089,5798.58,41.5,0.827,0.301,0.803,-10.59,1.17,B_New
+B_Donchian Breakout,SHIB_USDT,274,3547.99,46.7,0.82,0.194,1.053,-5.98,1.5,B_New
+B_MACD Centerline Cross + Divergence,SOL_USDT,2287,3799.94,51.6,0.814,0.299,0.538,-10.77,1.12,B_New
+B_MACD Centerline Cross + Divergence,BNB_USDT,3433,4675.14,51.7,0.799,0.273,0.48,-9.65,1.14,B_New
+B_Futures Short RF Model,SOL_USDT,53,1680.29,64.2,0.793,0.046,0.633,-4.35,2.48,B_New
+B_MACD Centerline Cross + Divergence,LINK_USDT,2955,5382.5,52.6,0.793,0.29,0.572,-10.66,1.13,B_New
+B_GARCH Volatility Position Sizing,DOGE_USDT,759,8766.32,45.3,0.783,0.271,0.755,-12.81,1.31,B_New
+A_Ensemble A (RSI+MACD+BB),BNB_USDT,4285,4102.74,39.3,0.774,0.335,0.297,-13.97,1.1,A_Original
+Ensemble_MetaFiltered,ADA_USDT,21,741.79,71.4,0.761,0.037,1.058,-0.85,5.66,B_New
+B_MACD Centerline Cross + Divergence,ADA_USDT,3260,4883.85,52.5,0.761,0.22,0.388,-13.1,1.11,B_New
+A_MACD Momentum,ETH_USDT,3587,4534.1,34.2,0.73,0.377,0.402,-10.95,1.1,A_Original
+Base_ML_MetaFiltered,HBAR_USDT,9,134.8,77.8,0.728,0.028,1.777,-0.11,12.17,B_New
+B_Ichimoku Cloud,DOGE_USDT,1355,7992.87,37.2,0.719,0.356,0.609,-14.78,1.19,B_New
+B_Keltner Channel Breakout,BNB_USDT,1080,6629.65,47.2,0.709,0.166,0.591,-10.46,1.22,B_New
+B_Ichimoku Cloud,SHIB_USDT,980,3685.72,37.6,0.706,0.289,0.599,-10.87,1.15,B_New
+B_GARCH Volatility Position Sizing,AVAX_USDT,631,4070.79,48.0,0.705,0.157,0.398,-15.81,1.17,B_New
+B_GARCH Volatility Position Sizing,NEAR_USDT,629,4115.68,49.1,0.688,0.148,0.387,-16.57,1.16,B_New
+A_Ensemble A (RSI+MACD+BB),LINK_USDT,3796,3668.58,39.1,0.687,0.297,0.251,-17.46,1.07,A_Original
+B_GARCH Volatility Position Sizing,XRP_USDT,896,5068.52,44.9,0.672,0.171,0.656,-8.03,1.22,B_New
+B_GARCH Volatility Position Sizing,LINK_USDT,871,4796.52,49.7,0.665,0.14,0.437,-12.66,1.15,B_New
+B_Futures Short RF Model,ETH_USDT,6,318.56,100.0,0.662,0.0,0.0,0.0,inf,B_New
+B_MACD Centerline Cross + Divergence,BTC_USDT,3446,2669.49,51.8,0.656,0.203,0.186,-14.85,1.1,B_New
+B_Keltner Channel Breakout,NEAR_USDT,727,3764.13,45.8,0.655,0.152,0.785,-7.56,1.15,B_New
+A_MACD Momentum,XRP_USDT,3434,4612.5,32.6,0.651,0.397,0.374,-13.01,1.11,A_Original
+B_MACD Centerline Cross + Divergence,ATOM_USDT,2807,3271.57,52.2,0.638,0.229,0.488,-8.45,1.1,B_New
+B_GARCH Volatility Position Sizing,SHIB_USDT,528,3068.87,43.2,0.632,0.161,0.693,-7.98,1.2,B_New
+B_VWAP Reversion,HBAR_USDT,2674,3091.61,67.8,0.628,0.118,0.245,-17.03,1.08,B_New
+B_MACD Centerline Cross + Divergence,NEAR_USDT,2272,3105.36,51.5,0.627,0.221,0.273,-18.31,1.09,B_New
+B_MACD Centerline Cross + Divergence,SHIB_USDT,2088,2328.32,51.7,0.621,0.19,0.54,-7.97,1.11,B_New
+B_MACD Centerline Cross + Divergence,DOT_USDT,2241,2307.9,53.4,0.621,0.198,0.539,-6.89,1.09,B_New
+A_MACD Momentum,BNB_USDT,3533,4239.68,35.2,0.619,0.294,0.361,-11.8,1.1,A_Original
+A_Ensemble A (RSI+MACD+BB),ADA_USDT,4074,3204.64,39.0,0.617,0.265,0.241,-14.63,1.07,A_Original
+MACD_MetaFiltered,TRX_USDT,31,796.28,58.1,0.617,0.043,0.854,-1.14,2.51,B_New
+B_Keltner Channel Breakout,AVAX_USDT,750,3221.26,47.6,0.614,0.137,0.423,-12.07,1.14,B_New
+B_Ichimoku Cloud,ADA_USDT,1601,4902.16,39.3,0.612,0.213,0.361,-14.12,1.11,B_New
+B_Keltner Channel Breakout,SOL_USDT,778,3435.45,46.7,0.611,0.143,0.611,-8.68,1.13,B_New
+A_RSI Mean Reversion,XRP_USDT,114,990.08,61.4,0.572,0.031,0.397,-3.0,1.56,A_Original
+B_Ichimoku Cloud,BNB_USDT,1696,5289.24,39.4,0.571,0.186,0.531,-9.68,1.13,B_New
+B_Funding Rate Arb,DOT_USDT,2,92.86,100.0,0.57,0.0,0.0,0.0,inf,B_New
+A_MACD Momentum,DOGE_USDT,2938,4838.12,32.4,0.569,0.468,0.41,-14.53,1.12,A_Original
+A_Ensemble A (RSI+MACD+BB),ATOM_USDT,3619,2787.18,39.0,0.562,0.27,0.186,-19.19,1.06,A_Original
+B_Funding Rate Arb,ICP_USDT,8,622.6,50.0,0.556,0.033,0.709,-1.73,3.79,B_New
+A_MACD Momentum,ADA_USDT,3340,3557.04,34.2,0.554,0.283,0.422,-9.14,1.08,A_Original
+MACD_MetaFiltered,ADA_USDT,24,569.91,54.2,0.545,0.017,0.31,-2.23,2.58,B_New
+B_GARCH Volatility Position Sizing,ADA_USDT,906,3583.04,46.7,0.543,0.113,0.223,-17.47,1.13,B_New
+A_Bollinger Band Reversion,ICP_USDT,677,1967.81,65.0,0.534,0.058,0.255,-14.42,1.13,A_Original
+B_GARCH Volatility Position Sizing,ETH_USDT,1058,3236.05,50.2,0.531,0.092,0.185,-17.71,1.12,B_New
+A_RSI Mean Reversion,SHIB_USDT,72,687.07,56.9,0.528,0.029,0.353,-3.81,1.43,A_Original
+B_Keltner Channel Breakout,SHIB_USDT,618,2326.46,42.4,0.526,0.151,0.429,-10.01,1.14,B_New
+A_Bollinger Band Reversion,NEAR_USDT,745,2029.04,65.0,0.517,0.068,0.292,-11.62,1.11,A_Original
+A_MACD Momentum,SOL_USDT,2343,2565.2,37.2,0.515,0.259,0.337,-12.11,1.07,A_Original
+A_Ensemble A (RSI+MACD+BB),SOL_USDT,2838,2151.63,40.7,0.514,0.204,0.284,-12.22,1.06,A_Original
+B_GARCH Volatility Position Sizing,HBAR_USDT,737,3531.16,44.2,0.512,0.125,0.296,-15.9,1.14,B_New
+A_Ensemble A (RSI+MACD+BB),XRP_USDT,4169,2425.79,37.1,0.51,0.222,0.16,-17.24,1.06,A_Original
+B_Trend RF Model,SHIB_USDT,660,1852.0,51.8,0.509,0.086,0.356,-9.77,1.13,B_New
+B_GARCH Volatility Position Sizing,BTC_USDT,1074,2354.33,50.8,0.505,0.093,0.19,-12.94,1.12,B_New
+A_RSI Mean Reversion,ICP_USDT,68,941.34,58.8,0.504,0.024,0.367,-4.98,1.46,A_Original
+B_Keltner Channel Breakout,ADA_USDT,1047,3423.65,45.4,0.502,0.12,0.204,-18.35,1.1,B_New
+B_MTF SMA-200 Filter,SHIB_USDT,2196,3216.52,23.7,0.5,0.294,0.384,-15.02,1.09,B_New
+RSI_MetaFiltered,HBAR_USDT,11,101.62,63.6,0.497,0.011,0.461,-0.33,3.02,B_New
+Ensemble_MetaFiltered,DOGE_USDT,2,79.84,100.0,0.494,0.0,0.0,0.0,inf,B_New
+Base_ML_MetaFiltered,DOGE_USDT,3,78.01,66.7,0.482,0.0,6.279,-0.02,43.7,B_New
+B_Base RF Model,ICP_USDT,746,2178.53,53.6,0.482,0.075,0.33,-12.24,1.1,B_New
+B_Keltner Channel Breakout,ETH_USDT,1136,2928.64,46.5,0.474,0.105,0.2,-14.97,1.11,B_New
+B_Elliott Wave + Base ML,SHIB_USDT,417,1363.2,45.6,0.474,0.078,0.313,-8.32,1.15,B_New
+B_Donchian Breakout,BNB_USDT,719,3153.34,43.7,0.464,0.105,0.165,-19.96,1.16,B_New
+B_Futures Short RF Model,DOGE_USDT,18,963.07,38.9,0.458,0.077,0.894,-1.52,3.93,B_New
+MACD_MetaFiltered,BTC_USDT,14,133.94,57.1,0.452,0.015,0.416,-0.37,3.7,B_New
+A_Ensemble A (RSI+MACD+BB),HBAR_USDT,3507,2153.51,36.6,0.446,0.238,0.34,-8.85,1.05,A_Original
+B_Ichimoku Cloud,NEAR_USDT,1102,2690.59,41.2,0.444,0.159,0.333,-13.21,1.07,B_New
+B_Ichimoku Cloud,ETH_USDT,1758,3063.79,39.2,0.442,0.147,0.161,-19.38,1.07,B_New
+B_GARCH Volatility Position Sizing,TRX_USDT,985,2507.61,49.2,0.441,0.088,0.247,-11.66,1.13,B_New
+B_MACD Centerline Cross + Divergence,SUI_USDT,1211,912.89,50.0,0.431,0.166,0.28,-10.56,1.06,B_New
+B_Funding Rate Arb,SUI_USDT,2,102.64,50.0,0.429,0.0,1.063,-0.32,4.15,B_New
+B_Funding Rate Arb,NEAR_USDT,1,86.0,100.0,0.425,0.0,0.0,0.0,inf,B_New
+B_Ichimoku Cloud,SOL_USDT,1149,2440.3,40.0,0.42,0.156,0.291,-13.39,1.07,B_New
+B_Funding Rate Arb,SOL_USDT,1,59.7,100.0,0.418,0.0,0.0,0.0,inf,B_New
+B_Keltner Channel Breakout,DOGE_USDT,807,2883.1,44.1,0.412,0.093,0.254,-14.92,1.12,B_New
+B_MACD Centerline Cross + Divergence,LTC_USDT,3421,2134.2,50.3,0.406,0.145,0.09,-26.08,1.05,B_New
+A_Ensemble A (RSI+MACD+BB),DOT_USDT,2848,1419.62,38.6,0.404,0.18,0.23,-10.24,1.05,A_Original
+MACD_MetaFiltered,DOGE_USDT,3,1676.71,100.0,0.402,0.0,0.0,0.0,inf,B_New
+B_MACD Centerline Cross + Divergence,ETH_USDT,3443,1808.56,51.6,0.401,0.123,0.079,-24.57,1.05,B_New
+Ensemble_MetaFiltered,TRX_USDT,17,374.4,52.9,0.399,0.029,0.371,-1.26,2.26,B_New
+A_Ensemble A (RSI+MACD+BB),ETH_USDT,4271,1810.67,38.1,0.396,0.158,0.101,-19.07,1.04,A_Original
+B_Futures Short RF Model,ICP_USDT,47,478.22,53.2,0.395,0.027,0.155,-6.11,1.37,B_New
+A_Bollinger Band Reversion,AVAX_USDT,755,1335.9,63.3,0.392,0.055,0.127,-17.76,1.08,A_Original
+Base_ML_MetaFiltered,BTC_USDT,2,12.9,100.0,0.386,0.0,0.0,0.0,inf,B_New
+Ensemble_MetaFiltered,SHIB_USDT,2,15.58,50.0,0.38,0.0,1.196,-0.03,6.95,B_New
+B_Trend RF Model,ICP_USDT,657,1572.87,53.1,0.379,0.06,0.201,-14.82,1.08,B_New
+B_Futures Short RF Model,HBAR_USDT,13,2515.58,30.8,0.376,0.174,1.716,-2.02,8.29,B_New
+B_Ichimoku Cloud,XRP_USDT,1598,2604.18,35.7,0.373,0.137,0.152,-19.37,1.07,B_New
+A_RSI Mean Reversion,DOGE_USDT,88,468.47,52.3,0.371,0.02,0.221,-3.04,1.32,A_Original
+B_Donchian Breakout,HBAR_USDT,572,1634.8,45.3,0.369,0.075,0.14,-16.67,1.11,B_New
+B_Funding Rate Arb,TRX_USDT,1,14.06,100.0,0.356,0.0,0.0,0.0,inf,B_New
+MACD_MetaFiltered,HBAR_USDT,28,250.52,50.0,0.345,0.02,0.332,-1.14,1.63,B_New
+RSI_MetaFiltered,ADA_USDT,3,25.34,66.7,0.338,0.0,0.369,-0.09,3.96,B_New
+B_VWAP Reversion,DOGE_USDT,2508,1404.58,67.0,0.333,0.059,0.182,-10.72,1.05,B_New
+B_Futures Short RF Model,SHIB_USDT,176,710.96,46.0,0.319,0.044,0.256,-5.43,1.16,B_New
+A_RSI Mean Reversion,ADA_USDT,122,591.75,58.2,0.319,0.017,0.114,-6.28,1.23,A_Original
+B_MTF SMA-200 Filter,BNB_USDT,3485,2422.97,25.7,0.318,0.144,0.181,-14.37,1.05,B_New
+B_Keltner Channel Breakout,ICP_USDT,627,1250.42,45.3,0.315,0.08,0.155,-15.48,1.07,B_New
+B_OFI Momentum,SOL_USDT,1801,1422.53,43.0,0.315,0.106,0.094,-25.11,1.04,B_New
+A_RSI Mean Reversion,LTC_USDT,135,604.62,55.6,0.314,0.018,0.152,-4.63,1.23,A_Original
+B_MTF SMA-200 Filter,DOGE_USDT,3099,2393.76,21.7,0.311,0.186,0.189,-16.9,1.05,B_New
+B_Ichimoku Cloud,LINK_USDT,1449,1913.58,40.4,0.308,0.107,0.122,-19.92,1.04,B_New
+B_Volatility Breakout (TTM Squeeze),HBAR_USDT,381,1718.61,44.6,0.295,0.078,0.225,-10.81,1.18,B_New
+A_MACD Momentum,LINK_USDT,3136,1531.91,34.5,0.293,0.158,0.111,-17.87,1.03,A_Original
+B_Volatility Breakout (TTM Squeeze),APT_USDT,213,530.69,42.3,0.291,0.047,0.165,-8.92,1.11,B_New
+A_Bollinger Band Reversion,SUI_USDT,399,460.62,66.9,0.288,0.037,0.13,-11.62,1.06,A_Original
+B_Donchian Breakout,NEAR_USDT,463,1140.56,47.3,0.287,0.051,0.193,-10.19,1.07,B_New
+A_MACD Momentum,DOT_USDT,2361,1092.35,35.2,0.287,0.162,0.205,-8.96,1.04,A_Original
+B_VWAP Reversion,NEAR_USDT,2500,1110.51,68.0,0.279,0.054,0.129,-14.92,1.04,B_New
+B_MTF SMA-200 Filter,XRP_USDT,3472,1907.15,23.0,0.277,0.14,0.101,-21.93,1.04,B_New
+B_Futures Short RF Model,APT_USDT,29,285.23,51.7,0.27,0.025,0.242,-3.3,1.37,B_New
+B_Donchian Breakout,LINK_USDT,578,1163.79,49.1,0.269,0.045,0.108,-14.11,1.07,B_New
+A_RSI Mean Reversion,DOT_USDT,86,334.06,59.3,0.267,0.017,0.15,-3.85,1.17,A_Original
+B_OFI Momentum,AVAX_USDT,1758,1188.84,43.5,0.263,0.089,0.136,-14.84,1.04,B_New
+A_MACD Momentum,AVAX_USDT,2362,1106.54,35.3,0.259,0.145,0.154,-12.31,1.04,A_Original
+B_Keltner Channel Breakout,LINK_USDT,946,1264.12,46.7,0.241,0.053,0.158,-10.46,1.05,B_New
+A_RSI Mean Reversion,ATOM_USDT,103,383.66,52.4,0.236,0.017,0.102,-5.29,1.16,A_Original
+A_Ensemble A (RSI+MACD+BB),DOGE_USDT,3500,977.36,35.9,0.234,0.113,0.083,-16.54,1.03,A_Original
+A_Bollinger Band Reversion,SOL_USDT,762,722.62,62.6,0.23,0.03,0.12,-10.2,1.05,A_Original
+B_Ichimoku Cloud,BTC_USDT,1775,1047.34,39.8,0.228,0.069,0.078,-14.79,1.04,B_New
+A_Bollinger Band Reversion,LTC_USDT,1130,928.22,64.2,0.22,0.027,0.067,-16.01,1.05,A_Original
+A_Bollinger Band Reversion,DOT_USDT,816,701.46,64.5,0.219,0.026,0.112,-10.72,1.05,A_Original
+B_Keltner Channel Breakout,DOT_USDT,738,842.16,46.5,0.218,0.045,0.094,-15.22,1.04,B_New
+A_Ensemble A (RSI+MACD+BB),AVAX_USDT,2866,775.65,38.1,0.218,0.098,0.075,-17.93,1.02,A_Original
+A_Bollinger Band Reversion,XRP_USDT,1037,784.64,64.2,0.217,0.025,0.066,-14.37,1.05,A_Original
+B_MTF SMA-200 Filter,ETH_USDT,3614,1318.66,24.3,0.211,0.092,0.067,-21.47,1.03,B_New
+B_GARCH Volatility Position Sizing,ICP_USDT,519,772.36,43.7,0.21,0.048,0.1,-15.03,1.05,B_New
+B_MTF SMA-200 Filter,SOL_USDT,2409,1016.81,25.1,0.205,0.093,0.086,-19.85,1.02,B_New
+B_Volatility Breakout (TTM Squeeze),SHIB_USDT,336,437.67,42.9,0.202,0.03,0.087,-9.96,1.07,B_New
+Base_ML_MetaFiltered,ADA_USDT,2,13.45,50.0,0.201,0.0,0.196,-0.09,2.57,B_New
+B_Base RF Model,XRP_USDT,1121,921.3,51.8,0.201,0.032,0.068,-16.26,1.04,B_New
+B_OFI Momentum,BTC_USDT,2555,745.05,40.0,0.19,0.063,0.044,-19.02,1.03,B_New
+B_Volatility Breakout (TTM Squeeze),TRX_USDT,340,487.19,41.2,0.182,0.024,0.07,-8.71,1.08,B_New
+B_OFI Momentum,ADA_USDT,2427,811.06,43.4,0.173,0.052,0.055,-17.63,1.02,B_New
+B_MTF SMA-200 Filter,ICP_USDT,2143,658.29,23.7,0.17,0.085,0.052,-24.84,1.02,B_New
+A_Bollinger Band Reversion,LINK_USDT,963,630.15,63.1,0.17,0.021,0.068,-12.47,1.03,A_Original
+B_MTF SMA-200 Filter,ADA_USDT,3429,974.37,23.4,0.17,0.078,0.071,-16.4,1.02,B_New
+A_Bollinger Band Reversion,ADA_USDT,1084,610.82,63.0,0.166,0.02,0.105,-7.05,1.04,A_Original
+Ensemble_MetaFiltered,BTC_USDT,7,11.26,42.9,0.158,0.003,0.092,-0.14,1.51,B_New
+A_RSI Mean Reversion,UNI_USDT,90,211.81,50.0,0.155,0.01,0.073,-5.1,1.11,A_Original
+B_GARCH Volatility Position Sizing,ATOM_USDT,793,656.87,48.8,0.155,0.029,0.032,-28.62,1.03,B_New
+RSI_MetaFiltered,TRX_USDT,8,53.79,75.0,0.153,0.006,0.094,-0.73,1.42,B_New
+B_Base RF Model,DOGE_USDT,1049,509.85,50.5,0.14,0.024,0.064,-11.43,1.02,B_New
+Ensemble_MetaFiltered,HBAR_USDT,18,75.69,44.4,0.138,0.006,0.076,-1.51,1.3,B_New
+B_MTF SMA-200 Filter,AVAX_USDT,2390,512.05,23.7,0.135,0.065,0.046,-19.43,1.01,B_New
+B_MACD Centerline Cross + Divergence,AVAX_USDT,2264,394.37,50.4,0.134,0.047,0.053,-13.16,1.01,B_New
+A_RSI Mean Reversion,APT_USDT,54,111.15,59.3,0.132,0.007,0.037,-8.47,1.07,A_Original
+Base_ML_MetaFiltered,TRX_USDT,7,44.24,71.4,0.126,0.005,0.077,-0.73,1.34,B_New
+B_OFI Momentum,DOT_USDT,1684,367.13,43.1,0.123,0.038,0.043,-14.77,1.01,B_New
+A_Ensemble A (RSI+MACD+BB),ICP_USDT,2548,303.43,37.5,0.121,0.058,0.041,-14.65,1.01,A_Original
+B_MTF SMA-200 Filter,DOT_USDT,2301,410.08,26.4,0.121,0.058,0.052,-13.7,1.01,B_New
+B_MTF SMA-200 Filter,LINK_USDT,3106,499.33,24.7,0.116,0.055,0.033,-20.32,1.01,B_New
+B_Futures Short RF Model,BNB_USDT,31,119.02,51.6,0.115,0.003,0.062,-2.24,1.18,B_New
+B_Elliott Wave + Base ML,ICP_USDT,460,289.68,54.6,0.112,0.014,0.034,-17.07,1.02,B_New
+A_Bollinger Band Reversion,DOGE_USDT,896,340.37,64.2,0.111,0.011,0.039,-12.55,1.02,A_Original
+B_GARCH Volatility Position Sizing,DOT_USDT,627,320.82,48.3,0.108,0.02,0.022,-24.98,1.02,B_New
+B_Ichimoku Cloud,TRX_USDT,1578,412.77,36.8,0.106,0.035,0.023,-22.26,1.01,B_New
+B_OFI Momentum,XRP_USDT,2445,384.33,42.5,0.104,0.032,0.029,-16.08,1.01,B_New
+B_Keltner Channel Breakout,BTC_USDT,1149,290.48,45.2,0.089,0.018,0.019,-17.09,1.01,B_New
+B_Keltner Channel Breakout,TRX_USDT,1105,269.51,41.8,0.086,0.019,0.024,-13.81,1.01,B_New
+B_Donchian Breakout,ETH_USDT,539,256.04,46.8,0.081,0.01,0.025,-11.76,1.02,B_New
+B_Volatility Breakout (TTM Squeeze),BTC_USDT,546,189.87,39.4,0.08,0.011,0.017,-12.59,1.02,B_New
+A_RSI Mean Reversion,SOL_USDT,99,101.08,49.5,0.076,0.005,0.028,-6.36,1.04,A_Original
+B_OFI Momentum,ETH_USDT,2636,206.88,42.7,0.069,0.02,0.013,-17.71,1.01,B_New
+A_Ensemble A (RSI+MACD+BB),NEAR_USDT,2921,87.93,37.3,0.06,0.029,0.011,-14.62,1.0,A_Original
+B_Keltner Channel Breakout,XRP_USDT,989,105.78,42.4,0.055,0.013,0.005,-26.54,1.0,B_New
+B_Funding Rate Arb,ATOM_USDT,2,11.58,50.0,0.053,0.0,0.031,-0.54,1.21,B_New
+A_MACD Momentum,TRX_USDT,3310,80.36,33.2,0.048,0.026,0.008,-13.55,1.0,A_Original
+B_Volatility Breakout (TTM Squeeze),SOL_USDT,339,16.07,43.4,0.032,0.004,0.003,-11.14,1.0,B_New
+B_Base RF Model,ADA_USDT,1170,-51.86,50.9,0.031,0.005,-0.003,-25.58,1.0,B_New
+B_Keltner Channel Breakout,APT_USDT,439,-22.36,41.7,0.031,0.009,-0.004,-16.69,1.0,B_New
+B_MTF SMA-200 Filter,APT_USDT,1357,-67.28,25.2,0.03,0.014,-0.009,-21.8,1.0,B_New
+B_Ichimoku Cloud,HBAR_USDT,1330,-400.04,38.3,0.022,0.01,-0.016,-37.67,0.99,B_New
+B_Volatility Breakout (TTM Squeeze),XRP_USDT,480,-23.49,42.1,0.022,0.003,-0.001,-21.91,1.0,B_New
+A_RSI Mean Reversion,BNB_USDT,130,13.45,47.7,0.018,0.001,0.002,-7.71,1.0,A_Original
+B_Volatility Breakout (TTM Squeeze),UNI_USDT,361,-28.01,46.3,0.018,0.002,-0.004,-13.94,1.0,B_New
+B_VWAP Reversion,SOL_USDT,2404,-94.9,67.4,0.016,0.003,-0.014,-11.58,1.0,B_New
+B_Donchian Breakout,XRP_USDT,439,-76.53,43.5,0.012,0.002,-0.009,-10.15,0.99,B_New
+B_Ichimoku Cloud,ICP_USDT,1003,-177.45,39.4,0.01,0.004,-0.024,-14.75,0.99,B_New
+B_Donchian Breakout,TRX_USDT,776,-87.14,42.1,0.009,0.002,-0.009,-12.96,0.99,B_New
+A_Bollinger Band Reversion,BNB_USDT,1162,-67.2,65.0,0.009,0.001,-0.005,-15.25,1.0,A_Original
+A_MACD Momentum,NEAR_USDT,2418,-190.3,33.8,0.005,0.003,-0.017,-19.81,0.99,A_Original
+B_Volatility Breakout (TTM Squeeze),ADA_USDT,451,-73.57,47.0,0.002,0.0,-0.005,-18.95,0.99,B_New
+B_Ensemble B (VWAP+Don+Kelt+Fund+OFI),DOGE_USDT,3676,-255.6,55.6,0.001,0.0,-0.023,-16.35,0.99,B_New
+Base_ML_MetaFiltered,BNB_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_Funding Rate Arb,XRP_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_OU Mean-Reversion Entry,ICP_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_OU Mean-Reversion Entry,SUI_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+RSI_MetaFiltered,SUI_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+MACD_MetaFiltered,SUI_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+"B_SuperTrend (ATR×3, 10)",SUI_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+"B_SuperTrend (ATR×3, 10)",SOL_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_OU Mean-Reversion Entry,ADA_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+"B_SuperTrend (ATR×3, 10)",ADA_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+"B_SuperTrend (ATR×3, 10)",ICP_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+MACD_MetaFiltered,ICP_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+"B_SuperTrend (ATR×3, 10)",LTC_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Base_ML_MetaFiltered,LTC_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Ensemble_MetaFiltered,LTC_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+MACD_MetaFiltered,LTC_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+RSI_MetaFiltered,LTC_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_OU Mean-Reversion Entry,LTC_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Base_ML_MetaFiltered,ETH_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_OU Mean-Reversion Entry,APT_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+RSI_MetaFiltered,APT_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+RSI_MetaFiltered,ETH_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+"B_SuperTrend (ATR×3, 10)",ETH_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_OU Mean-Reversion Entry,ETH_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_Volatility Breakout (TTM Squeeze),ETH_USDT,555,-74.91,40.7,-0.0,-0.0,-0.004,-21.64,0.99,B_New
+B_Funding Rate Arb,ETH_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Base_ML_MetaFiltered,APT_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Ensemble_MetaFiltered,APT_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+MACD_MetaFiltered,APT_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+"B_SuperTrend (ATR×3, 10)",APT_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Ensemble_MetaFiltered,ICP_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Base_ML_MetaFiltered,ICP_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Ensemble_MetaFiltered,SUI_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+RSI_MetaFiltered,ICP_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+MACD_MetaFiltered,UNI_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+RSI_MetaFiltered,UNI_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_Funding Rate Arb,DOGE_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_OU Mean-Reversion Entry,BNB_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_OU Mean-Reversion Entry,XRP_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Ensemble_MetaFiltered,BNB_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+RSI_MetaFiltered,BNB_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+MACD_MetaFiltered,BNB_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_Funding Rate Arb,BTC_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+"B_SuperTrend (ATR×3, 10)",BTC_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_OU Mean-Reversion Entry,BTC_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+MACD_MetaFiltered,NEAR_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+"B_SuperTrend (ATR×3, 10)",NEAR_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_OU Mean-Reversion Entry,NEAR_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+RSI_MetaFiltered,NEAR_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+"B_SuperTrend (ATR×3, 10)",TRX_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+"B_SuperTrend (ATR×3, 10)",UNI_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_OU Mean-Reversion Entry,UNI_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+MACD_MetaFiltered,ATOM_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_Funding Rate Arb,UNI_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+"B_SuperTrend (ATR×3, 10)",DOGE_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_OU Mean-Reversion Entry,DOGE_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Base_ML_MetaFiltered,NEAR_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Ensemble_MetaFiltered,NEAR_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Ensemble_MetaFiltered,ATOM_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+RSI_MetaFiltered,XRP_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+MACD_MetaFiltered,XRP_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Ensemble_MetaFiltered,XRP_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Base_ML_MetaFiltered,XRP_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_OU Mean-Reversion Entry,ATOM_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+"B_SuperTrend (ATR×3, 10)",XRP_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+RSI_MetaFiltered,ATOM_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+"B_SuperTrend (ATR×3, 10)",ATOM_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_Funding Rate Arb,ADA_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Base_ML_MetaFiltered,SOL_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Ensemble_MetaFiltered,SOL_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+MACD_MetaFiltered,SOL_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+RSI_MetaFiltered,SOL_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_OU Mean-Reversion Entry,SOL_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Base_ML_MetaFiltered,ATOM_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Ensemble_MetaFiltered,UNI_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Base_ML_MetaFiltered,UNI_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_Funding Rate Arb,LTC_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+"B_SuperTrend (ATR×3, 10)",BNB_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+RSI_MetaFiltered,AVAX_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_Funding Rate Arb,SHIB_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Base_ML_MetaFiltered,AVAX_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Ensemble_MetaFiltered,AVAX_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_OU Mean-Reversion Entry,LINK_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+RSI_MetaFiltered,LINK_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+MACD_MetaFiltered,LINK_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Ensemble_MetaFiltered,LINK_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Base_ML_MetaFiltered,LINK_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+"B_SuperTrend (ATR×3, 10)",LINK_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+"B_SuperTrend (ATR×3, 10)",HBAR_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_OU Mean-Reversion Entry,HBAR_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_Funding Rate Arb,HBAR_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+MACD_MetaFiltered,AVAX_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_OU Mean-Reversion Entry,AVAX_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_Funding Rate Arb,AVAX_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_OU Mean-Reversion Entry,TRX_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+"B_SuperTrend (ATR×3, 10)",SHIB_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+"B_SuperTrend (ATR×3, 10)",AVAX_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_OU Mean-Reversion Entry,SHIB_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+RSI_MetaFiltered,DOT_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+MACD_MetaFiltered,DOT_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Ensemble_MetaFiltered,DOT_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Base_ML_MetaFiltered,DOT_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_Funding Rate Arb,LINK_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+"B_SuperTrend (ATR×3, 10)",DOT_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+B_OU Mean-Reversion Entry,DOT_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+Base_ML_MetaFiltered,SUI_USDT,0,0.0,0.0,0.0,0.0,0.0,0.0,inf,B_New
+RSI_MetaFiltered,SHIB_USDT,8,-4.5,62.5,-0.01,-0.0,-0.008,-1.09,0.97,B_New
+B_Elliott Wave + Base ML,SOL_USDT,473,-211.72,51.0,-0.012,-0.001,-0.028,-13.41,0.98,B_New
+B_Donchian Breakout,AVAX_USDT,465,-212.15,44.9,-0.014,-0.003,-0.024,-15.67,0.99,B_New
+B_MTF SMA-200 Filter,NEAR_USDT,2402,-462.58,24.2,-0.016,-0.007,-0.045,-18.85,0.99,B_New
+B_MTF SMA-200 Filter,BTC_USDT,3579,-282.02,24.6,-0.018,-0.007,-0.015,-22.37,0.99,B_New
+B_Donchian Breakout,ADA_USDT,601,-269.44,45.3,-0.02,-0.003,-0.016,-20.8,0.98,B_New
+B_Futures Short RF Model,LTC_USDT,47,-33.1,46.8,-0.02,-0.001,-0.01,-4.07,0.96,B_New
+B_OFI Momentum,DOGE_USDT,2076,-417.66,39.8,-0.027,-0.01,-0.029,-21.77,0.99,B_New
+B_MTF SMA-200 Filter,HBAR_USDT,2909,-635.85,23.5,-0.03,-0.016,-0.036,-27.91,0.98,B_New
+B_Futures Short RF Model,ATOM_USDT,56,-68.1,58.9,-0.033,-0.001,-0.014,-7.15,0.96,B_New
+B_MACD Centerline Cross + Divergence,APT_USDT,1461,-170.93,49.4,-0.035,-0.014,-0.03,-16.45,0.99,B_New
+B_Base RF Model,LTC_USDT,1186,-380.08,49.0,-0.035,-0.007,-0.027,-17.39,0.98,B_New
+A_MACD Momentum,APT_USDT,1475,-240.41,33.2,-0.044,-0.027,-0.032,-21.52,0.99,A_Original
+A_Bollinger Band Reversion,ATOM_USDT,986,-338.99,61.8,-0.05,-0.007,-0.027,-18.25,0.98,A_Original
+A_RSI Mean Reversion,AVAX_USDT,94,-108.62,51.1,-0.052,-0.004,-0.025,-7.7,0.96,A_Original
+B_Base RF Model,ETH_USDT,1143,-472.56,48.9,-0.053,-0.01,-0.021,-26.65,0.98,B_New
+B_GARCH Volatility Position Sizing,SUI_USDT,328,-231.09,43.9,-0.056,-0.013,-0.047,-16.51,0.98,B_New
+A_RSI Mean Reversion,LINK_USDT,119,-142.89,52.1,-0.058,-0.003,-0.033,-5.98,0.96,A_Original
+B_Futures Short RF Model,NEAR_USDT,38,-99.95,44.7,-0.059,-0.005,-0.028,-6.57,0.91,B_New
+B_Donchian Breakout,ATOM_USDT,607,-428.34,44.5,-0.06,-0.01,-0.029,-21.77,0.97,B_New
+B_VWAP Reversion,AVAX_USDT,2327,-379.91,67.3,-0.06,-0.012,-0.025,-27.71,0.99,B_New
+B_Base RF Model,AVAX_USDT,812,-523.95,52.1,-0.067,-0.011,-0.078,-12.24,0.97,B_New
+B_Ensemble B (VWAP+Don+Kelt+Fund+OFI),SOL_USDT,3519,-515.12,55.4,-0.069,-0.02,-0.053,-17.27,0.99,B_New
+B_Trend RF Model,XRP_USDT,1005,-512.56,49.6,-0.07,-0.012,-0.033,-19.96,0.98,B_New
+B_Keltner Channel Breakout,HBAR_USDT,843,-1085.23,42.5,-0.084,-0.03,-0.043,-39.92,0.95,B_New
+B_Elliott Wave + Base ML,BTC_USDT,510,-364.18,46.5,-0.084,-0.009,-0.056,-7.54,0.96,B_New
+B_Volatility Breakout (TTM Squeeze),DOT_USDT,353,-340.2,45.9,-0.086,-0.01,-0.058,-10.4,0.96,B_New
+B_Elliott Wave + Base ML,XRP_USDT,556,-525.76,49.3,-0.095,-0.011,-0.03,-22.46,0.96,B_New
+A_MACD Momentum,ATOM_USDT,2950,-694.95,35.0,-0.1,-0.053,-0.049,-20.96,0.98,A_Original
+B_Volatility Breakout (TTM Squeeze),AVAX_USDT,321,-466.98,43.6,-0.102,-0.013,-0.043,-19.84,0.95,B_New
+A_MACD Momentum,BTC_USDT,3605,-531.88,33.1,-0.104,-0.048,-0.036,-17.63,0.98,A_Original
+B_Volatility Breakout (TTM Squeeze),BNB_USDT,449,-408.64,42.3,-0.104,-0.012,-0.036,-13.55,0.95,B_New
+B_OFI Momentum,BNB_USDT,2552,-793.87,41.0,-0.105,-0.034,-0.045,-21.57,0.97,B_New
+B_Elliott Wave + Base ML,ETH_USDT,605,-606.98,44.5,-0.106,-0.015,-0.042,-17.18,0.96,B_New
+B_GARCH Volatility Position Sizing,LTC_USDT,979,-792.52,47.1,-0.108,-0.019,-0.051,-19.21,0.97,B_New
+B_Ichimoku Cloud,LTC_USDT,1697,-877.79,37.4,-0.108,-0.037,-0.042,-25.73,0.97,B_New
+A_RSI Mean Reversion,ETH_USDT,167,-215.39,52.7,-0.114,-0.007,-0.027,-9.43,0.93,A_Original
+B_Ichimoku Cloud,APT_USDT,687,-511.77,39.3,-0.118,-0.044,-0.071,-20.69,0.97,B_New
+B_GARCH Volatility Position Sizing,APT_USDT,376,-428.37,47.6,-0.12,-0.024,-0.058,-21.34,0.96,B_New
+Base_ML_MetaFiltered,SHIB_USDT,9,-41.36,55.6,-0.12,-0.002,-0.076,-1.09,0.78,B_New
+B_Futures Short RF Model,ADA_USDT,12,-79.58,41.7,-0.122,-0.003,-0.076,-1.31,0.79,B_New
+B_GARCH Volatility Position Sizing,UNI_USDT,646,-769.08,45.0,-0.122,-0.025,-0.067,-21.19,0.96,B_New
+B_Donchian Breakout,DOT_USDT,469,-521.5,45.2,-0.122,-0.022,-0.045,-20.94,0.96,B_New
+B_Donchian Breakout,BTC_USDT,556,-535.59,45.5,-0.13,-0.018,-0.047,-13.44,0.95,B_New
+B_Keltner Channel Breakout,UNI_USDT,757,-799.24,44.4,-0.141,-0.033,-0.088,-16.81,0.96,B_New
+B_Elliott Wave + Base ML,APT_USDT,301,-445.63,49.2,-0.149,-0.02,-0.086,-14.97,0.94,B_New
+B_Donchian Breakout,SOL_USDT,462,-854.56,46.8,-0.158,-0.024,-0.075,-20.57,0.94,B_New
+B_VWAP Reversion,LINK_USDT,2947,-954.78,66.5,-0.163,-0.033,-0.048,-28.43,0.97,B_New
+B_Volatility Breakout (TTM Squeeze),LINK_USDT,468,-689.54,43.6,-0.165,-0.022,-0.072,-13.51,0.94,B_New
+B_Donchian Breakout,APT_USDT,246,-414.65,44.3,-0.167,-0.027,-0.076,-15.79,0.94,B_New
+A_Bollinger Band Reversion,BTC_USDT,1188,-595.52,65.4,-0.17,-0.02,-0.078,-9.06,0.95,A_Original
+B_Base RF Model,HBAR_USDT,1076,-1030.37,49.8,-0.171,-0.029,-0.085,-19.36,0.95,B_New
+B_VWAP Reversion,XRP_USDT,2575,-885.62,65.1,-0.177,-0.03,-0.077,-15.04,0.97,B_New
+B_Ichimoku Cloud,ATOM_USDT,1405,-1283.04,40.4,-0.178,-0.057,-0.07,-27.91,0.96,B_New
+A_Bollinger Band Reversion,ETH_USDT,1159,-802.08,62.4,-0.182,-0.023,-0.085,-11.26,0.95,A_Original
+B_MACD Centerline Cross + Divergence,TRX_USDT,3216,-857.12,49.2,-0.185,-0.058,-0.043,-26.15,0.97,B_New
+B_Ichimoku Cloud,DOT_USDT,1129,-1130.54,39.9,-0.191,-0.059,-0.078,-26.81,0.96,B_New
+B_Ensemble B (VWAP+Don+Kelt+Fund+OFI),NEAR_USDT,3473,-1015.46,56.2,-0.195,-0.06,-0.097,-19.7,0.97,B_New
+B_Base RF Model,NEAR_USDT,784,-1264.2,52.2,-0.208,-0.035,-0.097,-24.76,0.94,B_New
+B_Donchian Breakout,ICP_USDT,382,-796.8,43.5,-0.215,-0.034,-0.086,-19.15,0.93,B_New
+B_Base RF Model,SUI_USDT,441,-632.76,49.4,-0.219,-0.035,-0.115,-18.77,0.94,B_New
+B_MTF SMA-200 Filter,ATOM_USDT,2922,-1733.75,24.6,-0.22,-0.098,-0.09,-29.78,0.96,B_New
+B_Base RF Model,DOT_USDT,783,-1121.66,52.7,-0.221,-0.034,-0.101,-20.51,0.93,B_New
+A_RSI Mean Reversion,BTC_USDT,168,-450.67,51.2,-0.221,-0.013,-0.049,-10.83,0.86,A_Original
+B_Elliott Wave + Base ML,LTC_USDT,638,-1095.73,44.8,-0.23,-0.034,-0.062,-22.16,0.93,B_New
+B_OFI Momentum,LTC_USDT,2643,-1319.46,42.3,-0.231,-0.07,-0.062,-27.21,0.96,B_New
+B_Futures Short RF Model,XRP_USDT,10,-41.55,40.0,-0.236,-0.008,-0.102,-0.51,0.58,B_New
+A_RSI Mean Reversion,NEAR_USDT,94,-492.55,51.1,-0.241,-0.012,-0.11,-8.23,0.84,A_Original
+B_Base RF Model,APT_USDT,495,-789.38,50.5,-0.244,-0.041,-0.158,-14.56,0.94,B_New
+B_Trend RF Model,AVAX_USDT,699,-1266.31,50.9,-0.248,-0.039,-0.138,-17.28,0.93,B_New
+B_Volatility Breakout (TTM Squeeze),DOGE_USDT,431,-840.49,40.1,-0.258,-0.036,-0.09,-14.23,0.89,B_New
+B_VWAP Reversion,SHIB_USDT,1820,-805.27,64.4,-0.262,-0.05,-0.12,-14.01,0.96,B_New
+B_Futures Short RF Model,LINK_USDT,66,-360.68,50.0,-0.263,-0.011,-0.082,-6.13,0.79,B_New
+MACD_MetaFiltered,SHIB_USDT,4,-49.51,50.0,-0.268,-0.002,-0.122,-0.82,0.39,B_New
+B_Donchian Breakout,DOGE_USDT,381,-9963.1,44.1,-0.272,-0.017,-0.562,-99.72,0.28,B_New
+B_Trend RF Model,LTC_USDT,1040,-1591.44,45.7,-0.279,-0.053,-0.079,-25.97,0.93,B_New
+B_VWAP Reversion,ADA_USDT,3040,-1438.13,66.4,-0.281,-0.052,-0.09,-21.35,0.95,B_New
+B_Elliott Wave + Base ML,AVAX_USDT,477,-1228.67,49.3,-0.281,-0.037,-0.14,-16.47,0.91,B_New
+A_RSI Mean Reversion,TRX_USDT,165,-471.55,47.9,-0.281,-0.018,-0.083,-7.36,0.83,A_Original
+B_Futures Short RF Model,BTC_USDT,14,-145.54,35.7,-0.283,-0.005,-0.103,-1.63,0.55,B_New
+B_Elliott Wave + Base ML,DOGE_USDT,514,-2531.21,48.4,-0.284,-0.021,-0.122,-34.44,0.78,B_New
+A_Ensemble A (RSI+MACD+BB),LTC_USDT,4262,-1376.86,35.9,-0.285,-0.121,-0.058,-30.13,0.96,A_Original
+B_Trend RF Model,DOGE_USDT,873,-1396.8,48.7,-0.292,-0.044,-0.098,-22.2,0.92,B_New
+B_Futures Short RF Model,AVAX_USDT,64,-464.67,46.9,-0.294,-0.018,-0.105,-8.05,0.78,B_New
+B_OFI Momentum,SUI_USDT,950,-746.61,43.1,-0.3,-0.102,-0.163,-15.71,0.95,B_New
+B_OFI Momentum,LINK_USDT,2252,-1692.12,44.0,-0.302,-0.092,-0.102,-24.62,0.95,B_New
+B_Volatility Breakout (TTM Squeeze),ICP_USDT,307,-731.4,42.0,-0.302,-0.038,-0.079,-19.1,0.89,B_New
+B_Trend RF Model,ETH_USDT,1001,-1798.67,44.6,-0.308,-0.052,-0.076,-29.66,0.92,B_New
+B_Ensemble B (VWAP+Don+Kelt+Fund+OFI),ICP_USDT,2964,-1223.5,56.7,-0.313,-0.088,-0.11,-23.58,0.96,B_New
+B_Elliott Wave + Base ML,NEAR_USDT,485,-1482.8,50.3,-0.314,-0.042,-0.112,-25.49,0.89,B_New
+B_Keltner Channel Breakout,SUI_USDT,401,-864.39,42.1,-0.322,-0.077,-0.175,-16.98,0.92,B_New
+B_Trend RF Model,HBAR_USDT,852,-1682.51,50.0,-0.327,-0.054,-0.099,-27.81,0.92,B_New
+B_Base RF Model,ATOM_USDT,1008,-1844.71,49.7,-0.33,-0.055,-0.109,-26.38,0.91,B_New
+MACD_MetaFiltered,ETH_USDT,2,-40.68,50.0,-0.339,0.0,-0.115,-0.41,0.0,B_New
+Ensemble_MetaFiltered,ETH_USDT,1,-169.11,0.0,-0.339,0.0,-0.116,-1.69,0.0,B_New
+RSI_MetaFiltered,BTC_USDT,1,-0.51,0.0,-0.339,0.0,-0.115,-0.01,0.0,B_New
+A_Ensemble A (RSI+MACD+BB),BTC_USDT,4192,-1252.49,36.7,-0.342,-0.125,-0.063,-24.44,0.95,A_Original
+B_Base RF Model,SOL_USDT,805,-1842.67,50.3,-0.362,-0.056,-0.142,-24.6,0.9,B_New
+B_Ensemble B (VWAP+Don+Kelt+Fund+OFI),LINK_USDT,4391,-1980.89,56.0,-0.367,-0.112,-0.088,-34.12,0.95,B_New
+A_MACD Momentum,LTC_USDT,3635,-2110.94,31.8,-0.372,-0.196,-0.082,-34.17,0.95,A_Original
+B_Elliott Wave + Base ML,TRX_USDT,441,-1439.94,42.4,-0.373,-0.042,-0.098,-19.88,0.86,B_New
+B_Base RF Model,BTC_USDT,1096,-1665.21,48.0,-0.38,-0.06,-0.11,-18.87,0.9,B_New
+B_OFI Momentum,UNI_USDT,1728,-1988.91,43.3,-0.405,-0.097,-0.145,-26.77,0.92,B_New
+RSI_MetaFiltered,DOGE_USDT,2,-29.05,0.0,-0.408,-0.003,-0.147,-0.29,0.0,B_New
+B_Trend RF Model,ADA_USDT,1015,-2382.79,49.1,-0.411,-0.062,-0.105,-31.59,0.9,B_New
+B_Keltner Channel Breakout,LTC_USDT,1060,-2195.62,43.4,-0.418,-0.086,-0.127,-23.0,0.9,B_New
+B_VWAP Reversion,BTC_USDT,2158,-1475.62,64.1,-0.421,-0.068,-0.079,-23.18,0.93,B_New
+B_Futures Short RF Model,DOT_USDT,48,-476.93,39.6,-0.421,-0.022,-0.179,-4.77,0.69,B_New
+B_Trend RF Model,ATOM_USDT,859,-2231.51,49.4,-0.424,-0.072,-0.126,-28.08,0.89,B_New
+A_MACD Momentum,HBAR_USDT,2929,-2434.92,32.4,-0.427,-0.256,-0.112,-36.98,0.92,A_Original
+B_MTF SMA-200 Filter,TRX_USDT,3310,-2584.48,22.6,-0.436,-0.181,-0.118,-31.64,0.92,B_New
+B_Trend RF Model,SUI_USDT,388,-1066.57,49.7,-0.444,-0.072,-0.187,-19.74,0.89,B_New
+B_Ensemble B (VWAP+Don+Kelt+Fund+OFI),AVAX_USDT,3407,-1927.69,55.8,-0.446,-0.132,-0.116,-32.4,0.95,B_New
+B_Ensemble B (VWAP+Don+Kelt+Fund+OFI),SUI_USDT,1793,-1047.1,55.0,-0.455,-0.145,-0.235,-15.46,0.94,B_New
+B_Base RF Model,LINK_USDT,969,-2600.94,50.6,-0.456,-0.075,-0.123,-32.93,0.89,B_New
+B_VWAP Reversion,BNB_USDT,2549,-2028.24,65.3,-0.461,-0.076,-0.095,-27.76,0.92,B_New
+B_Ensemble B (VWAP+Don+Kelt+Fund+OFI),SHIB_USDT,2693,-1638.46,54.4,-0.464,-0.137,-0.143,-24.65,0.93,B_New
+B_Futures Short RF Model,UNI_USDT,64,-568.8,42.2,-0.468,-0.021,-0.155,-6.69,0.67,B_New
+B_Elliott Wave + Base ML,HBAR_USDT,565,-1960.07,49.9,-0.48,-0.061,-0.137,-23.8,0.86,B_New
+B_Volatility Breakout (TTM Squeeze),NEAR_USDT,307,-1384.87,43.3,-0.484,-0.06,-0.163,-16.31,0.83,B_New
+B_Elliott Wave + Base ML,LINK_USDT,592,-2281.85,47.5,-0.485,-0.065,-0.136,-25.72,0.84,B_New
+B_OFI Momentum,APT_USDT,1102,-1392.78,39.5,-0.485,-0.171,-0.146,-28.48,0.92,B_New
+B_Ensemble B (VWAP+Don+Kelt+Fund+OFI),HBAR_USDT,3854,-2408.61,56.2,-0.488,-0.132,-0.106,-38.6,0.94,B_New
+A_MACD Momentum,SUI_USDT,1305,-1212.98,32.6,-0.493,-0.287,-0.264,-16.03,0.92,A_Original
+B_Trend RF Model,NEAR_USDT,677,-2463.77,51.0,-0.501,-0.078,-0.166,-29.92,0.87,B_New
+A_MACD Momentum,UNI_USDT,2410,-2232.14,33.7,-0.505,-0.201,-0.168,-26.26,0.92,A_Original
+B_Trend RF Model,APT_USDT,447,-1443.83,48.1,-0.505,-0.088,-0.213,-20.26,0.88,B_New
+B_Trend RF Model,BTC_USDT,976,-2148.44,46.6,-0.512,-0.078,-0.117,-23.38,0.86,B_New
+B_Ensemble B (VWAP+Don+Kelt+Fund+OFI),ADA_USDT,4558,-2660.07,54.8,-0.516,-0.149,-0.113,-33.5,0.93,B_New
+B_Funding Rate Arb,APT_USDT,11,-361.6,36.4,-0.522,-0.013,-0.172,-6.02,0.44,B_New
+B_MTF SMA-200 Filter,LTC_USDT,3796,-3376.89,21.5,-0.527,-0.241,-0.113,-42.62,0.92,B_New
+B_Ichimoku Cloud,UNI_USDT,1147,-2693.12,36.3,-0.528,-0.155,-0.15,-36.34,0.9,B_New
+B_VWAP Reversion,ATOM_USDT,2804,-2431.14,66.4,-0.531,-0.099,-0.107,-36.42,0.93,B_New
+B_OFI Momentum,TRX_USDT,2477,-2220.7,40.4,-0.535,-0.166,-0.132,-23.74,0.9,B_New
+B_Funding Rate Arb,BNB_USDT,4,-89.05,0.0,-0.537,-0.005,-0.119,-0.89,0.0,B_New
+B_VWAP Reversion,SUI_USDT,1255,-1214.72,65.9,-0.54,-0.099,-0.291,-14.55,0.92,B_New
+B_Elliott Wave + Base ML,ADA_USDT,656,-2674.24,46.6,-0.549,-0.066,-0.111,-34.16,0.84,B_New
+B_Keltner Channel Breakout,ATOM_USDT,927,-2745.96,44.7,-0.55,-0.116,-0.157,-28.48,0.87,B_New
+A_Bollinger Band Reversion,APT_USDT,488,-1189.61,63.7,-0.553,-0.067,-0.203,-17.36,0.87,A_Original
+B_VWAP Reversion,DOT_USDT,2178,-2044.81,66.1,-0.556,-0.098,-0.172,-22.93,0.91,B_New
+B_Donchian Breakout,SUI_USDT,220,-1156.2,40.5,-0.559,-0.092,-0.25,-16.09,0.83,B_New
+B_MTF SMA-200 Filter,SUI_USDT,1270,-1726.82,24.0,-0.57,-0.258,-0.253,-24.24,0.91,B_New
+B_Ensemble B (VWAP+Don+Kelt+Fund+OFI),APT_USDT,2004,-1377.76,56.5,-0.573,-0.166,-0.166,-24.72,0.93,B_New
+B_MACD Centerline Cross + Divergence,UNI_USDT,2334,-2431.49,48.9,-0.581,-0.157,-0.179,-26.97,0.9,B_New
+B_Base RF Model,BNB_USDT,1080,-3095.39,46.9,-0.588,-0.085,-0.126,-33.92,0.82,B_New
+A_Ensemble A (RSI+MACD+BB),APT_USDT,1756,-1248.46,36.7,-0.592,-0.24,-0.161,-23.09,0.93,A_Original
+B_Ensemble B (VWAP+Don+Kelt+Fund+OFI),XRP_USDT,4158,-2702.23,54.7,-0.594,-0.152,-0.113,-34.11,0.91,B_New
+A_Ensemble A (RSI+MACD+BB),UNI_USDT,2839,-2239.85,36.9,-0.597,-0.212,-0.142,-30.99,0.92,A_Original
+A_RSI Mean Reversion,SUI_USDT,46,-541.05,43.5,-0.607,-0.03,-0.225,-8.19,0.65,A_Original
+B_Donchian Breakout,UNI_USDT,483,-2374.98,44.7,-0.608,-0.079,-0.155,-30.43,0.81,B_New
+B_Futures Short RF Model,TRX_USDT,8,-348.46,12.5,-0.61,-0.009,-0.12,-3.75,0.13,B_New
+B_Elliott Wave + Base ML,BNB_USDT,543,-2543.83,45.9,-0.611,-0.075,-0.118,-28.93,0.8,B_New
+B_Trend RF Model,SOL_USDT,678,-2839.08,49.6,-0.614,-0.093,-0.172,-32.98,0.84,B_New
+B_Ichimoku Cloud,SUI_USDT,627,-1757.83,37.3,-0.633,-0.227,-0.265,-23.6,0.88,B_New
+B_Base RF Model,TRX_USDT,1037,-2702.81,44.2,-0.637,-0.1,-0.128,-30.53,0.84,B_New
+A_Ensemble A (RSI+MACD+BB),TRX_USDT,4053,-2283.22,37.0,-0.637,-0.234,-0.127,-25.51,0.91,A_Original
+B_MTF SMA-200 Filter,UNI_USDT,2380,-3650.18,23.7,-0.64,-0.213,-0.212,-36.61,0.89,B_New
+B_VWAP Reversion,LTC_USDT,2910,-2857.52,65.0,-0.644,-0.115,-0.122,-32.21,0.9,B_New
+B_Trend RF Model,DOT_USDT,712,-2742.01,50.1,-0.662,-0.09,-0.195,-28.06,0.82,B_New
+B_Donchian Breakout,LTC_USDT,506,-2586.5,41.5,-0.667,-0.082,-0.132,-26.59,0.78,B_New
+B_VWAP Reversion,UNI_USDT,2304,-2978.56,65.7,-0.685,-0.113,-0.197,-30.95,0.88,B_New
+B_Base RF Model,UNI_USDT,774,-3510.23,50.0,-0.691,-0.089,-0.211,-35.2,0.8,B_New
+B_Elliott Wave + Base ML,ATOM_USDT,584,-2937.93,49.5,-0.693,-0.094,-0.142,-34.16,0.79,B_New
+B_Trend RF Model,LINK_USDT,867,-3454.19,48.2,-0.694,-0.118,-0.152,-37.27,0.83,B_New
+B_Ensemble B (VWAP+Don+Kelt+Fund+OFI),ATOM_USDT,4150,-3100.7,56.0,-0.706,-0.196,-0.14,-37.0,0.92,B_New
+B_Ensemble B (VWAP+Don+Kelt+Fund+OFI),BNB_USDT,4498,-3259.26,52.5,-0.708,-0.193,-0.123,-37.1,0.9,B_New
+B_Trend RF Model,BNB_USDT,969,-3461.49,45.3,-0.709,-0.106,-0.135,-36.28,0.8,B_New
+A_Bollinger Band Reversion,TRX_USDT,1030,-2312.69,58.2,-0.738,-0.092,-0.135,-24.23,0.82,A_Original
+A_MACD Momentum,ICP_USDT,2159,-2749.44,33.7,-0.756,-0.42,-0.179,-35.06,0.89,A_Original
+B_Ensemble B (VWAP+Don+Kelt+Fund+OFI),DOT_USDT,3285,-2734.19,54.7,-0.759,-0.214,-0.171,-31.98,0.9,B_New
+B_OFI Momentum,NEAR_USDT,1771,-3182.96,41.5,-0.759,-0.244,-0.171,-39.03,0.88,B_New
+B_Elliott Wave + Base ML,DOT_USDT,470,-2661.02,47.2,-0.762,-0.088,-0.183,-28.92,0.75,B_New
+B_VWAP Reversion,APT_USDT,1406,-1681.73,66.1,-0.767,-0.148,-0.216,-23.48,0.89,B_New
+B_Ensemble B (VWAP+Don+Kelt+Fund+OFI),BTC_USDT,4152,-2747.99,50.3,-0.777,-0.209,-0.124,-29.21,0.9,B_New
+A_Ensemble A (RSI+MACD+BB),SUI_USDT,1521,-1433.11,35.8,-0.781,-0.343,-0.269,-18.71,0.91,A_Original
+B_Trend RF Model,UNI_USDT,703,-3803.78,49.2,-0.781,-0.099,-0.212,-38.58,0.78,B_New
+A_Bollinger Band Reversion,UNI_USDT,752,-2700.46,60.6,-0.805,-0.096,-0.2,-27.24,0.8,A_Original
+B_OFI Momentum,HBAR_USDT,2100,-3977.1,41.9,-0.834,-0.267,-0.159,-46.62,0.85,B_New
+B_Elliott Wave + Base ML,UNI_USDT,497,-4411.37,46.3,-0.838,-0.079,-0.223,-44.11,0.68,B_New
+B_Trend RF Model,TRX_USDT,891,-3289.12,41.9,-0.847,-0.129,-0.127,-38.99,0.79,B_New
+B_OFI Momentum,ICP_USDT,1574,-2915.03,41.7,-0.861,-0.266,-0.188,-35.54,0.87,B_New
+B_Volatility Breakout (TTM Squeeze),LTC_USDT,514,-3054.38,37.0,-0.897,-0.117,-0.136,-31.43,0.72,B_New
+B_Ensemble B (VWAP+Don+Kelt+Fund+OFI),LTC_USDT,4525,-3895.77,55.3,-0.897,-0.24,-0.143,-40.19,0.89,B_New
+B_Elliott Wave + Base ML,SUI_USDT,280,-1925.43,46.4,-0.967,-0.132,-0.272,-25.35,0.75,B_New
+B_OFI Momentum,ATOM_USDT,2153,-4084.22,42.2,-0.968,-0.265,-0.169,-42.78,0.84,B_New
+B_Futures Short RF Model,SUI_USDT,13,-355.48,23.1,-1.02,-0.056,-0.311,-3.87,0.31,B_New
+B_VWAP Reversion,ETH_USDT,2647,-3783.25,63.3,-1.022,-0.179,-0.129,-41.24,0.85,B_New
+B_Volatility Breakout (TTM Squeeze),ATOM_USDT,424,-3380.08,42.2,-1.147,-0.122,-0.161,-35.51,0.65,B_New
+B_Ensemble B (VWAP+Don+Kelt+Fund+OFI),UNI_USDT,3449,-4444.28,55.8,-1.182,-0.297,-0.22,-45.19,0.84,B_New
+B_Volatility Breakout (TTM Squeeze),SUI_USDT,176,-1770.2,34.1,-1.203,-0.146,-0.317,-19.91,0.62,B_New
+B_Ensemble B (VWAP+Don+Kelt+Fund+OFI),ETH_USDT,4469,-4990.49,51.8,-1.321,-0.345,-0.149,-51.37,0.82,B_New
+B_VWAP Reversion,TRX_USDT,2104,-4760.84,62.2,-1.504,-0.235,-0.164,-48.05,0.76,B_New
+B_Ensemble B (VWAP+Don+Kelt+Fund+OFI),TRX_USDT,4097,-5154.59,48.7,-1.579,-0.415,-0.17,-51.65,0.79,B_New

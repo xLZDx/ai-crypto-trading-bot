@@ -80,9 +80,9 @@ if ($nvSmi) {
     Write-Host "  nvidia-smi not on PATH - skipping GPU check." -ForegroundColor DarkGray
 }
 
-# Parquet store is file-based — nothing to stop. Was a QuestDB note pre-migration.
+# Parquet store is file-based - nothing to stop. Was a QuestDB note pre-migration.
 Write-Host ""
-Write-Host "[4/4] Parquet store is file-based — no daemon to stop." -ForegroundColor DarkGray
+Write-Host "[4/4] Parquet store is file-based - no daemon to stop." -ForegroundColor DarkGray
 
 # Clean PID file so the next restart starts clean.
 if (Test-Path $pidFile) {

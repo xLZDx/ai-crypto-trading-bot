@@ -1,0 +1,31 @@
+{
+  "symbols": [
+    "BTC_USDT",
+    "SOL_USDT",
+    "ADA_USDT",
+    "ETH_USDT",
+    "BNB_USDT",
+    "XRP_USDT",
+    "DOGE_USDT",
+    "TRX_USDT",
+    "AVAX_USDT",
+    "SHIB_USDT",
+    "DOT_USDT",
+    "LINK_USDT",
+    "NEAR_USDT",
+    "UNI_USDT",
+    "LTC_USDT",
+    "APT_USDT",
+    "ATOM_USDT",
+    "HBAR_USDT",
+    "ICP_USDT",
+    "SUI_USDT"
+  ],
+  "timeframe": "1h",
+  "input_chunk_length": 168,
+  "output_chunk_length": 24,
+  "n_epochs": 30,
+  "model_path": "D:\\test 2\\AI trading assistance\\models\\tft_model.pt",
+  "device": "GPU",
+  "last_trained": "2026-05-03T10:37:48.036726+00:00"
+}

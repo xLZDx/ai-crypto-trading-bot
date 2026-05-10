@@ -1,0 +1,62 @@
+{
+  "sources": {
+    "bybit": {
+      "enabled": true,
+      "priority": 0,
+      "poll_sec": 300
+    },
+    "okx": {
+      "enabled": true,
+      "priority": 0,
+      "poll_sec": 300
+    },
+    "coinbase": {
+      "enabled": true,
+      "priority": 0,
+      "poll_sec": 300
+    },
+    "kraken": {
+      "enabled": true,
+      "priority": 0,
+      "poll_sec": 300
+    },
+    "coingecko": {
+      "enabled": true,
+      "priority": 0,
+      "poll_sec": 600
+    },
+    "fear_greed": {
+      "enabled": true,
+      "priority": 0,
+      "poll_sec": 3600
+    },
+    "fred": {
+      "enabled": true,
+      "priority": 1,
+      "poll_sec": 14400
+    },
+    "defillama": {
+      "enabled": true,
+      "priority": 1,
+      "poll_sec": 3600
+    },
+    "cryptocompare_news": {
+      "enabled": true,
+      "priority": 1,
+      "poll_sec": 600
+    },
+    "coinglass": {
+      "enabled": false,
+      "priority": 2,
+      "poll_sec": 600
+    },
+    "reddit": {
+      "enabled": false,
+      "priority": 2,
+      "poll_sec": 1800
+    }
+  },
+  "history_days": 365,
+  "store_local": true,
+  "google_drive_archive": false
+}

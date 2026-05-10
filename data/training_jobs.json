@@ -1,0 +1,162 @@
+{
+    "jobs": {
+        "orphan-17512": {
+            "job_id": "orphan-17512",
+            "model": "regime",
+            "status": "done",
+            "created_at": 1778270835.6288404,
+            "queued_at": 1778270835.6288404,
+            "started_at": 1778270835.6288404,
+            "child_pid": 17512,
+            "resource_kind": "cpu",
+            "progress": 0,
+            "total": 1,
+            "tf": null,
+            "progress_label": "reattached (orphan from prior boot)",
+            "finished_at": 1778272697.7166433,
+            "successes": 1
+        },
+        "orphan-35672": {
+            "job_id": "orphan-35672",
+            "model": "regime",
+            "status": "done",
+            "created_at": 1778270835.2242188,
+            "queued_at": 1778270835.2242188,
+            "started_at": 1778270835.2242188,
+            "child_pid": 35672,
+            "resource_kind": "cpu",
+            "progress": 0,
+            "total": 1,
+            "tf": null,
+            "progress_label": "reattached (orphan from prior boot)",
+            "finished_at": 1778272697.8423655,
+            "successes": 1
+        },
+        "orphan-39424": {
+            "job_id": "orphan-39424",
+            "model": "trend",
+            "status": "done",
+            "created_at": 1778270835.8206697,
+            "queued_at": 1778270835.8206697,
+            "started_at": 1778270835.8206697,
+            "child_pid": 39424,
+            "resource_kind": "cpu",
+            "progress": 0,
+            "total": 1,
+            "tf": null,
+            "progress_label": "reattached (orphan from prior boot)",
+            "finished_at": 1778273005.9484918,
+            "successes": 1
+        },
+        "orphan-71448": {
+            "job_id": "orphan-71448",
+            "model": "trend",
+            "status": "done",
+            "created_at": 1778270835.372445,
+            "queued_at": 1778270835.372445,
+            "started_at": 1778270835.372445,
+            "child_pid": 71448,
+            "resource_kind": "cpu",
+            "progress": 0,
+            "total": 1,
+            "tf": null,
+            "progress_label": "reattached (orphan from prior boot)",
+            "finished_at": 1778273005.83257,
+            "successes": 1
+        },
+        "579305eb267d": {
+            "job_id": "579305eb267d",
+            "model": "pipeline",
+            "status": "error",
+            "queued_at": 1778270874.1456497,
+            "created_at": 1778270874.145651,
+            "resource_kind": "exclusive",
+            "progress_label": "pipeline orchestrator",
+            "tf": null,
+            "total": 1,
+            "n": 1,
+            "started_at": 1778270874.2217677,
+            "log_path": "D:\\test 2\\AI trading assistance\\logs\\pipeline_1778270874.log",
+            "child_pid": 72480,
+            "finished_at": 1778270979.5996838,
+            "errors": [
+                "orchestrator exit code 4294967295"
+            ]
+        },
+        "2dd51a9f8f34": {
+            "job_id": "2dd51a9f8f34",
+            "model": "pipeline",
+            "status": "error",
+            "queued_at": 1778271238.5864174,
+            "created_at": 1778271238.5864182,
+            "resource_kind": "exclusive",
+            "progress_label": "pipeline orchestrator",
+            "tf": null,
+            "total": 1,
+            "n": 1,
+            "started_at": 1778271238.6121447,
+            "log_path": "D:\\test 2\\AI trading assistance\\logs\\pipeline_1778271238.log",
+            "child_pid": 71892,
+            "finished_at": 1778271310.6648679,
+            "errors": [
+                "orchestrator exit code 4294967295"
+            ]
+        },
+        "0d05ef1c8e7d": {
+            "job_id": "0d05ef1c8e7d",
+            "model": "pipeline",
+            "status": "done",
+            "queued_at": 1778271324.4793553,
+            "created_at": 1778271324.479356,
+            "resource_kind": "exclusive",
+            "progress_label": "pipeline orchestrator",
+            "tf": null,
+            "total": 1,
+            "n": 1,
+            "started_at": 1778271324.5033422,
+            "log_path": "D:\\test 2\\AI trading assistance\\logs\\pipeline_1778271324.log",
+            "child_pid": 37604,
+            "finished_at": 1778272467.9899209,
+            "successes": 1
+        },
+        "17d2982e5d4f": {
+            "job_id": "17d2982e5d4f",
+            "model": "pipeline",
+            "status": "error",
+            "queued_at": 1778272550.9082606,
+            "created_at": 1778272550.9082615,
+            "resource_kind": "exclusive",
+            "progress_label": "pipeline orchestrator",
+            "tf": null,
+            "total": 1,
+            "n": 1,
+            "started_at": 1778272550.9389608,
+            "log_path": "D:\\test 2\\AI trading assistance\\logs\\pipeline_1778272550.log",
+            "child_pid": 14300,
+            "finished_at": 1778272594.9593153,
+            "errors": [
+                "orchestrator exit code 4294967295"
+            ]
+        },
+        "b1002e2d2f8c": {
+            "job_id": "b1002e2d2f8c",
+            "model": "pipeline",
+            "status": "error",
+            "queued_at": 1778286521.2011378,
+            "created_at": 1778286521.2011387,
+            "resource_kind": "exclusive",
+            "progress_label": "pipeline orchestrator",
+            "tf": null,
+            "total": 1,
+            "n": 1,
+            "started_at": 1778286521.2412796,
+            "log_path": "D:\\test 2\\AI trading assistance\\logs\\pipeline_1778286521.log",
+            "child_pid": 72488,
+            "finished_at": 1778316063.0744615,
+            "errors": [
+                "orchestrator exit code 4294967295"
+            ]
+        }
+    },
+    "saved_at": 1778316063.0756245
+}

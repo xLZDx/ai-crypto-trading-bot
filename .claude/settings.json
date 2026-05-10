@@ -1,6 +1,8 @@
 {
   "permissions": {
     "allow": [
+      "Bash(*)",
+      "PowerShell(*)",
       "Bash(taskkill /PID 25840 /F)",
       "PowerShell(Stop-Process -Id 25840 -Force -ErrorAction SilentlyContinue)",
       "PowerShell(Start-Sleep -Seconds 1; Set-Location \"d:\\\\test 2\\\\AI trading assistance\"; Start-Process -FilePath \"venv\\\\Scripts\\\\python.exe\" -ArgumentList \"src/dashboard/app.py\" -WorkingDirectory \"d:\\\\test 2\\\\AI trading assistance\" -WindowStyle Hidden; Start-Sleep -Seconds 3; \\(Invoke-WebRequest -Uri \"http://localhost:5000/api/ai_status\" -UseBasicParsing -TimeoutSec 5\\).Content | ConvertFrom-Json | Select-Object active_model, model, available)",

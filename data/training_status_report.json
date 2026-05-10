@@ -1,0 +1,76 @@
+{
+  "generated_at": "2026-05-09T22:30:47.152160+00:00",
+  "host": "RAZER",
+  "execution": "LOCAL_ONLY",
+  "status": "not_started",
+  "epochs_target": 30,
+  "epochs_completed": 0,
+  "log": {
+    "log_present": false,
+    "log_path": "D:\\test 2\\AI trading assistance\\logs\\tft_3epoch.log",
+    "log_size_bytes": 0,
+    "lines_total": 0,
+    "epochs_observed": 0,
+    "epochs_completed": 0,
+    "current_epoch": null,
+    "current_progress_pct": null,
+    "last_train_loss": null,
+    "last_val_loss": null,
+    "last_line_excerpt": ""
+  },
+  "model": {
+    "present": true,
+    "path": "D:\\test 2\\AI trading assistance\\models\\tft_model.pt",
+    "size_bytes": 6814907,
+    "mtime_iso": "2026-05-03T10:37:47.796481+00:00",
+    "age_s": 561177.3
+  },
+  "checkpoint": {
+    "present": true,
+    "path": "D:\\test 2\\AI trading assistance\\models\\tft_model.pt.ckpt",
+    "size_bytes": 7810284,
+    "mtime_iso": "2026-05-03T10:37:48.016282+00:00",
+    "age_s": 561177.0
+  },
+  "meta": {
+    "symbols": [
+      "BTC_USDT",
+      "SOL_USDT",
+      "ADA_USDT",
+      "ETH_USDT",
+      "BNB_USDT",
+      "XRP_USDT",
+      "DOGE_USDT",
+      "TRX_USDT",
+      "AVAX_USDT",
+      "SHIB_USDT",
+      "DOT_USDT",
+      "LINK_USDT",
+      "NEAR_USDT",
+      "UNI_USDT",
+      "LTC_USDT",
+      "APT_USDT",
+      "ATOM_USDT",
+      "HBAR_USDT",
+      "ICP_USDT",
+      "SUI_USDT"
+    ],
+    "timeframe": "1h",
+    "input_chunk_length": 168,
+    "output_chunk_length": 24,
+    "n_epochs": 30,
+    "model_path": "D:\\test 2\\AI trading assistance\\models\\tft_model.pt",
+    "device": "GPU",
+    "last_trained": "2026-05-03T10:37:48.036726+00:00",
+    "present": true
+  },
+  "dashboard": {
+    "reachable": false,
+    "error": "TimeoutError: timed out"
+  },
+  "summary_bullets": [
+    "NOT STARTED \u2014 no log activity detected.",
+    "Model file present: 6.8 MB, mtime 2026-05-03T10:37:47.796481+00:00",
+    "Dashboard NOT reachable: TimeoutError: timed out."
+  ]
+}

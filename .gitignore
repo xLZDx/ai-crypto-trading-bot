@@ -18,3 +18,21 @@ logs/
 
 # Models (Large binary files)
 models/*.joblib
+models/*.pt
+models/*.ckpt
+
+# Generated parquet / DuckDB stores (runtime data, multi-GB)
+data/parquet/
+data/db/
+data/cache/
+questdb/
+*.duckdb
+
+# Build / training artefacts
+build/
+darts_logs/
+
+# Stray editor / pip artefacts
+=*
+* - Copy.md
+.claude/scheduled_tasks.lock

@@ -1,0 +1,23 @@
+{
+  "state": "RUNNING",
+  "config": {
+    "symbol": "BTC_USDT",
+    "timeframe": "1m",
+    "speed": 1000.0,
+    "scenario": "AUTO",
+    "start_date": null,
+    "end_date": null
+  },
+  "scenario": {
+    "type": "VOLATILE",
+    "symbol": "ETH_USDT",
+    "timeframe": "1m",
+    "start": "2026-05-18T03:52:58+00:00",
+    "end": "2026-05-19T13:12:58+00:00",
+    "window_bars": 2000
+  },
+  "bars_emitted": 0,
+  "current_ts": "",
+  "bars_per_sec": 0.0,
+  "error": ""
+}

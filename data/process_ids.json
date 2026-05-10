@@ -1,8 +1,8 @@
 {
-  "dash": 33888,
+  "dash": 11804,
   "training": 35956,
   "realtime": 60840,
-  "bot": 29528,
+  "bot": 65256,
   "orderbook": 31444,
   "debug": 7104,
   "orch": 27272,

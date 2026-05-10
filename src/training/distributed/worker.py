@@ -217,7 +217,7 @@ def _invoke_master_trainer(model_type: str, timeframe: str, symbol: str,
         logger.info("[Worker] no master trainer registered for model_type=%r — using legacy handler", model_type)
         return None
     mod_name, fn_name = spec
-    import importlib, time as _time, json as _json
+    import importlib, time as _time, json as _json, os as _os
     t0 = _time.time()
     try:
         mod = importlib.import_module(mod_name)
@@ -225,6 +225,19 @@ def _invoke_master_trainer(model_type: str, timeframe: str, symbol: str,
     except Exception as exc:
         logger.warning("[Worker] master trainer import failed (%s.%s): %s", mod_name, fn_name, exc)
         return None
+    # 2026-05-10 — Bug #1 fix. Master trainers use relative paths
+    # ('data/raw/BTC_USDT_1h.csv.gz') resolved against the current working
+    # directory. On a remote worker, cwd is the worker's local dir, NOT
+    # the SMB-mounted Z: share, so every load failed with "No training
+    # data found for ALL/<tf>". Chdir to PROJECT_ROOT (which is Z:\ on
+    # the worker via SMB) so relative paths resolve correctly. Restore
+    # cwd after so we don't pollute the worker process state.
+    saved_cwd = _os.getcwd()
+    try:
+        _os.chdir(str(PROJECT_ROOT))
+    except Exception as exc:
+        logger.warning("[Worker] chdir(%s) failed: %s — trainer may fail to find data",
+                       PROJECT_ROOT, exc)
     # Some trainers (oft, regime) don't accept timeframe — call accordingly.
     try:
         if model_type in ("oft",):
@@ -247,6 +260,11 @@ def _invoke_master_trainer(model_type: str, timeframe: str, symbol: str,
             "duration_s": round(_time.time() - t0, 2),
             "trainer_path": f"{mod_name}.{fn_name}",
         }
+    finally:
+        try:
+            _os.chdir(saved_cwd)
+        except Exception:
+            pass
     duration = _time.time() - t0
     # Read the meta JSON the trainer just wrote to extract metrics —
     # standard contract: every trainer writes models/<key>_<tf>_meta.json

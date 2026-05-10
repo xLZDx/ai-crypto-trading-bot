@@ -3,375 +3,397 @@
     "strategy": "RSI_MeanReversion",
     "symbol": "SUI_USDT",
     "n_folds": 5,
-    "wf_mean_sharpe": -0.105,
-    "wf_std_sharpe": 0.769,
-    "wf_mean_pnl": -47.35,
-    "wf_consistency": 0.4,
-    "wf_decay": -122.05,
+    "wf_mean_sharpe": 0.152,
+    "wf_std_sharpe": 1.196,
+    "wf_mean_pnl": -34.81,
+    "wf_consistency": 0.6,
+    "wf_decay": -165.58,
     "fold_pnls": [
-      65.33,
-      -173.81,
-      -128.63,
-      57.11,
-      -56.72
-    ]
+      37.64,
+      15.74,
+      119.6,
+      -219.12,
+      -127.94
+    ],
+    "timeframe": "1h"
   },
   {
     "strategy": "MACD_Momentum",
     "symbol": "SUI_USDT",
     "n_folds": 5,
-    "wf_mean_sharpe": -0.819,
-    "wf_std_sharpe": 0.447,
-    "wf_mean_pnl": -309.42,
-    "wf_consistency": 0.0,
-    "wf_decay": 288.72,
+    "wf_mean_sharpe": -0.451,
+    "wf_std_sharpe": 0.965,
+    "wf_mean_pnl": -122.14,
+    "wf_consistency": 0.4,
+    "wf_decay": 12.3,
     "fold_pnls": [
-      -556.93,
-      -114.44,
-      -465.18,
-      -142.36,
-      -268.21
-    ]
+      69.02,
+      -310.29,
+      -435.75,
+      -15.0,
+      81.32
+    ],
+    "timeframe": "1h"
   },
   {
     "strategy": "BB_Reversion",
     "symbol": "SUI_USDT",
     "n_folds": 5,
-    "wf_mean_sharpe": -0.588,
-    "wf_std_sharpe": 1.174,
-    "wf_mean_pnl": -138.76,
-    "wf_consistency": 0.2,
-    "wf_decay": -835.79,
+    "wf_mean_sharpe": -0.167,
+    "wf_std_sharpe": 0.488,
+    "wf_mean_pnl": -32.32,
+    "wf_consistency": 0.4,
+    "wf_decay": -123.92,
     "fold_pnls": [
-      443.36,
-      -208.19,
-      -293.12,
-      -243.43,
-      -392.43
-    ]
+      -11.66,
+      24.71,
+      61.24,
+      -100.31,
+      -135.58
+    ],
+    "timeframe": "1h"
   },
   {
     "strategy": "Ensemble_A",
     "symbol": "SUI_USDT",
     "n_folds": 5,
-    "wf_mean_sharpe": -1.38,
-    "wf_std_sharpe": 0.926,
-    "wf_mean_pnl": -416.73,
-    "wf_consistency": 0.0,
-    "wf_decay": 194.52,
+    "wf_mean_sharpe": -0.181,
+    "wf_std_sharpe": 1.17,
+    "wf_mean_pnl": -70.27,
+    "wf_consistency": 0.4,
+    "wf_decay": -198.63,
     "fold_pnls": [
-      -356.5,
-      -126.54,
-      -568.25,
-      -870.39,
-      -161.99
-    ]
+      221.1,
+      -360.28,
+      -204.6,
+      -30.05,
+      22.47
+    ],
+    "timeframe": "1h"
   },
   {
     "strategy": "VWAP_Reversion",
     "symbol": "SUI_USDT",
     "n_folds": 5,
-    "wf_mean_sharpe": -0.558,
-    "wf_std_sharpe": 1.285,
-    "wf_mean_pnl": -210.98,
-    "wf_consistency": 0.4,
-    "wf_decay": -488.44,
+    "wf_mean_sharpe": -0.161,
+    "wf_std_sharpe": 1.316,
+    "wf_mean_pnl": -66.76,
+    "wf_consistency": 0.6,
+    "wf_decay": -444.67,
     "fold_pnls": [
-      413.09,
-      45.84,
-      -1040.13,
-      -398.36,
-      -75.35
-    ]
+      -112.38,
+      12.06,
+      44.78,
+      278.79,
+      -557.05
+    ],
+    "timeframe": "1h"
   },
   {
     "strategy": "Donchian_Breakout",
     "symbol": "SUI_USDT",
     "n_folds": 5,
-    "wf_mean_sharpe": -0.049,
-    "wf_std_sharpe": 1.271,
-    "wf_mean_pnl": -16.87,
+    "wf_mean_sharpe": 0.289,
+    "wf_std_sharpe": 1.445,
+    "wf_mean_pnl": 46.81,
     "wf_consistency": 0.6,
-    "wf_decay": 60.63,
+    "wf_decay": -470.7,
     "fold_pnls": [
-      -9.3,
-      633.21,
-      -767.37,
-      7.8,
-      51.33
-    ]
+      138.88,
+      -129.56,
+      295.91,
+      260.66,
+      -331.83
+    ],
+    "timeframe": "1h"
   },
   {
     "strategy": "Keltner_Breakout",
     "symbol": "SUI_USDT",
     "n_folds": 5,
-    "wf_mean_sharpe": -0.16,
-    "wf_std_sharpe": 0.943,
-    "wf_mean_pnl": -71.09,
-    "wf_consistency": 0.6,
-    "wf_decay": -214.87,
+    "wf_mean_sharpe": 0.658,
+    "wf_std_sharpe": 1.71,
+    "wf_mean_pnl": 166.97,
+    "wf_consistency": 0.8,
+    "wf_decay": 545.5,
     "fold_pnls": [
-      187.84,
-      54.47,
-      213.99,
-      -784.73,
-      -27.03
-    ]
+      51.73,
+      371.32,
+      -592.45,
+      407.04,
+      597.23
+    ],
+    "timeframe": "1h"
   },
   {
     "strategy": "Funding_Arb",
     "symbol": "SUI_USDT",
     "n_folds": 5,
-    "wf_mean_sharpe": 0.0,
-    "wf_std_sharpe": 0.965,
+    "wf_mean_sharpe": -0.0,
+    "wf_std_sharpe": 1.245,
     "wf_mean_pnl": 14.36,
     "wf_consistency": 0.2,
-    "wf_decay": 0.0,
+    "wf_decay": -32.43,
     "fold_pnls": [
       0,
-      104.22,
-      -32.43,
       0,
-      0
-    ]
+      0,
+      104.22,
+      -32.43
+    ],
+    "timeframe": "1h"
   },
   {
     "strategy": "OFI_Momentum",
     "symbol": "SUI_USDT",
     "n_folds": 5,
-    "wf_mean_sharpe": -0.828,
-    "wf_std_sharpe": 0.884,
-    "wf_mean_pnl": -300.01,
+    "wf_mean_sharpe": -0.115,
+    "wf_std_sharpe": 1.235,
+    "wf_mean_pnl": -73.53,
     "wf_consistency": 0.2,
-    "wf_decay": 310.23,
+    "wf_decay": -324.79,
     "fold_pnls": [
-      -595.27,
-      270.52,
-      -501.97,
-      -388.27,
-      -285.04
-    ]
+      290.57,
+      -512.21,
+      -20.5,
+      -91.27,
+      -34.22
+    ],
+    "timeframe": "1h"
   },
   {
     "strategy": "Volatility_Breakout",
     "symbol": "SUI_USDT",
     "n_folds": 5,
-    "wf_mean_sharpe": -1.468,
-    "wf_std_sharpe": 1.97,
-    "wf_mean_pnl": -322.04,
-    "wf_consistency": 0.4,
-    "wf_decay": 673.8,
+    "wf_mean_sharpe": -1.851,
+    "wf_std_sharpe": 1.916,
+    "wf_mean_pnl": -218.18,
+    "wf_consistency": 0.2,
+    "wf_decay": -374.89,
     "fold_pnls": [
-      -657.22,
-      248.57,
-      -1007.39,
-      -210.73,
-      16.58
-    ]
+      -169.51,
+      -465.0,
+      141.36,
+      -53.36,
+      -544.4
+    ],
+    "timeframe": "1h"
   },
   {
     "strategy": "Ensemble_B",
     "symbol": "SUI_USDT",
     "n_folds": 5,
-    "wf_mean_sharpe": -0.238,
-    "wf_std_sharpe": 0.559,
-    "wf_mean_pnl": -103.99,
+    "wf_mean_sharpe": 0.1,
+    "wf_std_sharpe": 0.907,
+    "wf_mean_pnl": -17.67,
     "wf_consistency": 0.4,
-    "wf_decay": -147.04,
+    "wf_decay": -248.65,
     "fold_pnls": [
-      154.3,
-      -24.99,
-      -244.09,
-      -412.43,
-      7.26
-    ]
+      204.01,
+      -191.29,
+      -171.35,
+      114.91,
+      -44.64
+    ],
+    "timeframe": "1h"
   },
   {
     "strategy": "ElliottWave_ML",
     "symbol": "SUI_USDT",
     "n_folds": 5,
-    "wf_mean_sharpe": 0.017,
-    "wf_std_sharpe": 0.835,
-    "wf_mean_pnl": -14.92,
-    "wf_consistency": 0.2,
-    "wf_decay": -14.3,
+    "wf_mean_sharpe": 0.678,
+    "wf_std_sharpe": 1.871,
+    "wf_mean_pnl": 215.94,
+    "wf_consistency": 0.6,
+    "wf_decay": 747.19,
     "fold_pnls": [
-      0,
-      15.96,
-      0,
-      -76.26,
-      -14.3
-    ]
+      -88.41,
+      614.91,
+      -295.95,
+      190.35,
+      658.79
+    ],
+    "timeframe": "1h"
   },
   {
     "strategy": "Base_ML",
     "symbol": "SUI_USDT",
     "n_folds": 5,
-    "wf_mean_sharpe": -1.904,
-    "wf_std_sharpe": 0.736,
-    "wf_mean_pnl": -213.27,
-    "wf_consistency": 0.0,
-    "wf_decay": -1.15,
+    "wf_mean_sharpe": 1.863,
+    "wf_std_sharpe": 2.416,
+    "wf_mean_pnl": 449.16,
+    "wf_consistency": 0.8,
+    "wf_decay": 1143.55,
     "fold_pnls": [
-      -83.0,
-      -306.2,
-      -146.77,
-      -446.21,
-      -84.15
-    ]
+      362.97,
+      633.84,
+      -305.81,
+      48.3,
+      1506.51
+    ],
+    "timeframe": "1h"
   },
   {
     "strategy": "Trend_ML",
     "symbol": "SUI_USDT",
     "n_folds": 5,
-    "wf_mean_sharpe": 0.285,
-    "wf_std_sharpe": 0.738,
-    "wf_mean_pnl": 122.54,
+    "wf_mean_sharpe": 0.98,
+    "wf_std_sharpe": 2.016,
+    "wf_mean_pnl": 282.01,
     "wf_consistency": 0.8,
-    "wf_decay": -349.61,
+    "wf_decay": 387.38,
     "fold_pnls": [
-      196.49,
-      52.18,
-      311.1,
-      206.08,
-      -153.13
-    ]
+      348.19,
+      424.76,
+      -549.27,
+      450.8,
+      735.57
+    ],
+    "timeframe": "1h"
   },
   {
     "strategy": "Futures_Short_ML",
     "symbol": "SUI_USDT",
     "n_folds": 5,
-    "wf_mean_sharpe": -0.746,
-    "wf_std_sharpe": 1.837,
-    "wf_mean_pnl": -128.96,
-    "wf_consistency": 0.2,
-    "wf_decay": -1264.22,
+    "wf_mean_sharpe": -1.153,
+    "wf_std_sharpe": 0.984,
+    "wf_mean_pnl": -197.59,
+    "wf_consistency": 0.0,
+    "wf_decay": -94.3,
     "fold_pnls": [
-      729.42,
-      -21.38,
-      -16.1,
-      -801.95,
-      -534.8
-    ]
+      -9.09,
+      -300.98,
+      -116.04,
+      -458.46,
+      -103.39
+    ],
+    "timeframe": "1h"
   },
   {
     "strategy": "Scalping_ML",
     "symbol": "SUI_USDT",
     "n_folds": 5,
-    "wf_mean_sharpe": -1.08,
-    "wf_std_sharpe": 2.002,
-    "wf_mean_pnl": -361.53,
+    "wf_mean_sharpe": -1.21,
+    "wf_std_sharpe": 2.635,
+    "wf_mean_pnl": -292.32,
     "wf_consistency": 0.6,
-    "wf_decay": 1082.52,
+    "wf_decay": -1003.51,
     "fold_pnls": [
-      -1012.03,
-      265.62,
-      -1360.65,
-      228.9,
-      70.49
-    ]
+      105.71,
+      -1059.35,
+      169.4,
+      220.47,
+      -897.8
+    ],
+    "timeframe": "1h"
   },
   {
     "strategy": "GARCH_PositionSizing",
     "symbol": "SUI_USDT",
     "n_folds": 5,
-    "wf_mean_sharpe": 0.043,
-    "wf_std_sharpe": 1.941,
-    "wf_mean_pnl": 163.12,
-    "wf_consistency": 0.4,
-    "wf_decay": -1484.41,
+    "wf_mean_sharpe": 0.819,
+    "wf_std_sharpe": 2.552,
+    "wf_mean_pnl": 358.3,
+    "wf_consistency": 0.6,
+    "wf_decay": 1248.09,
     "fold_pnls": [
-      1051.56,
-      -116.82,
-      1096.74,
-      -783.03,
-      -432.84
-    ]
+      -122.29,
+      1155.88,
+      -618.18,
+      250.27,
+      1125.79
+    ],
+    "timeframe": "1h"
   },
   {
     "strategy": "MTF_SMA200_Filter",
     "symbol": "SUI_USDT",
     "n_folds": 5,
-    "wf_mean_sharpe": -0.548,
-    "wf_std_sharpe": 0.983,
-    "wf_mean_pnl": -293.55,
-    "wf_consistency": 0.2,
-    "wf_decay": 373.25,
+    "wf_mean_sharpe": 0.404,
+    "wf_std_sharpe": 1.343,
+    "wf_mean_pnl": 117.85,
+    "wf_consistency": 0.6,
+    "wf_decay": 703.95,
     "fold_pnls": [
-      -441.03,
-      440.98,
-      -395.46,
-      -1004.46,
-      -67.78
-    ]
+      45.7,
+      -498.15,
+      -140.21,
+      432.28,
+      749.65
+    ],
+    "timeframe": "1h"
   },
   {
     "strategy": "OU_MeanReversion_Filter",
     "symbol": "SUI_USDT",
     "n_folds": 5,
-    "wf_mean_sharpe": -0.042,
-    "wf_std_sharpe": 0.771,
-    "wf_mean_pnl": -14.5,
-    "wf_consistency": 0.4,
-    "wf_decay": -345.41,
+    "wf_mean_sharpe": 0.368,
+    "wf_std_sharpe": 1.02,
+    "wf_mean_pnl": 84.04,
+    "wf_consistency": 0.6,
+    "wf_decay": 229.78,
     "fold_pnls": [
-      345.0,
-      -104.71,
-      65.76,
-      -378.12,
-      -0.41
-    ]
+      121.57,
+      -63.45,
+      -266.34,
+      277.06,
+      351.35
+    ],
+    "timeframe": "1h"
   },
   {
     "strategy": "Ichimoku_Cloud",
     "symbol": "SUI_USDT",
     "n_folds": 5,
-    "wf_mean_sharpe": -0.64,
-    "wf_std_sharpe": 0.93,
-    "wf_mean_pnl": -287.56,
+    "wf_mean_sharpe": -0.534,
+    "wf_std_sharpe": 2.135,
+    "wf_mean_pnl": -149.03,
     "wf_consistency": 0.4,
-    "wf_decay": 946.24,
+    "wf_decay": 582.87,
     "fold_pnls": [
-      -707.58,
-      -440.71,
-      30.29,
-      -558.45,
-      238.66
-    ]
+      -73.47,
+      -511.74,
+      -1104.66,
+      435.33,
+      509.4
+    ],
+    "timeframe": "1h"
   },
   {
     "strategy": "Supertrend",
     "symbol": "SUI_USDT",
     "n_folds": 5,
-    "wf_mean_sharpe": 0.442,
-    "wf_std_sharpe": 1.003,
-    "wf_mean_pnl": 114.81,
-    "wf_consistency": 0.6,
-    "wf_decay": 848.04,
+    "wf_mean_sharpe": -0.15,
+    "wf_std_sharpe": 1.82,
+    "wf_mean_pnl": -22.78,
+    "wf_consistency": 0.4,
+    "wf_decay": 315.46,
     "fold_pnls": [
-      -323.31,
-      336.33,
-      172.83,
-      -136.56,
-      524.74
-    ]
+      -140.86,
+      -233.92,
+      -426.69,
+      512.98,
+      174.6
+    ],
+    "timeframe": "1h"
   },
   {
     "strategy": "MACD_Divergence",
     "symbol": "SUI_USDT",
     "n_folds": 5,
-    "wf_mean_sharpe": -0.07,
-    "wf_std_sharpe": 1.338,
-    "wf_mean_pnl": -16.2,
-    "wf_consistency": 0.6,
-    "wf_decay": -676.59,
+    "wf_mean_sharpe": 1.457,
+    "wf_std_sharpe": 1.129,
+    "wf_mean_pnl": 303.98,
+    "wf_consistency": 0.8,
+    "wf_decay": 219.4,
     "fold_pnls": [
-      800.94,
-      6.55,
-      -429.85,
-      -582.97,
-      124.35
-    ]
+      312.43,
+      517.26,
+      -105.43,
+      263.82,
+      531.83
+    ],
+    "timeframe": "1h"
   },
   {
     "strategy": "OU_Entry",
@@ -388,6 +410,7 @@
       0,
       0,
       0
-    ]
+    ],
+    "timeframe": "1h"
   }
 ]

@@ -1,0 +1,15 @@
+{
+    "mode": "real",
+    "timestamp": "2026-05-09T00:41:13.525268+00:00",
+    "cash_usdt": 10058.3915248,
+    "holdings": {
+        "BTC": 0.99928,
+        "ETH": 1.0,
+        "SOL": 5.0,
+        "ADA": 1885.0
+    },
+    "equity_usdt": 10058.3915248,
+    "pnl_24h": 0.0,
+    "drawdown_pct": 0.0,
+    "trade_count_24h": 0
+}

@@ -1,0 +1,25 @@
+{
+  "restart_history": [
+    {
+      "ts": 1778269226.6030374,
+      "reason": "3 consecutive failed health checks",
+      "killed_count": 0,
+      "new_pid": 63848
+    },
+    {
+      "ts": 1778317027.0544798,
+      "reason": "3 consecutive failed health checks",
+      "killed_count": 0,
+      "new_pid": 50640
+    },
+    {
+      "ts": 1778332873.4786787,
+      "reason": "3 consecutive failed health checks",
+      "killed_count": 2,
+      "new_pid": 78876
+    }
+  ],
+  "tripped": false,
+  "last_check_ts": 1778372996.6278374,
+  "last_restart_ts": 1778332873.4786894
+}

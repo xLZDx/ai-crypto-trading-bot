@@ -92,13 +92,31 @@ def _build_signal_dataset(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
     df_feat = feature_builder._build_all_features(df)
     df_feat['volatility_7'] = df_feat['return'].rolling(7).std()
 
+    # 2026-05-10 — Bug #2 fix. The trend model was trained with
+    # `signal_don` as a feature (computed from `don_pos_20` inside
+    # train_trend_model.py), but _build_all_features doesn't produce
+    # it — so column selection at line below raised
+    # KeyError: "['signal_don'] not in index" for every symbol when the
+    # meta-labeler tried to apply the trend model. Compute it here from
+    # don_pos_20 (which IS produced by _build_all_features) so the
+    # trend model has its full feature set.
+    if 'don_pos_20' in df_feat.columns and 'signal_don' not in df_feat.columns:
+        df_feat['signal_don'] = 0.0
+        df_feat.loc[df_feat['don_pos_20'] > 0.95, 'signal_don'] = 1.0
+        df_feat.loc[df_feat['don_pos_20'] < 0.05, 'signal_don'] = -1.0
+
     # --- 3. Generate primary model probabilities ---
+    # Defensive: use reindex(fill_value=0) instead of bare [cols] so a
+    # future model trained with a feature missing from _build_all_features
+    # doesn't crash the meta-labeler — degrades gracefully to a 0-valued
+    # feature instead. Pair with explicit feature computation above for
+    # known cases (signal_don) to preserve accuracy.
     base_features = MLPredictor(model_filename='btc_rf_model.joblib')._get_model_features()
-    X_base = df_feat[base_features].fillna(0)
+    X_base = df_feat.reindex(columns=base_features, fill_value=0).fillna(0)
     df_feat['prob_base'] = base_model.predict_proba(X_base)[:, 1]
 
     trend_features = MLPredictor(model_filename='trend_model.joblib')._get_model_features()
-    X_trend = df_feat[trend_features].fillna(0)
+    X_trend = df_feat.reindex(columns=trend_features, fill_value=0).fillna(0)
     df_feat['prob_trend'] = trend_model.predict_proba(X_trend)[:, 1]
 
     # --- 4. Generate regime context ---
