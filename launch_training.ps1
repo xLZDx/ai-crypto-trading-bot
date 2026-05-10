@@ -21,6 +21,34 @@ Set-Location $root
 
 . (Join-Path $root 'setup_env.ps1')
 
+# 2026-05-10 fix - also check the lock here so a manual relaunch from the
+# operator's shell doesn't bypass the gate. The Python side has its own
+# acquisition logic; this is a fast-fail in front of it. Pass --force to
+# override (passed straight through to the python script).
+$lockPath = Join-Path $root 'data\train_all_models.lock'
+$force    = ($args -contains '--force')
+if ((Test-Path $lockPath) -and (-not $force)) {
+    try {
+        $lockJson = Get-Content $lockPath -Raw | ConvertFrom-Json
+        $prevPid  = [int]$lockJson.pid
+        $alive    = $false
+        if ($prevPid -gt 0) {
+            $proc = Get-Process -Id $prevPid -ErrorAction SilentlyContinue
+            if ($proc) { $alive = $true }
+        }
+        if ($alive) {
+            Write-Host "" -ForegroundColor Yellow
+            Write-Host "Another train_all_models.py is already running (pid=$prevPid)." -ForegroundColor Yellow
+            Write-Host "Started: $($lockJson.started_iso)" -ForegroundColor Yellow
+            Write-Host "Pass --force to spawn a parallel run anyway, or kill that pid first." -ForegroundColor Yellow
+            Write-Host ""
+            exit 2
+        }
+    } catch {
+        Write-Host "Could not parse lock file ($($_.Exception.Message)) - proceeding." -ForegroundColor DarkYellow
+    }
+}
+
 # Pass any arguments from this script directly to the python script.
 # The script-block wrap is intentional - keeps stderr from being
 # surfaced as NativeCommandError noise to the operator console.

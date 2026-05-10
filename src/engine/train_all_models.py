@@ -82,12 +82,136 @@ if os.getenv('AI_TRADER_TRAIN_TF_MAP', '').lower() in ('strict', 'all', 'strict_
     log.info("AI_TRADER_TRAIN_TF_MAP override: strict all×all (49 combos)")
 
 
-def train_all(per_key_tfs: dict[str, tuple[str, ...]] | None = None):
+# 2026-05-10 fix — operator on the same machine had 6 zombie
+# train_all_models.py processes competing for CPU. Each launch (CLI or
+# dashboard "Retrain ALL") spawned without checking whether another was
+# already running. Concurrency lock at process level — refuses second
+# launch unless --force is passed.
+#
+# Lock file: data/train_all_models.lock — JSON {pid, started_iso, host}.
+# Stale-lock detection: if pid not alive, lock is reclaimed automatically.
+_LOCK_PATH = os.path.join(project_root, 'data', 'train_all_models.lock')
+_CURRENT_PATH = os.path.join(project_root, 'data', 'training_current.json')
+
+
+def _acquire_run_lock(force: bool = False) -> bool:
+    """Acquire the single-instance lock. Returns True on success.
+    Returns False (and logs reason) if another live instance holds it.
+    Auto-reclaims stale locks (pid not alive)."""
+    import json as _json, datetime as _dt, socket as _sock
+    if os.path.exists(_LOCK_PATH):
+        try:
+            with open(_LOCK_PATH, 'r', encoding='utf-8') as f:
+                prev = _json.load(f)
+        except Exception:
+            prev = {}
+        prev_pid = int(prev.get('pid', 0))
+        if prev_pid:
+            alive = False
+            try:
+                import psutil
+                alive = psutil.pid_exists(prev_pid)
+                if alive:
+                    p = psutil.Process(prev_pid)
+                    alive = ('python' in (p.name() or '').lower()
+                             and 'train_all_models' in ' '.join(p.cmdline() or []))
+            except Exception:
+                pass
+            if alive and not force:
+                log.error("Another train_all_models.py is already running "
+                          "(pid=%d, started=%s). Pass --force to override "
+                          "or kill that process first.",
+                          prev_pid, prev.get('started_iso', '?'))
+                return False
+            if alive and force:
+                log.warning("Another train_all_models.py is running (pid=%d) "
+                            "but --force given; proceeding in parallel "
+                            "(both will compete for CPU/GPU).",
+                            prev_pid)
+            else:
+                log.info("Reclaiming stale lock from dead pid=%d", prev_pid)
+    payload = {
+        'pid':         os.getpid(),
+        'started_iso': _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        'host':        _sock.gethostname(),
+    }
+    try:
+        os.makedirs(os.path.dirname(_LOCK_PATH), exist_ok=True)
+        with open(_LOCK_PATH, 'w', encoding='utf-8') as f:
+            _json.dump(payload, f, indent=2)
+    except Exception as exc:
+        log.warning("Could not write lock file %s: %s — proceeding anyway",
+                    _LOCK_PATH, exc)
+    return True
+
+
+def _release_run_lock() -> None:
+    """Best-effort lock release on graceful exit. Stale locks from
+    crashes are auto-reclaimed by _acquire_run_lock on next launch."""
+    try:
+        if os.path.exists(_LOCK_PATH):
+            with open(_LOCK_PATH, 'r', encoding='utf-8') as f:
+                import json as _j
+                prev = _j.load(f)
+            if int(prev.get('pid', 0)) == os.getpid():
+                os.remove(_LOCK_PATH)
+    except Exception:
+        pass
+
+
+def _set_current(model_key: str | None, tf: str | None,
+                 label: str | None, *, status: str = 'running') -> None:
+    """Write the actively-training model to data/training_current.json.
+    Dashboard's orphan detector reads this file and overrides the
+    'orphan = model=all' fan-out with the actual current model.
+
+    Pass model_key=None at end-of-run to clear the file."""
+    import json as _json, datetime as _dt
+    try:
+        if model_key is None:
+            if os.path.exists(_CURRENT_PATH):
+                os.remove(_CURRENT_PATH)
+            return
+        payload = {
+            'model_key':   model_key,
+            'current_tf':  tf,
+            'label':       label or model_key,
+            'status':      status,
+            'parent_pid':  os.getpid(),
+            'updated_iso': _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        }
+        os.makedirs(os.path.dirname(_CURRENT_PATH), exist_ok=True)
+        with open(_CURRENT_PATH, 'w', encoding='utf-8') as f:
+            _json.dump(payload, f, indent=2)
+    except Exception:
+        # Best-effort — don't let a status-file failure crash training.
+        pass
+
+
+def train_all(per_key_tfs: dict[str, tuple[str, ...]] | None = None,
+              *, force: bool = False):
     """Run the full training pipeline. Each tabular trainer runs once per
     timeframe in per_key_tfs[key] (defaults to DEFAULT_PER_KEY_TFS). Each
     invocation writes models/<key>_<tf>_*.{joblib,json} and — when tf is
     canonical — also writes the legacy filenames the bot's inference path
-    still loads."""
+    still loads.
+
+    force=True bypasses the single-instance lock — only use it when you
+    deliberately want two parallel runs (rare; usually a mistake)."""
+    if not _acquire_run_lock(force=force):
+        return  # already running, bail out cleanly
+    try:
+        _train_all_inner(per_key_tfs)
+    finally:
+        # Always clear the current-model state and release the lock,
+        # even if the pipeline raised. Stale lock from a crash IS
+        # auto-reclaimed on next launch via _acquire_run_lock, but
+        # cleaner to release on graceful exit.
+        _set_current(None, None, None)
+        _release_run_lock()
+
+
+def _train_all_inner(per_key_tfs: dict[str, tuple[str, ...]] | None = None):
     _hw_configure(verbose=True)
     cfg = per_key_tfs or DEFAULT_PER_KEY_TFS
     log.info("==========================================")
@@ -157,6 +281,7 @@ def train_all(per_key_tfs: dict[str, tuple[str, ...]] | None = None):
                 continue
             try:
                 log.info(">>> Training %s @ %s ...", label, tf)
+                _set_current(key, tf, label)
                 fn(timeframe=tf)
             except Exception as exc:
                 log.error("Error training %s @ %s: %s", label, tf, exc)
@@ -178,6 +303,7 @@ def train_all(per_key_tfs: dict[str, tuple[str, ...]] | None = None):
             continue
         try:
             log.info(">>> Training TFT Model @ %s ...", tf)
+            _set_current('tft', tf, 'TFT Model')
             train_tft_model(timeframe=tf)
         except Exception as exc:
             log.warning("Skipping TFT @ %s: %s", tf, exc)
@@ -197,6 +323,7 @@ def train_all(per_key_tfs: dict[str, tuple[str, ...]] | None = None):
         for sym in oft_symbols:
             try:
                 log.info(">>> Training OFT (Microstructure) @ %s/%s ...", sym, oft_tf)
+                _set_current('oft', oft_tf, f'OFT ({sym})')
                 train_oft(sym, oft_tf)
             except Exception as exc:
                 log.warning("Skipping OFT %s/%s: %s", sym, oft_tf, exc)
@@ -206,6 +333,7 @@ def train_all(per_key_tfs: dict[str, tuple[str, ...]] | None = None):
     # ── 6. Regime classifier (feature-stage, single-TF) ───────────────────
     try:
         log.info(">>> Training Regime Classifier (GMM, 3 regimes)...")
+        _set_current('regime', '1h', 'Regime Classifier')
         from src.analysis.regime_classifier import train_regime_classifier
         clf = train_regime_classifier()
         if clf.is_ready:
@@ -242,4 +370,9 @@ def train_all(per_key_tfs: dict[str, tuple[str, ...]] | None = None):
 
 
 if __name__ == "__main__":
-    train_all()
+    import argparse
+    _parser = argparse.ArgumentParser(description='Run the full training pipeline')
+    _parser.add_argument('--force', action='store_true',
+                         help='Bypass single-instance lock (allow parallel runs).')
+    _args, _unknown = _parser.parse_known_args()
+    train_all(force=_args.force)

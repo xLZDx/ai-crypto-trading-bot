@@ -4621,16 +4621,16 @@ async function trRetrainAll() {
     }
     if (!body.ok) throw new Error(body.error || 'request failed');
     _trMarkPending('Retrain ALL queued');
-    // Optimistic broadcast — flip every model row to RUNNING immediately
-    // so the user gets visible feedback instead of clicking again.
-    const fakeJob = {job_id: body.job_id, status: 'queued', model: 'all',
-                    progress_label: 'as part of Retrain ALL'};
-    for (const k of ['base','trend','futures','scalping','tft','oft','meta','regime']) {
-      _trActiveByModel[k] = body.job_id;
-      _trActiveJobs[k]    = {...fakeJob, model: k};
-    }
-    if (typeof _renderTrainingTable === 'function') _renderTrainingTable();
+    // 2026-05-10 fix — DO NOT optimistically fan RUNNING to all 8 model
+    // rows. The pre-fix shortcut copied the same job data into every
+    // _trActiveByModel[k], so every row showed identical elapsed/ETA
+    // values that were really just the parent process's wall-clock.
+    // Now: trust the backend's orphan detector + training_current.json
+    // pipeline (Phase 97) — only the actually-running model row flips
+    // to RUNNING; the rest stay OK. Operator gets feedback via the
+    // header chip + a fast pollTrainingJobs round-trip.
     pollTrainingJobs();
+    if (typeof _renderTrainingTable === 'function') _renderTrainingTable();
   } catch(e) {
     alert('Retrain ALL failed: ' + (e.message||e));
   }
@@ -4696,18 +4696,31 @@ async function pollTrainingJobs() {
     for (const j of recentFails) {
       if (j.model && !newActive[j.model]) newFails[j.model] = j;
     }
-    // If a 'Retrain ALL' job is active, broadcast it to every individual
-    // model row that isn't already running its own job — so every row's
-    // pill flips to RETRAIN-ALL instead of staying on stale OK.
+    // 2026-05-10 fix — when a 'Retrain ALL' job is active, only flip
+    // the row matching the ACTUAL currently-training model to RUNNING
+    // (read from data/training_current.json via backend orphan
+    // detector → orphan-job's current_model_key field). Pre-fix, every
+    // row was flipped to RUNNING with the same wall-clock + ETA from
+    // the parent process, which was misleading: 7 of the 8 models
+    // weren't actually training at that moment, just queued.
+    //
+    // Fallback when no current_model_key is reported (e.g., pipeline
+    // status path or pre-Phase-97 trainer): preserve the legacy broadcast
+    // so older trainers still surface visibly. Once the trainer is
+    // upgraded, the live row truthfully tracks the current model.
     if (allJob) {
-      // Use the allJob's own progress_label if the synth path set one
-      // ('as part of Pipeline Orchestrator'), otherwise fall back to
-      // the Retrain ALL wording.
       const lbl = allJob.progress_label || 'as part of Retrain ALL';
-      for (const k of ['base','trend','futures','scalping','tft','oft','meta','regime']) {
-        if (!newActive[k]) {
-          newActive[k] = allJob.job_id;
-          newJobs[k] = {...allJob, model: k, progress_label: lbl};
+      const cur = allJob.current_model_key;
+      if (cur && !newActive[cur]) {
+        newActive[cur] = allJob.job_id;
+        newJobs[cur] = {...allJob, model: cur, progress_label: lbl};
+      } else if (!cur) {
+        // Legacy fallback — older trainer didn't emit current_model_key.
+        for (const k of ['base','trend','futures','scalping','tft','oft','meta','regime']) {
+          if (!newActive[k]) {
+            newActive[k] = allJob.job_id;
+            newJobs[k] = {...allJob, model: k, progress_label: lbl};
+          }
         }
       }
     }

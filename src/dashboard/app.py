@@ -3023,6 +3023,34 @@ def _detect_orphan_training_subprocesses() -> None:
             # actual start time so elapsed_s is accurate from boot.
             jid = f'orphan-{pid}'
             created = float(p.info.get('create_time') or now)
+
+            # 2026-05-10 fix - when matched_key == 'all', enrich the
+            # job with the actual currently-training model from
+            # data/training_current.json. Pre-fix, every train_all run
+            # made the dashboard fan-out RUNNING to all 8 model rows
+            # with identical elapsed/eta values. Now: only the row
+            # matching the actual current model gets RUNNING; the
+            # parent 'all' job tracks pipeline-wide elapsed.
+            current_label = 'reattached (orphan from prior boot)'
+            current_tf = None
+            sub_model = None
+            if matched_key == 'all':
+                try:
+                    import json as _j
+                    cur_path = os.path.join(PROJECT_ROOT, 'data',
+                                             'training_current.json')
+                    if os.path.exists(cur_path):
+                        with open(cur_path, 'r', encoding='utf-8') as _cf:
+                            _cur = _j.load(_cf) or {}
+                        sub_model  = _cur.get('model_key')
+                        current_tf = _cur.get('current_tf')
+                        if sub_model:
+                            current_label = (
+                                f"running {sub_model}"
+                                + (f" @ {current_tf}" if current_tf else '')
+                            )
+                except Exception:
+                    pass
             _record_job(
                 jid,
                 model=matched_key,
@@ -3034,8 +3062,10 @@ def _detect_orphan_training_subprocesses() -> None:
                 resource_kind=_resource_kind_for(matched_key),
                 progress=0,
                 total=1,
-                tf=None,
-                progress_label='reattached (orphan from prior boot)',
+                tf=current_tf,
+                current_tf=current_tf,
+                current_model_key=sub_model,   # NEW field for FE
+                progress_label=current_label,
             )
             # Spawn poller to wait for it like a normal job.
             threading.Thread(
@@ -3791,6 +3821,38 @@ def api_training_run_all():
                         'existing_model':  j.get('model'),
                         'existing_status': j.get('status'),
                     }), 409
+        # 2026-05-10 fix — ALSO consult the cross-process lock file so a
+        # train_all_models.py spawned by a previous dashboard incarnation
+        # (or by the operator's CLI launcher) is detected, even though it
+        # isn't in this dashboard's _training_jobs dict.
+        try:
+            import json as _j
+            lock_path = os.path.join(PROJECT_ROOT, 'data',
+                                      'train_all_models.lock')
+            if os.path.exists(lock_path):
+                with open(lock_path, 'r', encoding='utf-8') as _f:
+                    _lock = _j.load(_f) or {}
+                _lpid = int(_lock.get('pid', 0))
+                if _lpid:
+                    import psutil as _ps
+                    if _ps.pid_exists(_lpid):
+                        _p = _ps.Process(_lpid)
+                        if 'train_all_models' in ' '.join(_p.cmdline() or []):
+                            return jsonify({
+                                'ok': False,
+                                'error': 'already_running',
+                                'message': (
+                                    f"train_all_models.py is already running "
+                                    f"(pid={_lpid}, started={_lock.get('started_iso','?')}). "
+                                    f"Pass force=true to spawn a parallel run anyway."
+                                ),
+                                'existing_pid':    _lpid,
+                                'existing_model':  'all',
+                                'existing_status': 'running',
+                                'lock_path':       lock_path,
+                            }), 409
+        except Exception:
+            pass
     job_id = uuid.uuid4().hex[:12]
     _record_job(job_id, model='all', n=1,
                 status='queued', created_at=time.time())

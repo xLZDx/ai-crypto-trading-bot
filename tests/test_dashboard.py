@@ -7706,6 +7706,136 @@ def test_phase96_orphan_detector_direct_script_form_plus_ps_native_fix():
           'NativeCommandError' in ps)
 
 
+def test_phase97_train_all_concurrency_lock_plus_current_state_pipeline():
+    """Phase 97 — four-part fix for the operator-reported issues:
+       1. all RUNNING rows showed identical elapsed/ETA values
+       2. operator wanted ONE training process at a time on master
+       3. zombie procs were stacking up across CLI relaunches
+
+    Root causes (test-confirmed, not speculation):
+       a. train_all_models.py had no concurrency lock — every CLI launch
+          + every dashboard "Retrain ALL" click spawned a parallel run.
+          6 zombies seen on 2026-05-10 evening.
+       b. The dashboard frontend had TWO optimistic-broadcast sites that
+          fanned model='all' → all 8 model rows with the SAME job's
+          elapsed/eta. So every row showed identical timing data.
+       c. train_all_models.py never wrote which model was actually
+          training right now to a file the dashboard could read.
+
+    Fixes:
+       1. _acquire_run_lock + _release_run_lock around train_all (file
+          lock at data/train_all_models.lock, stale-pid auto-reclaim,
+          --force CLI override). _set_current writes
+          data/training_current.json on every model transition.
+       2. Dashboard orphan detector enriches model='all' jobs with
+          current_model_key + current_tf from training_current.json.
+       3. Frontend optimistic-broadcasts (Retrain ALL click + poller)
+          replaced with current_model_key-aware logic — only the
+          actually-training row flips to RUNNING.
+       4. launch_training.ps1 also consults the lock file (cheap
+          fast-fail in front of the Python-side check).
+       5. /api/training/run/all checks the cross-process lock too, so
+          dashboard and CLI agree on "is anything running."
+    """
+    print('\n[Phase 97 — train_all concurrency lock + current-model state]')
+
+    train_path = os.path.join(BASE_DIR, 'src', 'engine', 'train_all_models.py')
+    with open(train_path, encoding='utf-8') as f:
+        train = f.read()
+    app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
+    with open(app_path, encoding='utf-8') as f:
+        app = f.read()
+    tpl_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
+    with open(tpl_path, encoding='utf-8') as f:
+        tpl = f.read()
+    ps_path = os.path.join(BASE_DIR, 'launch_training.ps1')
+    with open(ps_path, encoding='utf-8') as f:
+        ps = f.read()
+
+    # ── Fix 1: trainer-side lock + current state ────────────────────────
+    check('train_all_models defines _acquire_run_lock', 'def _acquire_run_lock(' in train)
+    check('train_all_models defines _release_run_lock', 'def _release_run_lock(' in train)
+    check('train_all_models defines _set_current',     'def _set_current(' in train)
+    check('lock path is data/train_all_models.lock',
+          "'train_all_models.lock'" in train)
+    check('current state path is data/training_current.json',
+          "'training_current.json'" in train)
+    check('lock acquire writes JSON {pid, started_iso, host}',
+          "'pid':" in train and "'started_iso':" in train and "'host':" in train)
+    check('lock acquire auto-reclaims stale (dead-pid) lock',
+          'psutil.pid_exists' in train and 'Reclaiming stale lock' in train)
+    check('--force flag bypasses the lock',
+          'force: bool = False' in train and "'--force'" in train)
+    check('train_all wraps inner pipeline in try/finally for cleanup',
+          'try:' in train and '_release_run_lock()' in train
+          and '_set_current(None, None, None)' in train)
+    check('_set_current writes model_key + current_tf + parent_pid',
+          "'model_key':" in train and "'current_tf':" in train and "'parent_pid':" in train)
+
+    # _set_current is called at every transition.
+    check('_set_current called inside _train_loop',
+          '_set_current(key, tf, label)' in train)
+    check('_set_current called for TFT loop',
+          "_set_current('tft', tf, 'TFT Model')" in train)
+    check('_set_current called for OFT loop',
+          "_set_current('oft', oft_tf," in train)
+    check('_set_current called for regime classifier',
+          "_set_current('regime', '1h'," in train)
+
+    # ── Fix 2: dashboard orphan detector enrichment ─────────────────────
+    det_start = app.find('def _detect_orphan_training_subprocesses')
+    det_end   = app.find('\ndef _reattach_training_subprocess', det_start + 1)
+    det_body  = app[det_start:det_end] if det_end > det_start else app[det_start:]
+    check('orphan detector reads training_current.json when matched_key=all',
+          "matched_key == 'all'" in det_body
+          and "'training_current.json'" in det_body)
+    check('orphan detector populates current_model_key on the job record',
+          'current_model_key=sub_model' in det_body)
+    check('orphan detector populates current_tf on the job record',
+          'current_tf=current_tf' in det_body)
+    check('progress_label changes to "running <key> @ <tf>" when current state present',
+          'f"running {sub_model}"' in det_body)
+
+    # ── Fix 3: dashboard frontend respects current_model_key ────────────
+    # Site A — Retrain ALL click handler (~line 4624)
+    # Comment naturally wraps across lines; match the contiguous part.
+    check('frontend Retrain ALL click no longer fans to all 8 keys eagerly',
+          'DO NOT optimistically fan RUNNING to all 8 model' in tpl)
+    # Site B — poller per-cycle broadcast
+    check('frontend poller flips ONLY current_model_key to RUNNING',
+          'allJob.current_model_key' in tpl
+          and 'cur && !newActive[cur]' in tpl)
+    check('frontend poller still has legacy fallback when current_model_key absent',
+          'Legacy fallback' in tpl
+          and "if (!cur)" in tpl)
+
+    # ── Fix 4: launch_training.ps1 lock check ───────────────────────────
+    check('launch_training.ps1 reads the lock file',
+          '$lockPath = Join-Path $root \'data\\train_all_models.lock\'' in ps)
+    check('launcher reports clear "already running" message + exits 2',
+          'Another train_all_models.py is already running' in ps
+          and 'exit 2' in ps)
+    check('launcher honors --force flag (passed straight through to python)',
+          "$force    = ($args -contains '--force')" in ps
+          and "(-not $force)" in ps)
+    check('launcher uses Get-Process to verify pid is actually alive',
+          'Get-Process -Id $prevPid' in ps)
+
+    # ── Fix 5: /api/training/run/all consults file lock ─────────────────
+    api_start = app.find("def api_training_run_all")
+    api_end   = app.find('\n@app.route', api_start + 1)
+    api_body  = app[api_start:api_end] if api_end > api_start else app[api_start:]
+    check('/api/training/run/all also consults cross-process lock file',
+          "'train_all_models.lock'" in api_body)
+    check('cross-process lock path resolved relative to PROJECT_ROOT',
+          "os.path.join(PROJECT_ROOT, 'data',\n                                      'train_all_models.lock')" in api_body
+          or "PROJECT_ROOT, 'data'" in api_body and "'train_all_models.lock'" in api_body)
+    check('endpoint returns 409 already_running when lock holds a live pid',
+          "'error': 'already_running'" in api_body
+          and "}), 409" in api_body
+          and 'pid_exists' in api_body)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -8065,6 +8195,7 @@ def main():
     test_phase94_distributed_backtest_per_cell()
     test_phase95_xgb_early_stop_eval_set_fix_and_backtest_column()
     test_phase96_orphan_detector_direct_script_form_plus_ps_native_fix()
+    test_phase97_train_all_concurrency_lock_plus_current_state_pipeline()
 
     if not args.offline:
         test_api(args.url)
