@@ -3744,6 +3744,237 @@ def _sync_cluster_task_status(job_id: str, key: str,
         _record_job(job_id, status=agg['interim'], progress=agg['progress'])
 
 
+# Phase 100b — distributed Retrain ALL. Submits all train cells to cluster
+# up-front; orchestrator load-balances across every healthy worker (Razer-CPU,
+# Ivan-CPU, Razer-GPU, Ivan-GPU + any future worker — added via the existing
+# /api/cluster/register heartbeat with zero code change). Per cell: train must
+# complete before its BT submits (sequential within cell). Across cells: full
+# parallelism (orchestrator routes by lane + GPU-first sort).
+
+def _retrain_all_cell_list() -> list[tuple[str, str]]:
+    """Build the (model_key, tf) cell list for Retrain ALL in model-major
+    order — finishes one model's full TF set before moving to next, so the
+    operator can stop early and still have a complete model coverage.
+    Source of truth: DEFAULT_PER_KEY_TFS in train_all_models.py."""
+    from src.engine.train_all_models import DEFAULT_PER_KEY_TFS
+    cells: list[tuple[str, str]] = []
+    for model_key in DEFAULT_PER_KEY_TFS:
+        for tf in DEFAULT_PER_KEY_TFS[model_key]:
+            cells.append((model_key, tf))
+    return cells
+
+
+def _retrain_all_build_train_spec(model_key: str, tf: str) -> dict:
+    """Pure helper — cluster task spec for a train submit. Extracted so the
+    functional test can assert what we'd POST without spinning the loop."""
+    return {
+        'model_type':  _to_cluster_model_type(model_key),
+        'symbol':      'BTC/USDT',
+        'timeframe':   tf,
+        'config':      {},
+        'data_path':   '',
+        'output_path': '',
+    }
+
+
+def _retrain_all_build_bt_spec(model_key: str, tf: str) -> dict:
+    """Pure helper — cluster task spec for a backtest-cell submit. The
+    worker's _run_backtest_cell handler scopes the BT to a single model
+    via config.models, so this cell's BT only re-runs strategies that
+    use this model. backtest_cell uses underscore-form symbol per
+    worker.py convention (BTC_USDT, not BTC/USDT)."""
+    return {
+        'model_type': 'backtest_cell',
+        'symbol':     'BTC_USDT',
+        'timeframe':  tf,
+        'config': {
+            'initial_capital': 10000.0,
+            'fee_preset':      'futures',
+            'models':          [_to_cluster_model_type(model_key)],
+        },
+    }
+
+
+def _retrain_all_step(cells: list[tuple[str, str]],
+                       state: dict,
+                       by_id: dict,
+                       submit_fn) -> dict:
+    """Phase 100b — PURE per-iteration step extracted for testability.
+    Given the cell list, current state, and a cluster-task snapshot,
+    advances state by one iteration:
+      - Trains that just turned 'done' get their BT submitted via submit_fn
+      - Trains that turned 'failed'/'cancelled' get their BT skipped
+      - BTs that turn terminal mark the cell complete
+    Returns dict with:
+      - cells_complete: int
+      - train_inflight: int
+      - bt_inflight: int
+      - finished: bool (all cells terminal)
+      - newly_submitted_bt: list[(model_key, tf)] (for test introspection)
+
+    `state` mutated in place: train_tids, bt_tids, train_done, bt_done,
+    cell_errors. `submit_fn(model_key, tf, bt_spec)` returns either a
+    cluster task_id (success) or None (submit failed).
+    """
+    train_tids   = state['train_tids']
+    bt_tids      = state['bt_tids']
+    train_done   = state['train_done']
+    bt_done      = state['bt_done']
+    cell_errors  = state['cell_errors']
+    newly_submitted_bt: list[tuple[str, str]] = []
+
+    # Step 1: check each train; on done → submit BT, on failed/cancelled → skip BT
+    for cell, tid in train_tids.items():
+        if cell in train_done:
+            continue
+        task = by_id.get(tid)
+        if not task:
+            continue
+        s = task.get('status')
+        if s == 'done':
+            train_done.add(cell)
+            model_key, tf = cell
+            bt_spec = _retrain_all_build_bt_spec(model_key, tf)
+            bt_task_id = submit_fn(model_key, tf, bt_spec)
+            if bt_task_id:
+                bt_tids[cell] = bt_task_id
+                newly_submitted_bt.append(cell)
+            else:
+                cell_errors[cell] = 'BT submit failed (cluster unreachable)'
+                bt_done.add(cell)
+        elif s in ('failed', 'cancelled'):
+            train_done.add(cell)
+            bt_done.add(cell)
+            cell_errors[cell] = f'train {s}: {task.get("error", "")[:120]}'
+
+    # Step 2: check each BT; on terminal → mark done
+    for cell, tid in bt_tids.items():
+        if cell in bt_done:
+            continue
+        task = by_id.get(tid)
+        if not task:
+            continue
+        s = task.get('status')
+        if s in ('done', 'failed', 'cancelled'):
+            bt_done.add(cell)
+            if s != 'done':
+                cell_errors[cell] = f'BT {s}: {task.get("error", "")[:120]}'
+
+    cells_complete  = sum(1 for c in cells if c in train_done and c in bt_done)
+    train_inflight  = sum(1 for c in train_tids if c not in train_done)
+    bt_inflight     = sum(1 for c in bt_tids   if c not in bt_done)
+    finished        = all(c in train_done and c in bt_done for c in cells)
+    return {
+        'cells_complete':       cells_complete,
+        'train_inflight':       train_inflight,
+        'bt_inflight':          bt_inflight,
+        'finished':             finished,
+        'newly_submitted_bt':   newly_submitted_bt,
+    }
+
+
+def _run_retrain_all_distributed(job_id: str) -> None:
+    """Phase 100b — distributed Retrain ALL dispatcher. Submits all train
+    cells to cluster up-front; chains BT per cell as that cell's train
+    completes. The cluster orchestrator handles load-balancing across
+    all healthy workers (current 4 lanes + any future worker added via
+    /api/cluster/register with zero code change here).
+
+    Decision logic delegated to _retrain_all_step (pure, unit-testable);
+    this wrapper handles cluster I/O, polling cadence, and the 12 h
+    deadline guard.
+    """
+    cells = _retrain_all_cell_list()
+    cells_total = len(cells)
+    if cells_total == 0:
+        _record_job(job_id, status='error',
+                    errors=['no cells in DEFAULT_PER_KEY_TFS'],
+                    finished_at=time.time())
+        return
+
+    # Submit ALL train tasks up-front. Orchestrator distributes immediately.
+    train_tids: dict[tuple[str, str], str] = {}
+    submit_failures: list[str] = []
+    for (model_key, tf) in cells:
+        spec = _retrain_all_build_train_spec(model_key, tf)
+        body, http_status = _cluster_proxy_post('/api/cluster/submit', spec)
+        if http_status == 200 and body.get('ok') and body.get('task_id'):
+            train_tids[(model_key, tf)] = body['task_id']
+        else:
+            submit_failures.append(f'{model_key}@{tf}: {str(body)[:120]}')
+
+    if not train_tids:
+        _record_job(job_id, status='error',
+                    errors=(['no train submits succeeded'] + submit_failures)[:5],
+                    finished_at=time.time())
+        return
+
+    state = {
+        'train_tids':  train_tids,
+        'bt_tids':     {},
+        'train_done':  set(),
+        'bt_done':     set(),
+        'cell_errors': {(m, t): f'train submit failed: {submit_failures}'
+                         for (m, t) in cells if (m, t) not in train_tids},
+    }
+    # Failed-submit cells: mark train_done + bt_done so the loop terminates
+    for (m, t) in cells:
+        if (m, t) not in train_tids:
+            state['train_done'].add((m, t))
+            state['bt_done'].add((m, t))
+
+    _record_job(job_id, status='running',
+                cluster_routed=True,
+                cluster_task_ids=list(train_tids.values()),
+                progress=0,
+                total=cells_total,
+                started_at=time.time(),
+                progress_label=(
+                    f'Retrain ALL — {len(train_tids)}/{cells_total} train submitted'
+                ))
+
+    def _submit_bt(model_key: str, tf: str, bt_spec: dict) -> str | None:
+        body, http_status = _cluster_proxy_post('/api/cluster/submit', bt_spec)
+        if http_status == 200 and body.get('ok') and body.get('task_id'):
+            return body['task_id']
+        return None
+
+    POLL_S = 5.0
+    DEADLINE_S = 12 * 3600
+    started = time.time()
+    while True:
+        time.sleep(POLL_S)
+        if time.time() - started > DEADLINE_S:
+            _record_job(job_id, status='error',
+                        errors=[f'retrain-all deadline exceeded ({DEADLINE_S}s)'],
+                        finished_at=time.time())
+            return
+        body, http_status = _cluster_proxy_get('/api/cluster/tasks')
+        if http_status != 200 or not isinstance(body, list):
+            continue
+        by_id = {t.get('task_id'): t for t in body if isinstance(t, dict)}
+        step = _retrain_all_step(cells, state, by_id, _submit_bt)
+        progress_label = (
+            f'Retrain ALL — {step["cells_complete"]}/{cells_total} cells done · '
+            f'{step["train_inflight"]} train · {step["bt_inflight"]} BT in flight'
+        )
+        if step['finished']:
+            final = 'partial' if state['cell_errors'] else 'done'
+            err_summary = [f'{m}@{t}: {e}'
+                            for (m, t), e in list(state['cell_errors'].items())[:5]]
+            _record_job(job_id, status=final,
+                        progress=step['cells_complete'],
+                        errors=err_summary,
+                        progress_label=(
+                            f'Retrain ALL — done '
+                            f'({step["cells_complete"]}/{cells_total} cells)'
+                        ),
+                        finished_at=time.time())
+            return
+        _record_job(job_id, progress=step['cells_complete'], total=cells_total,
+                    progress_label=progress_label)
+
+
 def _run_trainer_multi_tf(job_id: str, key: str, n: int,
                           tfs: tuple[str, ...],
                           with_backtest: bool = False) -> None:
@@ -4207,12 +4438,27 @@ def api_training_run_all():
     job_id = uuid.uuid4().hex[:12]
     _record_job(job_id, model='all', n=1,
                 status='queued', created_at=time.time())
+    # Phase 100b — route Retrain ALL through the cluster orchestrator.
+    # Submits all train cells up-front; cluster load-balances across all
+    # healthy worker lanes (Razer-CPU, Ivan-CPU, Razer-GPU, Ivan-GPU + any
+    # future worker added via /api/cluster/register). Per cell: train
+    # completes → cell's BT submits. Across cells: full parallelism.
+    # Opt-out for legacy local-subprocess train_all: AI_TRADER_LOCAL_TRAINING=1
+    if os.getenv('AI_TRADER_LOCAL_TRAINING', '0') == '1':
+        threading.Thread(
+            target=_run_trainer_blocking,
+            args=(job_id, 'all', 1),
+            daemon=True, name=f'train-all-local-{job_id}',
+        ).start()
+        return jsonify({'ok': True, 'job_id': job_id, 'model': 'all', 'n': 1,
+                        'routed_to': 'local'})
     threading.Thread(
-        target=_run_trainer_blocking,
-        args=(job_id, 'all', 1),
-        daemon=True, name=f'train-all-{job_id}',
+        target=_run_retrain_all_distributed,
+        args=(job_id,),
+        daemon=True, name=f'retrain-all-cluster-{job_id}',
     ).start()
-    return jsonify({'ok': True, 'job_id': job_id, 'model': 'all', 'n': 1})
+    return jsonify({'ok': True, 'job_id': job_id, 'model': 'all', 'n': 1,
+                    'routed_to': 'cluster'})
 
 
 # Typical training durations (seconds) per model key. Seeded from the

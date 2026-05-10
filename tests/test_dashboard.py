@@ -8487,6 +8487,254 @@ def test_phase100_functional_cluster_routing_proves_behavior():
           rj is not None and 'valid' in rj and 'futures' in rj.get('valid', []))
 
 
+def test_phase100b_retrain_all_distributed_train_then_bt():
+    """Phase 100b — Retrain ALL = distributed parallel cells, sequential
+    train → BT per cell. FUNCTIONAL tests (not string-match) that drive
+    the dispatcher through synthetic cluster snapshots and assert
+    observable behavior.
+
+    Sub-tests:
+      (a) _retrain_all_cell_list: pure cell-list builder; assert
+          model-major order matches DEFAULT_PER_KEY_TFS exactly.
+      (b) _retrain_all_build_train_spec / _retrain_all_build_bt_spec:
+          pure spec builders; assert payload shape per worker.py contract.
+      (c) _retrain_all_step: PURE iteration step. Drive it through:
+          - train task done → BT submitted via submit_fn
+          - train task failed → BT skipped, cell error recorded
+          - BT task done → cell marked complete
+          - BT task failed → cell marked complete with error
+          - Multiple cells in parallel — all advance per step
+          - Submit fn failure path
+          - Final terminal detection
+      (d) /api/training/run/all endpoint via test_client: routes to
+          cluster by default, AI_TRADER_LOCAL_TRAINING=1 routes to local.
+    """
+    print('\n[Phase 100b — Retrain ALL distributed (functional, proves behavior)]')
+    import sys, os
+    from pathlib import Path as _P
+    PRJ = _P(__file__).resolve().parents[1]
+    if str(PRJ) not in sys.path:
+        sys.path.insert(0, str(PRJ))
+    os.environ['DASHBOARD_API_KEY'] = ''
+    os.environ.pop('AI_TRADER_LOCAL_TRAINING', None)
+
+    try:
+        from src.dashboard import app as dash_app
+        from src.engine.train_all_models import DEFAULT_PER_KEY_TFS
+    except Exception as exc:
+        check(f'import succeeds (got {type(exc).__name__}: {exc})', False)
+        return
+
+    # ── (a) Cell list — model-major order ───────────────────────────────
+    cells = dash_app._retrain_all_cell_list()
+    expected_count = sum(len(tfs) for tfs in DEFAULT_PER_KEY_TFS.values())
+    check('cell list count matches sum of TFs per model in DEFAULT_PER_KEY_TFS',
+          len(cells) == expected_count)
+    # Model-major: all of model A then all of model B
+    seen_models = []
+    for (m, tf) in cells:
+        if not seen_models or seen_models[-1] != m:
+            seen_models.append(m)
+    check('cell list is model-major (model A all TFs, then model B all TFs)',
+          len(seen_models) == len(set(seen_models)))
+    # First model's TFs should match DEFAULT_PER_KEY_TFS in order
+    first_model = seen_models[0]
+    first_model_cells = [tf for (m, tf) in cells if m == first_model]
+    check('within a model, TFs match DEFAULT_PER_KEY_TFS order',
+          tuple(first_model_cells) == DEFAULT_PER_KEY_TFS[first_model])
+
+    # ── (b) Spec builders ───────────────────────────────────────────────
+    train_spec = dash_app._retrain_all_build_train_spec('futures', '4h')
+    check('train spec model_type mapped (futures → futures_short)',
+          train_spec['model_type'] == 'futures_short')
+    check('train spec timeframe matches the cell tf',
+          train_spec['timeframe'] == '4h')
+    check('train spec carries symbol BTC/USDT (slash form for trainers)',
+          train_spec['symbol'] == 'BTC/USDT')
+    check('train spec has config + data_path + output_path (worker contract)',
+          'config' in train_spec
+          and 'data_path' in train_spec
+          and 'output_path' in train_spec)
+
+    bt_spec = dash_app._retrain_all_build_bt_spec('meta', '15m')
+    check('BT spec model_type is "backtest_cell" (worker handler key)',
+          bt_spec['model_type'] == 'backtest_cell')
+    check('BT spec timeframe matches the cell tf',
+          bt_spec['timeframe'] == '15m')
+    check('BT spec symbol uses UNDERSCORE form (BTC_USDT) per worker.py',
+          bt_spec['symbol'] == 'BTC_USDT')
+    check('BT spec config.models scopes BT to this cell\'s mapped model_type',
+          bt_spec['config']['models'] == ['meta_labeler'])
+    check('BT spec config carries initial_capital + fee_preset',
+          bt_spec['config']['initial_capital'] == 10000.0
+          and bt_spec['config']['fee_preset'] == 'futures')
+
+    # ── (c) _retrain_all_step — drive the loop ───────────────────────────
+    step_fn = dash_app._retrain_all_step
+    # Setup: 3 cells, all submitted as trains
+    test_cells = [('trend', '1h'), ('base', '4h'), ('futures', '5m')]
+    state = {
+        'train_tids': {
+            ('trend', '1h'):   'train-tid-1',
+            ('base', '4h'):    'train-tid-2',
+            ('futures', '5m'): 'train-tid-3',
+        },
+        'bt_tids':     {},
+        'train_done':  set(),
+        'bt_done':     set(),
+        'cell_errors': {},
+    }
+    bt_submits_captured: list[tuple[str, str, dict]] = []
+    def _fake_submit_bt(model_key, tf, bt_spec):
+        bt_submits_captured.append((model_key, tf, bt_spec))
+        return f'bt-tid-{model_key}-{tf}'
+
+    # Iteration 1: nothing terminal yet — no progress
+    by_id = {
+        'train-tid-1': {'task_id': 'train-tid-1', 'status': 'running'},
+        'train-tid-2': {'task_id': 'train-tid-2', 'status': 'running'},
+        'train-tid-3': {'task_id': 'train-tid-3', 'status': 'pending'},
+    }
+    r = step_fn(test_cells, state, by_id, _fake_submit_bt)
+    check('step iter 1: nothing done, finished=False',
+          r['cells_complete'] == 0 and not r['finished'])
+    check('step iter 1: no BT submitted yet (no train done)',
+          len(bt_submits_captured) == 0)
+    check('step iter 1: 3 trains in flight',
+          r['train_inflight'] == 3)
+
+    # Iteration 2: trend@1h done → its BT submits
+    by_id = {
+        'train-tid-1': {'task_id': 'train-tid-1', 'status': 'done'},
+        'train-tid-2': {'task_id': 'train-tid-2', 'status': 'running'},
+        'train-tid-3': {'task_id': 'train-tid-3', 'status': 'running'},
+    }
+    r = step_fn(test_cells, state, by_id, _fake_submit_bt)
+    check('step iter 2: trend@1h train done triggers BT submit',
+          ('trend', '1h') in [(m, t) for (m, t, _) in bt_submits_captured])
+    check('step iter 2: BT submit captured the expected spec',
+          bt_submits_captured[0][2]['model_type'] == 'backtest_cell'
+          and bt_submits_captured[0][2]['timeframe'] == '1h')
+    check('step iter 2: state.bt_tids has the new BT id',
+          state['bt_tids'].get(('trend', '1h')) == 'bt-tid-trend-1h')
+    check('step iter 2: cells_complete still 0 (BT not done yet)',
+          r['cells_complete'] == 0)
+    check('step iter 2: train_inflight=2, bt_inflight=1',
+          r['train_inflight'] == 2 and r['bt_inflight'] == 1)
+
+    # Iteration 3: trend@1h BT done → cell complete. base@4h train failed → skip BT.
+    by_id = {
+        'train-tid-1': {'task_id': 'train-tid-1', 'status': 'done'},
+        'train-tid-2': {'task_id': 'train-tid-2', 'status': 'failed',
+                         'error': 'OOM in fit'},
+        'train-tid-3': {'task_id': 'train-tid-3', 'status': 'running'},
+        'bt-tid-trend-1h': {'task_id': 'bt-tid-trend-1h', 'status': 'done'},
+    }
+    r = step_fn(test_cells, state, by_id, _fake_submit_bt)
+    check('step iter 3: trend@1h fully complete (train+BT done)',
+          ('trend', '1h') in state['train_done']
+          and ('trend', '1h') in state['bt_done'])
+    check('step iter 3: base@4h marked done in train_done (was failed)',
+          ('base', '4h') in state['train_done'])
+    check('step iter 3: base@4h BT SKIPPED (no BT submitted for failed train)',
+          ('base', '4h') not in state['bt_tids']
+          and ('base', '4h') in state['bt_done'])
+    check('step iter 3: base@4h has error recorded',
+          'failed' in state['cell_errors'].get(('base', '4h'), '')
+          and 'OOM' in state['cell_errors'].get(('base', '4h'), ''))
+    check('step iter 3: cells_complete=2 (trend done, base skipped)',
+          r['cells_complete'] == 2)
+    check('step iter 3: NOT finished yet (futures still running)',
+          not r['finished'])
+
+    # Iteration 4: futures@5m done → BT submits. Same iter, BT not yet done.
+    by_id = {
+        'train-tid-1': {'task_id': 'train-tid-1', 'status': 'done'},
+        'train-tid-2': {'task_id': 'train-tid-2', 'status': 'failed'},
+        'train-tid-3': {'task_id': 'train-tid-3', 'status': 'done'},
+        'bt-tid-trend-1h': {'task_id': 'bt-tid-trend-1h', 'status': 'done'},
+    }
+    r = step_fn(test_cells, state, by_id, _fake_submit_bt)
+    check('step iter 4: futures@5m BT submitted now that its train is done',
+          state['bt_tids'].get(('futures', '5m')) == 'bt-tid-futures-5m')
+    check('step iter 4: not finished — futures BT still running',
+          not r['finished'])
+
+    # Iteration 5: futures BT done → all terminal → finished=True
+    by_id = {
+        'train-tid-1': {'task_id': 'train-tid-1', 'status': 'done'},
+        'train-tid-2': {'task_id': 'train-tid-2', 'status': 'failed'},
+        'train-tid-3': {'task_id': 'train-tid-3', 'status': 'done'},
+        'bt-tid-trend-1h':    {'task_id': 'bt-tid-trend-1h',    'status': 'done'},
+        'bt-tid-futures-5m':  {'task_id': 'bt-tid-futures-5m',  'status': 'done'},
+    }
+    r = step_fn(test_cells, state, by_id, _fake_submit_bt)
+    check('step iter 5: ALL cells terminal → finished=True',
+          r['finished'])
+    check('step iter 5: cells_complete=3 (all cells terminated, base BT skipped counts as terminal)',
+          r['cells_complete'] == 3)
+    check('step iter 5: cell_errors retained base@4h failure',
+          ('base', '4h') in state['cell_errors'])
+    check('step iter 5: cell_errors does NOT include successful cells',
+          ('trend', '1h') not in state['cell_errors']
+          and ('futures', '5m') not in state['cell_errors'])
+
+    # ── submit_fn failure path ──────────────────────────────────────────
+    state2 = {
+        'train_tids':  {('tft', '15m'): 'train-tid-x'},
+        'bt_tids':     {},
+        'train_done':  set(),
+        'bt_done':     set(),
+        'cell_errors': {},
+    }
+    def _fail_submit_bt(model_key, tf, bt_spec):
+        return None    # cluster unreachable
+    by_id = {'train-tid-x': {'task_id': 'train-tid-x', 'status': 'done'}}
+    r = step_fn([('tft', '15m')], state2, by_id, _fail_submit_bt)
+    check('submit_bt fails: cell marked bt_done (no infinite retry)',
+          ('tft', '15m') in state2['bt_done'])
+    check('submit_bt fails: error recorded "BT submit failed"',
+          'BT submit failed' in state2['cell_errors'].get(('tft', '15m'), ''))
+    check('submit_bt fails: finished=True (all terminal incl skipped BT)',
+          r['finished'])
+
+    # ── (d) Endpoint via test_client ─────────────────────────────────────
+    posts = []
+    def _silent_post(path, body, **kw):
+        posts.append((path, body))
+        return ({'ok': True, 'task_id': f'fake-tid-{len(posts)}'}, 200)
+    saved_post = dash_app._cluster_proxy_post
+    dash_app._cluster_proxy_post = _silent_post
+    try:
+        client = dash_app.app.test_client()
+        resp = client.post('/api/training/run/all',
+                           json={'force': True})
+        rj = resp.get_json()
+    finally:
+        dash_app._cluster_proxy_post = saved_post
+
+    check('endpoint /api/training/run/all returns 200 OK',
+          resp.status_code == 200)
+    check('endpoint: response routed_to="cluster" (default Phase 100b)',
+          rj is not None and rj.get('routed_to') == 'cluster')
+    check('endpoint: response model="all", n=1',
+          rj.get('model') == 'all' and rj.get('n') == 1)
+    check('endpoint: response includes job_id',
+          'job_id' in rj and len(rj['job_id']) > 6)
+
+    # AI_TRADER_LOCAL_TRAINING=1 routes to legacy local subprocess.
+    os.environ['AI_TRADER_LOCAL_TRAINING'] = '1'
+    try:
+        client = dash_app.app.test_client()
+        resp = client.post('/api/training/run/all',
+                           json={'force': True})
+        rj = resp.get_json()
+    finally:
+        os.environ.pop('AI_TRADER_LOCAL_TRAINING', None)
+    check('endpoint with AI_TRADER_LOCAL_TRAINING=1: routed_to="local"',
+          rj is not None and rj.get('routed_to') == 'local')
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -8851,6 +9099,7 @@ def main():
     test_phase97c_orphan_periodic_refresh_and_canonical_row_fallback()
     test_phase100_cluster_routed_training_dispatch()
     test_phase100_functional_cluster_routing_proves_behavior()
+    test_phase100b_retrain_all_distributed_train_then_bt()
 
     if not args.offline:
         test_api(args.url)
