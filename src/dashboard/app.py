@@ -4944,6 +4944,86 @@ def cluster_cancel_task(task_id):
     return jsonify(body), status
 
 
+# ─── Phase 94 — distributed backtest endpoints ──────────────────────────────
+#
+# Why: until Phase 94 the backtest was single-process on master. POST
+# /api/backtest/distributed/start fires `run_distributed_backtest`
+# which fans cells out to the cluster (one task per
+# (symbol, timeframe)) and aggregates summaries. GET .../status proxies
+# the cluster /tasks endpoint, filtered to model_type='backtest_cell',
+# so the dashboard column (Item B) can render per-cell progress.
+
+@app.route('/api/backtest/distributed/start', methods=['POST'])
+def api_backtest_distributed_start():
+    body       = request.get_json(force=True) or {}
+    timeframes = tuple(body.get('timeframes', ['1h']))
+    syms_raw   = body.get('symbols')
+    symbols    = tuple(syms_raw) if syms_raw else None
+    models_raw = body.get('models')
+    models     = tuple(models_raw) if models_raw else None
+    init_cap   = float(body.get('initial_capital', 10_000.0))
+    fee_preset = str(body.get('fee_preset', 'futures'))
+
+    def _bg():
+        try:
+            from src.engine.backtester import run_distributed_backtest
+            run_distributed_backtest(
+                cluster_url=CLUSTER_BASE_URL,
+                timeframes=timeframes,
+                symbols=symbols,
+                models=models,
+                initial_capital=init_cap,
+                fee_preset=fee_preset,
+            )
+        except Exception:
+            app.logger.exception('[dist-bt] background run failed')
+
+    threading.Thread(target=_bg, daemon=True,
+                     name='dist-bt-runner').start()
+    return jsonify({'ok': True,
+                    'timeframes': list(timeframes),
+                    'symbols':    list(symbols) if symbols else None,
+                    'models':     list(models)  if models  else None})
+
+
+@app.route('/api/backtest/distributed/status')
+def api_backtest_distributed_status():
+    """Per-cell status snapshot — filtered view of cluster /tasks for
+    model_type='backtest_cell'. Dashboard polls this for the Item-B
+    backtest column."""
+    body, status = _cluster_proxy_get('/api/cluster/tasks')
+    if status != 200 or not isinstance(body, list):
+        return jsonify({'error': 'cluster tasks unreachable',
+                        'cells': [], 'total': 0,
+                        'done': 0, 'running': 0, 'failed': 0, 'pending': 0}), status
+    cells = []
+    for t in body:
+        if t.get('model_type') != 'backtest_cell':
+            continue
+        result   = t.get('result') or {}
+        metrics  = result.get('metrics') or {}
+        cells.append({
+            'task_id':      t.get('task_id'),
+            'symbol':       t.get('symbol'),
+            'timeframe':    t.get('timeframe'),
+            'status':       t.get('status'),
+            'assigned_to':  t.get('assigned_to', ''),
+            'started_at':   t.get('started_at', ''),
+            'finished_at':  t.get('finished_at', ''),
+            'duration_s':   result.get('duration_s'),
+            'n_strategies': metrics.get('n_strategies'),
+            'error':        t.get('error', ''),
+        })
+    return jsonify({
+        'cells':   cells,
+        'total':   len(cells),
+        'done':    sum(1 for c in cells if c['status'] == 'done'),
+        'running': sum(1 for c in cells if c['status'] == 'running'),
+        'failed':  sum(1 for c in cells if c['status'] == 'failed'),
+        'pending': sum(1 for c in cells if c['status'] == 'pending'),
+    })
+
+
 # Phase 93 — manual operator restart of any worker by IP+port. Posts to
 # the worker's /restart endpoint server-side (avoids browser CORS) so
 # the dashboard's restart button works for remote nodes too. The

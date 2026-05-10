@@ -219,6 +219,14 @@ def _execute_task(task: dict) -> dict:
     if model_type == "smoke_test":
         return _run_smoke_test(task)
 
+    # Phase 94 — distributed backtest cell. Each task is one
+    # (symbol, timeframe) cell; the worker loads its own data via the
+    # SMB-mounted project root, builds signals, runs all enabled
+    # strategies + meta-filtered variants, and returns summary dicts.
+    # See run_distributed_backtest in src/engine/backtester.py.
+    if model_type == "backtest_cell":
+        return _run_backtest_cell(task)
+
     # v4 Phase B2 (2026-05-09) — invoke master's actual trainer modules
     # via the SMB-mounted code share, not the worker's simplified RF
     # wrapper. This is what makes the worker a peer-equal node to master:
@@ -486,6 +494,98 @@ def _run_smoke_test(task: dict) -> dict:
             "gpu_available":    gpu_available,
             "n_cpu_threads":    n_cpu_threads,
             "requested_duration_s": duration_s,
+        },
+    }
+
+
+# ─── Phase 94 — distributed backtest cell handler ───────────────────────────
+#
+# What this is: the worker-side counterpart to
+# `run_distributed_backtest` in src/engine/backtester.py. The
+# orchestrator dispatches one task per (symbol, timeframe) cell with
+# model_type='backtest_cell'; this handler imports master's actual
+# backtest code (via the SMB-mounted Z:\) and returns summary metrics
+# for every enabled strategy on that cell. Trades and equity curves
+# stay on the worker — only summary dicts cross the wire, so the
+# task_update payload is small (a few KB per cell vs. tens of MB if we
+# shipped raw BacktestResult objects).
+
+def _run_backtest_cell(task: dict) -> dict:
+    """Run all enabled backtest strategies for one (symbol, timeframe)
+    cell. Task spec:
+      {"model_type": "backtest_cell",
+       "symbol":     "BTC_USDT",
+       "timeframe":  "1h",
+       "config": {"initial_capital": 10000.0,
+                  "fee_preset":      "futures",
+                  "models":          ["base", "trend", ...] | None}}
+
+    Returns a result dict the orchestrator merges into the task table.
+    metrics.strategy_results is the list of per-strategy summary
+    dicts that master aggregates into the comparison frame.
+    """
+    import time as _time, os as _os
+    cfg       = task.get("config", {}) or {}
+    symbol    = task.get("symbol", "BTC_USDT")
+    timeframe = task.get("timeframe", "1h")
+
+    # Same chdir trick as _invoke_master_trainer: master's backtester
+    # uses relative paths ('data/raw/...') resolved against cwd. On a
+    # remote worker, cwd is the worker's local dir not Z:\, so without
+    # this every cell would fail "No training data found". chdir to
+    # PROJECT_ROOT (which is Z:\ on the worker via SMB) so relative
+    # paths resolve to the master's data tree.
+    saved_cwd = _os.getcwd()
+    try:
+        _os.chdir(str(PROJECT_ROOT))
+    except Exception:
+        pass
+
+    t0 = _time.time()
+    try:
+        from src.engine.backtester import run_one_backtest_cell_summaries
+    except Exception as exc:
+        try: _os.chdir(saved_cwd)
+        except Exception: pass
+        return {"status": "failed", "model": "backtest_cell",
+                "symbol": symbol, "timeframe": timeframe,
+                "error": f"backtester import failed: {type(exc).__name__}: {exc}"}
+
+    models_cfg = cfg.get("models")
+    models_tup = tuple(models_cfg) if models_cfg else None
+
+    try:
+        rows = run_one_backtest_cell_summaries(
+            symbol, timeframe,
+            initial_capital=float(cfg.get("initial_capital", 10_000.0)),
+            fee_preset=str(cfg.get("fee_preset", "futures")),
+            models=models_tup,
+        )
+    except Exception as exc:
+        logger.exception("[Worker] backtest_cell %s/%s raised", symbol, timeframe)
+        try: _os.chdir(saved_cwd)
+        except Exception: pass
+        return {"status": "failed", "model": "backtest_cell",
+                "symbol": symbol, "timeframe": timeframe,
+                "duration_s": round(_time.time() - t0, 2),
+                "error": f"{type(exc).__name__}: {exc}"}
+    finally:
+        try: _os.chdir(saved_cwd)
+        except Exception: pass
+
+    duration = _time.time() - t0
+    logger.info("[Worker] backtest_cell %s/%s done in %.1fs (%d strategies)",
+                symbol, timeframe, duration, len(rows))
+    return {
+        "status":     "done",
+        "model":      "backtest_cell",
+        "symbol":     symbol,
+        "timeframe":  timeframe,
+        "duration_s": round(duration, 2),
+        "via":        "backtest_cell",
+        "metrics":    {
+            "strategy_results": rows,
+            "n_strategies":     len(rows),
         },
     }
 

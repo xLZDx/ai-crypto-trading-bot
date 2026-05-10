@@ -692,6 +692,142 @@ def _strategy_uses_model(reg_name: str, model_key: str) -> bool:
     return False
 
 
+_BACKTEST_GROUP_A_NAMES = {"RSI_MeanReversion", "MACD_Momentum",
+                           "BB_Reversion", "Ensemble_A"}
+
+
+def _run_one_backtest_cell(
+    symbol: str,
+    timeframe: str,
+    *,
+    raw_dir: str | None = None,
+    initial_capital: float = 10_000.0,
+    fee_preset: str = "futures",
+    models: tuple[str, ...] | None = None,
+) -> list[BacktestResult]:
+    """Load + signal + score one (symbol, timeframe) cell.
+
+    Extracted from `run_full_backtest`'s inner loop in Phase 94 so
+    the same cell can run either inline on master or as a single
+    `model_type='backtest_cell'` task on a cluster worker.
+
+    Returns a flat list of BacktestResult objects (group A, group B,
+    and meta-filtered variants in one list — caller can split by
+    `strategy_name.startswith("A_")`). Each result has a `timeframe`
+    attribute attached. Returns `[]` (no raise) when data is missing
+    or insufficient — the distributed orchestrator treats empty cells
+    as silently skipped, matching the legacy single-process behavior.
+    """
+    from src.data_ingestion.funding_rate_downloader import merge_funding_into_ohlcv
+    from src.engine.strategy_registry import (
+        enabled_backtest_signal_cols, is_enabled_backtest,
+    )
+
+    if raw_dir is None:
+        raw_dir = os.path.join(PROJECT_ROOT, "data", "raw")
+
+    df = None
+    for fname in [f"{symbol}_{timeframe}.csv.gz",
+                  f"{symbol}_spot_{timeframe}.csv.gz"]:
+        fpath = os.path.join(raw_dir, fname)
+        if os.path.exists(fpath):
+            try:
+                df = pd.read_csv(fpath)
+                df["timestamp"] = pd.to_datetime(df["timestamp"])
+                df = df.sort_values("timestamp").reset_index(drop=True)
+                break
+            except Exception as e:
+                logger.warning("Could not load %s: %s", fpath, e)
+
+    if df is None or len(df) < 500:
+        logger.warning("Skipping %s @ %s — insufficient data.", symbol, timeframe)
+        return []
+
+    df = merge_funding_into_ohlcv(df, symbol.replace("_", "/"))
+
+    try:
+        df = _build_signals(df)
+    except Exception as e:
+        logger.error("Signal build failed for %s @ %s: %s", symbol, timeframe, e)
+        return []
+
+    bt = Backtester(initial_capital=initial_capital, fee_preset=fee_preset)
+    bt_scalping = Backtester(initial_capital=initial_capital,
+                              fee_preset="scalping", max_hold_bars=6)
+    out: list[BacktestResult] = []
+
+    # ── Registry-enabled strategies ──────────────────────────────────────
+    for reg_name, label, sig_col in enabled_backtest_signal_cols():
+        if sig_col not in df.columns:
+            continue
+        if models is not None and not any(
+                _strategy_uses_model(reg_name, m) for m in models):
+            continue
+        try:
+            group_prefix = "A_" if reg_name in _BACKTEST_GROUP_A_NAMES else "B_"
+            bt_run = bt_scalping if reg_name == "Scalping_ML" else bt
+            res = bt_run.run(df, sig_col, f"{group_prefix}{label}", symbol)
+            setattr(res, "timeframe", timeframe)
+            out.append(res)
+        except Exception as e:
+            logger.error("Backtest failed for %s/%s @ %s: %s",
+                         symbol, reg_name, timeframe, e)
+
+    # ── Meta-filtered variants ────────────────────────────────────────────
+    if is_enabled_backtest("MetaLabeler_Filter") and (
+            models is None
+            or any(_strategy_uses_model("MetaLabeler_Filter", m) for m in models)):
+        for strat, sig_col in [
+            ("RSI_MetaFiltered",      "signal_rsi"),
+            ("MACD_MetaFiltered",     "signal_macd"),
+            ("Ensemble_MetaFiltered", "signal_ensemble_b"),
+            ("Base_ML_MetaFiltered",  "signal_base_ml"),
+        ]:
+            if sig_col not in df.columns:
+                continue
+            try:
+                filtered_signal = _apply_meta_filter(df, sig_col)
+                tmp_col = f"_tmp_meta_{strat}"
+                df[tmp_col] = filtered_signal
+                res = bt.run(df, tmp_col, strat, symbol)
+                setattr(res, "timeframe", timeframe)
+                out.append(res)
+            except Exception as e:
+                logger.error("Meta-filtered backtest failed for %s/%s @ %s: %s",
+                             symbol, strat, timeframe, e)
+    return out
+
+
+def run_one_backtest_cell_summaries(
+    symbol: str,
+    timeframe: str,
+    *,
+    raw_dir: str | None = None,
+    initial_capital: float = 10_000.0,
+    fee_preset: str = "futures",
+    models: tuple[str, ...] | None = None,
+) -> list[dict]:
+    """JSON-safe wrapper over `_run_one_backtest_cell` — what the
+    cluster worker returns to master. Each result becomes a small
+    dict (BacktestResult.summary() + group + timeframe). Trades and
+    equity curves stay on the worker; only summary metrics travel
+    over the wire."""
+    results = _run_one_backtest_cell(
+        symbol, timeframe,
+        raw_dir=raw_dir,
+        initial_capital=initial_capital,
+        fee_preset=fee_preset,
+        models=models,
+    )
+    out: list[dict] = []
+    for r in results:
+        s = r.summary()
+        s["timeframe"] = getattr(r, "timeframe", timeframe)
+        s["group"]     = "A_Original" if r.strategy_name.startswith("A_") else "B_New"
+        out.append(s)
+    return out
+
+
 def run_full_backtest(
     raw_dir: str | None = None,
     output_dir: str | None = None,
@@ -699,6 +835,8 @@ def run_full_backtest(
     fee_preset: str = "futures",
     timeframes: tuple[str, ...] = ("1h",),
     models: tuple[str, ...] | None = None,
+    distribute: bool = False,
+    cluster_url: str = "http://localhost:7700",
 ) -> pd.DataFrame:
     """
     Entry point: loads all watchlist data, runs all strategies (Group A + B)
@@ -717,7 +855,24 @@ def run_full_backtest(
     path (PR-46 v3.1) so a manual `train trend @ 4h` followup-backtest
     finishes in <2 min instead of running every strategy on every
     symbol. None means run everything (default).
+
+    distribute — Phase 94 distributed-backtest flag. False (default) =
+    legacy single-process behavior on master. True = fan out one task
+    per (symbol, timeframe) cell to the cluster orchestrator at
+    `cluster_url`, aggregate summaries on master. Walk-forward stays
+    on master either way.
     """
+    if distribute:
+        return run_distributed_backtest(
+            cluster_url=cluster_url,
+            raw_dir=raw_dir,
+            output_dir=output_dir,
+            initial_capital=initial_capital,
+            fee_preset=fee_preset,
+            timeframes=timeframes,
+            models=models,
+        )
+
     import json as _json
 
     if raw_dir is None:
@@ -733,95 +888,50 @@ def run_full_backtest(
     else:
         symbols = ["BTC_USDT", "ETH_USDT", "SOL_USDT"]
 
-    from src.data_ingestion.funding_rate_downloader import merge_funding_into_ohlcv
-
     bt = Backtester(initial_capital=initial_capital, fee_preset=fee_preset)
     group_a_results: List[BacktestResult] = []
     group_b_results: List[BacktestResult] = []
-    last_df = None  # used for walk-forward sample at the end
+    last_cell: tuple[str, str] | None = None  # (sym, tf) of the LAST loaded cell
 
     # ── Outer loop: per timeframe ─────────────────────────────────────────
     for tf in timeframes:
         logger.info("=== Backtesting timeframe: %s ===", tf)
         for sym in symbols:
-            df = None
-            for fname in [f"{sym}_{tf}.csv.gz", f"{sym}_spot_{tf}.csv.gz"]:
-                fpath = os.path.join(raw_dir, fname)
-                if os.path.exists(fpath):
-                    try:
-                        df = pd.read_csv(fpath)
-                        df["timestamp"] = pd.to_datetime(df["timestamp"])
-                        df = df.sort_values("timestamp").reset_index(drop=True)
-                        break
-                    except Exception as e:
-                        logger.warning("Could not load %s: %s", fpath, e)
+            cell_results = _run_one_backtest_cell(
+                sym, tf,
+                raw_dir=raw_dir,
+                initial_capital=initial_capital,
+                fee_preset=fee_preset,
+                models=models,
+            )
+            for res in cell_results:
+                if res.strategy_name.startswith("A_"):
+                    group_a_results.append(res)
+                else:
+                    group_b_results.append(res)
+            if cell_results:
+                last_cell = (sym, tf)
 
-            if df is None or len(df) < 500:
-                logger.warning("Skipping %s @ %s — insufficient data.", sym, tf)
-                continue
-
-            df = merge_funding_into_ohlcv(df, sym.replace("_", "/"))
-
-            try:
-                df = _build_signals(df)
-            except Exception as e:
-                logger.error("Signal build failed for %s @ %s: %s", sym, tf, e)
-                continue
-
-            # ── Run all registry-enabled backtest strategies ───────────────
-            from src.engine.strategy_registry import enabled_backtest_signal_cols, is_enabled_backtest
-
-            _A_ORIG = {"RSI_MeanReversion", "MACD_Momentum", "BB_Reversion", "Ensemble_A"}
-            _bt_scalping = Backtester(initial_capital=initial_capital,
-                                      fee_preset="scalping", max_hold_bars=6)
-            for reg_name, label, sig_col in enabled_backtest_signal_cols():
-                if sig_col not in df.columns:
-                    continue
-                # Per-model filter: skip strategies whose underlying ML
-                # model isn't in the operator-supplied models tuple.
-                if models is not None and not any(
-                        _strategy_uses_model(reg_name, m) for m in models):
-                    continue
+    # ── Walk-forward needs the prepared df for ONE cell. Re-load it
+    # once for the last cell that produced results — cheap because
+    # pandas hit OS page cache from the cell call.
+    last_df = None
+    if last_cell is not None:
+        last_sym, last_tf = last_cell
+        from src.data_ingestion.funding_rate_downloader import merge_funding_into_ohlcv
+        for fname in [f"{last_sym}_{last_tf}.csv.gz",
+                      f"{last_sym}_spot_{last_tf}.csv.gz"]:
+            fpath = os.path.join(raw_dir, fname)
+            if os.path.exists(fpath):
                 try:
-                    group_prefix = "A_" if reg_name in _A_ORIG else "B_"
-                    _bt_run = _bt_scalping if reg_name == "Scalping_ML" else bt
-                    res = _bt_run.run(df, sig_col, f"{group_prefix}{label}", sym)
-                    # Tag the result with the timeframe so downstream rows
-                    # carry it through (Stability comparison view groups
-                    # by this column).
-                    setattr(res, "timeframe", tf)
-                    (group_a_results if group_prefix == "A_" else group_b_results).append(res)
-                except Exception as e:
-                    logger.error("Backtest failed for %s/%s @ %s: %s",
-                                 sym, reg_name, tf, e)
-
-            # ── Meta-filtered variants ────────────────────────────────────
-            # Same per-model filter applies — meta-filtered strategies
-            # only run if 'meta' (or the underlying model, e.g. 'base')
-            # is in the filter.
-            if is_enabled_backtest("MetaLabeler_Filter") and (
-                    models is None
-                    or any(_strategy_uses_model("MetaLabeler_Filter", m) for m in models)):
-                for strat, sig_col in [
-                    ("RSI_MetaFiltered",      "signal_rsi"),
-                    ("MACD_MetaFiltered",     "signal_macd"),
-                    ("Ensemble_MetaFiltered", "signal_ensemble_b"),
-                    ("Base_ML_MetaFiltered",  "signal_base_ml"),
-                ]:
-                    if sig_col not in df.columns:
-                        continue
-                    try:
-                        filtered_signal = _apply_meta_filter(df, sig_col)
-                        tmp_col = f"_tmp_meta_{strat}"
-                        df[tmp_col] = filtered_signal
-                        res = bt.run(df, tmp_col, strat, sym)
-                        setattr(res, "timeframe", tf)
-                        group_b_results.append(res)
-                    except Exception as e:
-                        logger.error("Meta-filtered backtest failed for %s/%s @ %s: %s",
-                                     sym, strat, tf, e)
-
-            last_df = df  # remember for the walk-forward sample below
+                    _df = pd.read_csv(fpath)
+                    _df["timestamp"] = pd.to_datetime(_df["timestamp"])
+                    _df = _df.sort_values("timestamp").reset_index(drop=True)
+                    _df = merge_funding_into_ohlcv(_df, last_sym.replace("_", "/"))
+                    last_df = _build_signals(_df)
+                    break
+                except Exception:
+                    pass
 
     all_results = group_a_results + group_b_results
     comparison = bt.compare_strategies(all_results)
@@ -861,7 +971,9 @@ def run_full_backtest(
     # Run WF on the last loaded df (representative sample). Tag with the
     # final TF so multi-TF runs produce per-TF WF rows for Stability view.
     wf_rows: List[dict] = []
+    wf_sym = last_cell[0] if last_cell else "BTC_USDT"
     try:
+        from src.engine.strategy_registry import enabled_backtest_signal_cols
         if last_df is not None and len(last_df) >= 200:
             for reg_name, label, sig_col in enabled_backtest_signal_cols():
                 if sig_col not in last_df.columns:
@@ -869,8 +981,7 @@ def run_full_backtest(
                 if models is not None and not any(
                         _strategy_uses_model(reg_name, m) for m in models):
                     continue
-                wf = bt.walk_forward(last_df, sig_col, reg_name,
-                                     sym if sym else "BTC_USDT")
+                wf = bt.walk_forward(last_df, sig_col, reg_name, wf_sym)
                 if wf:
                     wf["timeframe"] = timeframes[-1]
                     wf_rows.append(wf)
@@ -884,6 +995,236 @@ def run_full_backtest(
         logger.warning("Walk-forward analysis failed: %s", exc)
 
     logger.info("Backtest complete. Results saved to %s", output_dir)
+    return comparison
+
+
+# ═══ Phase 94 — distributed backtest ═════════════════════════════════════
+#
+# Why this exists: a sequential single-process backtest of 5 symbols × 7
+# timeframes pegs one core for ~30 min and leaves the rest of the cluster
+# idle. By splitting work at the (symbol, timeframe) cell level — same
+# unit of cost as data-load + signal-build, which dominates wall clock —
+# we fan out across the 4 lanes (LOCAL_RAZER_CPU/GPU + WORKER-1-CPU/GPU)
+# and bring wall-clock down to ~O(N/lanes).
+#
+# Walk-forward stays on master: it only ever ran on the LAST loaded df
+# anyway, so cluster fan-out adds nothing. Master loads one
+# representative cell after all distributed cells return and runs WF
+# the same way as the single-process path.
+
+def run_distributed_backtest(
+    cluster_url: str = "http://localhost:7700",
+    raw_dir: str | None = None,
+    output_dir: str | None = None,
+    initial_capital: float = 10_000.0,
+    fee_preset: str = "futures",
+    timeframes: tuple[str, ...] = ("1h",),
+    symbols: tuple[str, ...] | None = None,
+    models: tuple[str, ...] | None = None,
+    poll_interval_s: int = 5,
+    overall_timeout_s: int = 30 * 60,
+) -> pd.DataFrame:
+    """Fan one (symbol, timeframe) cell out per cluster task; aggregate
+    summaries on master.
+
+    Each cell becomes a task with `model_type='backtest_cell'`. Workers
+    load their own data via the SMB-mounted project root and call
+    `run_one_backtest_cell_summaries`. Only summary dicts (not trades or
+    equity curves) travel back to master.
+
+    Returns the same comparison frame that `run_full_backtest` returns
+    in single-process mode, and writes the same artifacts:
+      data/backtest/comparison_<ts>.csv
+      data/backtest/latest_comparison.json
+      data/backtest/ab_comparison.json
+      data/backtest/wf_results.json   (master-side, single rep cell)
+
+    Raises RuntimeError on cluster unreachable or overall timeout. Cells
+    that fail individually are logged and skipped — partial result frame
+    is returned.
+    """
+    import json as _json
+    import time as _time
+    import urllib.request as _ur
+    import urllib.error as _ue
+
+    if raw_dir is None:
+        raw_dir = os.path.join(PROJECT_ROOT, "data", "raw")
+    if output_dir is None:
+        output_dir = os.path.join(PROJECT_ROOT, "data", "backtest")
+    os.makedirs(output_dir, exist_ok=True)
+
+    if symbols is None:
+        wl_path = os.path.join(PROJECT_ROOT, "data", "watchlist.json")
+        if os.path.exists(wl_path):
+            with open(wl_path, "r", encoding="utf-8") as f:
+                symbols = tuple(s.replace("/", "_") for s in _json.load(f))
+        else:
+            symbols = ("BTC_USDT", "ETH_USDT", "SOL_USDT")
+
+    cluster_url = cluster_url.rstrip("/")
+
+    # ── 1. Submit one task per cell ──────────────────────────────────────
+    submitted: list[dict] = []
+    for tf in timeframes:
+        for sym in symbols:
+            spec = {
+                "model_type": "backtest_cell",
+                "symbol":     sym,
+                "timeframe":  tf,
+                "config": {
+                    "initial_capital": initial_capital,
+                    "fee_preset":      fee_preset,
+                    "models":          list(models) if models else None,
+                },
+            }
+            try:
+                body = _json.dumps(spec).encode("utf-8")
+                req  = _ur.Request(f"{cluster_url}/api/cluster/submit",
+                                   data=body, method="POST",
+                                   headers={"Content-Type": "application/json"})
+                with _ur.urlopen(req, timeout=10) as r:
+                    payload = _json.loads(r.read().decode("utf-8"))
+                tid = payload.get("task_id")
+                if tid:
+                    submitted.append({"task_id": tid, "symbol": sym, "timeframe": tf})
+            except (_ue.URLError, OSError, _json.JSONDecodeError) as exc:
+                raise RuntimeError(
+                    f"distributed backtest: cluster unreachable at {cluster_url}: {exc}"
+                ) from exc
+
+    if not submitted:
+        raise RuntimeError("distributed backtest: zero cells submitted (empty timeframes/symbols?)")
+
+    logger.info("[dist-bt] submitted %d cells across %d tf × %d sym",
+                len(submitted), len(timeframes), len(symbols))
+
+    # ── 2. Poll until all done / failed / cancelled ───────────────────────
+    target_ids = {c["task_id"] for c in submitted}
+    finished:  dict[str, dict] = {}
+    started_at = _time.time()
+    while True:
+        if _time.time() - started_at > overall_timeout_s:
+            raise RuntimeError(
+                f"distributed backtest: overall timeout {overall_timeout_s}s "
+                f"({len(finished)}/{len(target_ids)} cells finished)"
+            )
+        try:
+            with _ur.urlopen(f"{cluster_url}/api/cluster/tasks", timeout=10) as r:
+                tasks = _json.loads(r.read().decode("utf-8"))
+        except (_ue.URLError, OSError, _json.JSONDecodeError) as exc:
+            logger.warning("[dist-bt] tasks poll failed (%s) — retrying", exc)
+            _time.sleep(poll_interval_s)
+            continue
+        for t in tasks or []:
+            tid = t.get("task_id", "")
+            if tid not in target_ids or tid in finished:
+                continue
+            if t.get("status") in ("done", "failed", "cancelled"):
+                finished[tid] = t
+        if len(finished) >= len(target_ids):
+            break
+        _time.sleep(poll_interval_s)
+
+    # ── 3. Reconstruct strategy summary rows ──────────────────────────────
+    rows: list[dict] = []
+    for cell in submitted:
+        tid = cell["task_id"]
+        task = finished.get(tid, {})
+        if task.get("status") != "done":
+            logger.warning("[dist-bt] cell %s/%s task=%s status=%s — skipped",
+                           cell["symbol"], cell["timeframe"], tid[:11],
+                           task.get("status", "?"))
+            continue
+        result = task.get("result", {}) or {}
+        metrics = result.get("metrics", {}) or {}
+        for s in metrics.get("strategy_results", []) or []:
+            rows.append(s)
+
+    # Stable sort so the output CSV is deterministic across runs (worker
+    # completion order is non-deterministic).
+    rows.sort(key=lambda r: (r.get("symbol", ""),
+                             r.get("timeframe", ""),
+                             r.get("strategy", "")))
+
+    comparison = pd.DataFrame(rows)
+    if not comparison.empty:
+        comparison = comparison.sort_values("sharpe", ascending=False).reset_index(drop=True)
+
+    # ── 4. Write the same artifacts as run_full_backtest ──────────────────
+    if not comparison.empty and "group" not in comparison.columns:
+        comparison["group"] = comparison["strategy"].apply(
+            lambda s: "A_Original" if s.startswith("A_") else "B_New"
+        )
+    if not comparison.empty and "group" in comparison.columns:
+        for grp in ["A_Original", "B_New"]:
+            sub = comparison[comparison["group"] == grp]
+            if not sub.empty:
+                logger.info("[dist-bt] Group %s | mean Sharpe=%.3f | mean WinRate=%.1f%% | n=%d",
+                            grp, sub["sharpe"].mean(), sub["win_rate_pct"].mean(), len(sub))
+    ts = datetime.now(_tz.utc).strftime("%Y%m%d_%H%M")
+    comparison.to_csv(os.path.join(output_dir, f"comparison_{ts}.csv"), index=False)
+    comparison.to_json(os.path.join(output_dir, "latest_comparison.json"),
+                       orient="records", indent=2)
+    if not comparison.empty and "group" in comparison.columns:
+        ab = comparison.groupby("group")[["sharpe", "sortino", "win_rate_pct",
+                                          "max_drawdown_pct", "n_trades"]].mean()
+        ab.to_json(os.path.join(output_dir, "ab_comparison.json"), indent=2)
+
+    # ── 5. Walk-forward on a single representative cell, master-side ──────
+    # Pick the LAST submitted cell — same heuristic as the single-process
+    # path. Loads the df once on master; cheap.
+    rep = submitted[-1]
+    rep_results = _run_one_backtest_cell(
+        rep["symbol"], rep["timeframe"],
+        raw_dir=raw_dir,
+        initial_capital=initial_capital,
+        fee_preset=fee_preset,
+        models=models,
+    )
+    if rep_results:
+        # Re-load the df once for WF.
+        from src.data_ingestion.funding_rate_downloader import merge_funding_into_ohlcv
+        from src.engine.strategy_registry import enabled_backtest_signal_cols
+        last_df = None
+        for fname in [f"{rep['symbol']}_{rep['timeframe']}.csv.gz",
+                      f"{rep['symbol']}_spot_{rep['timeframe']}.csv.gz"]:
+            fpath = os.path.join(raw_dir, fname)
+            if os.path.exists(fpath):
+                try:
+                    _df = pd.read_csv(fpath)
+                    _df["timestamp"] = pd.to_datetime(_df["timestamp"])
+                    _df = _df.sort_values("timestamp").reset_index(drop=True)
+                    _df = merge_funding_into_ohlcv(_df, rep["symbol"].replace("_", "/"))
+                    last_df = _build_signals(_df)
+                    break
+                except Exception:
+                    pass
+        if last_df is not None and len(last_df) >= 200:
+            wf_rows: list[dict] = []
+            bt = Backtester(initial_capital=initial_capital, fee_preset=fee_preset)
+            for reg_name, _label, sig_col in enabled_backtest_signal_cols():
+                if sig_col not in last_df.columns:
+                    continue
+                if models is not None and not any(
+                        _strategy_uses_model(reg_name, m) for m in models):
+                    continue
+                try:
+                    wf = bt.walk_forward(last_df, sig_col, reg_name, rep["symbol"])
+                    if wf:
+                        wf["timeframe"] = rep["timeframe"]
+                        wf_rows.append(wf)
+                except Exception as exc:
+                    logger.debug("[dist-bt] WF skipped %s: %s", reg_name, exc)
+            if wf_rows:
+                with open(os.path.join(output_dir, "wf_results.json"), "w",
+                          encoding="utf-8") as f:
+                    _json.dump(wf_rows, f, indent=2)
+
+    logger.info("[dist-bt] complete: %d cells submitted, %d done, %d strategy rows",
+                len(submitted),
+                sum(1 for t in finished.values() if t.get("status") == "done"),
+                len(rows))
     return comparison
 
 

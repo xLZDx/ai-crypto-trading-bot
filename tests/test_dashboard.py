@@ -3465,10 +3465,16 @@ def test_phase42_pr3_backtester_multi_tf():
     check('outer loop iterates timeframes',
           'for tf in timeframes:' in bt)
     check('per-symbol load uses <sym>_<tf>.csv.gz',
-          'f"{sym}_{tf}.csv.gz"' in bt
-          and 'f"{sym}_spot_{tf}.csv.gz"' in bt)
+          # Phase 94 extracted this into _run_one_backtest_cell with
+          # symbol/timeframe param names; legacy run_full path still
+          # uses sym/tf — accept either form.
+          ('f"{sym}_{tf}.csv.gz"' in bt or 'f"{symbol}_{timeframe}.csv.gz"' in bt)
+          and ('f"{sym}_spot_{tf}.csv.gz"' in bt or 'f"{symbol}_spot_{timeframe}.csv.gz"' in bt))
     check('each BacktestResult tagged with timeframe attr',
-          'setattr(res, "timeframe", tf)' in bt)
+          # Phase 94 — tagging now happens inside _run_one_backtest_cell
+          # using `timeframe` not `tf`. Accept either.
+          'setattr(res, "timeframe", tf)' in bt
+          or 'setattr(res, "timeframe", timeframe)' in bt)
     check('comparison DataFrame carries timeframe column',
           '"timeframe" not in comparison.columns:' in bt
           and 'comparison["timeframe"]' in bt)
@@ -7307,6 +7313,196 @@ def test_phase93_worker_live_load_and_remote_restart():
           'setInterval(() => { if (activeTab === \'monitor\') clusterPoll(); }, 10_000)' in tpl)
 
 
+def test_phase94_distributed_backtest_per_cell():
+    """Phase 94 — per-cell distributed backtest.
+
+    Pre-Phase-94 `run_full_backtest` was single-process on master,
+    burning one core for ~30 min while the other 3 lanes (Ivan
+    CPU/GPU + LOCAL_RAZER GPU) sat idle. Phase 94 fans cells out to
+    the cluster: one task per (symbol, timeframe), workers load their
+    own data via SMB, return summary dicts only (no equity curves
+    over the wire).
+
+    What this test asserts:
+      1. backtester.py extracted `_run_one_backtest_cell` from the
+         inner loop (legacy single-process path now goes through it
+         too, so distributed and single-process paths are guaranteed
+         to produce identical strategy_result rows).
+      2. JSON-safe wrapper `run_one_backtest_cell_summaries` exists
+         (returns plain dicts the worker can put in task.result).
+      3. `run_distributed_backtest` submits one task per cell, polls
+         /api/cluster/tasks, aggregates summaries, writes the same
+         artifacts as the single-process path.
+      4. `run_full_backtest(distribute=True)` delegates to the
+         distributed path; default `distribute=False` keeps legacy
+         behavior.
+      5. Walk-forward stays on master in BOTH paths (no per-cell WF).
+      6. worker.py has the `model_type='backtest_cell'` branch wired
+         BEFORE the master_trainer dispatch — backtests are not
+         training, master_trainer doesn't know backtest_cell.
+      7. Worker chdir's to PROJECT_ROOT so master's relative-path data
+         loads work over SMB.
+      8. Dashboard exposes /api/backtest/distributed/start and /status.
+      9. /status only includes model_type='backtest_cell' tasks (not
+         every cluster task) and exposes per-cell counters.
+    """
+    print('\n[Phase 94 — distributed backtest per cell]')
+
+    bt_path = os.path.join(BASE_DIR, 'src', 'engine', 'backtester.py')
+    with open(bt_path, encoding='utf-8') as f:
+        bt = f.read()
+    worker_path = os.path.join(BASE_DIR, 'src', 'training', 'distributed', 'worker.py')
+    with open(worker_path, encoding='utf-8') as f:
+        worker = f.read()
+    app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
+    with open(app_path, encoding='utf-8') as f:
+        app = f.read()
+
+    # 1. Cell extraction
+    check('_run_one_backtest_cell defined',
+          'def _run_one_backtest_cell(' in bt)
+    check('_run_one_backtest_cell returns list[BacktestResult] (no raise on empty)',
+          'return []' in bt
+          and 'def _run_one_backtest_cell(' in bt)
+    check('_BACKTEST_GROUP_A_NAMES constant moved to module scope (was inline in run_full)',
+          '_BACKTEST_GROUP_A_NAMES' in bt
+          and 'RSI_MeanReversion' in bt)
+    check('legacy run_full_backtest now delegates per-cell to _run_one_backtest_cell',
+          'cell_results = _run_one_backtest_cell(' in bt)
+
+    # 2. JSON-safe summaries wrapper
+    check('run_one_backtest_cell_summaries defined',
+          'def run_one_backtest_cell_summaries(' in bt)
+    check('summaries wrapper attaches timeframe + group fields',
+          's["timeframe"]' in bt
+          and 's["group"]' in bt)
+    check('summaries wrapper does NOT serialize trades/equity_curve (JSON-safe)',
+          # The wrapper calls .summary() which only emits scalars.
+          'r.summary()' in bt
+          and 'def run_one_backtest_cell_summaries' in bt)
+
+    # 3. run_distributed_backtest
+    check('run_distributed_backtest defined',
+          'def run_distributed_backtest(' in bt)
+    rdb_start = bt.find('def run_distributed_backtest(')
+    rdb_end   = bt.find('\nif __name__', rdb_start)
+    rdb_body  = bt[rdb_start:rdb_end] if rdb_end > rdb_start else bt[rdb_start:]
+    check('distributed: submits one task per (symbol, timeframe) cell',
+          'for tf in timeframes:' in rdb_body
+          and 'for sym in symbols:' in rdb_body
+          and '"model_type": "backtest_cell"' in rdb_body)
+    check('distributed: posts to /api/cluster/submit',
+          '/api/cluster/submit' in rdb_body
+          and 'method="POST"' in rdb_body)
+    check('distributed: polls /api/cluster/tasks until done/failed/cancelled',
+          '/api/cluster/tasks' in rdb_body
+          and '("done", "failed", "cancelled")' in rdb_body)
+    check('distributed: overall_timeout_s guards against forever-poll',
+          'overall_timeout_s' in rdb_body
+          and 'RuntimeError' in rdb_body)
+    check('distributed: stable sort on (symbol, timeframe, strategy) before write',
+          'rows.sort(' in rdb_body
+          and '"symbol"' in rdb_body
+          and '"strategy"' in rdb_body)
+    check('distributed: writes the same artifacts as run_full_backtest',
+          'comparison_' in rdb_body
+          and 'latest_comparison.json' in rdb_body
+          and 'ab_comparison.json' in rdb_body)
+    check('distributed: cluster_url is configurable (default localhost:7700)',
+          'cluster_url: str = "http://localhost:7700"' in rdb_body)
+    check('distributed: raises on cluster unreachable (no silent partial)',
+          'cluster unreachable' in rdb_body)
+
+    # 4. run_full_backtest delegation
+    rfb_start = bt.find('def run_full_backtest(')
+    rfb_end   = bt.find('\n# ═══ Phase 94', rfb_start)
+    rfb_body  = bt[rfb_start:rfb_end] if rfb_end > rfb_start else bt[rfb_start:]
+    check('run_full_backtest exposes distribute= flag (default False)',
+          'distribute: bool = False' in rfb_body)
+    check('run_full_backtest delegates to run_distributed_backtest when distribute=True',
+          'if distribute:' in rfb_body
+          and 'run_distributed_backtest(' in rfb_body)
+    check('legacy default keeps single-process semantics (back-compat)',
+          'distribute: bool = False' in rfb_body)
+
+    # 5. Walk-forward stays on master in both paths
+    check('legacy WF block uses last_cell, not the lost `sym` from extraction',
+          'wf_sym = last_cell[0]' in rfb_body)
+    check('distributed WF runs on master, single rep cell',
+          'rep = submitted[-1]' in rdb_body
+          and 'walk_forward(' in rdb_body)
+
+    # 6. Worker handler wired BEFORE master_trainer dispatch
+    exec_start = worker.find('def _execute_task(')
+    exec_end   = worker.find('\n\n# ─', exec_start)
+    if exec_end < 0:
+        exec_end = worker.find('\ndef ', exec_start + 1)
+    exec_body  = worker[exec_start:exec_end] if exec_end > exec_start else worker[exec_start:]
+    check('worker._execute_task dispatches model_type="backtest_cell"',
+          'model_type == "backtest_cell"' in exec_body
+          and '_run_backtest_cell(task)' in exec_body)
+    check('backtest_cell branch comes BEFORE master_trainer dispatch (priority order)',
+          exec_body.find('model_type == "backtest_cell"')
+          < exec_body.find('use_master_trainer'))
+    check('worker._run_backtest_cell handler defined',
+          'def _run_backtest_cell(' in worker)
+
+    # 7. SMB cwd handling
+    rbc_start = worker.find('def _run_backtest_cell(')
+    rbc_end   = worker.find('\ndef _load_data', rbc_start)
+    if rbc_end < 0:
+        rbc_end = worker.find('\n\ndef ', rbc_start + 1)
+    rbc_body  = worker[rbc_start:rbc_end] if rbc_end > rbc_start else worker[rbc_start:]
+    check('handler chdirs to PROJECT_ROOT (SMB-relative data paths work)',
+          '_os.chdir(str(PROJECT_ROOT))' in rbc_body)
+    check('handler restores cwd in finally (no process-state pollution)',
+          'finally:' in rbc_body
+          and '_os.chdir(saved_cwd)' in rbc_body)
+    check('handler imports from master via run_one_backtest_cell_summaries',
+          'run_one_backtest_cell_summaries' in rbc_body)
+    check('handler returns metrics.strategy_results + n_strategies',
+          '"strategy_results": rows' in rbc_body
+          and '"n_strategies":' in rbc_body)
+    check('handler reports duration_s (operator visibility per cell)',
+          '"duration_s":' in rbc_body)
+    check('handler caps failure to status="failed" + error string (no raise to caller)',
+          '"status": "failed"' in rbc_body
+          and '"error":' in rbc_body)
+
+    # 8. Dashboard endpoints
+    check('dashboard /api/backtest/distributed/start route defined',
+          "@app.route('/api/backtest/distributed/start'" in app
+          and 'def api_backtest_distributed_start' in app)
+    check('start endpoint runs distributed backtest in a background thread',
+          'threading.Thread(target=_bg' in app
+          and 'run_distributed_backtest(' in app)
+    check('start endpoint accepts timeframes / symbols / models from body',
+          "body.get('timeframes'" in app
+          and "body.get('symbols')" in app
+          and "body.get('models')" in app)
+    check('dashboard /api/backtest/distributed/status route defined',
+          "@app.route('/api/backtest/distributed/status'" in app
+          and 'def api_backtest_distributed_status' in app)
+
+    # 9. /status filtering + counters
+    status_start = app.find('def api_backtest_distributed_status')
+    status_end   = app.find('\n@app.route', status_start + 1)
+    status_body  = app[status_start:status_end] if status_end > status_start else app[status_start:]
+    check('/status filters to model_type="backtest_cell" only',
+          "t.get('model_type') != 'backtest_cell'" in status_body)
+    check('/status surfaces per-cell counters: done/running/failed/pending',
+          "'done':" in status_body
+          and "'running':" in status_body
+          and "'failed':" in status_body
+          and "'pending':" in status_body)
+    check('/status includes per-cell metadata for the dashboard column',
+          "'task_id':" in status_body
+          and "'symbol':" in status_body
+          and "'timeframe':" in status_body
+          and "'assigned_to':" in status_body
+          and "'duration_s':" in status_body)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -7663,6 +7859,7 @@ def main():
     test_phase91_tft_dedupe_tz_normalize_plus_meta_hard_fail()
     test_phase92_meta_labeler_regime_dict_shape_tolerance()
     test_phase93_worker_live_load_and_remote_restart()
+    test_phase94_distributed_backtest_per_cell()
 
     if not args.offline:
         test_api(args.url)
