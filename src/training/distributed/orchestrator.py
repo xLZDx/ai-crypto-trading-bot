@@ -41,6 +41,23 @@ ORCH_PORT       = 7700
 WORKER_TIMEOUT  = 60    # mark worker offline after N seconds without heartbeat
 MAX_TASK_RETRIES = 2
 
+# 2026-05-10 — task progress watchdog (Phase 88).
+# A task held "running" indefinitely by a zombie worker (e.g. trainer
+# thread crashed silently while heartbeat keeps reporting busy) was the
+# #1 cause of confusion during the 2026-05-10 distributed sweep. The
+# watchdog scans running tasks every WATCHDOG_POLL_S seconds; if a task
+# has been running longer than the per-lane TIMEOUT and hasn't received
+# a status update in STALE_UPDATE_S, mark it failed (error =
+# "watchdog_timeout") and free the worker so it picks up the next task.
+WATCHDOG_POLL_S            = 30
+WATCHDOG_STALE_UPDATE_S    = 5 * 60       # 5 min without an update + over-budget = dead
+WATCHDOG_TIMEOUT_BY_KIND   = {
+    "cpu":       60 * 60,                 # CPU model: 60 min hard cap
+    "gpu":       120 * 60,                # GPU model: 120 min hard cap
+    "exclusive": 180 * 60,                # OFT-class: 180 min hard cap
+}
+WATCHDOG_DEFAULT_TIMEOUT_S = 60 * 60
+
 
 class Orchestrator:
     """
@@ -64,7 +81,14 @@ class Orchestrator:
             target=self._scheduler_loop, daemon=True, name="orch-scheduler"
         )
         self._schedule_thread.start()
-        logger.info("[Orch] Orchestrator started")
+        # 2026-05-10 — task progress watchdog (Phase 88). Catches zombie
+        # workers that report 'busy' on heartbeat but whose task thread
+        # has crashed silently.
+        self._watchdog_thread = threading.Thread(
+            target=self._watchdog_loop, daemon=True, name="orch-watchdog"
+        )
+        self._watchdog_thread.start()
+        logger.info("[Orch] Orchestrator started (scheduler + watchdog)")
 
     def stop(self) -> None:
         self._running = False
@@ -107,22 +131,27 @@ class Orchestrator:
     def submit_task(self, task_spec: dict) -> str:
         """Submit a training task. Returns task_id."""
         task_id = str(uuid.uuid4())[:12]
+        now_iso = datetime.now(timezone.utc).isoformat()
         task = {
-            "task_id":     task_id,
-            "model_type":  task_spec.get("model_type", "btc_rf"),
-            "symbol":      task_spec.get("symbol", "BTC/USDT"),
-            "timeframe":   task_spec.get("timeframe", "1m"),
-            "config":      task_spec.get("config", {}),
-            "data_path":   task_spec.get("data_path", ""),
-            "output_path": task_spec.get("output_path", str(PROJECT_ROOT / "models")),
-            "status":      "pending",
-            "assigned_to": "",
-            "created_at":  datetime.now(timezone.utc).isoformat(),
-            "started_at":  "",
-            "finished_at": "",
-            "result":      {},
-            "error":       "",
-            "retries":     0,
+            "task_id":         task_id,
+            "model_type":      task_spec.get("model_type", "btc_rf"),
+            "symbol":          task_spec.get("symbol", "BTC/USDT"),
+            "timeframe":       task_spec.get("timeframe", "1m"),
+            "config":          task_spec.get("config", {}),
+            "data_path":       task_spec.get("data_path", ""),
+            "output_path":     task_spec.get("output_path", str(PROJECT_ROOT / "models")),
+            "status":          "pending",
+            "assigned_to":     "",
+            "created_at":      now_iso,
+            "started_at":      "",
+            "finished_at":     "",
+            # Watchdog timestamp — refreshed on every update_task() and on
+            # dispatch. If now - last_update_at > stale window AND elapsed
+            # > timeout, the watchdog kills the task.
+            "last_update_at":  now_iso,
+            "result":          {},
+            "error":           "",
+            "retries":         0,
         }
         with self._lock:
             self._tasks[task_id] = task
@@ -137,6 +166,9 @@ class Orchestrator:
             if not task:
                 return
             task["status"] = status
+            # Watchdog timestamp — refresh on every status update from a
+            # worker so stale-task detection knows the trainer is alive.
+            task["last_update_at"] = datetime.now(timezone.utc).isoformat()
             if node_id:
                 task["assigned_to"] = node_id
             if result:
@@ -199,6 +231,84 @@ class Orchestrator:
             except Exception as exc:
                 logger.debug("[Orch] Scheduler error: %s", exc)
             time.sleep(5)
+
+    def _watchdog_loop(self) -> None:
+        """Phase 88 watchdog. Every WATCHDOG_POLL_S, scan running tasks
+        and kill any that have:
+          1. exceeded the per-lane wall-clock timeout (started_at), AND
+          2. not received a status update in the last STALE window
+        For each killed task: status='failed', error='watchdog_timeout',
+        free the worker (idle, current_task=''). The dispatcher then
+        picks the next pending task for that worker on the next cycle.
+
+        This is the server-side fix for 'zombie worker holds task running
+        forever' — observed during the 2026-05-10 sweep when Ivan's
+        trainer thread crashed silently while heartbeats kept lying.
+        """
+        while self._running:
+            try:
+                self._sweep_stale_tasks()
+            except Exception as exc:
+                logger.debug("[Orch] Watchdog error: %s", exc)
+            time.sleep(WATCHDOG_POLL_S)
+
+    def _sweep_stale_tasks(self) -> None:
+        # Resolve each task's resource_kind to pick the right timeout.
+        try:
+            from src.training.training_rules import resource_kind as _rkind
+        except Exception:
+            _rkind = lambda _m: "cpu"
+        now = datetime.now(timezone.utc)
+        with self._lock:
+            for task_id, task in list(self._tasks.items()):
+                if task.get("status") != "running":
+                    continue
+                # Wall-clock elapsed since the task started executing.
+                started_iso = task.get("started_at") or task.get("created_at")
+                try:
+                    started = datetime.fromisoformat(started_iso.replace("Z", "+00:00"))
+                except Exception:
+                    continue
+                elapsed_s = (now - started).total_seconds()
+                # Stale-update window — refreshed on every update_task() call.
+                last_update_iso = task.get("last_update_at") or started_iso
+                try:
+                    last_update = datetime.fromisoformat(last_update_iso.replace("Z", "+00:00"))
+                except Exception:
+                    last_update = started
+                stale_s = (now - last_update).total_seconds()
+                # Per-lane timeout from training_rules.
+                kind = "cpu"
+                try:
+                    kind = _rkind(task.get("model_type", "")) or "cpu"
+                except Exception:
+                    pass
+                timeout_s = WATCHDOG_TIMEOUT_BY_KIND.get(kind, WATCHDOG_DEFAULT_TIMEOUT_S)
+                # Kill condition: elapsed over budget AND no recent update
+                # from the worker. Both gates must trip — a long-running
+                # but actively-progressing task should NOT be killed.
+                if elapsed_s > timeout_s and stale_s > WATCHDOG_STALE_UPDATE_S:
+                    logger.warning(
+                        "[Orch] WATCHDOG killing stale task %s %s@%s "
+                        "(elapsed=%ds > %ds AND stale=%ds > %ds)",
+                        task_id, task.get("model_type"), task.get("timeframe"),
+                        int(elapsed_s), timeout_s, int(stale_s), WATCHDOG_STALE_UPDATE_S,
+                    )
+                    task["status"]      = "failed"
+                    task["error"]       = (
+                        f"watchdog_timeout: elapsed={int(elapsed_s)}s exceeds "
+                        f"{kind}-lane budget {timeout_s}s, last update {int(stale_s)}s ago"
+                    )
+                    task["finished_at"] = now.isoformat()
+                    task["last_update_at"] = now.isoformat()
+                    # Free the assigned worker so the dispatcher reassigns.
+                    nid = task.get("assigned_to", "")
+                    if nid and nid in self._workers:
+                        self._workers[nid]["status"]       = "idle"
+                        self._workers[nid]["current_task"] = ""
+                        self._workers[nid]["tasks_failed"] = (
+                            self._workers[nid].get("tasks_failed", 0) + 1
+                        )
 
     def _dispatch_pending(self) -> None:
         with self._lock:

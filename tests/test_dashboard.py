@@ -6657,6 +6657,136 @@ def test_phase87_dual_lane_workers_concurrent_cpu_gpu():
           'CUDA_VISIBLE_DEVICES' in sc and 'lane == "cpu"' in sc)
 
 
+def test_phase88_orchestrator_task_progress_watchdog():
+    """Server-side watchdog (2026-05-10): catches zombie workers that
+    keep heartbeating 'busy' while their task thread has crashed
+    silently. Every WATCHDOG_POLL_S, scan running tasks and kill any
+    that exceed the per-lane wall-clock timeout AND haven't received a
+    status update in the last STALE window. Killed tasks become
+    status='failed' with error='watchdog_timeout', and their assigned
+    worker is freed (idle, current_task='') so the dispatcher reassigns.
+
+    Phase 88 covers:
+      P1. Watchdog constants + per-lane timeouts.
+      P2. Tasks carry last_update_at field, refreshed on update_task().
+      P3. Watchdog thread starts alongside the scheduler.
+      P4. Stale + over-budget task gets killed; worker freed; dispatcher
+          can pick a fresh task on the same worker.
+      P5. Long-running but ACTIVELY-PROGRESSING task is NOT killed.
+    """
+    print('\n[Phase 88 — orchestrator task-progress watchdog]')
+
+    orch_path = os.path.join(BASE_DIR, 'src', 'training', 'distributed', 'orchestrator.py')
+    with open(orch_path, encoding='utf-8') as f:
+        orch = f.read()
+
+    # P1 — constants
+    check('WATCHDOG_POLL_S defined',                 'WATCHDOG_POLL_S' in orch and '= 30' in orch)
+    check('WATCHDOG_STALE_UPDATE_S defined',         'WATCHDOG_STALE_UPDATE_S' in orch)
+    check('WATCHDOG_TIMEOUT_BY_KIND with cpu/gpu/exclusive',
+          '"cpu":' in orch and '"gpu":' in orch and '"exclusive":' in orch
+          and '60 * 60' in orch and '120 * 60' in orch and '180 * 60' in orch)
+
+    # P2 — last_update_at on submit + refreshed on every update
+    check('submit_task seeds last_update_at',
+          '"last_update_at":' in orch and 'now_iso' in orch)
+    check('update_task refreshes last_update_at',
+          'task["last_update_at"] = datetime.now(timezone.utc).isoformat()' in orch)
+
+    # P3 — watchdog thread starts alongside scheduler
+    check('start() spawns _watchdog_loop in a thread',
+          '_watchdog_thread' in orch
+          and 'target=self._watchdog_loop' in orch
+          and 'name="orch-watchdog"' in orch)
+    check('def _watchdog_loop body uses WATCHDOG_POLL_S',
+          'def _watchdog_loop' in orch and 'WATCHDOG_POLL_S' in orch)
+    check('_sweep_stale_tasks helper defined',
+          'def _sweep_stale_tasks' in orch)
+
+    # P4 — kill condition: BOTH wall-clock over budget AND stale
+    check('kill needs elapsed > timeout AND stale > update window',
+          'elapsed_s > timeout_s and stale_s > WATCHDOG_STALE_UPDATE_S' in orch)
+    check('kill marks status=failed with watchdog_timeout error',
+          '"watchdog_timeout' in orch and 'task["status"]      = "failed"' in orch)
+    check('kill frees worker (status=idle, current_task="")',
+          'self._workers[nid]["status"]       = "idle"' in orch
+          and 'self._workers[nid]["current_task"] = ""' in orch)
+
+    # ── Functional smoke test using a real Orchestrator instance ──────
+    import importlib, sys, time as _t, datetime as _dt
+    if 'src.training.distributed.orchestrator' in sys.modules:
+        del sys.modules['src.training.distributed.orchestrator']
+    mod = importlib.import_module('src.training.distributed.orchestrator')
+
+    # Build a fresh orchestrator without starting threads (we want
+    # deterministic state for testing the helper directly).
+    o = mod.Orchestrator()
+    # Register a fake worker
+    nid = "test-node-1"
+    o.register_worker({
+        "node_id": nid, "name": "TEST_WORKER", "ip": "127.0.0.1",
+        "port": 9999, "hostname": "TEST", "status": "busy",
+        "lane": "cpu", "cuda_available": False, "gpu_vram_gb": 0,
+        "cpu_cores": 4, "ram_gb": 8, "current_task": "",
+    })
+    # Submit a task and force it into stale-running state in the past.
+    tid = o.submit_task({"model_type": "base", "timeframe": "1h",
+                         "symbol": "ALL", "config": {}})
+    long_ago_iso = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=2)).isoformat()
+    with o._lock:
+        o._tasks[tid]["status"]         = "running"
+        o._tasks[tid]["assigned_to"]    = nid
+        o._tasks[tid]["started_at"]     = long_ago_iso
+        o._tasks[tid]["last_update_at"] = long_ago_iso
+        o._workers[nid]["current_task"] = tid
+        o._workers[nid]["status"]       = "busy"
+
+    o._sweep_stale_tasks()
+
+    with o._lock:
+        killed_status = o._tasks[tid].get("status")
+        killed_error  = o._tasks[tid].get("error", "")
+        worker_now    = dict(o._workers[nid])
+
+    check('stale CPU task killed (status=failed)',
+          killed_status == "failed")
+    check('killed task error contains "watchdog_timeout"',
+          'watchdog_timeout' in killed_error)
+    check('worker freed (status=idle, current_task="")',
+          worker_now.get("status") == "idle"
+          and worker_now.get("current_task") == "")
+
+    # P5 — actively-progressing task must NOT be killed
+    nid2 = "test-node-2"
+    o.register_worker({
+        "node_id": nid2, "name": "TEST_WORKER_2", "ip": "127.0.0.2",
+        "port": 9998, "hostname": "TEST2", "status": "busy",
+        "lane": "cpu", "cuda_available": False, "gpu_vram_gb": 0,
+        "cpu_cores": 4, "ram_gb": 8, "current_task": "",
+    })
+    tid2 = o.submit_task({"model_type": "base", "timeframe": "1h",
+                          "symbol": "ALL", "config": {}})
+    long_ago_iso = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=2)).isoformat()
+    fresh_iso    = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    with o._lock:
+        o._tasks[tid2]["status"]         = "running"
+        o._tasks[tid2]["assigned_to"]    = nid2
+        o._tasks[tid2]["started_at"]     = long_ago_iso   # over budget
+        o._tasks[tid2]["last_update_at"] = fresh_iso       # but PROGRESSING
+        o._workers[nid2]["current_task"] = tid2
+        o._workers[nid2]["status"]       = "busy"
+
+    o._sweep_stale_tasks()
+
+    with o._lock:
+        progressing_status = o._tasks[tid2].get("status")
+        worker2_now        = dict(o._workers[nid2])
+
+    check('actively-progressing task is NOT killed (recent update_at)',
+          progressing_status == "running"
+          and worker2_now.get("status") == "busy")
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
