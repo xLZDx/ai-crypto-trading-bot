@@ -7805,9 +7805,23 @@ def test_phase97_train_all_concurrency_lock_plus_current_state_pipeline():
     check('frontend poller flips ONLY current_model_key to RUNNING',
           'allJob.current_model_key' in tpl
           and 'cur && !newActive[cur]' in tpl)
-    check('frontend poller still has legacy fallback when current_model_key absent',
-          'Legacy fallback' in tpl
-          and "if (!cur)" in tpl)
+    check('frontend poller no longer fans to all 8 keys when current_model_key absent',
+          # Strict mode (2026-05-10 v2): no row-level RUNNING when
+          # current model unknown. Header chip still shows activity.
+          'strict: only flip the actually-training row' in tpl)
+    # Pipeline status now propagates current_model_key + current_tf to
+    # the synthetic allJob construction.
+    check('pipeline-status synthetic allJob carries current_model_key',
+          'current_model_key: _pipeStatus.current_model_key' in tpl)
+    check('pipeline-status synthetic allJob carries current_tf',
+          'current_tf:        _pipeStatus.current_tf' in tpl)
+    # Backend pipeline-status endpoint enriches with training_current.json.
+    pstatus_start = app.find('def api_pipeline_status')
+    pstatus_end   = app.find('\n@app.route', pstatus_start + 1)
+    pstatus_body  = app[pstatus_start:pstatus_end] if pstatus_end > pstatus_start else app[pstatus_start:]
+    check('/api/pipeline/status reads training_current.json',
+          "'training_current.json'" in pstatus_body
+          and "snap['current_model_key']" in pstatus_body)
 
     # ── Fix 4: launch_training.ps1 lock check ───────────────────────────
     check('launch_training.ps1 reads the lock file',
@@ -7827,9 +7841,9 @@ def test_phase97_train_all_concurrency_lock_plus_current_state_pipeline():
     api_body  = app[api_start:api_end] if api_end > api_start else app[api_start:]
     check('/api/training/run/all also consults cross-process lock file',
           "'train_all_models.lock'" in api_body)
-    check('cross-process lock path resolved relative to PROJECT_ROOT',
-          "os.path.join(PROJECT_ROOT, 'data',\n                                      'train_all_models.lock')" in api_body
-          or "PROJECT_ROOT, 'data'" in api_body and "'train_all_models.lock'" in api_body)
+    check('cross-process lock path resolved relative to project_root',
+          "project_root, 'data'" in api_body
+          and "'train_all_models.lock'" in api_body)
     check('endpoint returns 409 already_running when lock holds a live pid',
           "'error': 'already_running'" in api_body
           and "}), 409" in api_body

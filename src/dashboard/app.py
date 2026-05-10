@@ -3037,7 +3037,7 @@ def _detect_orphan_training_subprocesses() -> None:
             if matched_key == 'all':
                 try:
                     import json as _j
-                    cur_path = os.path.join(PROJECT_ROOT, 'data',
+                    cur_path = os.path.join(project_root, 'data',
                                              'training_current.json')
                     if os.path.exists(cur_path):
                         with open(cur_path, 'r', encoding='utf-8') as _cf:
@@ -3827,7 +3827,7 @@ def api_training_run_all():
         # isn't in this dashboard's _training_jobs dict.
         try:
             import json as _j
-            lock_path = os.path.join(PROJECT_ROOT, 'data',
+            lock_path = os.path.join(project_root, 'data',
                                       'train_all_models.lock')
             if os.path.exists(lock_path):
                 with open(lock_path, 'r', encoding='utf-8') as _f:
@@ -4552,10 +4552,30 @@ def _pipeline_proc_alive() -> bool:
 def api_pipeline_status():
     """Return the orchestrator status snapshot. Combines the on-disk status
     file (survives dashboard restarts) with the live subprocess-alive
-    check so the dashboard pill shows 'running' even if status writes lag."""
+    check so the dashboard pill shows 'running' even if status writes lag.
+
+    Phase 97 follow-up: surfaces current_model_key + current_tf from
+    data/training_current.json so the frontend can flip ONLY the
+    actually-training row to RUNNING (not all 8). Pre-fix, every row
+    showed identical timing data because the synthetic 'all' job had
+    no current-model context."""
     from src.utils.safe_json import read_json
     snap = read_json(_pipeline_status_path(), default={}) or {}
     snap['process_alive'] = _pipeline_proc_alive()
+    # Phase 97 follow-up — enrich with current-model state file written
+    # by train_all_models.py on every model transition. The pipeline
+    # orchestrator runs train_all_models internally so this file IS
+    # being kept up to date when the orchestrator is the parent.
+    try:
+        cur = read_json(os.path.join(project_root, 'data',
+                                      'training_current.json'),
+                         default=None)
+        if isinstance(cur, dict):
+            snap['current_model_key'] = cur.get('model_key')
+            snap['current_tf']        = cur.get('current_tf')
+            snap['current_label']     = cur.get('label')
+    except Exception:
+        pass
     if snap.get('status') == 'running' and not snap['process_alive']:
         # Orchestrator died without writing a final status — surface this
         # so the operator can re-launch instead of waiting forever.

@@ -4665,14 +4665,20 @@ async function pollTrainingJobs() {
     // Kept as belt-and-suspenders in case the registry write fails.
     if (!allJob && typeof _pipeStatus !== 'undefined' && _pipeStatus
         && _pipeStatus.status === 'running' && _pipeStatus.phase === 'train') {
+      // Phase 97 follow-up — propagate the current_model_key from the
+      // pipeline status snapshot (which now reads training_current.json
+      // on the backend) so the per-cycle broadcast below flips only
+      // the row that's actually training, not all 8.
       allJob = {
         job_id: 'pipeline:' + (_pipeStatus.pid || 'orch'),
         model: 'all',
         status: 'running',
-        progress_label: 'as part of Pipeline Orchestrator',
-        // Carry over started_at if the pipeline status surfaces it so
-        // the elapsed timer on each row works.
+        progress_label: _pipeStatus.current_label
+                          ? `pipeline · running ${_pipeStatus.current_label}`
+                          : 'as part of Pipeline Orchestrator',
         started_at: _pipeStatus.started_at || null,
+        current_model_key: _pipeStatus.current_model_key || null,
+        current_tf:        _pipeStatus.current_tf        || null,
       };
     }
     // Recently-failed jobs we want to surface for ~2 minutes so the
@@ -4711,17 +4717,16 @@ async function pollTrainingJobs() {
     if (allJob) {
       const lbl = allJob.progress_label || 'as part of Retrain ALL';
       const cur = allJob.current_model_key;
+      // 2026-05-10 v2 — strict: only flip the actually-training row to
+      // RUNNING. Pre-fix legacy fallback fanned to all 8 rows when
+      // current_model_key was absent — that's exactly the bug operator
+      // hit (8 rows showing "57m 45s · ~2h 02m left" identically).
+      // When current_model_key is null (between models, in download
+      // phase, etc.), no row-level RUNNING badge is shown. Header-level
+      // pipeline chip still reflects activity, so visibility isn't lost.
       if (cur && !newActive[cur]) {
         newActive[cur] = allJob.job_id;
         newJobs[cur] = {...allJob, model: cur, progress_label: lbl};
-      } else if (!cur) {
-        // Legacy fallback — older trainer didn't emit current_model_key.
-        for (const k of ['base','trend','futures','scalping','tft','oft','meta','regime']) {
-          if (!newActive[k]) {
-            newActive[k] = allJob.job_id;
-            newJobs[k] = {...allJob, model: k, progress_label: lbl};
-          }
-        }
       }
     }
     const changed = JSON.stringify(newActive) !== JSON.stringify(_trActiveByModel)
