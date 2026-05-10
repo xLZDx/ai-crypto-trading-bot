@@ -121,10 +121,18 @@ def _build_signal_dataset(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
     df_feat['prob_trend'] = trend_model.predict_proba(X_trend)[:, 1]
 
     # --- 4. Generate regime context ---
+    # 2026-05-10 fix — regime_classifier.joblib is saved as
+    #   {"model": {"gmm": bgmm, "scaler": scaler}, "label_map": ...}
+    # but the original meta-labeler code read it as if it were FLAT:
+    #   regime_model_data["scaler"]   # KeyError — scaler lives in ["model"]
+    # Caused per-symbol "ERROR Failed to process X: 'scaler'" → meta-labeler
+    # ended with no signal data → silent success (until Phase 91 hard-fail).
+    # Tolerate BOTH shapes so legacy flat artifacts also work.
     from src.analysis.regime_classifier import RegimeClassifier
     regime_features_df = _compute_regime_features(df_feat)
-    X_regime_scaled = regime_model_data["scaler"].transform(regime_features_df[RegimeClassifier.FEATURE_COLS])
-    raw_labels = regime_model_data["gmm"].predict(X_regime_scaled)
+    _rmodel = regime_model_data.get("model", regime_model_data)   # nested or flat
+    X_regime_scaled = _rmodel["scaler"].transform(regime_features_df[RegimeClassifier.FEATURE_COLS])
+    raw_labels = _rmodel["gmm"].predict(X_regime_scaled)
     df_feat['regime'] = pd.Series([regime_model_data['label_map'].get(int(r), 0) for r in raw_labels], index=regime_features_df.index).ffill()
 
     # Dynamic Triple Barrier outcome labels

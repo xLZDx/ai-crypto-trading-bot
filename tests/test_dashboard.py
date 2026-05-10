@@ -7107,6 +7107,29 @@ def test_phase91_tft_dedupe_tz_normalize_plus_meta_hard_fail():
           and 'raise RuntimeError(msg)' in meta)
 
 
+def test_phase92_meta_labeler_regime_dict_shape_tolerance():
+    """2026-05-10 hotfix — meta-labeler crashed per-symbol with
+    KeyError: 'scaler' because regime_classifier.joblib is saved as
+    {"model": {"gmm":..., "scaler":...}, "label_map":...} (NESTED) but
+    the meta-labeler read it as if FLAT: regime_model_data["scaler"].
+    Failure cascade: per-symbol exception → no signal data collected →
+    Phase 91 hard-fail with "no signal data collected". Real root cause
+    was here, not the primary models. Fix: read via .get("model", self)
+    so both nested and legacy-flat artifacts work."""
+    print('\n[Phase 92 — meta-labeler regime dict-shape tolerance]')
+    meta_path = os.path.join(BASE_DIR, 'src', 'engine', 'train_meta_labeler.py')
+    with open(meta_path, encoding='utf-8') as f:
+        meta = f.read()
+    check('regime artifact accessed via .get("model", regime_model_data) — tolerant fallback',
+          'regime_model_data.get("model", regime_model_data)' in meta)
+    check('scaler + gmm read from the unwrapped layer (_rmodel)',
+          '_rmodel["scaler"]' in meta and '_rmodel["gmm"]' in meta)
+    check('label_map still read from outer dict (where it lives)',
+          "regime_model_data['label_map']" in meta)
+    check('comment captures the per-symbol scaler KeyError chain',
+          ("'scaler'" in meta) and ('Caused per-symbol' in meta or 'no signal data' in meta))
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
