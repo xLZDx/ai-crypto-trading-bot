@@ -6877,6 +6877,157 @@ def test_phase89_gpu_classifier_wrapper_and_trainer_migration():
           (proba >= 0).all() and (proba <= 1).all())
 
 
+def test_phase90_master_agent_zombie_worker_supervisor():
+    """master_agent (Layer 5 supervisor) — closes the self-healing loop
+    the Phase 88 watchdog left open. The watchdog detects zombie tasks
+    and frees the cluster's worker SLOT, but the worker process keeps
+    reporting 'busy' because its Python thread doesn't honour cancel.
+    master_agent is the process-side healer:
+
+      - Every POLL_S seconds, scans the cluster.
+      - For each ONLINE worker reporting busy + current_task:
+        * If the task isn't in the cluster's task table -> PHANTOM
+        * If task status in {failed, cancelled, done} -> DEAD-TASK
+        Either case = zombie worker.
+      - Local zombies (hostname == this machine): SIGKILL + respawn.
+      - Remote zombies (Ivan, future workers): log + service.alerts topic.
+      - Also ensures cluster_orchestrator + local lane workers are alive.
+
+    Phase 90 covers:
+      P1. Module + entrypoint exist.
+      P2. Detection: phantom (task_id missing from table) + dead-task
+          (task in failed/cancelled/done).
+      P3. Local heal: SIGKILL + respawn invoked for hostname == local.
+      P4. Remote heal: alert path (no kill, log + topic write).
+      P5. Cluster orchestrator self-respawn when /api/cluster/status
+          doesn't respond.
+      P6. _ensure_local_workers spawns BOTH cpu + gpu lanes if missing.
+    """
+    print('\n[Phase 90 — master_agent (Layer 5 supervisor)]')
+
+    ma_path = os.path.join(BASE_DIR, 'src', 'orchestration', 'master_agent.py')
+    check('src/orchestration/master_agent.py exists', os.path.exists(ma_path))
+    with open(ma_path, encoding='utf-8') as f:
+        ma = f.read()
+
+    # P1 — surface area
+    check('exposes MasterAgent class',           'class MasterAgent' in ma)
+    check('has __main__ entrypoint + main()',
+          '__name__ == "__main__"' in ma and 'def main()' in ma)
+    check('POLL_S constant defined',             'POLL_S' in ma and '= 60' in ma)
+    check('LOCAL_WORKER_SPECS for cpu + gpu lanes',
+          '("cpu", 7701, "LOCAL_RAZER_CPU")' in ma
+          and '("gpu", 7702, "LOCAL_RAZER_GPU")' in ma)
+
+    # P2 — both zombie detection paths
+    check('PHANTOM detection (task_id not in cluster table)',
+          'phantom_task_id' in ma and 'task_lookup.get(tid)' in ma)
+    check('DEAD-TASK detection (status failed/cancelled/done)',
+          '"failed", "cancelled", "done"' in ma
+          and 'task_status=' in ma)
+
+    # P3 — local heal: kill + respawn
+    check('_heal_zombie has local branch (LOCAL_HOSTNAME match)',
+          'host == LOCAL_HOSTNAME' in ma
+          and 'self._kill_pids(pids)' in ma)
+    check('_heal_zombie respawns the same lane after kill',
+          'self._spawn_local_worker(lane, spec_port, name)' in ma)
+    check('_find_local_python_pids matches --name + --lane',
+          'def _find_local_python_pids' in ma
+          and 'f"--name {name}"' in ma and 'f"--lane {lane}"' in ma)
+    check('_kill_pids uses psutil with SIGKILL semantics',
+          'def _kill_pids' in ma and 'p.kill()' in ma)
+
+    # P4 — remote heal path
+    check('_heal_zombie has REMOTE branch (logs + topic)',
+          'REMOTE ZOMBIE' in ma
+          and 'TOPIC_SERVICE_ALERTS' in ma)
+    check('remote zombie writes to service.alerts topic',
+          'topic(TOPIC_SERVICE_ALERTS).append(' in ma
+          and '"kind":      "remote_zombie_worker"' in ma)
+
+    # P5 — orchestrator self-respawn
+    check('_ensure_cluster_orchestrator alive check',
+          'def _cluster_orchestrator_alive' in ma
+          and "'/api/cluster/status'" in ma)
+    check('_ensure_cluster_orchestrator respawn when down',
+          'def _ensure_cluster_orchestrator' in ma
+          and 'src.training.distributed.orchestrator' in ma
+          and 'subprocess.Popen' in ma)
+
+    # P6 — local worker lifecycle
+    check('_ensure_local_workers iterates LOCAL_WORKER_SPECS',
+          'def _ensure_local_workers' in ma
+          and 'for lane, port, name in LOCAL_WORKER_SPECS:' in ma)
+    check('skip if already registered (no double-spawn)',
+          '(name, lane) in registered_local' in ma)
+    check('CPU lane spawn sets CUDA_VISIBLE_DEVICES=""',
+          'lane == "cpu"' in ma
+          and 'CUDA_VISIBLE_DEVICES' in ma)
+
+    # ── Functional smoke: MasterAgent._sweep_zombie_workers correctly
+    # identifies the two zombie patterns. We monkey-patch _http_get and
+    # _heal_zombie to capture which workers got flagged.
+    import importlib, sys as _sys, types as _types
+    if 'src.orchestration.master_agent' in _sys.modules:
+        del _sys.modules['src.orchestration.master_agent']
+    mod = importlib.import_module('src.orchestration.master_agent')
+
+    captured: list[tuple[str, str]] = []   # (worker_name, reason)
+
+    def _fake_http_get(path, timeout=5.0):
+        if path == "/api/cluster/status":
+            return {"workers": [
+                # PHANTOM zombie — task not in table
+                {"node_id": "z1", "name": "LOCAL_RAZER_GPU", "hostname": "Razer",
+                 "lane": "gpu", "online": True, "status": "busy",
+                 "current_task": "phantom-task-99", "last_seen_ago": 5},
+                # DEAD-TASK zombie — task is failed
+                {"node_id": "z2", "name": "WORKER-1-CPU", "hostname": "Ivan",
+                 "lane": "cpu", "online": True, "status": "busy",
+                 "current_task": "deadtask-1", "last_seen_ago": 5},
+                # Healthy: busy with a real running task
+                {"node_id": "h1", "name": "LOCAL_RAZER_CPU", "hostname": "Razer",
+                 "lane": "cpu", "online": True, "status": "busy",
+                 "current_task": "running-task-5", "last_seen_ago": 5},
+                # Idle: not a zombie
+                {"node_id": "i1", "name": "OTHER", "hostname": "Razer",
+                 "lane": "cpu", "online": True, "status": "idle",
+                 "current_task": "", "last_seen_ago": 5},
+            ]}
+        if path == "/api/cluster/tasks":
+            return [
+                {"task_id": "deadtask-1",      "status": "failed"},
+                {"task_id": "running-task-5", "status": "running"},
+                # phantom-task-99 deliberately missing
+            ]
+        return None
+
+    mod._http_get = _fake_http_get
+
+    agent = mod.MasterAgent()
+    # Patch _heal_zombie to capture rather than really kill
+    def _capture(worker, reason, task_id):
+        captured.append((worker.get("name", ""), reason))
+    agent._heal_zombie = _capture
+
+    agent._sweep_zombie_workers()
+
+    captured_names = sorted([c[0] for c in captured])
+    captured_reasons = [c[1] for c in captured]
+
+    check('phantom-task zombie detected on local GPU worker',
+          "LOCAL_RAZER_GPU" in captured_names
+          and any("phantom_task_id" in r for r in captured_reasons))
+    check('dead-task zombie detected on remote CPU worker',
+          "WORKER-1-CPU" in captured_names
+          and any("task_status=failed" in r for r in captured_reasons))
+    check('healthy busy worker is NOT flagged as zombie',
+          "LOCAL_RAZER_CPU" not in captured_names)
+    check('idle worker is NOT flagged as zombie',
+          "OTHER" not in captured_names)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
