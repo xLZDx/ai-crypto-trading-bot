@@ -1,15 +1,4 @@
 {
-  "entries": {
-    "warning::monitor/health::surface:service:fastapi": {
-      "kind": "warning",
-      "file": "monitor/health",
-      "signature": "surface:service:fastapi",
-      "sample": "FastAPI control plane DOWN on :8100 \u2014 URLError",
-      "source": "surface",
-      "first_seen": 1778370209.8673146,
-      "last_seen": 1778371457.1801746,
-      "count": 3
-    }
-  },
+  "entries": {},
   "dismissed_until": {}
 }
