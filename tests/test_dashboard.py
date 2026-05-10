@@ -6331,6 +6331,129 @@ def test_phase84_orchestration_topics_pubsub():
             pass
 
 
+def test_phase85_distributed_smoketest_three_bug_fixes():
+    """Three pre-existing distributed-training bugs surfaced during the
+    2026-05-10 smoke test, plus a synthetic CPU+GPU stress handler:
+
+      Bug #1 — worker data-path resolution
+        _invoke_master_trainer ran trainers without first chdir'ing to
+        PROJECT_ROOT, so on a remote worker the trainers' relative
+        'data/raw/...' paths failed. Result: every cluster task
+        submitted to Ivan failed in <1 s with 'No training data found
+        for ALL/<tf>'. Fix saves cwd, chdirs to PROJECT_ROOT, restores
+        in finally.
+
+      Bug #2 — meta-labeler signal_don column missing
+        train_meta_labeler used df_feat[trend_features] which raised
+        KeyError when 'signal_don' was missing. signal_don is computed
+        inside train_trend_model.py from don_pos_20 but
+        _build_all_features (the inference feature builder) never
+        exposed it. Fix: derive signal_don from don_pos_20 in the
+        meta-labeler before applying primaries; also reindex(fill_value=0)
+        so future feature drift degrades gracefully instead of crashing.
+
+      Bug #3 — dashboard cluster split-brain
+        Each Python process had its own Orchestrator() singleton.
+        Dashboard's /api/cluster/status returned its own empty
+        in-process state, not the standalone :7700 cluster where
+        workers actually connected. Result: dashboard cluster card
+        always lied. Fix: proxy user-facing cluster endpoints to
+        http://localhost:7700.
+
+      smoke_test handler
+        New synthetic stress task that exercises CPU + GPU for a
+        configurable duration (5–1800 s). Lets an operator verify a
+        worker is reachable + see compute usage in TaskManager /
+        nvidia-smi, without touching real model files.
+    """
+    print('\n[Phase 85 — distributed smoke-test bug fixes + smoke_test handler]')
+
+    worker_path = os.path.join(BASE_DIR, 'src', 'training', 'distributed', 'worker.py')
+    with open(worker_path, encoding='utf-8') as f:
+        worker = f.read()
+    meta_path = os.path.join(BASE_DIR, 'src', 'engine', 'train_meta_labeler.py')
+    with open(meta_path, encoding='utf-8') as f:
+        meta = f.read()
+    app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
+    with open(app_path, encoding='utf-8') as f:
+        app = f.read()
+
+    # ── Bug #1 — worker data-path resolution ────────────────────────────
+    check('worker chdirs to PROJECT_ROOT before invoking master trainer',
+          'saved_cwd = _os.getcwd()' in worker
+          and '_os.chdir(str(PROJECT_ROOT))' in worker)
+    check('worker restores cwd in finally so process state is clean',
+          'finally:' in worker
+          and '_os.chdir(saved_cwd)' in worker)
+    check('comment explains the SMB-mount path-resolution failure',
+          'SMB-mounted Z:' in worker or 'Z:\\\\' in worker
+          or 'No training data found' in worker)
+
+    # ── Bug #2 — meta-labeler signal_don ────────────────────────────────
+    check('meta-labeler computes signal_don from don_pos_20',
+          "df_feat['signal_don'] = 0.0" in meta
+          and "don_pos_20" in meta
+          and ">  0.95" in meta.replace(' ', '')   # tolerate spacing
+          or "don_pos_20'] > 0.95" in meta)
+    check('meta-labeler uses reindex(fill_value=0) for defensive feature selection',
+          'reindex(columns=base_features, fill_value=0)' in meta
+          and 'reindex(columns=trend_features, fill_value=0)' in meta)
+    check('meta-labeler no longer uses bare df_feat[trend_features]',
+          'X_trend = df_feat[trend_features].fillna(0)' not in meta)
+
+    # ── Bug #3 — dashboard cluster proxy ────────────────────────────────
+    check('CLUSTER_BASE_URL constant defined',
+          "CLUSTER_BASE_URL = 'http://localhost:7700'" in app)
+    check('_cluster_proxy_get helper present',
+          'def _cluster_proxy_get(' in app)
+    check('_cluster_proxy_post helper present (covers POST + DELETE)',
+          'def _cluster_proxy_post(' in app)
+    check('cluster_status endpoint forwards to standalone',
+          "_cluster_proxy_get('/api/cluster/status')" in app)
+    check('cluster_workers endpoint forwards to standalone',
+          "_cluster_proxy_get('/api/cluster/workers')" in app)
+    check('cluster_tasks endpoint added (was missing)',
+          "@app.route('/api/cluster/tasks')" in app
+          and "_cluster_proxy_get('/api/cluster/tasks')" in app)
+    check('cluster_submit endpoint forwards to standalone',
+          "_cluster_proxy_post('/api/cluster/submit'" in app)
+    check('cluster_submit_all endpoint forwards to standalone',
+          "_cluster_proxy_post('/api/cluster/submit_all'" in app)
+    check('cluster_cancel_task endpoint forwards via DELETE',
+          "method='DELETE'" in app
+          and "/api/cluster/task/" in app)
+    check('worker-facing endpoints (register, task_update) stay in-process',
+          # They still call _get_orchestrator, NOT _cluster_proxy_*
+          'def cluster_register' in app
+          and 'def cluster_task_update' in app)
+
+    # ── smoke_test handler ──────────────────────────────────────────────
+    check('smoke_test dispatched in _execute_task before master trainer',
+          'if model_type == "smoke_test":' in worker
+          and 'return _run_smoke_test(task)' in worker)
+    check('_run_smoke_test function defined',
+          'def _run_smoke_test(' in worker)
+    check('smoke_test reads duration_s from config (5-1800 s)',
+          "cfg.get(\"duration_s\"" in worker
+          and 'min(1800' in worker
+          and 'max(5' in worker)
+    check('smoke_test runs CPU lane via numpy matmul threads',
+          'def _cpu_loop' in worker
+          and 'numpy' in worker.lower()
+          and '_np.dot(A, B)' in worker)
+    check('smoke_test runs GPU lane via torch cuda matmul when available',
+          'def _gpu_loop' in worker
+          and "device='cuda'" in worker
+          and 'torch.cuda.synchronize' in worker)
+    check('smoke_test logs heartbeat every 30 s with elapsed/remaining',
+          'SMOKE_TEST tick' in worker
+          and 'elapsed=%ds remain=%ds' in worker)
+    check('smoke_test returns metrics with cpu_iters + gpu_iters + gpu_available',
+          '"cpu_iters":' in worker
+          and '"gpu_iters":' in worker
+          and '"gpu_available":' in worker)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's

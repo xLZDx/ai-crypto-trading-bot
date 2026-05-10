@@ -154,6 +154,15 @@ def _execute_task(task: dict) -> dict:
 
     logger.info("[Worker] Running task: %s / %s / %s", model_type, symbol, timeframe)
 
+    # 2026-05-10 — synthetic CPU+GPU stress test. Lets an operator
+    # verify a worker is reachable, configured correctly, and actually
+    # exercising both compute lanes — without touching real model
+    # files. Submitted as
+    #   {"model_type": "smoke_test", "config": {"duration_s": 300}}
+    # Skips the master_trainer dispatch entirely.
+    if model_type == "smoke_test":
+        return _run_smoke_test(task)
+
     # v4 Phase B2 (2026-05-09) — invoke master's actual trainer modules
     # via the SMB-mounted code share, not the worker's simplified RF
     # wrapper. This is what makes the worker a peer-equal node to master:
@@ -299,6 +308,129 @@ def _invoke_master_trainer(model_type: str, timeframe: str, symbol: str,
             "auc_roc":               metrics.get("auc_roc"),
             "n_samples":             metrics.get("n_samples"),
         } if metrics else {},
+    }
+
+
+# ─── 2026-05-10 — Synthetic CPU+GPU stress test ─────────────────────────────
+
+def _run_smoke_test(task: dict) -> dict:
+    """Burn CPU and GPU for a configurable duration so an operator can
+    verify a worker node is healthy and visible in compute monitors.
+
+    Task spec:
+      {"model_type": "smoke_test",
+       "config": {"duration_s": 300}}        # default 60 s, capped at 1800
+
+    What it does:
+      - CPU lane: tight numpy matmul loop on ~1024×1024 random arrays
+        across (cpu_count - 1) threads, sized to keep ~70-90% CPU
+        without thrashing.
+      - GPU lane: if torch+CUDA available, runs continuous tensor
+        matmuls on small (~512×512) cuda tensors with periodic
+        torch.cuda.synchronize() so nvidia-smi sees activity. VRAM
+        footprint stays ≤ ~200 MB so it fits even on a 6 GB card.
+      - Logs every 30 s with elapsed/remaining/CPU%/GPU%.
+
+    Returns standard task result dict with status='done' on completion.
+    Stops cleanly when duration elapses; no real model artifacts touched.
+    """
+    import time as _time, math as _math, threading as _threading
+    cfg = task.get("config", {}) or {}
+    duration_s = max(5, min(1800, int(cfg.get("duration_s", 60))))
+    t_start = _time.time()
+    t_end   = t_start + duration_s
+
+    logger.info("[Worker] SMOKE_TEST start: duration=%ds — CPU lane + GPU lane",
+                duration_s)
+
+    # ── CPU lane ────────────────────────────────────────────────────────
+    cpu_done = _threading.Event()
+    cpu_iters = [0]
+    def _cpu_loop():
+        try:
+            import numpy as _np
+            # Size chosen so a single matmul takes ~30-60 ms on modern
+            # CPUs — small enough to keep iteration rate high (granular
+            # cancellation) but large enough that TaskManager registers
+            # the load.
+            A = _np.random.rand(1024, 1024).astype(_np.float32)
+            B = _np.random.rand(1024, 1024).astype(_np.float32)
+            while _time.time() < t_end:
+                _np.dot(A, B)
+                cpu_iters[0] += 1
+        finally:
+            cpu_done.set()
+
+    import os as _os
+    n_cpu_threads = max(1, (_os.cpu_count() or 4) - 1)
+    cpu_threads = [_threading.Thread(target=_cpu_loop, daemon=True,
+                                      name=f"smoke-cpu-{i}")
+                   for i in range(n_cpu_threads)]
+    for t in cpu_threads:
+        t.start()
+
+    # ── GPU lane ────────────────────────────────────────────────────────
+    gpu_iters = [0]
+    gpu_available = False
+    gpu_thread = None
+    try:
+        import torch as _torch
+        if _torch.cuda.is_available():
+            gpu_available = True
+            def _gpu_loop():
+                try:
+                    a = _torch.randn(512, 512, device='cuda')
+                    b = _torch.randn(512, 512, device='cuda')
+                    while _time.time() < t_end:
+                        c = a @ b
+                        a = c + 0.001
+                        # Force sync every 32 iterations so utilisation
+                        # registers in nvidia-smi instead of being
+                        # masked by async kernel queueing.
+                        if gpu_iters[0] % 32 == 0:
+                            _torch.cuda.synchronize()
+                        gpu_iters[0] += 1
+                except Exception as exc:
+                    logger.warning("[Worker] smoke_test GPU lane error: %s", exc)
+            gpu_thread = _threading.Thread(target=_gpu_loop, daemon=True,
+                                            name="smoke-gpu")
+            gpu_thread.start()
+    except Exception as exc:
+        logger.info("[Worker] smoke_test: torch/CUDA unavailable (%s) — CPU-only", exc)
+
+    # ── Heartbeat log every 30 s ────────────────────────────────────────
+    while _time.time() < t_end:
+        _time.sleep(min(30.0, t_end - _time.time()))
+        elapsed = int(_time.time() - t_start)
+        remain  = max(0, int(t_end - _time.time()))
+        logger.info("[Worker] SMOKE_TEST tick: elapsed=%ds remain=%ds "
+                    "cpu_iters=%d gpu_iters=%d gpu=%s",
+                    elapsed, remain, cpu_iters[0], gpu_iters[0],
+                    'on' if gpu_available else 'off')
+
+    # ── Drain ───────────────────────────────────────────────────────────
+    for t in cpu_threads:
+        t.join(timeout=2.0)
+    if gpu_thread is not None:
+        gpu_thread.join(timeout=2.0)
+    duration = _time.time() - t_start
+    logger.info("[Worker] SMOKE_TEST done: %.1fs cpu_iters=%d gpu_iters=%d",
+                duration, cpu_iters[0], gpu_iters[0])
+
+    return {
+        "status":     "done",
+        "model":      "smoke_test",
+        "timeframe":  task.get("timeframe", "-"),
+        "symbol":     task.get("symbol", "-"),
+        "duration_s": round(duration, 2),
+        "via":        "smoke_test",
+        "metrics": {
+            "cpu_iters":        cpu_iters[0],
+            "gpu_iters":        gpu_iters[0],
+            "gpu_available":    gpu_available,
+            "n_cpu_threads":    n_cpu_threads,
+            "requested_duration_s": duration_s,
+        },
     }
 
 

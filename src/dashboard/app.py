@@ -4823,7 +4823,56 @@ def db_ingest():
 
 # ─── Training Cluster endpoints ──────────────────────────────────────────────
 
+# Standalone cluster orchestrator URL. Workers (LOCAL_RAZER + Ivan)
+# register and report to this URL. The dashboard's user-facing cluster
+# endpoints proxy to it so the UI reflects the REAL cluster state, not
+# a separate in-process singleton.
+#
+# 2026-05-10 — Bug #3 fix. Pre-fix, every Python process held its own
+# Orchestrator() singleton (dashboard had one, standalone :7700 had
+# another, and they didn't share state). Tasks submitted to :7700
+# (where workers actually connect) never appeared in the dashboard's
+# Cluster card because the dashboard queried its own empty in-process
+# orchestrator. Result: the unified Training & Backtest card lied
+# about everything cluster-related. Proxy fix routes all user-facing
+# reads/writes to the standalone, eliminating the split-brain.
+CLUSTER_BASE_URL = 'http://localhost:7700'
+
+
+def _cluster_proxy_get(path: str, timeout: float = 5.0):
+    """Forward a GET to the standalone cluster orchestrator. Returns the
+    JSON body + status code, or a 503 dict if the standalone is down."""
+    import urllib.request as _ur, urllib.error as _ue, json as _j
+    try:
+        with _ur.urlopen(f'{CLUSTER_BASE_URL}{path}', timeout=timeout) as r:
+            return _j.loads(r.read().decode('utf-8')), r.status
+    except (_ue.URLError, OSError, _j.JSONDecodeError) as exc:
+        return {'error': f'cluster orchestrator unreachable: {exc}',
+                'cluster_url': CLUSTER_BASE_URL}, 503
+
+
+def _cluster_proxy_post(path: str, body: dict, timeout: float = 5.0,
+                        method: str = 'POST'):
+    """Forward a POST/DELETE to the standalone cluster orchestrator."""
+    import urllib.request as _ur, urllib.error as _ue, json as _j
+    try:
+        data = _j.dumps(body or {}).encode('utf-8')
+        req = _ur.Request(f'{CLUSTER_BASE_URL}{path}', data=data,
+                          method=method,
+                          headers={'Content-Type': 'application/json'})
+        with _ur.urlopen(req, timeout=timeout) as r:
+            return _j.loads(r.read().decode('utf-8')), r.status
+    except (_ue.URLError, OSError, _j.JSONDecodeError) as exc:
+        return {'error': f'cluster orchestrator unreachable: {exc}',
+                'cluster_url': CLUSTER_BASE_URL}, 503
+
+
 def _get_orchestrator():
+    """Returns the in-process orchestrator singleton — used only by the
+    worker-facing endpoints (register, task_update) that need to accept
+    legacy callbacks. User-facing endpoints (status/workers/submit) now
+    proxy to the standalone via _cluster_proxy_*.
+    """
     try:
         from src.training.distributed.orchestrator import get_orchestrator
         return get_orchestrator()
@@ -4833,39 +4882,34 @@ def _get_orchestrator():
 
 @app.route('/api/cluster/status')
 def cluster_status():
-    orch = _get_orchestrator()
-    if orch is None:
-        return jsonify({'error': 'Orchestrator not available'}), 503
-    return jsonify(orch.get_status())
+    body, status = _cluster_proxy_get('/api/cluster/status')
+    return jsonify(body), status
 
 
 @app.route('/api/cluster/workers')
 def cluster_workers():
-    orch = _get_orchestrator()
-    if orch is None:
-        return jsonify([])
-    return jsonify(orch.list_workers())
+    body, status = _cluster_proxy_get('/api/cluster/workers')
+    return jsonify(body), status
+
+
+@app.route('/api/cluster/tasks')
+def cluster_tasks():
+    body, status = _cluster_proxy_get('/api/cluster/tasks')
+    return jsonify(body), status
 
 
 @app.route('/api/cluster/submit', methods=['POST'])
 def cluster_submit():
-    orch = _get_orchestrator()
-    if orch is None:
-        return jsonify({'error': 'Orchestrator not available'}), 503
     spec = request.get_json(force=True) or {}
-    tid  = orch.submit_task(spec)
-    return jsonify({'ok': True, 'task_id': tid})
+    body, status = _cluster_proxy_post('/api/cluster/submit', spec)
+    return jsonify(body), status
 
 
 @app.route('/api/cluster/submit_all', methods=['POST'])
 def cluster_submit_all():
-    orch = _get_orchestrator()
-    if orch is None:
-        return jsonify({'error': 'Orchestrator not available'}), 503
-    body    = request.get_json(force=True) or {}
-    symbols = body.get('symbols')
-    ids     = orch.submit_full_training_run(symbols)
-    return jsonify({'ok': True, 'task_ids': ids, 'count': len(ids)})
+    spec = request.get_json(force=True) or {}
+    body, status = _cluster_proxy_post('/api/cluster/submit_all', spec)
+    return jsonify(body), status
 
 
 @app.route('/api/cluster/register', methods=['POST'])
@@ -4895,11 +4939,9 @@ def cluster_task_update():
 
 @app.route('/api/cluster/task/<task_id>', methods=['DELETE'])
 def cluster_cancel_task(task_id):
-    orch = _get_orchestrator()
-    if orch is None:
-        return jsonify({'ok': False})
-    ok = orch.cancel_task(task_id)
-    return jsonify({'ok': ok})
+    body, status = _cluster_proxy_post(f'/api/cluster/task/{task_id}',
+                                        body={}, method='DELETE')
+    return jsonify(body), status
 
 
 # ────────────────────────────────────────────────────────────────────────────
