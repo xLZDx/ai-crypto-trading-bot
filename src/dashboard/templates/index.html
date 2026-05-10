@@ -2034,6 +2034,8 @@ document.addEventListener('DOMContentLoaded', function() {
                   <th class="tr-th" data-col="market"       onclick="trSort('market')"       style="text-align:left;padding:5px 6px" title="Asset class / venue this model targets">Market <span class="tr-chev"></span></th>
                   <th class="tr-th" data-col="timeframe"    onclick="trSort('timeframe')"    style="text-align:left;padding:5px 6px" title="Bar timeframe used for features and labels">TF <span class="tr-chev"></span></th>
                   <th class="tr-th" data-col="run_status"   onclick="trSort('run_status')"   style="text-align:center;padding:5px 6px" title="Live training status. RUNNING = orchestrator currently training this row · OK = last train succeeded · FAILED = last train errored (hover for reason) · STOPPED = operator killed · NOT STARTED = model never trained.">Status <span class="tr-chev"></span></th>
+                  <th class="tr-th" data-col="eta_train_s"    onclick="trSort('eta_train_s')"    style="text-align:right;padding:5px 6px" title="Estimated training time for this row. Per-(model, TF) rolling-average of last 5 successful runs on this hardware; falls back to model-only when no per-TF history. Color: <5m green · 5-30m amber · >30m red.">ETA Train <span class="tr-chev"></span></th>
+                  <th class="tr-th" data-col="eta_backtest_s" onclick="trSort('eta_backtest_s')" style="text-align:right;padding:5px 6px" title="Estimated backtest time for this row when chained after training (run_full_backtest at this TF, scoped to this model). Per-(model, TF) rolling avg; seed default ~15-90s on first run.">ETA BT <span class="tr-chev"></span></th>
                   <th class="tr-th active" data-col="age_s" onclick="trSort('age_s')"        style="text-align:right;padding:5px 6px" title="Time since meta JSON was written. Smaller = fresher.">Last trained <span class="tr-chev">▲</span></th>
                   <th class="tr-th" data-col="runs_today"   onclick="trSort('runs_today')"   style="text-align:right;padding:5px 6px" title="1 if meta updated within 24h, else 0">Today <span class="tr-chev"></span></th>
                   <th class="tr-th" data-col="total_runs_min" onclick="trSort('total_runs_min')" style="text-align:right;padding:5px 6px" title="Lower bound: archived metas + current. Trainers don't yet write training_runs Parquet rows.">Total ≥ <span class="tr-chev"></span></th>
@@ -2055,7 +2057,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 </tr>
               </thead>
               <tbody id="training-tbody">
-                <tr><td colspan="22" style="text-align:center;color:#475569;padding:12px">Loading…</td></tr>
+                <tr><td colspan="24" style="text-align:center;color:#475569;padding:12px">Loading…</td></tr>
               </tbody>
               <!-- v3.1 fleet aggregate footer — populated by
                    _renderTrainingTable() with the average Health
@@ -4061,8 +4063,12 @@ function trSort(col) {
   } else {
     _trSortCol = col;
     // Strings + age default to ascending; numerics default to descending.
+    // Phase 98 — ETA columns default to asc so the operator sees the
+    // shortest jobs first ("run the 10-min one before the 3-hr one").
     _trSortDir = (col === 'label' || col === 'market' || col === 'timeframe' ||
-                  col === 'target' || col === 'age_s') ? 'asc' : 'desc';
+                  col === 'target' || col === 'age_s' ||
+                  col === 'eta_train_s' || col === 'eta_backtest_s' ||
+                  col === 'eta_total_s') ? 'asc' : 'desc';
   }
   document.querySelectorAll('#tr-thead-row .tr-th').forEach(th => {
     const isActive = th.dataset.col === col;
@@ -4216,7 +4222,7 @@ function _renderTrainingTable() {
   }
 
   if (!filtered.length) {
-    tbody.innerHTML = `<tr><td colspan="22" style="text-align:center;color:#475569;padding:14px">No models match this filter.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="24" style="text-align:center;color:#475569;padding:14px">No models match this filter.</td></tr>`;
     const tfoot0 = $('training-tfoot');
     if (tfoot0) tfoot0.innerHTML = '';
     return;
@@ -4271,10 +4277,25 @@ function _renderTrainingTable() {
     const dirless = m.directionless;
     const warnMark = m.accuracy_warning ? ' <span title="' + esc(m.accuracy_warning) + '" style="color:#fbbf24;cursor:help">⚠</span>' : '';
     // Active job for this model (poll runs every 5s via pollTrainingJobs).
+    // Phase 97b — lookup is keyed by (model, tf) so per-(model, tf) rows
+    // light up independently. Try parent_key+@+tf first (for per-tf rows
+    // like 'futures_5m'), then m.key+@+timeframe (for canonical rows like
+    // 'futures' @ 1h), then m.key alone (jobs without tf — regime, oft).
+    const _rowParentKey = m.parent_key || m.key;
+    const _rowTfKey     = m.tf || m.timeframe;
+    const _lookupKey    = (typeof _trActiveByModel !== 'undefined' && _trActiveByModel)
+      ? (_trActiveByModel[`${_rowParentKey}@${_rowTfKey}`] !== undefined
+          ? `${_rowParentKey}@${_rowTfKey}`
+          : (_trActiveByModel[`${m.key}@${_rowTfKey}`] !== undefined
+              ? `${m.key}@${_rowTfKey}`
+              : (_trActiveByModel[_rowParentKey] !== undefined
+                  ? _rowParentKey
+                  : m.key)))
+      : m.key;
     const activeJobId = (typeof _trActiveByModel !== 'undefined' && _trActiveByModel)
-                        ? _trActiveByModel[m.key] : null;
+                        ? _trActiveByModel[_lookupKey] : null;
     const activeJob   = (typeof _trActiveJobs !== 'undefined' && _trActiveJobs)
-                        ? _trActiveJobs[m.key] : null;
+                        ? _trActiveJobs[_lookupKey] : null;
     // If actively training, override status with the actual job phase.
     let st = _statusFor(m);
     if (activeJob) {
@@ -4293,11 +4314,12 @@ function _renderTrainingTable() {
       // Optimistic UI: trRunOne sets activeJobId immediately, but the
       // first poll hasn't returned yet — show STARTING.
       st = {cls:'run', txt:'STARTING', tip:'Trainer subprocess spawning…'};
-    } else if (typeof _trRecentFails !== 'undefined' && _trRecentFails && _trRecentFails[m.key]) {
+    } else if (typeof _trRecentFails !== 'undefined' && _trRecentFails && _trRecentFails[_lookupKey]) {
       // Surface a recently-failed run so the operator sees the failure
       // reason inline (instead of the row reverting to last-OK state and
       // hiding the recent error). Auto-clears 2 min after finished_at.
-      const f = _trRecentFails[m.key];
+      // Phase 97b — keyed same way as activeJob lookup above.
+      const f = _trRecentFails[_lookupKey];
       const reason = (f.errors && f.errors[0]) || (f.errors_by_tf && Object.values(f.errors_by_tf).flat()[0]) || f.error || 'unknown error';
       st = {cls:'err', txt:f.status === 'cancelled' ? 'CANCELLED' : 'FAILED',
             tip:String(reason).slice(0, 300)};
@@ -4330,11 +4352,32 @@ function _renderTrainingTable() {
     }
     // Description: short blurb sourced from _MODEL_DESCRIPTIONS
     const desc = (typeof _MODEL_DESCRIPTIONS !== 'undefined') ? (_MODEL_DESCRIPTIONS[m.key] || '') : '';
-    return `<tr data-model-key="${esc(m.key)}" data-health-score="${m.health_score==null?'':m.health_score.toFixed(1)}" data-health-grade="${m._health_grade||''}">
+    // Phase 98 — ETA Train + ETA BT cells. Color tint reflects runtime
+    // band: <5m green / 5-30m amber / >30m red. Helps the operator pick
+    // a 10-min row over a 3-hr row at a glance.
+    const _etaColor = (s) => {
+      if (s == null || isNaN(s)) return '#475569';
+      if (s < 300)   return '#34d399';   // < 5m  — green
+      if (s < 1800)  return '#fbbf24';   // 5-30m — amber
+      return '#fb7185';                   // > 30m — red
+    };
+    const _etaTrain = m.eta_train_s,    _etaBt = m.eta_backtest_s,
+          _etaTotal = m.eta_total_s;
+    const _etaTrainFmt = _trFmtDuration(_etaTrain);
+    const _etaBtFmt    = _trFmtDuration(_etaBt);
+    const _etaTrainTip = _etaTrain == null
+      ? 'No prior runs — ETA unknown'
+      : `Estimated training time on this hardware. Total (train+BT): ${_trFmtDuration(_etaTotal)||'—'}`;
+    const _etaBtTip = _etaBt == null
+      ? 'No prior backtest runs — using seed default'
+      : `Estimated chained backtest time at this TF`;
+    return `<tr data-model-key="${esc(m.key)}" data-eta-total="${_etaTotal==null?'':_etaTotal}" data-eta-train="${_etaTrain==null?'':_etaTrain}" data-eta-bt="${_etaBt==null?'':_etaBt}" data-health-score="${m.health_score==null?'':m.health_score.toFixed(1)}" data-health-grade="${m._health_grade||''}">
       <td style="color:#e2e8f0;font-weight:700">${m.icon||''} ${esc(m.label||m.key)}${warnMark}</td>
       <td style="color:#94a3b8">${esc(m.market||'—')}</td>
       <td style="color:#94a3b8">${esc(m.timeframe||'—')}</td>
       <td style="text-align:center"><span title="${esc(st.tip)}" style="display:inline-block;font-size:.55rem;font-weight:800;letter-spacing:.04em;padding:2px 7px;border-radius:999px;background:${stBg};color:${stColor};border:1px solid ${stColor}55${st.cls==='run'?';animation:pulse 1.5s ease-in-out infinite':''}">${st.txt}</span>${timingSub}</td>
+      <td style="text-align:right;color:${_etaColor(_etaTrain)};font-family:'JetBrains Mono';font-weight:700" title="${esc(_etaTrainTip)}">${_etaTrainFmt||'—'}</td>
+      <td style="text-align:right;color:${_etaColor(_etaBt)};font-family:'JetBrains Mono'" title="${esc(_etaBtTip)}">${_etaBtFmt||'—'}</td>
       <td style="text-align:right;color:${m.runs_today?'#34d399':(m.age_s>7*86400?'#fb7185':'#94a3b8')}">${_trRelTime(m.age_s)}</td>
       <td style="text-align:right">${todayBadge}</td>
       <td style="text-align:right;color:#94a3b8">≥ ${m.total_runs_min||0}</td>
@@ -4513,9 +4556,12 @@ async function trRunOne(rowKey) {
   // Optimistic UI #1 — flash QUEUED *immediately* so the user sees
   // visible feedback the instant they click OK, before the network
   // round-trip even finishes.
-  _trActiveByModel = {..._trActiveByModel, [key]: 'pending'};
-  _trActiveJobs    = {..._trActiveJobs,    [key]: {
-    job_id: 'pending', status: 'queued', model: key, n, tf,
+  // Phase 97b — key by model+@+tf so per-tf rows flash too. Falls back
+  // to model-only when tf is empty/'all' (those rows look up by model).
+  const _optKey = (tf && tf !== 'all') ? `${key}@${tf}` : key;
+  _trActiveByModel = {..._trActiveByModel, [_optKey]: 'pending'};
+  _trActiveJobs    = {..._trActiveJobs,    [_optKey]: {
+    job_id: 'pending', status: 'queued', model: key, tf, n,
     progress_label: tf === 'all' ? `chained ${n} iter × ALL` : '',
   }};
   if (typeof _renderTrainingTable === 'function') _renderTrainingTable();
@@ -4541,8 +4587,9 @@ async function trRunOne(rowKey) {
         `${key} is already training (status: ${resp.existing_status}).\n\n` +
         `Force a new training run anyway? The existing one will keep going in parallel — both will write to the same model file, last one wins.`);
       if (!ok) {
-        // Keep optimistic state pointing at the existing job so UI is consistent
-        _trActiveByModel[key] = resp.existing_job_id || _trActiveByModel[key];
+        // Keep optimistic state pointing at the existing job so UI is consistent.
+        // Phase 97b — keyed by model+@+tf to match the new lookup scheme.
+        _trActiveByModel[_optKey] = resp.existing_job_id || _trActiveByModel[_optKey];
         if (typeof _renderTrainingTable === 'function') _renderTrainingTable();
         return;
       }
@@ -4554,9 +4601,10 @@ async function trRunOne(rowKey) {
     if (!resp.ok) throw new Error(resp.error || 'request failed');
     _trMarkPending(`${key}@${tfLabel} ×${n} queued`);
     // Replace the placeholder job_id with the real one.
-    _trActiveByModel = {..._trActiveByModel, [key]: resp.job_id};
-    _trActiveJobs    = {..._trActiveJobs, [key]: {
-      ..._trActiveJobs[key], job_id: resp.job_id,
+    // Phase 97b — keyed by model+@+tf so the per-tf row keeps tracking.
+    _trActiveByModel = {..._trActiveByModel, [_optKey]: resp.job_id};
+    _trActiveJobs    = {..._trActiveJobs, [_optKey]: {
+      ..._trActiveJobs[_optKey], job_id: resp.job_id,
       tfs: resp.tfs || (tf ? [tf] : []),
     }};
     if (typeof _renderTrainingTable === 'function') _renderTrainingTable();
@@ -4572,9 +4620,10 @@ async function trRunOne(rowKey) {
     }, 30_000);
     pollTrainingJobs();
   } catch(e) {
-    // Roll back the optimistic state
-    delete _trActiveByModel[key];
-    delete _trActiveJobs[key];
+    // Roll back the optimistic state. Phase 97b — same key shape as the
+    // optimistic write above so the rollback actually clears the entry.
+    delete _trActiveByModel[_optKey];
+    delete _trActiveJobs[_optKey];
     if (typeof _renderTrainingTable === 'function') _renderTrainingTable();
     alert('Training trigger failed: ' + (e.message||e));
   }
@@ -4587,7 +4636,12 @@ async function trStopOne(jobId, key) {
       { method: 'POST', headers: hdrs() });
     const body = await r.json();
     if (!body.ok) throw new Error(body.error || 'stop failed');
-    _trActiveByModel = {..._trActiveByModel}; delete _trActiveByModel[key];
+    // Phase 97b — _trActiveByModel is keyed by model+@+tf now; find the
+    // entry whose value equals this jobId rather than guessing the key.
+    _trActiveByModel = {..._trActiveByModel};
+    for (const k of Object.keys(_trActiveByModel)) {
+      if (_trActiveByModel[k] === jobId) delete _trActiveByModel[k];
+    }
     if (typeof _renderTrainingTable === 'function') _renderTrainingTable();
     pollTrainingJobs();
   } catch(e) {
@@ -4689,18 +4743,28 @@ async function pollTrainingJobs() {
       (j.status === 'error' || j.status === 'partial' || j.status === 'cancelled')
       && j.finished_at && (now - j.finished_at) < 120
     );
+    // Phase 97b — key by model+@+tf so per-(model, tf) rows light up
+    // independently. A futures @ 5m job no longer flips all 6 futures
+    // rows to RUNNING; only the row whose timeframe matches does.
+    // Fallback: jobs without tf (regime, oft, all) get keyed by model
+    // alone — those models only have one row anyway.
+    const _activeKey = (j) => j.tf ? `${j.model}@${j.tf}` : j.model;
     const newActive = {};
     const newJobs = {};
     for (const j of active) {
       if (j.model) {
-        newActive[j.model] = j.job_id;
-        newJobs[j.model] = j;
+        const k = _activeKey(j);
+        newActive[k] = j.job_id;
+        newJobs[k] = j;
       }
     }
     // Stash recent fails in _trRecentFails so _renderTrainingTable can show them
     const newFails = {};
     for (const j of recentFails) {
-      if (j.model && !newActive[j.model]) newFails[j.model] = j;
+      if (j.model) {
+        const k = _activeKey(j);
+        if (!newActive[k]) newFails[k] = j;
+      }
     }
     // 2026-05-10 fix — when a 'Retrain ALL' job is active, only flip
     // the row matching the ACTUAL currently-training model to RUNNING
@@ -4717,16 +4781,19 @@ async function pollTrainingJobs() {
     if (allJob) {
       const lbl = allJob.progress_label || 'as part of Retrain ALL';
       const cur = allJob.current_model_key;
-      // 2026-05-10 v2 — strict: only flip the actually-training row to
-      // RUNNING. Pre-fix legacy fallback fanned to all 8 rows when
-      // current_model_key was absent — that's exactly the bug operator
-      // hit (8 rows showing "57m 45s · ~2h 02m left" identically).
-      // When current_model_key is null (between models, in download
-      // phase, etc.), no row-level RUNNING badge is shown. Header-level
-      // pipeline chip still reflects activity, so visibility isn't lost.
-      if (cur && !newActive[cur]) {
-        newActive[cur] = allJob.job_id;
-        newJobs[cur] = {...allJob, model: cur, progress_label: lbl};
+      const curTf = allJob.current_tf;
+      // Phase 97b — key by model+@+tf so the synthetic allJob lights up
+      // exactly the row whose (model, tf) matches the pipeline's currently-
+      // training cell. When tf is unknown (older trainer, between cells),
+      // fall back to model-only — those rows still light up but no fan-out.
+      // When current_model_key is null entirely, no row-level RUNNING is
+      // shown; the pipeline header chip still reflects activity.
+      if (cur) {
+        const k = curTf ? `${cur}@${curTf}` : cur;
+        if (!newActive[k]) {
+          newActive[k] = allJob.job_id;
+          newJobs[k] = {...allJob, model: cur, tf: curTf || null, progress_label: lbl};
+        }
       }
     }
     const changed = JSON.stringify(newActive) !== JSON.stringify(_trActiveByModel)

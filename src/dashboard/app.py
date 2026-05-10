@@ -1371,9 +1371,16 @@ def strategy_full():
         archived_n = archived_index.get(key, 0)
         total_runs_min = archived_n + (1 if model_path.exists() else 0)
 
+        # Phase 98 — ETA estimate for "Train this model" + chained backtest.
+        # Per-(model, tf) entries take precedence; falls back to model-only
+        # when no per-tf history exists yet.
+        _eta = _eta_for_row(key, meta.get('timeframe'))
         ml_models.append({
             'key': key, 'label': label, 'icon': icon, 'market': market,
             'model_exists':   model_path.exists(),
+            'eta_train_s':    _eta['eta_train_s'],
+            'eta_backtest_s': _eta['eta_backtest_s'],
+            'eta_total_s':    _eta['eta_total_s'],
             'accuracy':       round(headline_acc, 2) if headline_acc is not None else None,
             'accuracy_test':  round(acc_pct, 2) if acc_pct is not None else None,
             'accuracy_walk_forward': round(wf_pct, 2) if wf_pct is not None else None,
@@ -1437,6 +1444,9 @@ def strategy_full():
                     )
                 except Exception:
                     age_v = None
+                # Phase 98 — per-tf ETA (train + backtest). Falls back to
+                # parent model-only when no per-tf history yet.
+                _eta_tf = _eta_for_row(key, tf)
                 ml_models.append({
                     'key':            f'{key}_{tf}',
                     'parent_key':     key,
@@ -1445,6 +1455,9 @@ def strategy_full():
                     'icon':           icon,
                     'market':         mkt,
                     'model_exists':   mp.exists(),
+                    'eta_train_s':    _eta_tf['eta_train_s'],
+                    'eta_backtest_s': _eta_tf['eta_backtest_s'],
+                    'eta_total_s':    _eta_tf['eta_total_s'],
                     'accuracy':       round(acc_p, 2) if acc_p is not None else None,
                     'accuracy_test':  round(acc_p, 2) if acc_p is not None else None,
                     'accuracy_walk_forward': round(wf_p, 2) if wf_p is not None else None,
@@ -3405,6 +3418,21 @@ def _run_followup_backtest_blocking(job_id: str, model_key: str,
         finished_at = time.time()
         if rc == 0:
             _record_job(job_id, status='done', finished_at=finished_at)
+            # Phase 98 — record per-(model, tf) backtest duration so the
+            # ETA-BT column self-tunes from observed cluster timing.
+            with _training_jobs_lock:
+                _bt_entry = _training_jobs.get(job_id) or {}
+            _bt_started = _bt_entry.get('started_at') or 0
+            if _bt_started > 0:
+                _bt_dur = finished_at - _bt_started
+                if len(tfs) == 1:
+                    _record_completed_backtest_duration(model_key, tfs[0], _bt_dur)
+                else:
+                    # Multi-TF backtest — split equally as a coarse estimate;
+                    # better than nothing for ETA self-tuning.
+                    _per_tf_dur = _bt_dur / max(1, len(tfs))
+                    for _tf in tfs:
+                        _record_completed_backtest_duration(model_key, _tf, _per_tf_dur)
         else:
             tail = _read_training_log_tail(job_id, 600)
             _record_job(job_id, status='error',
@@ -3626,12 +3654,13 @@ def _run_trainer_blocking(job_id: str, key: str, n: int,
                     successes=successes, errors=errors[-3:],
                     finished_at=finished_at)
         # Same rolling-average update as multi-tf path; only record
-        # successful single-iteration runs.
+        # successful single-iteration runs. Phase 98 — pass tf so the
+        # per-(model, tf) ETA map gets updated.
         with _training_jobs_lock:
             entry = _training_jobs.get(job_id) or {}
         started_at = entry.get('started_at') or 0
         if final_status == 'done' and started_at > 0:
-            _record_completed_duration(key, finished_at - started_at)
+            _record_completed_duration(key, finished_at - started_at, tf=tf)
         with _training_active_lock:
             _training_active_procs.pop(job_id, None)
         # P-2: chain a per-TF backtest if the operator opted in.
@@ -3883,6 +3912,31 @@ _TYPICAL_DURATIONS: dict[str, float] = {
 _TYPICAL_HISTORY: dict[str, list[float]] = {}
 _TYPICAL_LOCK = threading.Lock()
 
+# Phase 98 — per-(model, tf) train-time map. Smaller TFs have more samples,
+# so a single-key average is misleading. We track a parallel rolling average
+# keyed by 'model@tf' and fall back to model-only when no per-tf data yet.
+_TYPICAL_DURATIONS_BY_TF: dict[str, float] = {}
+_TYPICAL_HISTORY_BY_TF: dict[str, list[float]] = {}
+
+# Phase 98 — per-(model, tf) backtest duration. Backtest cost is much smaller
+# than training (10–60 s typical) but visible enough to influence "run the
+# 10-min one first" decisions. Self-tunes from _spawn_followup_backtest
+# completions; seeded with conservative defaults below.
+_TYPICAL_BACKTEST_S: dict[str, float] = {}
+_TYPICAL_BACKTEST_HISTORY: dict[str, list[float]] = {}
+# Default backtest seed (model-key fallback). One run_full_backtest at a
+# given TF takes ~15–60 s depending on strategy count and bar count.
+_TYPICAL_BACKTEST_DEFAULT: dict[str, float] = {
+    'base':     45.0,
+    'trend':    45.0,
+    'futures':  45.0,
+    'scalping': 90.0,   # 1m bars = many more rows
+    'tft':      30.0,
+    'oft':      30.0,
+    'meta':     20.0,
+    'regime':   15.0,
+}
+
 # v3.1 step 15 (5A) — load persisted self-tuned values from data/cache/cold/
 # at import time. The rolling-avg map self-corrects as jobs finish; without
 # this restore, every dashboard restart resets to the hand-seeded numbers
@@ -3906,15 +3960,41 @@ try:
         for _k, _vlist in _persisted_hist.items():
             if isinstance(_vlist, list):
                 _TYPICAL_HISTORY[_k] = [float(x) for x in _vlist if isinstance(x, (int, float))][-5:]
+    # Phase 98 — per-(model,tf) train + backtest persisted maps.
+    for _slot, _target_dur, _target_hist in (
+        ('typical_durations_by_tf', _TYPICAL_DURATIONS_BY_TF, _TYPICAL_HISTORY_BY_TF),
+        ('typical_backtest_s',      _TYPICAL_BACKTEST_S,      _TYPICAL_BACKTEST_HISTORY),
+    ):
+        _persisted_dur = _cold_cache.load(_slot, default=None, max_age_s=30 * 86400)
+        if isinstance(_persisted_dur, dict):
+            for _k, _v in _persisted_dur.items():
+                try:
+                    _v = float(_v)
+                    if 1 < _v < 6 * 3600:
+                        _target_dur[_k] = _v
+                except (TypeError, ValueError):
+                    continue
+        _persisted_h = _cold_cache.load(_slot + '_history', default=None,
+                                         max_age_s=30 * 86400)
+        if isinstance(_persisted_h, dict):
+            for _k, _vlist in _persisted_h.items():
+                if isinstance(_vlist, list):
+                    _target_hist[_k] = [float(x) for x in _vlist if isinstance(x, (int, float))][-5:]
 except Exception:
     pass
 
 
-def _record_completed_duration(key: str, duration_s: float) -> None:
+def _record_completed_duration(key: str, duration_s: float,
+                                tf: str | None = None) -> None:
     """Update _TYPICAL_DURATIONS with a rolling average of recent runs.
     Persists to data/cache/cold/typical_durations.json + _history.json on
     each update so a dashboard restart doesn't reset the self-tuned values
-    (v3.1 step 15)."""
+    (v3.1 step 15).
+
+    Phase 98 — also records the per-(model, tf) entry when tf is provided.
+    The model-only map remains the canonical fallback so older trainers
+    (multi-tf path) keep working unchanged.
+    """
     if not key or duration_s <= 0 or duration_s > 6 * 3600:
         return
     with _TYPICAL_LOCK:
@@ -3923,13 +4003,81 @@ def _record_completed_duration(key: str, duration_s: float) -> None:
         if len(hist) > 5:
             del hist[0]
         _TYPICAL_DURATIONS[key] = sum(hist) / len(hist)
+        if tf:
+            tf_key = f'{key}@{tf}'
+            tf_hist = _TYPICAL_HISTORY_BY_TF.setdefault(tf_key, [])
+            tf_hist.append(duration_s)
+            if len(tf_hist) > 5:
+                del tf_hist[0]
+            _TYPICAL_DURATIONS_BY_TF[tf_key] = sum(tf_hist) / len(tf_hist)
         # Cold-cache snapshot — best-effort, never blocks the caller.
         try:
             from src.dashboard import cold_cache as _cc
             _cc.save('typical_durations', dict(_TYPICAL_DURATIONS))
             _cc.save('typical_history', {k: list(v) for k, v in _TYPICAL_HISTORY.items()})
+            _cc.save('typical_durations_by_tf', dict(_TYPICAL_DURATIONS_BY_TF))
+            _cc.save('typical_durations_by_tf_history',
+                     {k: list(v) for k, v in _TYPICAL_HISTORY_BY_TF.items()})
         except Exception:
             pass
+
+
+def _record_completed_backtest_duration(key: str, tf: str | None,
+                                         duration_s: float) -> None:
+    """Phase 98 — per-(model, tf) backtest rolling average. Same shape as
+    _record_completed_duration but feeds _TYPICAL_BACKTEST_S so the dashboard
+    ETA column reflects observed cluster timing rather than the seed defaults.
+    """
+    if not key or duration_s <= 0 or duration_s > 6 * 3600:
+        return
+    bt_key = f'{key}@{tf}' if tf else key
+    with _TYPICAL_LOCK:
+        hist = _TYPICAL_BACKTEST_HISTORY.setdefault(bt_key, [])
+        hist.append(duration_s)
+        if len(hist) > 5:
+            del hist[0]
+        _TYPICAL_BACKTEST_S[bt_key] = sum(hist) / len(hist)
+        try:
+            from src.dashboard import cold_cache as _cc
+            _cc.save('typical_backtest_s', dict(_TYPICAL_BACKTEST_S))
+            _cc.save('typical_backtest_s_history',
+                     {k: list(v) for k, v in _TYPICAL_BACKTEST_HISTORY.items()})
+        except Exception:
+            pass
+
+
+def _eta_for_row(model_key: str, tf: str | None) -> dict:
+    """Phase 98 — return ETA-train + ETA-backtest + total seconds for a model
+    row in the Model Training table. Per-(model, tf) entries take precedence;
+    fall back to model-only when no per-tf history yet. Returns dict with the
+    three field names emitted to the frontend.
+    """
+    train_s: float | None = None
+    bt_s:    float | None = None
+    if tf:
+        tf_key = f'{model_key}@{tf}'
+        train_s = _TYPICAL_DURATIONS_BY_TF.get(tf_key)
+        bt_s    = _TYPICAL_BACKTEST_S.get(tf_key)
+    if train_s is None:
+        train_s = _TYPICAL_DURATIONS.get(model_key)
+    if bt_s is None:
+        # Try model-key entry from backtest map first; fall back to seed default.
+        bt_s = _TYPICAL_BACKTEST_S.get(model_key)
+    if bt_s is None:
+        bt_s = _TYPICAL_BACKTEST_DEFAULT.get(model_key, 30.0)
+    out = {
+        'eta_train_s':    round(train_s, 1) if train_s is not None else None,
+        'eta_backtest_s': round(bt_s, 1) if bt_s is not None else None,
+    }
+    if train_s is not None and bt_s is not None:
+        out['eta_total_s'] = round(train_s + bt_s, 1)
+    elif train_s is not None:
+        out['eta_total_s'] = round(train_s, 1)
+    elif bt_s is not None:
+        out['eta_total_s'] = round(bt_s, 1)
+    else:
+        out['eta_total_s'] = None
+    return out
 
 
 def _annotate_job_timing(j: dict) -> dict:

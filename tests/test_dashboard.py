@@ -2619,12 +2619,18 @@ def test_phase57_pr26_all_tfs_and_status():
     check('Status pill shows progress_label / current_tf when running',
           'activeJob.progress_label' in tpl
           and 'activeJob.current_tf' in tpl)
+    # Phase 97b — keying changed from [key] to [_optKey] (model@tf form)
+    # so per-tf rows flash too. Accept either keying style as a regression
+    # guard: the assertion is "optimistic flash exists", not "exact key var".
     check('Optimistic UI flashes QUEUED before network round-trip',
-          "_trActiveJobs    = {..._trActiveJobs,    [key]: {" in tpl
+          ("_trActiveJobs    = {..._trActiveJobs,    [key]: {" in tpl
+           or "_trActiveJobs    = {..._trActiveJobs,    [_optKey]: {" in tpl)
           and "status: 'queued'" in tpl)
     check('Failed POST rolls back the optimistic state',
-          'delete _trActiveByModel[key]' in tpl
-          and 'delete _trActiveJobs[key]' in tpl)
+          ('delete _trActiveByModel[key]' in tpl
+           or 'delete _trActiveByModel[_optKey]' in tpl)
+          and ('delete _trActiveJobs[key]' in tpl
+               or 'delete _trActiveJobs[_optKey]' in tpl))
     check('Polling interval drops to 1.5s for 30s after click',
           'setInterval(pollTrainingJobs, 1500)' in tpl
           and "setTimeout(() => {" in tpl)
@@ -5675,11 +5681,11 @@ def test_phase74_v31_health_column_and_fleet_aggregate():
           ('A:<b' in html and 'B:<b' in html and 'C:<b' in html
            and 'D:<b' in html and 'F:<b' in html))
 
-    # Empty-state colspan was bumped 20 → 21 (Health column added in v3.1)
-    # then 21 → 22 (Backtest column added in Phase 95). Accept either to
-    # decouple this assertion from future column additions.
+    # Empty-state colspan was bumped 20 → 21 (Health), 21 → 22 (Backtest),
+    # 22 → 24 (ETA Train + ETA BT). Accept any post-Health value.
     check('empty-state colspan bumped to 21',
-          ('colspan="21"' in html or 'colspan="22"' in html)
+          ('colspan="21"' in html or 'colspan="22"' in html
+           or 'colspan="23"' in html or 'colspan="24"' in html)
           and 'No models match this filter.' in html)
 
 
@@ -7575,10 +7581,15 @@ def test_phase95_xgb_early_stop_eval_set_fix_and_backtest_column():
           and '/api/backtest/distributed' in tpl)
 
     # 2b. Loading + no-match placeholder colspans bumped 21 → 22.
-    check('placeholder Loading row uses colspan="22" (was 21)',
-          'colspan="22" style="text-align:center;color:#475569;padding:12px">Loading' in tpl)
-    check('"No models match" placeholder uses colspan="22" (was 21)',
-          'colspan="22" style="text-align:center;color:#475569;padding:14px">No models match this filter' in tpl)
+    # Phase 98 then bumped 22 → 24 (ETA Train + ETA BT). Accept either
+    # so the assertion stays a regression guard for "the colspan is at
+    # least the post-Backtest value", not a brittle exact-version pin.
+    check('placeholder Loading row uses colspan ≥ 22',
+          ('colspan="22" style="text-align:center;color:#475569;padding:12px">Loading' in tpl
+           or 'colspan="24" style="text-align:center;color:#475569;padding:12px">Loading' in tpl))
+    check('"No models match" placeholder uses colspan ≥ 22',
+          ('colspan="22" style="text-align:center;color:#475569;padding:14px">No models match this filter' in tpl
+           or 'colspan="24" style="text-align:center;color:#475569;padding:14px">No models match this filter' in tpl))
     check('fleet aggregate footer trailing colspan bumped 2 → 3 (Backtest + Description + Action)',
           'td colspan="3"></td>' in tpl)
 
@@ -7802,13 +7813,18 @@ def test_phase97_train_all_concurrency_lock_plus_current_state_pipeline():
     check('frontend Retrain ALL click no longer fans to all 8 keys eagerly',
           'DO NOT optimistically fan RUNNING to all 8 model' in tpl)
     # Site B — poller per-cycle broadcast
+    # Phase 97b — keying tightened from `[cur]` to `[cur+'@'+curTf]` so
+    # per-(model, tf) precision is restored. The "only flip the matching
+    # row" intent is the same; just the lookup key shape changed.
     check('frontend poller flips ONLY current_model_key to RUNNING',
           'allJob.current_model_key' in tpl
-          and 'cur && !newActive[cur]' in tpl)
+          and ('cur && !newActive[cur]' in tpl
+               or 'const k = curTf ? `${cur}@${curTf}` : cur;' in tpl))
     check('frontend poller no longer fans to all 8 keys when current_model_key absent',
-          # Strict mode (2026-05-10 v2): no row-level RUNNING when
-          # current model unknown. Header chip still shows activity.
-          'strict: only flip the actually-training row' in tpl)
+          # Phase 97b — strict-mode comment was rewritten with tf
+          # qualifier. Either form is the same intent.
+          ('strict: only flip the actually-training row' in tpl
+           or 'fall back to model-only — those rows still light up but no fan-out' in tpl))
     # Pipeline status now propagates current_model_key + current_tf to
     # the synthetic allJob construction.
     check('pipeline-status synthetic allJob carries current_model_key',
@@ -7848,6 +7864,166 @@ def test_phase97_train_all_concurrency_lock_plus_current_state_pipeline():
           "'error': 'already_running'" in api_body
           and "}), 409" in api_body
           and 'pid_exists' in api_body)
+
+
+def test_phase98_eta_train_bt_columns_and_tf_keyed_running():
+    """Phase 97b + 98 — bundled fix.
+
+    Operator screenshot 2026-05-10: pipeline orchestrator running, GPUs
+    at 70%, but every Model Training row showed "OK". Two fixes:
+
+      (1) ETA Train + ETA BT columns right of Status, sortable,
+          per-(model, tf) rolling-average self-tunes from cluster runs.
+          Goal: pick the 10-min row over the 3-hr row.
+
+      (2) RUNNING-row keying: pre-fix, _trActiveByModel was keyed by
+          model alone — a single 'futures' job lit all 6 futures rows.
+          Phase 97a went the other way and lit nothing when the key
+          shape mismatched. Now keyed by 'model@tf', with a fallback
+          chain: parent_key+tf → key+tf → parent_key → key. Per-tf
+          rows light up independently, no fan-out, no blanks.
+
+    Tests cover the backend ETA producer (per-tf precedence, defaults,
+    self-tune wiring) and the frontend rendering + lookup chain.
+    """
+    print('\n[Phase 98 — ETA Train+BT columns + Phase 97b tf-keyed RUNNING]')
+    from pathlib import Path as _P
+    PRJ = _P(__file__).resolve().parents[1]
+    app = (PRJ / 'src/dashboard/app.py').read_text(encoding='utf-8')
+    tpl = (PRJ / 'src/dashboard/templates/index.html').read_text(encoding='utf-8')
+
+    # ── Backend: per-(model, tf) typical-duration map ────────────────────
+    check('backend declares _TYPICAL_DURATIONS_BY_TF map',
+          '_TYPICAL_DURATIONS_BY_TF: dict[str, float] = {}' in app)
+    check('backend declares _TYPICAL_HISTORY_BY_TF (rolling avg shape)',
+          '_TYPICAL_HISTORY_BY_TF: dict[str, list[float]] = {}' in app)
+    check('backend declares per-(model, tf) backtest map',
+          '_TYPICAL_BACKTEST_S: dict[str, float] = {}' in app)
+    check('backend declares backtest history (rolling avg shape)',
+          '_TYPICAL_BACKTEST_HISTORY: dict[str, list[float]] = {}' in app)
+    check('backend has seed defaults for backtest ETA per model key',
+          '_TYPICAL_BACKTEST_DEFAULT' in app
+          and "'scalping': 90.0" in app   # 1m bars = bigger seed
+          and "'regime':   15.0" in app)
+
+    # ── Cold-cache restore wiring (so dashboard restart keeps tunings) ───
+    check('cold-cache restore loads typical_durations_by_tf at boot',
+          "_cold_cache.load(_slot, default=None" in app
+          and "'typical_durations_by_tf'" in app
+          and "'typical_backtest_s'" in app)
+
+    # ── Recorder accepts tf= and writes to per-tf map ────────────────────
+    check('_record_completed_duration accepts tf= kwarg',
+          'def _record_completed_duration(key: str, duration_s: float,' in app
+          and 'tf: str | None = None' in app)
+    check('_record_completed_duration writes per-(model, tf) entry',
+          "tf_key = f'{key}@{tf}'" in app
+          and '_TYPICAL_DURATIONS_BY_TF[tf_key]' in app)
+    check('_record_completed_duration persists per-tf maps via cold_cache',
+          "_cc.save('typical_durations_by_tf'" in app)
+
+    # ── Backtest recorder is its own function (backtest != train) ────────
+    check('backend defines _record_completed_backtest_duration',
+          'def _record_completed_backtest_duration(' in app
+          and '_TYPICAL_BACKTEST_S[bt_key]' in app)
+    check('followup backtest finish hook records per-(model, tf) duration',
+          '_record_completed_backtest_duration(model_key, tfs[0]' in app)
+    check('multi-tf followup backtest splits duration evenly per tf',
+          '_per_tf_dur = _bt_dur / max(1, len(tfs))' in app)
+
+    # ── ETA producer: per-tf precedence with model-only fallback ─────────
+    check('backend defines _eta_for_row(model_key, tf)',
+          'def _eta_for_row(model_key: str, tf: str | None)' in app)
+    check('ETA producer prefers per-(model, tf) train entry',
+          'tf_key = f\'{model_key}@{tf}\'' in app
+          and 'train_s = _TYPICAL_DURATIONS_BY_TF.get(tf_key)' in app)
+    check('ETA producer falls back to model-only when no per-tf history',
+          'train_s = _TYPICAL_DURATIONS.get(model_key)' in app)
+    check('ETA producer falls back to seed default when no history at all',
+          'bt_s = _TYPICAL_BACKTEST_DEFAULT.get(model_key, 30.0)' in app)
+    check('ETA producer returns three field names',
+          "'eta_train_s'" in app
+          and "'eta_backtest_s'" in app
+          and "'eta_total_s'" in app)
+    check('ETA total is train+backtest sum when both available',
+          'out[\'eta_total_s\'] = round(train_s + bt_s, 1)' in app)
+
+    # ── /api/strategy/full row builder injects ETA fields ────────────────
+    # Two row-append sites: canonical (legacy 1-tf-per-model) + per-tf.
+    canonical_idx = app.find("'is_canonical':   True")
+    pertf_idx     = app.find("'is_canonical':   False")
+    check('canonical row builder calls _eta_for_row',
+          '_eta = _eta_for_row(key, meta.get(\'timeframe\'))' in app)
+    check('canonical row dict carries eta_train_s + eta_backtest_s + total',
+          canonical_idx > 0
+          and "'eta_train_s':    _eta['eta_train_s']" in app[:canonical_idx])
+    check('per-tf row builder calls _eta_for_row(key, tf)',
+          '_eta_tf = _eta_for_row(key, tf)' in app)
+    check('per-tf row dict carries the three ETA fields',
+          pertf_idx > 0
+          and "'eta_train_s':    _eta_tf['eta_train_s']" in app[:pertf_idx])
+
+    # ── Single-tf trainer finish hook passes tf to recorder ──────────────
+    check('single-tf trainer finish hook passes tf to _record_completed_duration',
+          '_record_completed_duration(key, finished_at - started_at, tf=tf)' in app)
+
+    # ── Frontend: two new column headers right of Status ─────────────────
+    check('ETA Train column header (sortable, right of Status)',
+          'data-col="eta_train_s"' in tpl
+          and 'onclick="trSort(\'eta_train_s\')"' in tpl
+          and '>ETA Train <' in tpl)
+    check('ETA BT column header (sortable, right of ETA Train)',
+          'data-col="eta_backtest_s"' in tpl
+          and 'onclick="trSort(\'eta_backtest_s\')"' in tpl
+          and '>ETA BT <' in tpl)
+    # Ordering: Status → ETA Train → ETA BT → Last trained
+    status_pos    = tpl.find('data-col="run_status"')
+    eta_train_pos = tpl.find('data-col="eta_train_s"')
+    eta_bt_pos    = tpl.find('data-col="eta_backtest_s"')
+    last_trained  = tpl.find('data-col="age_s"')
+    check('column order: Status → ETA Train → ETA BT → Last trained',
+          status_pos > 0 < eta_train_pos < eta_bt_pos < last_trained)
+
+    # ── Empty-state colspan bumped 22 → 24 (two new columns) ─────────────
+    check('Loading placeholder colspan bumped to 24',
+          'colspan="24" style="text-align:center;color:#475569;padding:12px">Loading' in tpl)
+
+    # ── Frontend cell renders with color tint + tooltip ──────────────────
+    check('ETA color helper banded < 5m green / 5-30m amber / >30m red',
+          'if (s < 300)   return \'#34d399\';' in tpl
+          and 'if (s < 1800)  return \'#fbbf24\';' in tpl
+          and "return '#fb7185';                   // > 30m — red" in tpl)
+    check('row carries data-eta-total / data-eta-train / data-eta-bt for sort',
+          'data-eta-total="${_etaTotal' in tpl
+          and 'data-eta-train="${_etaTrain' in tpl
+          and 'data-eta-bt="${_etaBt' in tpl)
+    check('ETA cells use _trFmtDuration for formatting (existing helper)',
+          '_etaTrainFmt = _trFmtDuration(_etaTrain)' in tpl
+          and '_etaBtFmt    = _trFmtDuration(_etaBt)' in tpl)
+
+    # ── ETA columns default to ASC sort (shortest first) ─────────────────
+    check('ETA columns default to ascending sort (shortest first)',
+          "col === 'eta_train_s' || col === 'eta_backtest_s'" in tpl)
+
+    # ── Phase 97b: tf-keyed RUNNING lookup ───────────────────────────────
+    check('poller keys active jobs by model+@+tf (not model alone)',
+          'const _activeKey = (j) => j.tf ? `${j.model}@${j.tf}` : j.model;' in tpl)
+    check('poller fallback to model-only for jobs without tf (regime, oft)',
+          'j.tf ? `${j.model}@${j.tf}` : j.model' in tpl)
+    check('row lookup tries parent_key+@+tf, then key+@+tf, then parent_key, then key',
+          '_rowParentKey = m.parent_key || m.key' in tpl
+          and '_rowTfKey     = m.tf || m.timeframe' in tpl
+          and '`${_rowParentKey}@${_rowTfKey}`' in tpl
+          and '`${m.key}@${_rowTfKey}`' in tpl)
+    check('synthetic allJob (pipeline path) keyed by current_model_key+@+current_tf',
+          'const k = curTf ? `${cur}@${curTf}` : cur;' in tpl)
+    check('optimistic flash key uses model+@+tf (per-tf rows flash too)',
+          "const _optKey = (tf && tf !== 'all') ? `${key}@${tf}` : key;" in tpl
+          and '_trActiveByModel = {..._trActiveByModel, [_optKey]: \'pending\'}' in tpl)
+    check('trStopOne deletes by jobId scan (not by model key)',
+          'if (_trActiveByModel[k] === jobId) delete _trActiveByModel[k];' in tpl)
+    check('recent-fails lookup uses _lookupKey (same chain as activeJob)',
+          '_trRecentFails[_lookupKey]' in tpl)
 
 
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
@@ -8210,6 +8386,7 @@ def main():
     test_phase95_xgb_early_stop_eval_set_fix_and_backtest_column()
     test_phase96_orphan_detector_direct_script_form_plus_ps_native_fix()
     test_phase97_train_all_concurrency_lock_plus_current_state_pipeline()
+    test_phase98_eta_train_bt_columns_and_tf_keyed_running()
 
     if not args.offline:
         test_api(args.url)
