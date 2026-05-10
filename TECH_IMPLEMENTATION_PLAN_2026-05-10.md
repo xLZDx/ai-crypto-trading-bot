@@ -5,6 +5,22 @@
 
 ---
 
+## ⚠️ 2026-05-10 sequence change — Sprint 1a inserted
+
+Per operator directive 2026-05-10 22:55 ("we have a lot of issues with model training because the logic and execution patterns are all in one file for everything … we need to postpone on new plan implementation before we stabilize the current solution"), the original sequence is amended:
+
+1. **Sprint 0 stabilization** (in flight) — Phase 97c orphan refresh + canonical-row fallback just landed. Banner alert dedup is the next small follow-up.
+2. **Sprint 1a** — Per-Model Agent Refactor + KPI Dashboard (~13-15d). Canonical doc: [`core/SPRINT_1A_PER_MODEL_AGENTS_AND_KPI.md`](core/SPRINT_1A_PER_MODEL_AGENTS_AND_KPI.md).
+   - **R1 (5–7d):** split monolithic `train_all_models.py` into per-model files + per-model supervised agents. Pipeline orchestrator becomes a topic dispatcher; orphan detection in dashboard gets deleted.
+   - **R2 (3d):** KPI gate per run (WF Sharpe, Calmar, Max DD, win rate, expectancy, total trades). 3 misses → auto-retire. New `kpi_threshold` block in `data/training_rules.json`.
+   - **R3 (5d):** new "Model Comparison" dashboard tab — sortable KPI grid, drill-down, Promote/Retire/Restore. Same template re-used for Strategy and Combo comparisons.
+3. **Sprint 0 §0–§S0c cross-cutting setup + risk hardening** — postponed until Sprint 1a R1+R2+R3 land. Reason: building validation-rigor scaffolding on top of the current monolithic trainer would just lock in the bug surface; refactor first, then audit.
+4. **§S0.5 Analytic phase + Sprint 1 onward** — unchanged sequence, runs after Sprint 0 reaches §A end-of-sprint deliverables.
+
+The Sprint 0 sections below remain the canonical spec for §0–§S0c when their slot arrives. Estimates and acceptance gates do not change; only the start date moves out by ~13–15 days.
+
+---
+
 ## How to read this document
 - Each S0-N section maps 1:1 to §11 in the assessment doc.
 - File paths are absolute relative to project root (`d:\test 2\AI trading assistance\`).

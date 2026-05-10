@@ -4796,6 +4796,41 @@ async function pollTrainingJobs() {
         }
       }
     }
+    // Phase 97c — canonical-row fallback. When the synthetic allJob (or
+    // any active job) keys to `model@tf` but no row exists at that
+    // exact (model, tf) — common case: pipeline trains tft @ 15m while
+    // the table only has the canonical tft @ 1h row, since per-tf rows
+    // only appear after an artifact lands — promote the activeJob to
+    // the canonical row's key so the operator sees the model lit up
+    // with the actual tf in the sub-line. Without this, training on a
+    // tf that has no row yields ZERO rows showing RUNNING, which is
+    // exactly the operator-screenshot bug from 2026-05-10 22:55.
+    try {
+      const tableRows = (typeof _stratFull !== 'undefined' && _stratFull
+                         && _stratFull.ml_models) || [];
+      for (const k of Object.keys(newActive)) {
+        if (!k.includes('@')) continue;            // model-only key — skip
+        const [mod, tf] = k.split('@');
+        if (!mod || !tf) continue;
+        // A row covers this (mod, tf) iff its parent_key/key matches mod
+        // AND its tf/timeframe matches tf. Per-tf rows have parent_key=mod;
+        // canonical rows have key=mod with timeframe at the canonical tf.
+        const exactRowExists = tableRows.some(m =>
+          (m.parent_key === mod || m.key === mod)
+          && (m.tf === tf || m.timeframe === tf));
+        if (exactRowExists) continue;              // proper row will match
+        // No exact (mod, tf) row → promote to canonical mod (key === mod,
+        // no parent_key). Canonical row's lookup chain falls through to
+        // `mod` model-only key, which we now populate.
+        if (newActive[mod]) continue;              // model-only already set
+        const job = newJobs[k];
+        newActive[mod] = job.job_id;
+        const promotedLabel = (job.progress_label || '')
+          + (tf ? ` (training @ ${tf})` : '');
+        newJobs[mod] = {...job, model: mod, current_tf: tf,
+                        progress_label: promotedLabel};
+      }
+    } catch (_) { /* best-effort promotion; never block render */ }
     const changed = JSON.stringify(newActive) !== JSON.stringify(_trActiveByModel)
                  || JSON.stringify(newJobs) !== JSON.stringify(_trActiveJobs)
                  || JSON.stringify(newFails) !== JSON.stringify(_trRecentFails);

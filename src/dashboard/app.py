@@ -3096,6 +3096,95 @@ def _detect_orphan_training_subprocesses() -> None:
             '[training] reattached %d orphan training subprocess(es)', found)
 
 
+def _refresh_orphan_current_state() -> None:
+    """Phase 97c — periodic refresh of orphan-* records' current_model_key /
+    current_tf / progress_label from data/training_current.json. Without this,
+    orphan job records freeze on whatever was training at dashboard boot — the
+    pipeline orchestrator iterates through models (TFT → … → scalping) but
+    the dashboard keeps reporting the model that was active when the orphan
+    detector first ran. Operator screenshot 2026-05-10 22:55: pipeline at
+    scalping@5m, orphan record still said tft@15m.
+
+    Called every 5 s by the daemon loop below. No-ops cheap when orphan-*
+    records don't exist or training_current.json is missing.
+    """
+    try:
+        import json as _j
+    except ImportError:
+        return
+    cur_path = os.path.join(project_root, 'data', 'training_current.json')
+    if not os.path.exists(cur_path):
+        return
+    try:
+        with open(cur_path, 'r', encoding='utf-8') as _cf:
+            _cur = _j.load(_cf) or {}
+    except Exception:
+        return
+    sub_model  = _cur.get('model_key')
+    current_tf = _cur.get('current_tf')
+    label      = _cur.get('label')
+    if sub_model:
+        progress_label = (
+            f"running {sub_model}"
+            + (f" @ {current_tf}" if current_tf else '')
+        )
+    else:
+        progress_label = None
+    # Walk orphan-* records (synthesized for train_all subprocesses spawned
+    # by launch_training.ps1 / pipeline_orchestrator). Refresh in place so
+    # the FE poller sees the up-to-date current model on every cycle.
+    with _training_jobs_lock:
+        for jid, job in list(_training_jobs.items()):
+            if job.get('status') != 'running':
+                continue
+            # Two record shapes carry the parent train_all pid:
+            #   1. orphan-<pid> records (synthesized by _detect_orphan_…)
+            #   2. dashboard-spawned 'all' jobs (model='all', not orphan)
+            # Both should refresh — the operator may launch via either path.
+            if not (jid.startswith('orphan-') or job.get('model') == 'all'):
+                continue
+            updates: dict = {}
+            if sub_model and job.get('current_model_key') != sub_model:
+                updates['current_model_key'] = sub_model
+            if current_tf and job.get('current_tf') != current_tf:
+                updates['current_tf'] = current_tf
+                # Mirror to top-level tf so FE polling code that reads job.tf
+                # (the original key shape) also sees the change. Pre-fix only
+                # current_tf was updated, but newActive[`${j.model}@${j.tf}`]
+                # in the FE poll uses j.tf, so the top-level field is what
+                # actually drives the row lookup.
+                updates['tf'] = current_tf
+            if progress_label and job.get('progress_label') != progress_label:
+                updates['progress_label'] = progress_label
+            if updates:
+                _record_job(jid, **updates)
+
+
+def _orphan_refresh_loop() -> None:
+    """Phase 97c daemon — re-detect orphan training subprocesses + refresh
+    current_model_key/current_tf on already-tracked records every 5 s.
+    Cheap (single psutil scan + small file read); runs in the background
+    so the dashboard's read-side reflects pipeline-orchestrator iteration."""
+    while True:
+        try:
+            time.sleep(5)
+            _detect_orphan_training_subprocesses()
+            _refresh_orphan_current_state()
+        except Exception:
+            # Log + continue. Exceptions in the loop must never break it
+            # (then the dashboard would silently stop tracking pipeline state).
+            try:
+                import logging as _lg
+                _lg.getLogger(__name__).exception(
+                    '[training] orphan refresh loop iteration failed')
+            except Exception:
+                pass
+
+
+threading.Thread(target=_orphan_refresh_loop, daemon=True,
+                 name='training-orphan-refresh').start()
+
+
 def _reattach_training_subprocess(job_id: str, pid: int) -> None:
     """Wait for an orphaned-but-alive training subprocess to finish,
     then record the result. Used after dashboard restart picks up a

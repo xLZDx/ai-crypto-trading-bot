@@ -8026,6 +8026,103 @@ def test_phase98_eta_train_bt_columns_and_tf_keyed_running():
           '_trRecentFails[_lookupKey]' in tpl)
 
 
+def test_phase97c_orphan_periodic_refresh_and_canonical_row_fallback():
+    """Phase 97c — make Phase 97b actually work end-to-end.
+
+    Operator screenshot 2026-05-10 22:55: pipeline orchestrator running,
+    GPUs at 70%, training_current.json showed scalping@5m, but the orphan
+    job record in /api/training/jobs still claimed tft@15m (frozen from
+    boot) AND every Model Training row showed OK because no per-tf row
+    exists at scalping@5m yet. Two compounding bugs:
+
+      (1) Backend: _detect_orphan_training_subprocesses runs ONCE in
+          _training_state_recover at dashboard import. Pipeline iterates
+          through models but the orphan record's current_model_key /
+          current_tf never refresh.
+
+      (2) Frontend: synthetic allJob keys to `tft@15m`, lookup chain
+          falls through to `tft` model-only, but newActive only had
+          `tft@15m` written. No row covers tft@15m (no per-tf TFT row
+          exists until a 15m artifact lands). Result: no row lights up.
+
+    Fixes:
+      Backend  → _refresh_orphan_current_state() called every 5 s by
+                 _orphan_refresh_loop daemon thread. Walks orphan-* +
+                 'all'-model records, refreshes current_model_key /
+                 current_tf / tf / progress_label from training_current.json.
+      Frontend → canonical-row fallback. After newActive built, walk
+                 model@tf entries, check if any row covers (model, tf);
+                 if not, promote the entry to the canonical model row
+                 (key === model, no parent_key) so the operator sees
+                 the actually-training model lit up with the actual tf
+                 in the sub-line.
+    """
+    print('\n[Phase 97c — orphan periodic refresh + canonical-row fallback]')
+    from pathlib import Path as _P
+    PRJ = _P(__file__).resolve().parents[1]
+    app = (PRJ / 'src/dashboard/app.py').read_text(encoding='utf-8')
+    tpl = (PRJ / 'src/dashboard/templates/index.html').read_text(encoding='utf-8')
+
+    # ── Backend: periodic-refresh daemon ─────────────────────────────────
+    check('backend defines _refresh_orphan_current_state()',
+          'def _refresh_orphan_current_state()' in app)
+    check('backend defines _orphan_refresh_loop() daemon body',
+          'def _orphan_refresh_loop()' in app)
+    check('orphan refresh loop sleeps 5s between iterations',
+          'time.sleep(5)' in app
+          and '_detect_orphan_training_subprocesses()' in app
+          and '_refresh_orphan_current_state()' in app)
+    check('orphan refresh loop runs in a daemon thread (named)',
+          "name='training-orphan-refresh'" in app
+          and 'threading.Thread(target=_orphan_refresh_loop, daemon=True' in app)
+
+    refresh_start = app.find('def _refresh_orphan_current_state(')
+    refresh_end   = app.find('\ndef ', refresh_start + 1)
+    refresh_body  = app[refresh_start:refresh_end] if refresh_end > refresh_start else app[refresh_start:]
+    check('refresh reads training_current.json from project_root',
+          "os.path.join(project_root, 'data', 'training_current.json')"
+          in refresh_body)
+    check('refresh updates current_model_key / current_tf / progress_label',
+          "updates['current_model_key']" in refresh_body
+          and "updates['current_tf']" in refresh_body
+          and "updates['progress_label']" in refresh_body)
+    check('refresh ALSO mirrors current_tf into top-level tf field',
+          # FE poller keys newActive by `${j.model}@${j.tf}` — so the
+          # top-level tf is what actually drives row lookup, not just
+          # current_tf. Pre-Phase-97c only current_tf was updated.
+          "updates['tf']" in refresh_body)
+    check('refresh skips records that are not orphan-* or model="all"',
+          "jid.startswith('orphan-')" in refresh_body
+          and "job.get('model') == 'all'" in refresh_body)
+    check('refresh skips non-running records (no thrash on completed jobs)',
+          "if job.get('status') != 'running':" in refresh_body
+          and 'continue' in refresh_body)
+
+    # ── Backend: refresh loop tolerates single-iteration failures ───────
+    check('refresh loop catches Exception per iteration (never breaks)',
+          '[training] orphan refresh loop iteration failed' in app)
+
+    # ── Frontend: canonical-row fallback ─────────────────────────────────
+    check('frontend has Phase 97c canonical-row fallback comment',
+          'Phase 97c — canonical-row fallback' in tpl)
+    check('fallback walks newActive model@tf keys',
+          "if (!k.includes('@')) continue;" in tpl
+          and 'const [mod, tf] = k.split(\'@\');' in tpl)
+    check('fallback computes exactRowExists from _stratFull.ml_models',
+          'tableRows.some(m =>' in tpl
+          and '(m.parent_key === mod || m.key === mod)' in tpl
+          and '(m.tf === tf || m.timeframe === tf)' in tpl)
+    check('fallback skips when exact row already exists (no fan-out)',
+          'if (exactRowExists) continue;' in tpl)
+    check('fallback skips when canonical key already populated',
+          'if (newActive[mod]) continue;' in tpl)
+    check('fallback adds "(training @ <tf>)" to progress_label',
+          '(training @ ${tf})' in tpl)
+    check('fallback wrapped in try/catch so promotion never blocks render',
+          "} catch (_) { /* best-effort promotion; never block render */ }"
+          in tpl)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -8387,6 +8484,7 @@ def main():
     test_phase96_orphan_detector_direct_script_form_plus_ps_native_fix()
     test_phase97_train_all_concurrency_lock_plus_current_state_pipeline()
     test_phase98_eta_train_bt_columns_and_tf_keyed_running()
+    test_phase97c_orphan_periodic_refresh_and_canonical_row_fallback()
 
     if not args.offline:
         test_api(args.url)
