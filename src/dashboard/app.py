@@ -4959,8 +4959,13 @@ def cluster_worker_restart():
     if not ip or not port:
         return jsonify({'ok': False, 'error': 'ip and port required'}), 400
     try:
+        # confirm=True is required by the worker's /restart gate (added
+        # after the 2026-05-10 accidental restart incident — a probe
+        # with {"dry_run": true} re-execed a worker because that flag
+        # was never honoured).
         req = _ur.Request(f'http://{ip}:{port}/restart',
-                          data=_j.dumps({'reason': 'operator_manual'}).encode('utf-8'),
+                          data=_j.dumps({'confirm': True,
+                                         'reason': 'operator_manual'}).encode('utf-8'),
                           method='POST',
                           headers={'Content-Type': 'application/json'})
         with _ur.urlopen(req, timeout=5) as r:

@@ -7202,6 +7202,26 @@ def test_phase93_worker_live_load_and_remote_restart():
     check('/restart responds OK before re-exec (delayed_exec thread)',
           '_delayed_exec' in worker
           and 'time.sleep(1.0)' in worker)
+    # Confirm gate added 2026-05-10 after the {"dry_run": true} accident
+    # re-execed Ivan's GPU worker. /restart must reject any body that
+    # doesn't include {"confirm": true}.
+    restart_start = worker.find('def restart()')
+    restart_end   = worker.find('\n        @app.route', restart_start + 1)
+    if restart_end < 0:
+        restart_end = worker.find('\n        return app', restart_start + 1)
+    restart_body  = worker[restart_start:restart_end] if restart_end > restart_start else worker[restart_start:]
+    check('/restart parses POST body via flask.get_json',
+          'freq.get_json(' in restart_body
+          and 'silent=True' in restart_body)
+    check('/restart returns 400 unless body.confirm is True',
+          'body.get("confirm") is not True' in restart_body
+          and ', 400' in restart_body)
+    check('/restart 400 response includes a hint pointing at the confirm flag',
+          '"hint":' in restart_body
+          and '"confirm": true' in restart_body)
+    check('/restart docstring/comment cites the dry_run accident',
+          'dry_run' in worker
+          and 'accident' in worker.lower())
     check('/system_info endpoint defined',
           '@app.route("/system_info")' in worker
           and 'def system_info()' in worker)
@@ -7247,6 +7267,8 @@ def test_phase93_worker_live_load_and_remote_restart():
     check('master_agent uses worker ip+port to reach the remote /restart',
           'worker.get("ip"' in heal_body
           and 'worker.get("port"' in heal_body)
+    check('master_agent /restart POST includes "confirm": True (gate compliance)',
+          '"confirm": True' in heal_body)
     check('successful remote restart emits REMOTE RESTART log line',
           'REMOTE RESTART' in heal_body)
     check('failed remote restart still emits REMOTE ZOMBIE alert (fallback)',
@@ -7262,6 +7284,9 @@ def test_phase93_worker_live_load_and_remote_restart():
           "f'http://{ip}:{port}/restart'" in app)
     check('worker_restart validates ip+port (no bare proxy)',
           "if not ip or not port" in app)
+    check('dashboard proxy includes "confirm": True in body (gate compliance)',
+          "'confirm': True" in app
+          and 'worker_restart' in app)
     check('cluster card renders cpu_percent + gpu_percent on each worker',
           'w.cpu_percent' in tpl
           and 'w.gpu_percent' in tpl)

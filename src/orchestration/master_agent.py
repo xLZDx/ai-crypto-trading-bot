@@ -308,7 +308,14 @@ class MasterAgent:
             triggered = False
             if ip and port:
                 try:
-                    body = json.dumps({"reason": reason, "task_id": task_id}).encode("utf-8")
+                    # confirm=True is required by the worker's /restart
+                    # gate (added after the 2026-05-10 accidental restart
+                    # incident on Ivan).
+                    body = json.dumps({
+                        "confirm": True,
+                        "reason":  reason,
+                        "task_id": task_id,
+                    }).encode("utf-8")
                     req  = urllib.request.Request(
                         f"http://{ip}:{port}/restart",
                         data=body,

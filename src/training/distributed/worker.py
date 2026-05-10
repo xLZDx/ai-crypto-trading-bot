@@ -690,6 +690,13 @@ class TrainingWorker:
         # now the supervisor can self-heal even when the worker is on
         # Ivan's PC (or any future remote node).
         #
+        # Confirm gate: caller MUST send {"confirm": true} in the body.
+        # Reason: 2026-05-10 a probe POST with {"dry_run": true} (a flag
+        # this endpoint does NOT honour) re-execed Ivan's GPU worker by
+        # accident. The gate keeps `/restart` reachable on the LAN
+        # without auth but blocks single-line copy-paste mistakes.
+        # master_agent and the dashboard proxy both send the flag.
+        #
         # Implementation: respond OK first, then re-exec the same Python
         # process in a background thread after a 1-second delay so the
         # HTTP response flushes before the listening socket dies. On
@@ -698,6 +705,13 @@ class TrainingWorker:
         # restarting us — same recovery path as crash-on-startup.
         @app.route("/restart", methods=["POST"])
         def restart():
+            body = freq.get_json(force=True, silent=True) or {}
+            if body.get("confirm") is not True:
+                return jsonify({
+                    "ok": False,
+                    "error": "confirm flag required",
+                    "hint": 'POST body must include {"confirm": true}',
+                }), 400
             def _delayed_exec():
                 time.sleep(1.0)
                 logger.warning("[Worker] /restart received — re-executing self")
