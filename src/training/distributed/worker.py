@@ -573,11 +573,19 @@ def _train_garch(task: dict) -> dict:
 
 class TrainingWorker:
 
-    def __init__(self, master_url: str, node_id: str, name: str, port: int = WORKER_PORT):
+    def __init__(self, master_url: str, node_id: str, name: str, port: int = WORKER_PORT,
+                 lane: str = "any"):
         self.master_url = master_url.rstrip("/")
         self.node_id    = node_id
         self.name       = name
         self.port       = port
+        # 2026-05-10 — dual-lane support. lane = "cpu" | "gpu" | "any".
+        # "any" (default) = legacy behaviour, accepts any task. "cpu" only
+        # accepts cpu-lane tasks; "gpu" only accepts gpu/exclusive tasks.
+        # The orchestrator filters dispatch by lane match. This lets a
+        # single PC run two worker processes — one per lane — so CPU and
+        # GPU work happen concurrently on the same machine.
+        self.lane       = lane if lane in ("cpu", "gpu", "any") else "any"
         self.hw         = _detect_hardware()
         self._running   = False
         self._current_task: dict | None = None
@@ -673,6 +681,7 @@ class TrainingWorker:
                         "cpu_cores":     self.hw["cpu_cores"],
                         "ram_gb":        self.hw["ram_gb"],
                         "cuda_available": self.hw["cuda_available"],
+                        "lane":          self.lane,
                         "status":        "busy" if self._current_task else "idle",
                         "current_task":  (self._current_task or {}).get("task_id", ""),
                         "last_seen":     datetime.now(timezone.utc).isoformat(),
@@ -711,6 +720,10 @@ def main() -> None:
     parser.add_argument("--name",   default=socket.gethostname(), help="Human-readable node name")
     parser.add_argument("--port",   type=int, default=WORKER_PORT, help="Local HTTP port (default 7701)")
     parser.add_argument("--id",     default=str(uuid.uuid4())[:8],  help="Node ID (auto-generated)")
+    parser.add_argument("--lane",   default="any", choices=("cpu", "gpu", "any"),
+                        help="Which task lane this worker accepts. 'cpu' = only "
+                             "CPU-resource models (base/trend/futures/scalping/meta/regime). "
+                             "'gpu' = only gpu/exclusive (tft/oft). 'any' = legacy/default.")
     args = parser.parse_args()
 
     worker = TrainingWorker(
@@ -718,6 +731,7 @@ def main() -> None:
         node_id=args.id,
         name=args.name,
         port=args.port,
+        lane=args.lane,
     )
     worker.start()
 

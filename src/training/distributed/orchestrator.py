@@ -204,7 +204,7 @@ class Orchestrator:
         with self._lock:
             if not self._queue:
                 return
-            # Find idle workers (GPU workers get tasks first)
+            # Find idle online workers
             idle = [
                 w for w in self._workers.values()
                 if w.get("status") == "idle"
@@ -213,16 +213,61 @@ class Orchestrator:
             ]
             if not idle:
                 return
-            # Sort: GPU workers first, then by VRAM descending
+            # Sort: GPU workers first, then by VRAM descending — used as the
+            # tie-breaker after lane match.
             idle.sort(key=lambda w: (-int(w.get("cuda_available", False)), -w.get("gpu_vram_gb", 0)))
+
+            # 2026-05-10 — lane-aware dispatch. Each task carries a model_type;
+            # we look up its resource_kind from training_rules.json (cpu / gpu /
+            # exclusive) and route to a worker whose lane MATCHES. Lane "any"
+            # accepts every kind (legacy/back-compat).
+            #
+            # Mapping:
+            #   resource_kind=cpu        -> lane in {cpu, any}
+            #   resource_kind=gpu        -> lane in {gpu, any}
+            #   resource_kind=exclusive  -> lane in {gpu, any}  (gpu lane runs OFT;
+            #                                                    sweep coordinator
+            #                                                    serialises so OFT
+            #                                                    runs alone)
+            try:
+                from src.training.training_rules import resource_kind as _rkind
+            except Exception:
+                _rkind = lambda _m: "cpu"  # safe default
+
+            def _lane_accepts(worker_lane: str, kind: str) -> bool:
+                if worker_lane == "any":
+                    return True
+                if kind == "cpu":
+                    return worker_lane == "cpu"
+                if kind in ("gpu", "exclusive"):
+                    return worker_lane == "gpu"
+                return True
+
             pending = [tid for tid in self._queue if self._tasks.get(tid, {}).get("status") == "pending"]
-            for task_id, worker in zip(pending, idle):
+            assigned_workers: set[str] = set()
+            for task_id in pending:
                 task = self._tasks[task_id]
+                kind = "cpu"
+                try:
+                    kind = _rkind(task.get("model_type", "")) or "cpu"
+                except Exception:
+                    pass
+                # Find first idle worker (GPU-sorted) whose lane accepts this kind
+                # AND that we haven't already assigned this round.
+                worker = next(
+                    (w for w in idle
+                     if w["node_id"] not in assigned_workers
+                     and _lane_accepts(w.get("lane", "any"), kind)),
+                    None,
+                )
+                if worker is None:
+                    continue   # no compatible worker idle; task stays pending
                 task["status"]      = "running"
                 task["assigned_to"] = worker["node_id"]
                 task["started_at"]  = datetime.now(timezone.utc).isoformat()
                 worker["status"]        = "busy"
                 worker["current_task"]  = task_id
+                assigned_workers.add(worker["node_id"])
                 if task_id in self._queue:
                     self._queue.remove(task_id)
                 # Dispatch in background (don't hold lock during HTTP call)

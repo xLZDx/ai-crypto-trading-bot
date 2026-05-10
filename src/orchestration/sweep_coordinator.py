@@ -239,38 +239,58 @@ class SweepCoordinator:
 
     # ── Worker lifecycle ────────────────────────────────────────────────
 
-    def _ensure_local_worker(self) -> Optional[int]:
-        """Spawn LOCAL_RAZER worker on master if no worker process exists.
-        Uses PYTHONUNBUFFERED=1 so trainer logs flush in real time
-        (the 2026-05-10 stdout-buffering issue we hit during the smoke test)."""
-        try:
-            from src.utils import process_health as ph
-            if ph.find_process(ph.KIND_WORKER) is not None:
-                logger.info("Local worker already running — skipping spawn")
-                return None
-        except Exception:
-            pass
+    def _spawn_local_worker(self, lane: str, port: int, name: str) -> Optional[int]:
+        """Spawn one local worker on master with a specific lane (cpu|gpu).
+        Each lane runs in its own python process so master can do CPU and
+        GPU work simultaneously. Uses PYTHONUNBUFFERED=1 so trainer logs
+        flush in real time (the 2026-05-10 stdout-buffering issue we hit
+        during the smoke test)."""
         import subprocess
         venv_py = PROJECT_ROOT / "venv" / "Scripts" / "python.exe"
         if not venv_py.exists():
             logger.warning("venv python not found at %s — skipping local worker spawn", venv_py)
             return None
         cmd = [str(venv_py), "-u", "-m", "src.training.distributed.worker",
-               "--master", CLUSTER_BASE_URL, "--name", "LOCAL_RAZER"]
+               "--master", CLUSTER_BASE_URL,
+               "--name", name,
+               "--lane", lane,
+               "--port", str(port)]
         env = os.environ.copy()
         env["PYTHONPATH"]      = str(PROJECT_ROOT)
         env["PYTHONUNBUFFERED"] = "1"
-        log_out = open(PROJECT_ROOT / "logs" / "master_worker.log", "a", encoding="utf-8")
-        log_err = open(PROJECT_ROOT / "logs" / "master_worker.err.log", "a", encoding="utf-8")
+        # GPU lane: hide CUDA from CPU workers so they can't grab VRAM.
+        if lane == "cpu":
+            env["CUDA_VISIBLE_DEVICES"] = ""
+        log_out = open(PROJECT_ROOT / "logs" / f"local_worker_{lane}.log", "a", encoding="utf-8")
+        log_err = open(PROJECT_ROOT / "logs" / f"local_worker_{lane}.err.log", "a", encoding="utf-8")
         flags = 0
         if sys.platform == "win32":
             flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
         proc = subprocess.Popen(cmd, cwd=str(PROJECT_ROOT), env=env,
                                 stdout=log_out, stderr=log_err, creationflags=flags)
-        logger.info("Spawned LOCAL_RAZER worker pid=%d (waiting %ds for registration)",
-                    proc.pid, WORKER_REGISTER_WAIT_S)
-        time.sleep(WORKER_REGISTER_WAIT_S)
+        logger.info("Spawned %s worker (lane=%s, port=%d) pid=%d", name, lane, port, proc.pid)
         return proc.pid
+
+    def _ensure_local_workers(self) -> None:
+        """Spawn TWO local workers on master — one per lane (cpu, gpu) — so
+        the master node can run a CPU model and a GPU model concurrently.
+        Skips spawn if a worker is already registered for that lane."""
+        try:
+            from src.utils import process_health as ph
+            existing = ph.find_process(ph.KIND_WORKER)
+            if existing:
+                logger.info("Local worker(s) already running (pid=%d) — skipping spawn",
+                            existing.pid)
+                # Still wait briefly so any in-flight registration completes
+                time.sleep(3)
+                return
+        except Exception:
+            pass
+        # Spawn cpu lane on port 7701, gpu lane on port 7702.
+        self._spawn_local_worker(lane="cpu", port=7701, name="LOCAL_RAZER_CPU")
+        self._spawn_local_worker(lane="gpu", port=7702, name="LOCAL_RAZER_GPU")
+        logger.info("Waiting %ds for both local workers to register", WORKER_REGISTER_WAIT_S)
+        time.sleep(WORKER_REGISTER_WAIT_S)
 
     # ── Cluster wrappers ────────────────────────────────────────────────
 
@@ -296,12 +316,28 @@ class SweepCoordinator:
         logger.info("=== SweepCoordinator START sweep_id=%s ===", self.state["sweep_id"])
         self._save_state()
 
-        # Step 1: ensure a local worker is up so the cluster has at least
-        # one node on the master side. (Ivan is user-managed.)
-        self._ensure_local_worker()
+        # Step 1: spawn TWO local workers (cpu + gpu lanes) so master runs
+        # CPU and GPU work concurrently. Ivan is expected to do the same
+        # on his side (user-managed).
+        self._ensure_local_workers()
 
-        # Step 2: walk through models in PLAN_ORDER.
+        # Step 2: kick off ALL gpu-lane work UPFRONT so it runs in parallel
+        # with the cpu-lane sweep. The orchestrator's lane-aware dispatch
+        # routes these to gpu workers only; cpu workers ignore them.
+        # OFT is `exclusive` (heavy GPU + CPU) — submitted last in the GPU
+        # lane so a TFT failure doesn't keep the GPU lane idle waiting on
+        # OFT to finish.
+        self._submit_gpu_lane()
+
+        # Step 3: walk through CPU models in PLAN_ORDER.
         for model_idx, model in enumerate(PLAN_ORDER):
+            # Skip GPU models here — they were submitted upfront in step 2.
+            try:
+                from src.training.training_rules import resource_kind as _rk
+                if _rk(model) in ("gpu", "exclusive"):
+                    continue
+            except Exception:
+                pass
             if self._abort_requested:
                 self.state["status"] = "aborted"
                 self._save_state()
@@ -320,7 +356,11 @@ class SweepCoordinator:
             self._save_state()
             self._run_one_model(model)
 
-        # Step 3: backtest after all training done.
+        # Step 4: wait for any still-running GPU lane tasks to finish
+        # before triggering the final backtest (we want all models fresh).
+        self._await_gpu_lane()
+
+        # Step 5: backtest after all training done.
         if not self._abort_requested:
             self.state["next_phase"] = "backtest"
             self._save_state()
@@ -330,6 +370,114 @@ class SweepCoordinator:
         self.state["finished_at"] = datetime.now(timezone.utc).isoformat()
         self._save_state()
         logger.info("=== SweepCoordinator END status=%s ===", self.state["status"])
+
+    def _submit_gpu_lane(self) -> None:
+        """Submit all GPU/exclusive (model, tf) tasks immediately so they
+        flow through the gpu-lane workers in parallel with the cpu sweep."""
+        try:
+            from src.training.training_rules import resource_kind as _rk
+        except Exception:
+            return
+        for model in PLAN_ORDER:
+            if model not in self.state["models"]:
+                continue
+            try:
+                kind = _rk(model)
+            except Exception:
+                continue
+            if kind not in ("gpu", "exclusive"):
+                continue
+            m_state = self.state["models"][model]
+            for tf, tf_state in m_state["tfs"].items():
+                if tf_state["status"] in ("done", "failed_permanently", "skipped_fresh"):
+                    continue
+                if self._is_model_fresh(model, tf):
+                    tf_state["status"] = "skipped_fresh"
+                    self.state["tasks_skipped_fresh"] += 1
+                    logger.info("GPU-lane skip %s @ %s — fresh model on disk", model, tf)
+                    continue
+                spec = self._build_task_spec(model, tf)
+                task_id = self._submit_task(spec)
+                if task_id is None:
+                    tf_state["status"] = "failed_permanently"
+                    tf_state["error"]  = "submit_failed"
+                    self.state["tasks_failed"] += 1
+                    self.state["tasks_failed_permanently"].append(f"{model}@{tf}")
+                    continue
+                tf_state["task_id"]  = task_id
+                tf_state["status"]   = "submitted"
+                self.state["tasks_submitted"] += 1
+                logger.info("GPU-lane submit %s @ %s → %s", model, tf, task_id)
+        self._save_state()
+
+    def _await_gpu_lane(self) -> None:
+        """Block until every GPU/exclusive (model, tf) reaches a terminal
+        state. Called after the CPU sweep finishes, before backtest."""
+        try:
+            from src.training.training_rules import resource_kind as _rk
+        except Exception:
+            return
+        gpu_models = []
+        for m in PLAN_ORDER:
+            if m not in self.state["models"]:
+                continue
+            try:
+                if _rk(m) in ("gpu", "exclusive"):
+                    gpu_models.append(m)
+            except Exception:
+                pass
+        if not gpu_models:
+            return
+        logger.info("Awaiting GPU-lane tasks for: %s", gpu_models)
+        while True:
+            if self._abort_requested:
+                return
+            all_done = True
+            for model in gpu_models:
+                m_state = self.state["models"][model]
+                for tf, tf_state in m_state["tfs"].items():
+                    if tf_state["status"] in ("done", "failed_permanently", "skipped_fresh"):
+                        continue
+                    all_done = False
+                    if not tf_state.get("task_id"):
+                        continue
+                    task = self._get_task(tf_state["task_id"])
+                    if task is None:
+                        continue
+                    cstatus = task.get("status", "")
+                    if cstatus == "done":
+                        tf_state["status"] = "done"
+                        self.state["tasks_done"] += 1
+                    elif cstatus in ("failed", "cancelled"):
+                        err = task.get("error", "") or "(no error message)"
+                        tf_state["error"] = err
+                        if (cstatus == "failed"
+                            and tf_state["retries"] < MAX_RETRIES_PER_TASK
+                            and _is_transient_failure(err)):
+                            tf_state["retries"] += 1
+                            new_id = self._submit_task(self._build_task_spec(model, tf))
+                            if new_id:
+                                tf_state["task_id"] = new_id
+                                tf_state["status"]  = "submitted"
+                            else:
+                                tf_state["status"] = "failed_permanently"
+                                self.state["tasks_failed_permanently"].append(f"{model}@{tf}")
+                                self.state["tasks_failed"] += 1
+                        else:
+                            tf_state["status"] = "failed_permanently"
+                            self.state["tasks_failed_permanently"].append(f"{model}@{tf}")
+                            self.state["tasks_failed"] += 1
+            self._save_state()
+            if all_done:
+                break
+            time.sleep(POLL_S)
+        # Mark gpu models done if any TF succeeded.
+        for model in gpu_models:
+            m_state = self.state["models"][model]
+            any_done = any(s["status"] == "done" for s in m_state["tfs"].values())
+            any_skip = any(s["status"] == "skipped_fresh" for s in m_state["tfs"].values())
+            m_state["status"] = "done" if (any_done or any_skip) else "failed"
+        self._save_state()
 
     def _run_one_model(self, model: str) -> None:
         m_state = self.state["models"][model]

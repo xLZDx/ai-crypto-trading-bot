@@ -6562,6 +6562,101 @@ def test_phase86_sweep_coordinator_daemon():
           and 'PYTHONUNBUFFERED' in sc)
 
 
+def test_phase87_dual_lane_workers_concurrent_cpu_gpu():
+    """Dual-lane worker support (2026-05-10): each PC runs TWO worker
+    processes — one on the CPU lane, one on the GPU lane — so a CPU model
+    and a GPU model can train concurrently on the same machine. The
+    sweep_coordinator submits TFT/OFT (gpu/exclusive) immediately at
+    sweep start so they run in parallel with the model-by-model CPU
+    sweep.
+
+    Phase 87 covers:
+      P1. worker.py --lane flag: cpu | gpu | any (back-compat default).
+      P2. Worker registration carries the 'lane' attribute.
+      P3. Orchestrator dispatch matches resource_kind <-> worker.lane:
+            cpu task -> lane in {cpu, any}
+            gpu / exclusive task -> lane in {gpu, any}
+      P4. SweepCoordinator spawns TWO local workers (cpu + gpu) on master.
+      P5. SweepCoordinator submits all gpu/exclusive tasks UPFRONT (parallel).
+      P6. SweepCoordinator awaits remaining gpu-lane tasks before backtest.
+      P7. CPU lane in spawned worker has CUDA_VISIBLE_DEVICES='' so it
+          doesn't grab VRAM.
+    """
+    print('\n[Phase 87 — dual-lane workers (concurrent CPU+GPU)]')
+
+    worker_path = os.path.join(BASE_DIR, 'src', 'training', 'distributed', 'worker.py')
+    with open(worker_path, encoding='utf-8') as f:
+        worker = f.read()
+    orch_path = os.path.join(BASE_DIR, 'src', 'training', 'distributed', 'orchestrator.py')
+    with open(orch_path, encoding='utf-8') as f:
+        orch = f.read()
+    sc_path = os.path.join(BASE_DIR, 'src', 'orchestration', 'sweep_coordinator.py')
+    with open(sc_path, encoding='utf-8') as f:
+        sc = f.read()
+
+    # P1 — --lane flag with cpu|gpu|any choices
+    check('worker.py adds --lane flag with choices cpu|gpu|any',
+          '--lane' in worker
+          and 'choices=("cpu", "gpu", "any")' in worker)
+    check('worker default lane is "any" (back-compat for Ivan-style legacy launches)',
+          'default="any"' in worker)
+    check('TrainingWorker constructor accepts lane parameter',
+          'def __init__(self, master_url' in worker
+          and 'lane: str = "any"' in worker)
+    check('TrainingWorker validates lane to one of cpu|gpu|any',
+          'lane if lane in ("cpu", "gpu", "any")' in worker)
+
+    # P2 — registration includes lane
+    check('heartbeat payload includes "lane" field',
+          '"lane":          self.lane' in worker
+          or '"lane": self.lane' in worker)
+
+    # P3 — orchestrator lane-aware dispatch
+    check('orchestrator imports resource_kind from training_rules for routing',
+          'from src.training.training_rules import resource_kind' in orch)
+    check('orchestrator defines _lane_accepts() helper',
+          'def _lane_accepts(' in orch)
+    check('"any" lane accepts every kind (back-compat)',
+          'if worker_lane == "any":' in orch
+          and 'return True' in orch)
+    check('cpu kind routes to {cpu, any}',
+          'if kind == "cpu":' in orch
+          and 'worker_lane == "cpu"' in orch)
+    check('gpu/exclusive kind routes to {gpu, any}',
+          'if kind in ("gpu", "exclusive"):' in orch
+          and 'worker_lane == "gpu"' in orch)
+    check('dispatch picks first idle worker matching lane (not blind round-robin)',
+          'next(' in orch
+          and '_lane_accepts(w.get("lane", "any"), kind)' in orch)
+
+    # P4 — sweep_coordinator spawns two local workers
+    check('SweepCoordinator has _spawn_local_worker(lane, port, name)',
+          'def _spawn_local_worker(' in sc)
+    check('SweepCoordinator spawns BOTH cpu + gpu lanes',
+          'def _ensure_local_workers' in sc
+          and 'lane="cpu"' in sc
+          and 'lane="gpu"' in sc)
+    check('CPU lane port=7701, GPU lane port=7702',
+          'port=7701' in sc and 'port=7702' in sc)
+
+    # P5 — submit all gpu lane upfront so it parallelises with cpu sweep
+    check('SweepCoordinator._submit_gpu_lane defined and called from run()',
+          'def _submit_gpu_lane' in sc
+          and 'self._submit_gpu_lane()' in sc)
+    check('CPU sweep loop SKIPS gpu/exclusive models (they were submitted upfront)',
+          'if _rk(model) in ("gpu", "exclusive"):' in sc
+          and 'continue' in sc)
+
+    # P6 — await gpu lane before backtest
+    check('SweepCoordinator._await_gpu_lane defined and called before backtest',
+          'def _await_gpu_lane' in sc
+          and 'self._await_gpu_lane()' in sc)
+
+    # P7 — cpu-lane worker hides CUDA so it doesn't grab VRAM
+    check('CPU-lane worker has CUDA_VISIBLE_DEVICES="" set',
+          'CUDA_VISIBLE_DEVICES' in sc and 'lane == "cpu"' in sc)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
