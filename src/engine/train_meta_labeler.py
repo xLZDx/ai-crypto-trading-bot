@@ -187,8 +187,19 @@ def train_meta_labeler(timeframe: str = '1h'):
             log.warning("No data for %s", sym)
 
     if not all_frames:
-        log.error("No signal data collected. Cannot train meta-labeler.")
-        return
+        # 2026-05-10 — was a silent success: function returned None, the
+        # cluster orchestrator marked the task `done`, the dashboard kept
+        # showing the meta model as STALE because no artifact was written.
+        # Hard-fail now so the worker reports the task as failed and the
+        # operator sees the real cause (primary models can't generate
+        # signals on the loaded data — usually feature mismatch from
+        # sklearn-version drift or a feature-engineering regression).
+        msg = ("meta-labeler: no signal data collected from any symbol — "
+               "primary models (base/trend) couldn't generate signals on "
+               "the loaded OHLCV. Check that primaries are fresh and that "
+               "feature_engineering produces all META_FEATURES.")
+        log.error(msg)
+        raise RuntimeError(msg)
 
     combined = pd.concat(all_frames, ignore_index=True)
     combined = combined.sort_values('timestamp')

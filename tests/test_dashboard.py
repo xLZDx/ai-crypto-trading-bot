@@ -7045,6 +7045,68 @@ def test_phase90_master_agent_zombie_worker_supervisor():
           and any("phantom_task_id_persisted" in r for r in captured_reasons_2))
 
 
+def test_phase91_tft_dedupe_tz_normalize_plus_meta_hard_fail():
+    """Two trainer-side fixes uncovered during the 2026-05-10 sweep:
+
+    Fix #1 — TFT @ 1h failed every run with:
+      'cannot reindex on an axis with duplicate labels'
+    immediately preceded by:
+      'WARNING The provided DatetimeIndex was associated with a timezone
+       (tz), which is currently not supported. To avoid unexpected
+       behaviour, the tz information was removed.'
+    Root cause: distinct tz-aware timestamps collapse into duplicate
+    naive timestamps after Darts strips tz internally. Our dedupe ran
+    BEFORE Darts' strip, so it didn't catch the post-strip collisions.
+    Fix: normalize tz to UTC-naive INSIDE _dedupe_for_darts BEFORE
+    drop_duplicates, so Darts has nothing left to strip.
+
+    Fix #2 — Meta-labeler silently 'succeeded' with no artifacts:
+      log.error('No signal data collected. Cannot train meta-labeler.')
+      return    ← silent success — task marked done, dashboard keeps
+                  showing STALE because no artifact was written
+    Fix: raise RuntimeError so the worker reports task=failed and the
+    operator sees the real cause (primary models couldn't generate
+    signals — usually sklearn-version mismatch or feature regression).
+    """
+    print('\n[Phase 91 — TFT tz-normalize dedupe + meta-labeler hard-fail]')
+
+    tft_path = os.path.join(BASE_DIR, 'src', 'engine', 'train_tft_model.py')
+    with open(tft_path, encoding='utf-8') as f:
+        tft = f.read()
+    meta_path = os.path.join(BASE_DIR, 'src', 'engine', 'train_meta_labeler.py')
+    with open(meta_path, encoding='utf-8') as f:
+        meta = f.read()
+
+    # Fix #1: tz-normalize in _dedupe_for_darts
+    check('_dedupe_for_darts checks tz before dedupe',
+          'def _dedupe_for_darts(' in tft
+          and 'getattr(df[time_col].dt' in tft
+          and "'tz'" in tft)
+    check('tz-aware timestamps converted to UTC then naive',
+          "tz_convert('UTC').dt.tz_localize(None)" in tft)
+    check('tz-normalize happens BEFORE drop_duplicates (correct order)',
+          tft.find("tz_localize(None)") < tft.find("drop_duplicates(subset=[time_col]")
+          if "tz_localize(None)" in tft else False)
+    check('docstring captures the 2026-05-10 root cause',
+          ('tz info was removed' in tft or 'distinct-tz' in tft
+           or 'tz-strip' in tft.lower() or 'collapsed' in tft.lower()))
+
+    # Fix #2: meta-labeler hard-fail on empty signal_dataset
+    check('meta-labeler raises RuntimeError on no signals (no silent success)',
+          'raise RuntimeError(' in meta
+          and 'no signal data collected' in meta.lower())
+    check('docstring/comment explains why hard-fail (not silent return)',
+          'silent success' in meta.lower()
+          and 'STALE' in meta)
+    check('no leftover bare-return on the no-signals path',
+          # Confirm the function no longer returns None silently — the
+          # raise is on the same condition path. Crude but effective:
+          # the literal "return\n" right after the empty-frames check
+          # is gone.
+          'No signal data collected. Cannot train meta-labeler.' in meta
+          and 'raise RuntimeError(msg)' in meta)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's

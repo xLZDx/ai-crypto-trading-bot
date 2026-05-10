@@ -118,11 +118,23 @@ def _dedupe_for_darts(df: pd.DataFrame, time_col: str = "timestamp") -> pd.DataF
     darts.TimeSeries.from_dataframe with fill_missing_dates=True calls
     pandas reindex(), which raises "cannot reindex on an axis with
     duplicate labels" if the same timestamp appears twice. Duplicates
-    leak in via the market_data UNION (new ParquetClient store + legacy
-    data/parquet/) when the two stores overlap; this guard is also
-    defensive against any intermediate mutation between the three
-    from_dataframe() calls in build_series_bundle().
+    leak in three ways:
+      1) market_data UNION — new ParquetClient store + legacy
+         data/parquet/ — when the two overlap
+      2) tz-aware timestamps where Darts' internal tz-strip collapses
+         distinct-tz timestamps into duplicate naive ones (the
+         2026-05-10 TFT @ 1h failure: 'WARNING ... tz info was removed'
+         immediately followed by 'cannot reindex on duplicate labels')
+      3) intermediate mutation between the three from_dataframe() calls
+         in build_series_bundle() — defensive
+
+    Fix order: normalize tz to UTC-naive FIRST (so Darts can't introduce
+    new collisions on its strip), THEN dedupe, THEN sort.
     """
+    df = df.copy()
+    if time_col in df.columns and pd.api.types.is_datetime64_any_dtype(df[time_col]):
+        if getattr(df[time_col].dt, 'tz', None) is not None:
+            df[time_col] = df[time_col].dt.tz_convert('UTC').dt.tz_localize(None)
     return (df.sort_values(time_col)
               .drop_duplicates(subset=[time_col], keep="last")
               .reset_index(drop=True))
