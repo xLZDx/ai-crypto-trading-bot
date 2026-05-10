@@ -4356,13 +4356,22 @@ def test_phase29_cleanup_questdb_artifacts():
           'trading_questdb' not in sa)
 
     # 5. CLAUDE.md describes the new DB stack
+    # Per-project CLAUDE.md slimmed to project-specific context only (2026-05-11
+    # unified culture restructure). Cross-cutting rules moved to the global
+    # D:\test 2\CLAUDE.md. Check both files so the assertion stays valid
+    # regardless of where the rule landed.
     cm = open(os.path.join(BASE_DIR, 'CLAUDE.md'), encoding='utf-8').read()
+    _global_cm_path = os.path.join(os.path.dirname(BASE_DIR), 'CLAUDE.md')
+    cm_global = ''
+    if os.path.exists(_global_cm_path):
+        cm_global = open(_global_cm_path, encoding='utf-8').read()
+    cm_all = (cm + '\n' + cm_global).lower()
     check('CLAUDE.md DB line points at ParquetClient',
-          'ParquetClient' in cm
-          and 'data/db/' in cm)
-    check('CLAUDE.md commit-before-implementations rule documented',
-          'commit of the current state' in cm.lower()
-          or 'commit before' in cm.lower())
+          'parquetclient' in cm_all
+          and 'data/db/' in cm_all)
+    check('CLAUDE.md commit-before-implementations rule documented (per-project or global)',
+          'commit of the current state' in cm_all
+          or 'commit before' in cm_all)
 
     # 6. requirements.txt no longer ships the questdb client
     rq = open(os.path.join(BASE_DIR, 'requirements.txt'), encoding='utf-8').read()
@@ -8200,8 +8209,12 @@ def test_phase100_cluster_routed_training_dispatch():
     check('sync aggregates: any cancelled → job cancelled',
           "if any(s == 'cancelled' for s in statuses):" in app)
     check('sync aggregates: terminal mix → partial or error',
+          # Phase 100b refactor — logic moved out of the sync loop into the
+          # pure _aggregate_cluster_task_statuses helper for testability.
+          # Either string form is acceptable as evidence.
           "if all(s in ('done', 'failed', 'cancelled') for s in statuses):" in app
-          and "final = 'partial' if any(s == 'done' for s in statuses) else 'error'" in app)
+          and ("final = 'partial' if any(s == 'done' for s in statuses) else 'error'" in app
+               or "out['final']  = 'partial' if any(s == 'done' for s in statuses) else 'error'" in app))
     check('sync records training duration on done (ETA self-tune)',
           '_record_completed_duration(key, elapsed, tf=tf)' in app)
     check('sync chains followup backtest when with_backtest=true',
@@ -8226,6 +8239,252 @@ def test_phase100_cluster_routed_training_dispatch():
           "os.getenv('AI_TRADER_LOCAL_TRAINING', '0') == '1'" in ep_body)
     check('endpoint response includes routed_to field (cluster|local)',
           "'routed_to':" in ep_body)
+
+
+def test_phase100_functional_cluster_routing_proves_behavior():
+    """Phase 100 — FUNCTIONAL unit tests (not string-match). Each assertion
+    invokes the code under test and asserts on observable state change.
+
+    Required by the 2026-05-11 global rule "Functional Tests Prove Behavior":
+    string-match tests verify the source contains a symbol; functional tests
+    verify the symbol BEHAVES correctly. Phase 100a shipped with 24 string-
+    matches that all passed — a logic bug would have slipped past every one.
+    This test plugs that hole.
+
+    Sub-tests:
+      (a) _to_cluster_model_type: pure mapping fn — call, assert return value
+      (b) _cluster_status_to_job_status: pure mapping fn — same
+      (c) _aggregate_cluster_task_statuses: pure aggregator extracted from the
+          sync daemon; call with synthetic snapshots, assert decisions
+      (d) _dispatch_training_to_cluster: monkey-patch _cluster_proxy_post +
+          _record_job to in-memory stubs, call, assert side effects
+      (e) api_training_run_one endpoint: app.test_client(), POST, assert
+          response JSON shape + that the dispatch path was taken
+    """
+    print('\n[Phase 100 — FUNCTIONAL tests that actually call the code]')
+    import sys, os, importlib
+    from pathlib import Path as _P
+    PRJ = _P(__file__).resolve().parents[1]
+    if str(PRJ) not in sys.path:
+        sys.path.insert(0, str(PRJ))
+
+    # Disable API key check for the test client.
+    os.environ['DASHBOARD_API_KEY'] = ''
+    # Force-local pathway should be OFF (default cluster routing).
+    os.environ.pop('AI_TRADER_LOCAL_TRAINING', None)
+
+    # Import the module under test. The harness expects this is safe —
+    # daemon threads start at import but they're daemonic and won't block
+    # interpreter exit. No socket binding happens (Flask app.run not called).
+    try:
+        from src.dashboard import app as dash_app
+    except Exception as exc:
+        check(f'import src.dashboard.app succeeds (got {type(exc).__name__}: {exc})', False)
+        return
+
+    # ── (a) _to_cluster_model_type pure mapping ──────────────────────────
+    check('_to_cluster_model_type("base") → "btc_rf"',
+          dash_app._to_cluster_model_type('base') == 'btc_rf')
+    check('_to_cluster_model_type("futures") → "futures_short"',
+          dash_app._to_cluster_model_type('futures') == 'futures_short')
+    check('_to_cluster_model_type("meta") → "meta_labeler"',
+          dash_app._to_cluster_model_type('meta') == 'meta_labeler')
+    check('_to_cluster_model_type("trend") → "trend" (passthrough, same on both sides)',
+          dash_app._to_cluster_model_type('trend') == 'trend')
+    check('_to_cluster_model_type("tft") → "tft" (passthrough)',
+          dash_app._to_cluster_model_type('tft') == 'tft')
+    check('_to_cluster_model_type("unknown_xyz") → "unknown_xyz" (fallback)',
+          dash_app._to_cluster_model_type('unknown_xyz') == 'unknown_xyz')
+
+    # ── (b) _cluster_status_to_job_status pure mapping ───────────────────
+    check('_cluster_status_to_job_status("pending") → "queued"',
+          dash_app._cluster_status_to_job_status('pending') == 'queued')
+    check('_cluster_status_to_job_status("running") → "running"',
+          dash_app._cluster_status_to_job_status('running') == 'running')
+    check('_cluster_status_to_job_status("done") → "done"',
+          dash_app._cluster_status_to_job_status('done') == 'done')
+    check('_cluster_status_to_job_status("failed") → "error"',
+          dash_app._cluster_status_to_job_status('failed') == 'error')
+    check('_cluster_status_to_job_status("cancelled") → "cancelled"',
+          dash_app._cluster_status_to_job_status('cancelled') == 'cancelled')
+    check('_cluster_status_to_job_status("unknown_xyz") → "unknown_xyz" (passthrough)',
+          dash_app._cluster_status_to_job_status('unknown_xyz') == 'unknown_xyz')
+
+    # ── (c) _aggregate_cluster_task_statuses — pure aggregator ────────────
+    agg = dash_app._aggregate_cluster_task_statuses
+    # All done → final='done'
+    by_id = {'t1': {'task_id':'t1','status':'done'},
+             't2': {'task_id':'t2','status':'done'}}
+    r = agg(('t1','t2'), by_id, {})
+    check('aggregator: all-done → final="done", progress=2',
+          r['final'] == 'done' and r['progress'] == 2)
+    # Any cancelled → final='cancelled' (even with running siblings)
+    by_id = {'t1': {'task_id':'t1','status':'running'},
+             't2': {'task_id':'t2','status':'cancelled'}}
+    r = agg(('t1','t2'), by_id, {})
+    check('aggregator: any-cancelled → final="cancelled"',
+          r['final'] == 'cancelled')
+    # All terminal, mix of done+failed → 'partial' with errors collected
+    by_id = {'t1': {'task_id':'t1','status':'done'},
+             't2': {'task_id':'t2','status':'failed','error':'oom in fit'}}
+    r = agg(('t1','t2'), by_id, {})
+    check('aggregator: done+failed terminal mix → final="partial" with errors',
+          r['final'] == 'partial' and 'oom in fit' in r['errors'])
+    # All failed → 'error'
+    by_id = {'t1': {'task_id':'t1','status':'failed','error':'A'},
+             't2': {'task_id':'t2','status':'failed','error':'B'}}
+    r = agg(('t1','t2'), by_id, {})
+    check('aggregator: all-failed → final="error" with both errors',
+          r['final'] == 'error' and set(r['errors']) == {'A','B'})
+    # Any running → interim='running', final=None
+    by_id = {'t1': {'task_id':'t1','status':'running'},
+             't2': {'task_id':'t2','status':'pending'}}
+    r = agg(('t1','t2'), by_id, {})
+    check('aggregator: any-running, no terminal → final=None, interim="running"',
+          r['final'] is None and r['interim'] == 'running')
+    # All pending → interim='queued', final=None
+    by_id = {'t1': {'task_id':'t1','status':'pending'},
+             't2': {'task_id':'t2','status':'pending'}}
+    r = agg(('t1','t2'), by_id, {})
+    check('aggregator: all-pending → final=None, interim="queued"',
+          r['final'] is None and r['interim'] == 'queued')
+    # Task missing from by_id but seen before → carry over last_status_seen
+    last_seen = {'t1': 'running'}
+    r = agg(('t1','t2'), {}, last_seen)
+    check('aggregator: missing task with prior status → preserves last_status_seen',
+          r['statuses'][0] == 'running' and r['statuses'][1] == 'pending')
+    # last_status_seen gets mutated to track current — verify
+    by_id = {'t1': {'task_id':'t1','status':'done'}}
+    last_seen = {}
+    agg(('t1',), by_id, last_seen)
+    check('aggregator: mutates last_status_seen for next iteration',
+          last_seen.get('t1') == 'done')
+
+    # ── (d) _dispatch_training_to_cluster: monkey-patch + assert ─────────
+    captured_posts: list[tuple] = []
+    fake_task_id_counter = [0]
+    def _fake_proxy_post(path, body, **kw):
+        captured_posts.append((path, body))
+        fake_task_id_counter[0] += 1
+        return ({'ok': True, 'task_id': f'fake-tid-{fake_task_id_counter[0]}'}, 200)
+    saved_post = dash_app._cluster_proxy_post
+    saved_record_job = dash_app._record_job
+    recorded_jobs: dict[str, dict] = {}
+    def _fake_record_job(jid, **fields):
+        e = recorded_jobs.get(jid) or {'job_id': jid}
+        e.update(fields)
+        recorded_jobs[jid] = e
+    # Patch and call
+    dash_app._cluster_proxy_post = _fake_proxy_post
+    dash_app._record_job = _fake_record_job
+    try:
+        dash_app._dispatch_training_to_cluster('test-job-1', 'futures', n=1, tf='4h')
+    finally:
+        dash_app._cluster_proxy_post = saved_post
+        dash_app._record_job = saved_record_job
+
+    check('dispatch: exactly 1 cluster submit POST for n=1',
+          len(captured_posts) == 1)
+    check('dispatch: POST path is /api/cluster/submit',
+          captured_posts[0][0] == '/api/cluster/submit')
+    check('dispatch: POST body model_type="futures_short" (mapped from dashboard "futures")',
+          captured_posts[0][1].get('model_type') == 'futures_short')
+    check('dispatch: POST body timeframe="4h" matches the dashboard tf arg',
+          captured_posts[0][1].get('timeframe') == '4h')
+    check('dispatch: job record updated with cluster_routed=True',
+          recorded_jobs.get('test-job-1', {}).get('cluster_routed') is True)
+    check('dispatch: job record carries cluster_task_ids list with the fake id',
+          recorded_jobs.get('test-job-1', {}).get('cluster_task_ids') == ['fake-tid-1'])
+    check('dispatch: job status set to "queued" after successful submit',
+          recorded_jobs.get('test-job-1', {}).get('status') == 'queued')
+
+    # n=3 test — 3 cluster tasks submitted
+    captured_posts.clear()
+    fake_task_id_counter[0] = 0
+    recorded_jobs.clear()
+    dash_app._cluster_proxy_post = _fake_proxy_post
+    dash_app._record_job = _fake_record_job
+    try:
+        dash_app._dispatch_training_to_cluster('test-job-2', 'meta', n=3, tf='1h')
+    finally:
+        dash_app._cluster_proxy_post = saved_post
+        dash_app._record_job = saved_record_job
+    check('dispatch n=3: exactly 3 cluster submits',
+          len(captured_posts) == 3)
+    check('dispatch n=3: all 3 task_ids recorded on the job',
+          recorded_jobs.get('test-job-2', {}).get('cluster_task_ids')
+          == ['fake-tid-1', 'fake-tid-2', 'fake-tid-3'])
+    check('dispatch n=3: every submit was meta_labeler (key mapping consistent)',
+          all(p[1].get('model_type') == 'meta_labeler' for p in captured_posts))
+
+    # Failed-submit path — _cluster_proxy_post returns non-200; job records error
+    def _failing_proxy_post(path, body, **kw):
+        return ({'error': 'cluster down'}, 503)
+    recorded_jobs.clear()
+    dash_app._cluster_proxy_post = _failing_proxy_post
+    dash_app._record_job = _fake_record_job
+    try:
+        dash_app._dispatch_training_to_cluster('test-job-3', 'tft', n=1, tf='1h')
+    finally:
+        dash_app._cluster_proxy_post = saved_post
+        dash_app._record_job = saved_record_job
+    check('dispatch (cluster down): job status set to "error"',
+          recorded_jobs.get('test-job-3', {}).get('status') == 'error')
+    check('dispatch (cluster down): error message mentions cluster submit failure',
+          any('cluster submit failed' in e
+              for e in recorded_jobs.get('test-job-3', {}).get('errors', [])))
+
+    # ── (e) api_training_run_one endpoint — flask test_client ─────────────
+    # Hit the endpoint through Flask; assert the response and that the
+    # dispatch thread was spawned (model recorded in _training_jobs).
+    # Set up patches so the dispatch function doesn't actually POST anywhere.
+    posts_log = []
+    def _silent_proxy_post(path, body, **kw):
+        posts_log.append((path, body))
+        return ({'ok': True, 'task_id': 'endpoint-test-tid'}, 200)
+    dash_app._cluster_proxy_post = _silent_proxy_post
+    try:
+        client = dash_app.app.test_client()
+        resp = client.post('/api/training/run/futures',
+                           json={'n': 1, 'tf': '15m', 'force': True})
+        rj = resp.get_json()
+    finally:
+        dash_app._cluster_proxy_post = saved_post
+
+    check('endpoint: POST /api/training/run/futures returns 200 OK',
+          resp.status_code == 200)
+    check('endpoint: response ok=True',
+          rj is not None and rj.get('ok') is True)
+    check('endpoint: response routed_to="cluster" (default routing)',
+          rj.get('routed_to') == 'cluster')
+    check('endpoint: response includes job_id',
+          'job_id' in rj and isinstance(rj['job_id'], str) and len(rj['job_id']) > 6)
+    check('endpoint: response model="futures" (dashboard key, not cluster key)',
+          rj.get('model') == 'futures')
+    check('endpoint: response tf="15m"',
+          rj.get('tf') == '15m')
+
+    # Now hit the same endpoint with AI_TRADER_LOCAL_TRAINING=1 → routed_to="local"
+    os.environ['AI_TRADER_LOCAL_TRAINING'] = '1'
+    try:
+        client = dash_app.app.test_client()
+        resp = client.post('/api/training/run/scalping',
+                           json={'n': 1, 'tf': '1m', 'force': True})
+        rj = resp.get_json()
+    finally:
+        os.environ.pop('AI_TRADER_LOCAL_TRAINING', None)
+    check('endpoint with AI_TRADER_LOCAL_TRAINING=1: routed_to="local"',
+          rj is not None and rj.get('routed_to') == 'local')
+
+    # Invalid key → 400 with valid-list
+    client = dash_app.app.test_client()
+    resp = client.post('/api/training/run/not_a_model',
+                       json={'n': 1, 'tf': '1h', 'force': True})
+    check('endpoint: unknown key returns 400',
+          resp.status_code == 400)
+    rj = resp.get_json()
+    check('endpoint: unknown key response includes valid model list',
+          rj is not None and 'valid' in rj and 'futures' in rj.get('valid', []))
 
 
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
@@ -8591,6 +8850,7 @@ def main():
     test_phase98_eta_train_bt_columns_and_tf_keyed_running()
     test_phase97c_orphan_periodic_refresh_and_canonical_row_fallback()
     test_phase100_cluster_routed_training_dispatch()
+    test_phase100_functional_cluster_routing_proves_behavior()
 
     if not args.offline:
         test_api(args.url)

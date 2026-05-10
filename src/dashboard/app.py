@@ -3631,6 +3631,62 @@ def _dispatch_training_to_cluster(job_id: str, key: str, n: int,
     ).start()
 
 
+def _aggregate_cluster_task_statuses(task_ids: tuple[str, ...] | list[str],
+                                      by_id: dict,
+                                      last_status_seen: dict[str, str]) -> dict:
+    """Phase 100 — PURE aggregator extracted for testability. Given a
+    snapshot of cluster task records keyed by task_id (`by_id`) and a
+    rolling memory of last-seen statuses, computes:
+
+      - per-task status list (preserves order matching task_ids)
+      - progress (count of done tasks)
+      - final job status if terminal, else None ("still in progress")
+      - failure errors (only when final indicates partial/error)
+      - interim status ("running" if any running, else "queued") used
+        when final is None
+
+    Side effect (intentional): mutates `last_status_seen` so the next
+    call carries over knowledge of tasks that have fallen off the
+    cluster's recent-list. The function is "pure" in the sense that
+    given the same inputs it returns the same outputs — no time,
+    no I/O, no globals.
+
+    The wrapper (_sync_cluster_task_status) handles the polling loop,
+    sleeping, deadline, and side-effects (record_job, ETA recording,
+    followup backtest). All decision logic lives here so a unit test
+    can prove it without spawning a thread or mocking the clock.
+    """
+    statuses: list[str] = []
+    progress = 0
+    for tid in task_ids:
+        t = by_id.get(tid)
+        if not t:
+            # Task fell off cluster's recent-list → carry over last-known status
+            statuses.append(last_status_seen.get(tid, 'pending'))
+            continue
+        s = t.get('status', 'pending')
+        last_status_seen[tid] = s
+        statuses.append(s)
+        if s == 'done':
+            progress += 1
+    out = {'statuses': statuses, 'progress': progress, 'final': None,
+           'interim': 'queued', 'errors': []}
+    if all(s == 'done' for s in statuses):
+        out['final'] = 'done'
+        return out
+    if any(s == 'cancelled' for s in statuses):
+        out['final'] = 'cancelled'
+        return out
+    if all(s in ('done', 'failed', 'cancelled') for s in statuses):
+        errors = [by_id.get(tid, {}).get('error', '') for tid in task_ids
+                  if by_id.get(tid, {}).get('status') == 'failed']
+        out['final']  = 'partial' if any(s == 'done' for s in statuses) else 'error'
+        out['errors'] = [e for e in errors if e][:3]
+        return out
+    out['interim'] = 'running' if any(s == 'running' for s in statuses) else 'queued'
+    return out
+
+
 def _sync_cluster_task_status(job_id: str, key: str,
                                task_ids: tuple[str, ...],
                                tf: str | None,
@@ -3638,12 +3694,9 @@ def _sync_cluster_task_status(job_id: str, key: str,
     """Phase 100 daemon — poll cluster /api/cluster/tasks every 5 s for
     the given task IDs and sync status into _training_jobs.
 
-    Job-status aggregation across N tasks:
-      - any task running → job 'running'
-      - all tasks done   → job 'done' (record duration for ETA self-tune)
-      - any task failed AND no tasks still running → job 'error' / 'partial'
-        depending on whether anything succeeded
-      - any task cancelled → job 'cancelled'
+    Decision logic is delegated to _aggregate_cluster_task_statuses (pure
+    function, unit-testable). This wrapper handles the polling cadence,
+    6 h deadline, and side effects on terminal aggregation.
     """
     POLL_S = 5.0
     DEADLINE_S = 6 * 3600   # 6h ceiling so a stuck cluster task can't pin a job forever
@@ -3660,35 +3713,17 @@ def _sync_cluster_task_status(job_id: str, key: str,
         if http_status != 200 or not isinstance(body, list):
             # transient — try again next iteration
             continue
-        # Map cluster task_id → status. body is list of task dicts.
         by_id = {t.get('task_id'): t for t in body if isinstance(t, dict)}
-        statuses: list[str] = []
-        progress = 0
-        for tid in task_ids:
-            t = by_id.get(tid)
-            if not t:
-                # Task fell off the cluster's recent-list — treat as unknown,
-                # leave at previous status if we have one.
-                statuses.append(last_status_seen.get(tid, 'pending'))
-                continue
-            s = t.get('status', 'pending')
-            last_status_seen[tid] = s
-            statuses.append(s)
-            if s == 'done':
-                progress += 1
-        # Aggregate
-        if all(s == 'done' for s in statuses):
+        agg = _aggregate_cluster_task_statuses(task_ids, by_id, last_status_seen)
+        if agg['final'] == 'done':
             finished_at = time.time()
-            _record_job(job_id, status='done', progress=progress,
+            _record_job(job_id, status='done', progress=agg['progress'],
                         finished_at=finished_at)
             elapsed = finished_at - started
             try:
                 _record_completed_duration(key, elapsed, tf=tf)
             except Exception:
                 pass
-            # Optional chained backtest. _spawn_followup_backtest already
-            # routes through cluster eventually; for now reuse the existing
-            # path (local backtest worker thread).
             if with_backtest:
                 from src.engine.train_all_models import DEFAULT_PER_KEY_TFS
                 bt_tf = tf or (DEFAULT_PER_KEY_TFS.get(key, ('1h',)) or ('1h',))[0]
@@ -3697,24 +3732,16 @@ def _sync_cluster_task_status(job_id: str, key: str,
                 except Exception:
                     pass
             return
-        if any(s == 'cancelled' for s in statuses):
-            _record_job(job_id, status='cancelled', progress=progress,
+        if agg['final'] == 'cancelled':
+            _record_job(job_id, status='cancelled', progress=agg['progress'],
                         finished_at=time.time())
             return
-        if all(s in ('done', 'failed', 'cancelled') for s in statuses):
-            # All terminal but not all done → partial / error
-            errors = [by_id.get(tid, {}).get('error', '') for tid in task_ids
-                      if by_id.get(tid, {}).get('status') == 'failed']
-            final = 'partial' if any(s == 'done' for s in statuses) else 'error'
-            _record_job(job_id, status=final, progress=progress,
-                        errors=[e for e in errors if e][:3],
-                        finished_at=time.time())
+        if agg['final'] in ('partial', 'error'):
+            _record_job(job_id, status=agg['final'], progress=agg['progress'],
+                        errors=agg['errors'], finished_at=time.time())
             return
-        # Still running or queued — emit interim update
-        if any(s == 'running' for s in statuses):
-            _record_job(job_id, status='running', progress=progress)
-        else:
-            _record_job(job_id, status='queued', progress=progress)
+        # Still in progress — emit interim status, keep polling
+        _record_job(job_id, status=agg['interim'], progress=agg['progress'])
 
 
 def _run_trainer_multi_tf(job_id: str, key: str, n: int,
