@@ -9,6 +9,15 @@ Before writing ANY code, always present a written implementation plan and wait f
 - **All sub-phases of an approved plan ARE auto-approved.** Once approval is given for a multi-layer plan, every layer/sub-step inside that plan can proceed without re-asking. The gate is on the PLAN boundary, not each step within it.
 - If the user adds NEW scope mid-conversation (new requirements, new layers), treat the expanded plan as un-approved and re-confirm. Original approval only covers original scope.
 
+## No Guessing (MANDATORY)
+
+When asked a factual question about state ("is X working?", "is it correct?", "what's happening?"):
+- **TEST first** — query the actual system (logs, processes, HTTP endpoints, files). Make the test specific enough that the result distinguishes between hypotheses.
+- **If you cannot test or aren't sure**: ASK the user for the missing detail before answering.
+- **Never substitute speculation for evidence.** Words like "probably", "most likely", "should be", "likely cause" without a test backing them = banned.
+- When you DO answer, lead with the test result, not the conclusion. e.g. "nvidia-smi shows 0% util + no python in compute apps → GPU is not being used" — NOT "the trainer is probably still in data prep".
+- Reason: 2026-05-10 — speculated repeatedly during a TFT smoke test about whether GPU was being used. User correctly called it out: stop guessing, test or ask.
+
 ## Workflow Rules
 
 - Run `restart_all.ps1` after every completed task so the live bot and dashboard always reflect latest code.

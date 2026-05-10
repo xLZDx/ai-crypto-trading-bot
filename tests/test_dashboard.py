@@ -6454,6 +6454,114 @@ def test_phase85_distributed_smoketest_three_bug_fixes():
           and '"gpu_available":' in worker)
 
 
+def test_phase86_sweep_coordinator_daemon():
+    """Sweep Coordinator daemon (2026-05-10): drives the model-by-model
+    distributed training sweep across cluster workers. Auto-starts on
+    launch, persists state, refuses to start a second concurrent
+    instance, retries transient failures once, runs backtest after
+    training done.
+
+    Phase 86 covers:
+      P1. Module + entrypoint exist.
+      P2. Pidfile lock prevents concurrent instances.
+      P3. State machine (fresh / running / paused / done / aborted).
+      P4. Skip-if-fresh window = 24 h matches user instruction.
+      P5. Plan order puts CPU models first, GPU/exclusive last.
+      P6. Build task spec uses use_master_trainer + symbol=ALL.
+      P7. Transient-failure detection covers OOM / timeout / reroute / network.
+      P8. Control plane (pause/resume/abort) endpoints exist.
+      P9. Backtest stage runs after training done."""
+    print('\n[Phase 86 — sweep coordinator daemon]')
+
+    sc_path = os.path.join(BASE_DIR, 'src', 'orchestration', 'sweep_coordinator.py')
+    check('src/orchestration/sweep_coordinator.py exists', os.path.exists(sc_path))
+    with open(sc_path, encoding='utf-8') as f:
+        sc = f.read()
+
+    # P1 — surface area
+    check('exposes SweepCoordinator class', 'class SweepCoordinator' in sc)
+    check('has __main__ entrypoint',        '__name__ == "__main__"' in sc)
+    check('exposes main()',                 'def main()' in sc)
+
+    # P2 — pidfile lock
+    check('PIDFILE constant defined',       'PIDFILE' in sc and 'sweep_coordinator.pid' in sc)
+    check('_acquire_pidfile rejects concurrent instance',
+          'def _acquire_pidfile' in sc
+          and 'refusing to start' in sc.lower())
+    check('_release_pidfile cleans up on exit',
+          'def _release_pidfile' in sc and 'PIDFILE.unlink' in sc)
+
+    # P3 — state machine
+    check('state file path is data/sweep_state.json',
+          'STATE_PATH' in sc and 'sweep_state.json' in sc)
+    check('fresh state seeded from training_rules.planned_combos',
+          'planned_combos' in sc)
+    check('atomic state save (tmp + rename)',
+          ".with_suffix(\".tmp\")" in sc and 'os.replace(tmp, STATE_PATH)' in sc)
+    check('resumes if last status was running/paused',
+          'state.get("status") in ("running", "paused")' in sc)
+
+    # P4 — 24h skip-if-fresh
+    check('SKIP_IF_FRESH_HOURS = 24 (per user instruction)',
+          'SKIP_IF_FRESH_HOURS' in sc and '= 24' in sc)
+    check('_is_model_fresh checks meta mtime',
+          'def _is_model_fresh' in sc and "mtime" in sc.lower() and 'SKIP_IF_FRESH_HOURS' in sc)
+
+    # P5 — plan order: CPU first, GPU last
+    plan_idx_base    = sc.find('"base"')
+    plan_idx_tft     = sc.find('"tft"')
+    plan_idx_oft     = sc.find('"oft"')
+    check('PLAN_ORDER lists base, trend, futures, scalping, meta, regime, tft, oft',
+          'PLAN_ORDER = ["base", "trend", "futures", "scalping", "meta",' in sc)
+    check('TFT/OFT placed AFTER cpu models in PLAN_ORDER',
+          plan_idx_base > 0 and plan_idx_tft > plan_idx_base and plan_idx_oft > plan_idx_tft)
+
+    # P6 — task spec contract
+    check('_build_task_spec uses use_master_trainer + symbol=ALL',
+          'def _build_task_spec' in sc
+          and '"use_master_trainer": True' in sc
+          and '"symbol":       "ALL"' in sc)
+
+    # P7 — transient failure detection
+    check('_is_transient_failure covers OOM / timeout / reroute / network',
+          '_TRANSIENT_FAIL_PATTERNS' in sc
+          and 'out of memory' in sc.lower()
+          and 'timeout' in sc.lower()
+          and 'insufficient_vram' in sc
+          and 'ConnectionError' in sc)
+    check('MAX_RETRIES_PER_TASK = 1',
+          'MAX_RETRIES_PER_TASK' in sc and '= 1' in sc)
+    check('retry path resubmits with new task_id',
+          'tf_state["retries"] += 1' in sc
+          and 'new_id = self._submit_task' in sc)
+
+    # P8 — control plane
+    check('CONTROL_PORT = 7710',          'CONTROL_PORT' in sc and '7710' in sc)
+    check('GET /api/sweep/status route',  '/api/sweep/status' in sc)
+    check('POST /api/sweep/pause route',  '/api/sweep/pause' in sc)
+    check('POST /api/sweep/resume route', '/api/sweep/resume' in sc)
+    check('POST /api/sweep/abort route',  '/api/sweep/abort' in sc)
+    check('request_abort + request_pause + request_resume defined',
+          'def request_abort' in sc
+          and 'def request_pause' in sc
+          and 'def request_resume' in sc)
+
+    # P9 — backtest stage runs after training
+    check('_run_backtest defined and called after training models',
+          'def _run_backtest' in sc
+          and 'self._run_backtest()' in sc
+          and 'next_phase' in sc)
+    check('backtest invokes run_full_backtest with multi-TF',
+          'run_full_backtest' in sc
+          and "(\"5m\", \"15m\", \"1h\", \"4h\", \"1d\")" in sc)
+
+    # P10 — worker lifecycle (spawn LOCAL_RAZER if missing)
+    check('_ensure_local_worker spawns worker if not present',
+          'def _ensure_local_worker' in sc
+          and 'KIND_WORKER' in sc
+          and 'PYTHONUNBUFFERED' in sc)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
