@@ -116,6 +116,62 @@ def _local_ip() -> str:
         return "127.0.0.1"
 
 
+# ─── Phase 93 — live load sampling for /health + heartbeat ───────────────────
+#
+# Why this exists: master_agent at the time of writing only knew that a
+# worker had registered — not whether its CPU/GPU were actually doing
+# useful work. During the 2026-05-10 sweep we burned hours staring at
+# nvidia-smi on the wrong PC because the dashboard had no per-worker
+# load number. Putting cpu_percent/gpu_percent on every heartbeat closes
+# that visibility gap without requiring a side-channel monitoring tool.
+
+def _sample_live_load() -> dict:
+    """Snapshot current CPU + GPU utilisation on this host.
+
+    Returns:
+      cpu_percent      — system-wide CPU % since the last sample
+                          (psutil; 15-s window via the heartbeat cadence)
+      gpu_percent      — GPU utilisation % from `nvidia-smi`, or None if
+                          nvidia-smi missing/CPU-only host
+      gpu_mem_used_mb  — VRAM in use (MiB), or None
+      gpu_mem_total_mb — total VRAM (MiB), or None
+
+    Cheap (~5-30 ms) — safe to call on every heartbeat. Failures are
+    swallowed; we'd rather report stale numbers than crash the heartbeat
+    loop.
+    """
+    out = {"cpu_percent": 0.0, "gpu_percent": None,
+           "gpu_mem_used_mb": None, "gpu_mem_total_mb": None}
+    try:
+        import psutil
+        # interval=None returns the percent since the LAST call. The
+        # heartbeat thread calls this every HEARTBEAT_SEC (15 s), so
+        # the value is the average over that window. First call after
+        # process start always returns 0.0 — that's expected.
+        out["cpu_percent"] = round(float(psutil.cpu_percent(interval=None)), 1)
+    except Exception:
+        pass
+    try:
+        proc = subprocess.run(
+            ["nvidia-smi",
+             "--query-gpu=utilization.gpu,memory.used,memory.total",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, timeout=3, text=True,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            # If multiple GPUs, take GPU 0 (the one CUDA exposes by default).
+            parts = [p.strip() for p in proc.stdout.strip().splitlines()[0].split(",")]
+            if len(parts) >= 3:
+                out["gpu_percent"]      = round(float(parts[0]), 1)
+                out["gpu_mem_used_mb"]  = int(float(parts[1]))
+                out["gpu_mem_total_mb"] = int(float(parts[2]))
+    except (FileNotFoundError, subprocess.TimeoutExpired, ValueError, IndexError):
+        pass
+    except Exception:
+        pass
+    return out
+
+
 # ─── Task execution ──────────────────────────────────────────────────────────
 
 def _execute_task(task: dict) -> dict:
@@ -590,6 +646,10 @@ class TrainingWorker:
         self._running   = False
         self._current_task: dict | None = None
         self._lock      = threading.Lock()
+        # Phase 93 — uptime tracking for /system_info and remote-restart
+        # confirmation. master_agent uses this to verify a /restart POST
+        # actually rolled the worker over (uptime drops to <heartbeat).
+        self._start_time = time.time()
         self._app       = self._build_app()
 
     def _build_app(self):
@@ -605,6 +665,10 @@ class TrainingWorker:
                 "status": "busy" if self._current_task else "idle",
                 "hw": self.hw,
                 "transport": self._transport_info(),
+                # Phase 93 — live CPU+GPU sample on demand. Cheap enough
+                # (~5-30 ms) to include in every /health response.
+                "live_load": _sample_live_load(),
+                "uptime_s":  int(time.time() - self._start_time),
             })
 
         @app.route("/task", methods=["POST"])
@@ -619,6 +683,53 @@ class TrainingWorker:
         def cancel():
             self._current_task = None
             return jsonify({"ok": True})
+
+        # Phase 93 — remote process control. master_agent POSTs here to
+        # remediate a remote zombie worker (host != LOCAL_HOSTNAME).
+        # Pre-Phase-93 the only remediation was an alert + manual SSH —
+        # now the supervisor can self-heal even when the worker is on
+        # Ivan's PC (or any future remote node).
+        #
+        # Implementation: respond OK first, then re-exec the same Python
+        # process in a background thread after a 1-second delay so the
+        # HTTP response flushes before the listening socket dies. On
+        # failure we fall back to os._exit(1); a process supervisor
+        # (master_agent / Windows service / systemd) is responsible for
+        # restarting us — same recovery path as crash-on-startup.
+        @app.route("/restart", methods=["POST"])
+        def restart():
+            def _delayed_exec():
+                time.sleep(1.0)
+                logger.warning("[Worker] /restart received — re-executing self")
+                try:
+                    os.execv(sys.executable, [sys.executable] + sys.argv)
+                except Exception as exc:
+                    logger.error("[Worker] /restart os.execv failed: %s — exiting", exc)
+                    os._exit(1)
+            threading.Thread(target=_delayed_exec, daemon=True,
+                             name="worker-restart").start()
+            return jsonify({"ok": True, "action": "restart_in_1s",
+                            "node_id": self.node_id, "name": self.name})
+
+        # Phase 93 — full diagnostic dump. Hit this when investigating
+        # "why is this worker behaving weirdly" without having to read
+        # logs on the remote machine.
+        @app.route("/system_info")
+        def system_info():
+            return jsonify({
+                "node_id":      self.node_id,
+                "name":         self.name,
+                "lane":         self.lane,
+                "port":         self.port,
+                "hw":           self.hw,
+                "live_load":    _sample_live_load(),
+                "transport":    self._transport_info(),
+                "current_task": (self._current_task or {}).get("task_id", ""),
+                "uptime_s":     int(time.time() - self._start_time),
+                "python":       sys.version.split()[0],
+                "platform":     platform.platform(),
+                "pid":          os.getpid(),
+            })
 
         return app
 
@@ -668,6 +779,12 @@ class TrainingWorker:
         import requests as req
         while self._running:
             try:
+                # Phase 93 — sample live load once per heartbeat and ship
+                # it inline. Adds ~30 ms to each beat (nvidia-smi spawn);
+                # acceptable at HEARTBEAT_SEC=15. Numbers go straight
+                # through register_worker into the cluster's worker dict
+                # and on to the dashboard's Live Load column.
+                live = _sample_live_load()
                 req.post(
                     f"{self.master_url}/api/cluster/register",
                     json={
@@ -685,6 +802,12 @@ class TrainingWorker:
                         "status":        "busy" if self._current_task else "idle",
                         "current_task":  (self._current_task or {}).get("task_id", ""),
                         "last_seen":     datetime.now(timezone.utc).isoformat(),
+                        # Phase 93 live load
+                        "cpu_percent":      live["cpu_percent"],
+                        "gpu_percent":      live["gpu_percent"],
+                        "gpu_mem_used_mb":  live["gpu_mem_used_mb"],
+                        "gpu_mem_total_mb": live["gpu_mem_total_mb"],
+                        "uptime_s":         int(time.time() - self._start_time),
                     },
                     timeout=5,
                 )

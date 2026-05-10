@@ -7038,6 +7038,36 @@ async function runUnifiedSweep() {
 }
 
 
+// Phase 93 — short uptime formatter for the worker card.
+function _fmtUptime(s) {
+  if (!s || s < 60) return `${s|0}s`;
+  if (s < 3600)    return `${(s/60).toFixed(0)}m`;
+  if (s < 86400)   return `${(s/3600).toFixed(1)}h`;
+  return `${(s/86400).toFixed(1)}d`;
+}
+
+// Phase 93 — POST /api/cluster/worker_restart so the dashboard backend
+// proxies to the worker's /restart endpoint (avoids cross-origin
+// browser issues). Master_agent does the same thing automatically for
+// remote zombies; this button is the manual operator equivalent.
+async function clusterRestartWorker(ip, port, name) {
+  if (!ip || !port) return;
+  if (!confirm(`Restart worker "${name}" at ${ip}:${port}?\n\nThe worker re-execs itself in ~1s and re-registers with the cluster.`)) return;
+  try {
+    const r = await fetch('/api/cluster/worker_restart', {
+      method: 'POST', headers: hdrs(),
+      body: JSON.stringify({ ip, port }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      alert(`Restart triggered for ${name} — give it ~10 s to come back.`);
+      setTimeout(clusterPoll, 5_000);
+    } else {
+      alert(`Restart failed: ${d.error||'unknown'}`);
+    }
+  } catch (e) { alert('Error: ' + e.message); }
+}
+
 async function clusterPoll() {
   // Local-training progress runs in parallel with the cluster fetch.
   // The cluster card is collapsed by default; we still want to populate
@@ -7067,6 +7097,18 @@ async function clusterPoll() {
           const busy   = w.status === 'busy';
           const dot    = online ? (busy ? '#fbbf24' : '#34d399') : '#fb7185';
           const status = online ? (busy ? `BUSY — ${w.current_task||'task'}` : 'IDLE') : 'OFFLINE';
+          // Phase 93 — live load bars. cpu_percent always present once
+          // a Phase-93 worker has heartbeat at least once; gpu_percent
+          // is null on CPU-only nodes / when nvidia-smi isn't on PATH.
+          const cpuPct = (typeof w.cpu_percent === 'number') ? w.cpu_percent : null;
+          const gpuPct = (typeof w.gpu_percent === 'number') ? w.gpu_percent : null;
+          const cpuColor = cpuPct === null ? '#475569' : (cpuPct > 80 ? '#fb7185' : cpuPct > 50 ? '#fbbf24' : '#34d399');
+          const gpuColor = gpuPct === null ? '#475569' : (gpuPct > 80 ? '#fb7185' : gpuPct > 50 ? '#fbbf24' : '#34d399');
+          const cpuTxt = cpuPct === null ? '—' : `${cpuPct.toFixed(0)}%`;
+          const gpuTxt = gpuPct === null ? (w.cuda_available ? '—' : 'n/a') : `${gpuPct.toFixed(0)}%`;
+          const memTxt = (typeof w.gpu_mem_used_mb === 'number' && typeof w.gpu_mem_total_mb === 'number' && w.gpu_mem_total_mb > 0)
+            ? ` · ${(w.gpu_mem_used_mb/1024).toFixed(1)}/${(w.gpu_mem_total_mb/1024).toFixed(1)} GB` : '';
+          const upT = (typeof w.uptime_s === 'number') ? _fmtUptime(w.uptime_s) : '';
           return `<div style="background:rgba(15,23,42,.7);border:1px solid rgba(148,163,184,.12);border-radius:10px;padding:12px 14px">
             <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
               <span style="width:8px;height:8px;border-radius:50%;background:${dot};display:inline-block;flex-shrink:0"></span>
@@ -7075,9 +7117,23 @@ async function clusterPoll() {
             <div style="font-size:.62rem;color:#94a3b8">${w.gpu_name||'CPU only'}</div>
             <div style="font-size:.62rem;color:#64748b">${w.cuda_available?'CUDA ✓':'CPU only'} &nbsp;·&nbsp; ${w.gpu_vram_gb||0} GB VRAM</div>
             <div style="font-size:.62rem;color:#64748b">${w.cpu_cores||'?'} cores &nbsp;·&nbsp; ${w.ram_gb||'?'} GB RAM</div>
-            <div style="font-size:.62rem;color:#64748b;margin-top:4px">${w.ip}:${w.port}</div>
+            <div style="display:flex;gap:10px;margin-top:6px;padding-top:6px;border-top:1px solid rgba(148,163,184,.08)">
+              <div style="flex:1">
+                <div style="font-size:.55rem;color:#64748b;text-transform:uppercase;letter-spacing:.05em">CPU</div>
+                <div style="font-size:.78rem;font-weight:700;color:${cpuColor}">${cpuTxt}</div>
+              </div>
+              <div style="flex:1">
+                <div style="font-size:.55rem;color:#64748b;text-transform:uppercase;letter-spacing:.05em">GPU</div>
+                <div style="font-size:.78rem;font-weight:700;color:${gpuColor}">${gpuTxt}</div>
+              </div>
+            </div>
+            ${memTxt ? `<div style="font-size:.55rem;color:#64748b;margin-top:2px">VRAM${memTxt}</div>` : ''}
+            <div style="font-size:.62rem;color:#64748b;margin-top:4px">${w.ip}:${w.port}${upT?' · up '+upT:''}</div>
             <div style="font-size:.62rem;font-weight:700;color:${dot};margin-top:4px">${status}</div>
-            <div style="font-size:.58rem;color:#334155;margin-top:3px">Done: ${w.tasks_done||0} · Failed: ${w.tasks_failed||0}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:3px">
+              <span style="font-size:.58rem;color:#334155">Done: ${w.tasks_done||0} · Failed: ${w.tasks_failed||0}</span>
+              <button onclick="clusterRestartWorker('${esc(w.ip||'')}', ${w.port||0}, '${esc(w.name||w.node_id||'')}')" class="btn btn-ghost btn-sm" style="font-size:.55rem;padding:2px 6px" title="POST /restart to this worker (Phase 93)">↻ restart</button>
+            </div>
           </div>`;
         }).join('');
       }

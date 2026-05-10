@@ -96,6 +96,13 @@ class Orchestrator:
     # ── Worker registration ───────────────────────────────────────────────────
 
     def register_worker(self, info: dict) -> None:
+        # Phase 93 — heartbeat payload now carries live load fields
+        # (cpu_percent, gpu_percent, gpu_mem_used_mb, gpu_mem_total_mb,
+        # uptime_s). They flow through the {**prev, **info} merge below
+        # without any per-field plumbing — the dashboard's Live Load
+        # column reads them straight off the worker dict in
+        # /api/cluster/status. Older workers without these fields just
+        # leave them None and the UI degrades gracefully.
         node_id = info.get("node_id", "")
         if not node_id:
             return

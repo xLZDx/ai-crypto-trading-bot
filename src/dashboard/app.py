@@ -4944,6 +4944,32 @@ def cluster_cancel_task(task_id):
     return jsonify(body), status
 
 
+# Phase 93 — manual operator restart of any worker by IP+port. Posts to
+# the worker's /restart endpoint server-side (avoids browser CORS) so
+# the dashboard's restart button works for remote nodes too. The
+# automated path lives in master_agent._heal_zombie; this is the
+# eyes-on-glass equivalent for cases the supervisor isn't catching
+# (e.g. worker is fine but operator wants a clean state).
+@app.route('/api/cluster/worker_restart', methods=['POST'])
+def cluster_worker_restart():
+    import urllib.request as _ur, urllib.error as _ue, json as _j
+    body = request.get_json(force=True) or {}
+    ip   = body.get('ip', '')
+    port = int(body.get('port', 0))
+    if not ip or not port:
+        return jsonify({'ok': False, 'error': 'ip and port required'}), 400
+    try:
+        req = _ur.Request(f'http://{ip}:{port}/restart',
+                          data=_j.dumps({'reason': 'operator_manual'}).encode('utf-8'),
+                          method='POST',
+                          headers={'Content-Type': 'application/json'})
+        with _ur.urlopen(req, timeout=5) as r:
+            payload = _j.loads(r.read().decode('utf-8'))
+            return jsonify({'ok': True, 'worker_response': payload})
+    except (_ue.URLError, OSError, _j.JSONDecodeError) as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 502
+
+
 # ────────────────────────────────────────────────────────────────────────────
 #  Phase 9 — dual-balance, news, OFT signal, orchestrator stats, retention,
 #  rate-limiter usage. These power the REAL vs TEST/TRAIN mode switcher.

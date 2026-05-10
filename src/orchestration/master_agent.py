@@ -297,12 +297,41 @@ class MasterAgent:
                     self._spawn_local_worker(lane, spec_port, name)
                     break
         else:
-            # Remote: alert (operator must restart on the remote machine).
-            logger.error("[master_agent] REMOTE ZOMBIE on host=%s (%s) lane=%s "
-                         "reason=%s task_id=%s — operator must restart this "
-                         "worker on the remote machine.",
-                         host, name, lane, reason, task_id[:11])
-            # Also write a service.alerts topic entry so dashboard can show.
+            # Phase 93 — remote zombies can now self-heal via the
+            # worker's /restart endpoint. POSTing here causes the worker
+            # process to os.execv itself in 1 s; uptime resets, the
+            # dead trainer thread is gone, and the next heartbeat
+            # registers the fresh process. Pre-Phase-93 the only
+            # remediation was a logged alert + manual SSH/RDP.
+            ip   = worker.get("ip", "")
+            port = worker.get("port", 0)
+            triggered = False
+            if ip and port:
+                try:
+                    body = json.dumps({"reason": reason, "task_id": task_id}).encode("utf-8")
+                    req  = urllib.request.Request(
+                        f"http://{ip}:{port}/restart",
+                        data=body,
+                        method="POST",
+                        headers={"Content-Type": "application/json"},
+                    )
+                    with urllib.request.urlopen(req, timeout=5) as r:
+                        triggered = (r.status == 200)
+                except (urllib.error.URLError, OSError) as exc:
+                    logger.warning("[master_agent] /restart POST to %s:%d failed: %s",
+                                   ip, port, exc)
+            if triggered:
+                logger.warning("[master_agent] REMOTE RESTART: %s (host=%s, %s:%d) "
+                               "reason=%s task_id=%s — worker will re-exec in 1s",
+                               name, host, ip, port, reason, task_id[:11])
+            else:
+                logger.error("[master_agent] REMOTE ZOMBIE on host=%s (%s) lane=%s "
+                             "reason=%s task_id=%s — /restart unavailable, "
+                             "operator must restart this worker manually.",
+                             host, name, lane, reason, task_id[:11])
+            # Always emit the service.alerts topic entry so the
+            # dashboard can show what happened (auto-healed vs needs
+            # human).
             try:
                 from src.orchestration.topics import topic, TOPIC_SERVICE_ALERTS
                 topic(TOPIC_SERVICE_ALERTS).append({
@@ -313,7 +342,9 @@ class MasterAgent:
                     "node_id":   node_id,
                     "task_id":   task_id,
                     "reason":    reason,
-                    "needs":     "operator restart on remote machine",
+                    "auto_healed": triggered,
+                    "needs":     "self_restart_via_endpoint" if triggered
+                                 else "operator restart on remote machine",
                 })
             except Exception:
                 pass

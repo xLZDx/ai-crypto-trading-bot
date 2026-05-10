@@ -7130,6 +7130,158 @@ def test_phase92_meta_labeler_regime_dict_shape_tolerance():
           ("'scaler'" in meta) and ('Caused per-symbol' in meta or 'no signal data' in meta))
 
 
+def test_phase93_worker_live_load_and_remote_restart():
+    """Phase 93 — visibility + remote process control for the cluster.
+
+    Pre-Phase-93 the dashboard knew a worker had registered, but had no
+    per-worker CPU/GPU number — operators were tail-ing nvidia-smi on
+    the wrong PC during the 2026-05-10 sweep. master_agent could heal
+    LOCAL zombies (kill+respawn) but could only LOG remote zombies on
+    Ivan, requiring manual SSH/RDP.
+
+    Phase 93 closes both gaps:
+      1. Worker /health + heartbeat carry cpu_percent, gpu_percent,
+         gpu_mem_used_mb, gpu_mem_total_mb, uptime_s.
+      2. Worker exposes /restart (self-execv) + /system_info (full diag dump).
+      3. Orchestrator passes live load fields straight through to the
+         dashboard worker dict (existing {**prev, **info} merge).
+      4. master_agent._heal_zombie POSTs /restart for remote zombies
+         (auto-heal); falls back to operator-alert if the endpoint is down.
+      5. Dashboard renders CPU/GPU columns on each worker card +
+         operator-triggered ↻restart button via a server-side proxy
+         (avoids browser CORS).
+    """
+    print('\n[Phase 93 — worker live-load + remote restart]')
+
+    worker_path = os.path.join(BASE_DIR, 'src', 'training', 'distributed', 'worker.py')
+    with open(worker_path, encoding='utf-8') as f:
+        worker = f.read()
+    orch_path = os.path.join(BASE_DIR, 'src', 'training', 'distributed', 'orchestrator.py')
+    with open(orch_path, encoding='utf-8') as f:
+        orch = f.read()
+    ma_path = os.path.join(BASE_DIR, 'src', 'orchestration', 'master_agent.py')
+    with open(ma_path, encoding='utf-8') as f:
+        ma = f.read()
+    app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
+    with open(app_path, encoding='utf-8') as f:
+        app = f.read()
+    tpl_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
+    with open(tpl_path, encoding='utf-8') as f:
+        tpl = f.read()
+
+    # 1. _sample_live_load helper exists with the four required fields.
+    check('worker._sample_live_load() defined',
+          'def _sample_live_load(' in worker)
+    check('_sample_live_load returns cpu_percent, gpu_percent, gpu_mem_used_mb, gpu_mem_total_mb',
+          'cpu_percent' in worker
+          and 'gpu_percent' in worker
+          and 'gpu_mem_used_mb' in worker
+          and 'gpu_mem_total_mb' in worker)
+    check('CPU% sampled via psutil.cpu_percent',
+          'psutil.cpu_percent(interval=None)' in worker)
+    check('GPU% sampled via nvidia-smi --query-gpu',
+          '--query-gpu=utilization.gpu,memory.used,memory.total' in worker)
+    check('nvidia-smi failure swallowed (graceful CPU-only fallback)',
+          'FileNotFoundError' in worker
+          and ('subprocess.TimeoutExpired' in worker))
+
+    # 2. /health includes live_load + uptime_s; new /restart + /system_info
+    #    endpoints exist.
+    check('/health response includes live_load',
+          '"live_load": _sample_live_load()' in worker)
+    check('/health response includes uptime_s',
+          '"uptime_s":  int(time.time() - self._start_time)' in worker
+          or '"uptime_s": int(time.time() - self._start_time)' in worker)
+    check('worker tracks _start_time in __init__',
+          'self._start_time = time.time()' in worker)
+    check('/restart endpoint defined',
+          '@app.route("/restart"' in worker
+          and 'def restart()' in worker)
+    check('/restart re-execs via os.execv on the same Python',
+          'os.execv(sys.executable' in worker)
+    check('/restart responds OK before re-exec (delayed_exec thread)',
+          '_delayed_exec' in worker
+          and 'time.sleep(1.0)' in worker)
+    check('/system_info endpoint defined',
+          '@app.route("/system_info")' in worker
+          and 'def system_info()' in worker)
+    check('/system_info dumps live_load, transport, hw, uptime, pid',
+          '"live_load":' in worker
+          and '"transport":' in worker
+          and '"uptime_s":' in worker
+          and '"pid":' in worker)
+
+    # 3. Heartbeat payload carries the new fields.
+    hb_start = worker.find('def _heartbeat_loop')
+    hb_end   = worker.find('\n    def ', hb_start + 4)
+    hb_body  = worker[hb_start:hb_end] if hb_end > hb_start else worker[hb_start:]
+    check('heartbeat payload includes cpu_percent',
+          '"cpu_percent":' in hb_body)
+    check('heartbeat payload includes gpu_percent',
+          '"gpu_percent":' in hb_body)
+    check('heartbeat payload includes gpu_mem_used_mb + gpu_mem_total_mb',
+          '"gpu_mem_used_mb":' in hb_body
+          and '"gpu_mem_total_mb":' in hb_body)
+    check('heartbeat samples live load once per beat',
+          '_sample_live_load()' in hb_body)
+    check('heartbeat payload includes uptime_s',
+          '"uptime_s":' in hb_body)
+
+    # 4. Orchestrator merge passes through (no per-field plumbing needed —
+    #    {**prev, **info} already does it).
+    check('orchestrator register_worker docstring/comment notes Phase 93 live load',
+          'Phase 93' in orch
+          and 'cpu_percent' in orch
+          and 'gpu_percent' in orch)
+    check('orchestrator merges new info over previous state',
+          'self._workers[node_id] = {**prev, **info}' in orch)
+
+    # 5. master_agent — remote zombie path POSTs /restart.
+    heal_start = ma.find('def _heal_zombie')
+    heal_end   = ma.find('\n    def ', heal_start + 4)
+    heal_body  = ma[heal_start:heal_end] if heal_end > heal_start else ma[heal_start:]
+    check('master_agent._heal_zombie POSTs /restart for remote zombies',
+          '/restart' in heal_body
+          and 'urllib.request.Request' in heal_body
+          and "method=\"POST\"" in heal_body)
+    check('master_agent uses worker ip+port to reach the remote /restart',
+          'worker.get("ip"' in heal_body
+          and 'worker.get("port"' in heal_body)
+    check('successful remote restart emits REMOTE RESTART log line',
+          'REMOTE RESTART' in heal_body)
+    check('failed remote restart still emits REMOTE ZOMBIE alert (fallback)',
+          'REMOTE ZOMBIE' in heal_body
+          and "'auto_healed'" in heal_body
+          or '"auto_healed":' in heal_body)
+
+    # 6. Dashboard backend proxy + frontend rendering.
+    check('dashboard /api/cluster/worker_restart route defined',
+          "@app.route('/api/cluster/worker_restart'" in app
+          and 'def cluster_worker_restart' in app)
+    check('worker_restart route POSTs to {ip}:{port}/restart',
+          "f'http://{ip}:{port}/restart'" in app)
+    check('worker_restart validates ip+port (no bare proxy)',
+          "if not ip or not port" in app)
+    check('cluster card renders cpu_percent + gpu_percent on each worker',
+          'w.cpu_percent' in tpl
+          and 'w.gpu_percent' in tpl)
+    check('cluster card renders VRAM used/total when available',
+          'w.gpu_mem_used_mb' in tpl
+          and 'w.gpu_mem_total_mb' in tpl)
+    check('CPU/GPU bars use red/amber/green thresholds (>80 / >50)',
+          ('> 80' in tpl or '>80' in tpl)
+          and ('> 50' in tpl or '>50' in tpl))
+    check('dashboard ↻restart button calls clusterRestartWorker',
+          'function clusterRestartWorker(' in tpl
+          and "fetch('/api/cluster/worker_restart'" in tpl)
+    check('_fmtUptime helper renders worker uptime',
+          'function _fmtUptime(' in tpl)
+    # Confirm clusterPoll timer still fires (nothing broke the existing
+    # 10-s poll that drives Live Load freshness).
+    check('clusterPoll setInterval still 10 s',
+          'setInterval(() => { if (activeTab === \'monitor\') clusterPoll(); }, 10_000)' in tpl)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -7475,6 +7627,17 @@ def main():
     test_phase80_v4_b0_training_rules_registry_and_api()
     test_phase81_v4_b5_prime_unified_card_ui()
     test_phase82_v4_component_health_module_style_launches()
+    test_phase83_centralised_process_health_module()
+    test_phase84_orchestration_topics_pubsub()
+    test_phase85_distributed_smoketest_three_bug_fixes()
+    test_phase86_sweep_coordinator_daemon()
+    test_phase87_dual_lane_workers_concurrent_cpu_gpu()
+    test_phase88_orchestrator_task_progress_watchdog()
+    test_phase89_gpu_classifier_wrapper_and_trainer_migration()
+    test_phase90_master_agent_zombie_worker_supervisor()
+    test_phase91_tft_dedupe_tz_normalize_plus_meta_hard_fail()
+    test_phase92_meta_labeler_regime_dict_shape_tolerance()
+    test_phase93_worker_live_load_and_remote_restart()
 
     if not args.offline:
         test_api(args.url)
