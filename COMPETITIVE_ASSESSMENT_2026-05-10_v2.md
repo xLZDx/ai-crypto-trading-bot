@@ -618,6 +618,33 @@ If S0-1 / S0-2 reveals widespread leakage or adversarial-AUC > 0.6 across most m
 
 This is uncomfortable but cheaper than discovering it post-launch.
 
+### Sprint 0a / 0b / 0c — Capital-preservation hardening (added 2026-05-10 after personal-use reframe)
+
+After §S0-1 through §S0-6 complete, three additional risk-hardening sub-sprints run before the analytic phase. Detailed file-level plans live in [`TECH_IMPLEMENTATION_PLAN_2026-05-10.md`](TECH_IMPLEMENTATION_PLAN_2026-05-10.md) §S0a/§S0b/§S0c. Goal: eliminate **avoidable** capital losses end-to-end.
+
+**§S0a — Market-risk / fat-tail hardening (~5 days)**
+- M1 position-sizing enforcer (per-trade ≤1 %, per-symbol ≤10 %, total open ≤50 %, hard ceiling 5 %)
+- M2 strategy correlation monitor (alarm if any pair > 0.7)
+- M3 leverage cap enforcer (auto-deleverage on breach)
+- M4 tick-level circuit breaker (4σ single-tick freeze, 60s)
+
+**§S0b — Operational-risk hardening (~7 days)**
+- O1 automated state backups (hourly/daily/weekly/monthly retention)
+- O2 offsite encrypted snapshots (Backblaze B2 default; tested restore)
+- O3 restart state reconciliation (refuse trade until exchange ↔ local state matches)
+- O4 ISP/network outage SAFE MODE (heartbeat + exchange-side stops)
+- O5 UPS / power-out runbook (doc + light `nut` integration)
+
+**§S0c — Counterparty-risk hardening (~5 days)**
+- C1 multi-exchange capital split (Binance + Bybit + OKX routing)
+- C2 auto-withdraw to cold storage (weekly, hardware-wallet whitelist, 2FA gate)
+- C3 exchange health monitor (latency + queue + news; 3 reds → quarantine)
+- C4 custodian integration (DEFERRED, doc-only — only relevant >$1M AUM)
+
+**Combined timeline:** Sprint 0 (~17 days) + 0a (~5d) + 0b (~7d) + 0c (~5d) + analytic phase (~5d) = **~25–28 days with parallelism** (~5 weeks). Sprints 0a + 0b can run concurrently with the bake-off wait time in §S0-2.
+
+**Mandatory pass items before live capital:** §S0-3 (kill switch), §S0a (all four), §S0b O1 + O3 + O4, §S0c C1 + C3. C2 mandatory only after operator whitelists a hardware-wallet cold-storage address.
+
 ---
 
 ## 12. Analytic phase (post-Sprint 0)

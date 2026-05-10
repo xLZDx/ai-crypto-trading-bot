@@ -602,6 +602,301 @@ Plus a summary header: `Live: N  |  Shadow: M  |  Kill: K`.
 
 ---
 
+---
+
+## §S0a — Market-risk / fat-tail hardening (~5 days, post §S0)
+
+These four items together prevent **avoidable market-side losses** that the Sprint-0 model audit + kill-switch don't cover. The kill-switch (§S0-3) reacts to losses already realized; §S0a stops orders BEFORE they're submitted when caps would be breached, and adds a tick-level circuit breaker faster than the 5-min watchdog.
+
+### S0a-M1 — Position-sizing enforcer audit + ratchet (~1 day)
+
+**Goal:** every order goes through a hard cap gate. No exceptions.
+
+**Existing code to audit:** `src/risk/institutional_gate.py` (or wherever the InstitutionalGate lives) — confirm what caps are enforced today, what's missing.
+
+**New file:** `src/risk/position_caps.py`
+
+```python
+@dataclass
+class PositionCaps:
+    per_trade_pct_equity:           float = 0.01    # default 1 %
+    per_symbol_pct_equity:          float = 0.10    # 10 % cap on any one symbol
+    total_open_exposure_pct_equity: float = 0.50    # 50 % cap across all open
+    per_strategy_max_concurrent_trades: int = 5
+    HARD_CEILING_per_trade_pct: float = 0.05        # immutable ceiling — never above 5 %
+
+def validate_order_size(
+    symbol: str, side: str, size_usdt: float,
+    current_equity: float,
+    open_positions: list[dict],
+    caps: PositionCaps,
+) -> tuple[bool, str]:
+    """Return (ok, reason). Reason populated only on rejection.
+    Checked: per-trade, per-symbol total, total open exposure, concurrent count."""
+```
+
+**Config:** `data/risk_caps.json` — operator-tunable values, schema validated on load.
+
+**Wiring:** every order submission path imports `validate_order_size` and refuses to place if `ok=False`. Orders rejected here log a `risk_cap_breach` event to the kill-switch's input stream — repeated breaches feed §S0-3 trigger #3 (latency/operational degradation pattern).
+
+**Success criteria:** synthetic test — submit an order at 2 % equity; gate rejects with reason "per_trade_pct_equity 0.02 > cap 0.01."
+
+### S0a-M2 — Strategy correlation monitor (~1 day)
+
+**New file:** `src/risk/correlation_monitor.py`
+
+Rolling 30-day per-strategy daily P&L window → pairwise Spearman correlation matrix. Alarm when any pair > 0.7 (you think you have N diversified strategies; you actually have 1 with N hats).
+
+**Dashboard tile:** correlation heatmap in the Audit tab (added in §0).
+
+**Decision rule:** correlation > 0.7 → log alert, dashboard turns yellow. Doesn't auto-pause — operator decision (might be correct in regime where everything moves together).
+
+### S0a-M3 — Leverage cap enforcer (~1 day)
+
+**New file:** `src/risk/leverage_cap.py`
+
+```python
+@dataclass
+class LeverageCaps:
+    max_total_leverage:         float = 3.0
+    max_per_strategy_leverage:  float = 2.0
+    max_per_symbol_leverage:    float = 1.5
+
+def evaluate_leverage(open_positions, equity, caps) -> tuple[float, str | None]:
+    """Returns (current_total_leverage, breach_reason or None)."""
+
+def deleverage_actions(open_positions, caps) -> list[dict]:
+    """Returns ordered list of close-actions to bring leverage under cap.
+    Strategy: close worst-performing position first."""
+```
+
+**Wiring:** kill-switch §S0-3 polls this on every tick; if breach detected → freeze new entries + execute deleverage_actions one at a time (not all at once — avoid liquidity self-impact).
+
+### S0a-M4 — Fat-tail tick circuit breaker (~2 days)
+
+**New file:** `src/risk/tick_circuit_breaker.py`
+
+Faster than §S0-3's 5-min window. Runs on every price tick:
+
+```python
+class TickCircuitBreaker:
+    def __init__(self, sigma_threshold: float = 4.0,
+                 vol_window_bars: int = 30,
+                 freeze_seconds: int = 60): ...
+
+    def observe_tick(self, symbol: str, price: float, ts: datetime) -> bool:
+        """Return True if order submission for this symbol is currently
+        frozen due to a recent extreme tick."""
+```
+
+Logic:
+- Maintain rolling 30-bar realized stddev per symbol (cheap, deque).
+- On each tick, compute log-return vs prev tick.
+- If `|log_return| > sigma_threshold * sigma` → freeze symbol for `freeze_seconds`.
+- After freeze elapses: re-enable. Log every fire to `data/audit/circuit_breaker_log.jsonl`.
+
+**Default 4σ.** A 4σ move is a ~1-in-31,000 event under normal distribution — far rarer in reality, so when it fires the market really IS in stress mode.
+
+**Wiring:** every order submission consults `tick_breaker.observe_tick(...)` for the target symbol; refuses if frozen.
+
+**Success criteria:** synthetic test — feed a price series with a 5σ spike; the symbol freezes; within 60s of return-to-normal, freeze releases.
+
+### §S0a — success criteria + decision gate
+
+- All four items wired into the order-submission path.
+- Synthetic stress tests pass (rejection on per-trade cap, deleverage on leverage cap, freeze on tick spike).
+- Configurable thresholds in `data/risk_caps.json` reload-able without restart.
+
+**Mandatory pass.** No live capital should run without these four.
+
+---
+
+## §S0b — Operational-risk hardening (~7 days, post §S0a)
+
+### S0b-O1 — Automated state backups (~1 day)
+
+**New file:** `src/ops/state_backup.py`
+
+```python
+def run_backup(now: datetime, root: Path = PROJECT_ROOT,
+               dest: Path = Path("D:/backups")) -> Path:
+    """Tar.gz snapshot of:
+      data/  (excluding data/parquet/ — too big, separate path)
+      models/  (excluding models/archive/)
+      config files in root
+    Output: D:/backups/<YYYYMMDD_HHMMSS>/snapshot.tar.gz + manifest.json"""
+```
+
+**Schedule:** every 4 hours via existing scheduler, configurable in `data/backup_config.json`.
+
+**Retention:**
+- Hourly: keep last 24
+- Daily: keep last 7
+- Weekly: keep last 4
+- Monthly: keep forever
+
+Rotation script `scripts/rotate_backups.py` runs after each new backup.
+
+**Dashboard tile:** "Last backup: 2026-05-10 14:00 UTC ✓ · Next: 18:00 UTC" in Audit tab.
+
+### S0b-O2 — Offsite encrypted snapshot (~2 days)
+
+**New file:** `src/ops/offsite_snapshot.py`
+
+- AES-256-GCM encrypt the `state_backup.py` tar.gz output. Key from `.env` (`OFFSITE_BACKUP_KEY`, **never** in git).
+- Provider: Backblaze B2 default ($0.005/GB/month, S3-compatible API). Configurable via `data/offsite_config.json`.
+- Daily incremental + weekly full.
+- Retention: weekly fulls 12 weeks, daily incrementals 14 days.
+
+**New script:** `scripts/restore_from_offsite.py` — operator runs manually. Pulls latest snapshot, decrypts, verifies hash, extracts to `D:/restore_staging/<timestamp>/`. Operator reviews before swapping into live `data/` and `models/`.
+
+**RUNBOOK section:** "Restore from offsite snapshot" — exact commands, expected duration, how to verify integrity.
+
+### S0b-O3 — Restart state reconciliation (~2 days)
+
+**New file:** `src/ops/state_reconciler.py`
+
+```python
+def reconcile_on_startup(exchange_clients: dict, local_state: dict) -> ReconciliationReport:
+    """Pull live positions + open orders from every connected exchange.
+    Compare to local state. Returns report with:
+      - positions_match: bool
+      - orphan_orders: list[dict]   (exchange-side orders we don't track)
+      - phantom_positions: list[dict] (we think we have, exchange doesn't)
+      - mismatched_sizes: list[dict]
+    If any non-empty: bot enters RECONCILE_REQUIRED status and refuses to trade
+    until operator dashboard ACKs."""
+```
+
+**Wiring:** `src/main.py` calls reconciler before any trade-loop iteration. Status surfaces in Audit tab + Telegram alert if running.
+
+**Decision rule:** **mandatory pass.** Auto-reconcile (cancel orphans, mark phantoms closed, log) only on operator's explicit click. No silent fix-ups — every reconciliation event is auditable.
+
+### S0b-O4 — ISP / network outage SAFE MODE (~1 day)
+
+**New file:** `src/ops/network_health.py`
+
+- Heartbeat to each exchange API every 30s.
+- 3 consecutive failures → SAFE MODE: refuse new order submissions; existing positions unchanged.
+- Pre-condition: every existing position must have an **exchange-side stop-loss** (server-side OCO order). Audit existing position-management code to ensure this is the default; if not, add to position open path.
+- When network recovers: run reconciler (§S0b-O3); if clean, exit SAFE MODE.
+
+**Dashboard tile:** network-health status per exchange (last heartbeat, consecutive fails, current mode).
+
+### S0b-O5 — UPS / power-out runbook (~1 day, doc + light code)
+
+**Edit:** `RUNBOOK.md` — new section:
+- Recommended UPS: APC Back-UPS Pro 1500VA or equivalent (15+ min runtime under bot's load)
+- Power-loss test procedure (pull plug, observe graceful shutdown, restore power, verify reconciler runs clean)
+- Expected behavior: bot detects low-battery signal from UPS via `nut` (Network UPS Tools); enters SAFE MODE; saves checkpoint; flat-orders if config says so; clean shutdown.
+- **Light code:** new file `src/ops/ups_monitor.py` polling `nut` if installed; degrades to no-op if not. Optional (default disabled).
+
+**Warm-standby on Ivan worker DEFERRED** — heavy lift (active-passive replication, exchange API key sharing, conflict resolution). Not core to capital safety.
+
+### §S0b — success criteria + decision gate
+
+- Backup ran 4 times in the last 24h, all verified by hash.
+- One offsite restore-test PASSED (extract to staging, hash compare to source).
+- Synthetic test: kill the bot mid-trade; on restart, reconciler fires; bot stays in `RECONCILE_REQUIRED` until ACKed.
+- Network heartbeat fails 3x → SAFE MODE engages within ~90s.
+
+**Mandatory: O1, O3, O4 must pass before live capital. O2 strongly recommended. O5 doc-only, no gate.**
+
+---
+
+## §S0c — Counterparty-risk hardening (~5 days, post §S0b)
+
+### S0c-C1 — Multi-exchange capital split (~2 days)
+
+**Existing code to audit:** any references to "binance" in `src/exchange/`, `src/agents/`, `src/main.py`. Document which paths assume single-exchange.
+
+**New file:** `src/risk/capital_allocator.py`
+
+```python
+@dataclass
+class ExchangeAllocation:
+    name:                 str            # 'binance', 'bybit', 'okx', ...
+    target_pct:           float          # 0.5 = 50 % of total
+    min_balance_usdt:     float          # don't drain below this
+    enabled:              bool = True
+
+def pick_exchange_for_order(strategy: str, side: str, size_usdt: float,
+                             exchange_balances: dict[str, float],
+                             allocations: list[ExchangeAllocation],
+                             health_status: dict[str, str],  # green/yellow/red
+                             ) -> str | None:
+    """Returns the exchange name to route this order to, or None if all
+    suitable exchanges are unhealthy / too low balance."""
+```
+
+**Config:** `data/capital_allocation.json`.
+
+**Wiring:** strategy code calls `pick_exchange_for_order(...)` before order submission. Per-exchange health (from §S0c-C3) gates routing.
+
+### S0c-C2 — Auto-withdraw to cold storage (~2 days)
+
+**New file:** `src/ops/cold_storage_withdraw.py`
+
+```python
+@dataclass
+class ColdStorageConfig:
+    enabled:                       bool   = False    # OFF until operator whitelists
+    schedule_cron:                 str    = "0 3 * * 0"   # Sun 03:00 UTC
+    min_balance_floor_usdt:        float  = 5000.0
+    min_withdrawal_threshold_usdt: float  = 1000.0
+    addresses_by_chain:            dict   = field(default_factory=dict)
+
+def schedule_weekly_withdrawals(cfg: ColdStorageConfig,
+                                exchange_clients: dict) -> None:
+    """For each exchange:
+      - Skip if balance ≤ floor + threshold
+      - Compute amount = balance - floor
+      - Generate pre-submit alert (dashboard + Telegram)
+      - Wait up to 5 min for operator dashboard ACK
+      - On ACK: submit withdrawal
+      - On timeout: cancel"""
+```
+
+**Audit log:** `data/cold_storage_audit.jsonl` — every event (skipped, alerted, ACKed, submitted, completed, failed).
+
+**Dashboard tile:** Audit tab — last withdrawal, scheduled next, current floor balances per exchange.
+
+**Hard gates:**
+- Cold address must be on whitelist BEFORE any withdrawal can fire.
+- Whitelist edit requires editing `data/cold_storage_config.json` directly (not via dashboard) — prevents API-key-compromise-then-redirect.
+- 2FA at exchange level still applies (every withdrawal goes through exchange's 2FA).
+
+**`enabled: false` by default** — operator sets up hardware wallet, gets a USDT-receivable address, edits config, sets `enabled: true`.
+
+### S0c-C3 — Exchange health monitor (~1 day)
+
+**New file:** `src/ops/exchange_health.py`
+
+Per-exchange metrics:
+- API latency p99 (rolling 5-min)
+- Order acknowledgement rate (orders accepted within 2s / orders submitted)
+- Withdrawal queue health (Binance/Bybit expose this; others fall back to "unknown")
+- News-signal: keyword match across `data/news/*.jsonl` for `<exchange>` + `outage|halt|insolvency|paused|suspended`
+- Three RED → exchange enters `quarantined` status; §S0c-C1 stops routing there
+
+**Dashboard tile:** per-exchange status with sparklines.
+
+### S0c-C4 — Custodian integration — DEFERRED
+
+Document only. New section in `RUNBOOK.md`:
+
+> Custodial cold storage (Fireblocks, Copper, Casa) is the standard for institutional-tier capital safety. It removes counterparty risk almost entirely. Cost: $5k+/month + setup fee. Cost-benefit: positive when AUM > ~$1M. For personal capital under that threshold, hardware-wallet self-custody (S0c-C2) is the right tier.
+
+### §S0c — success criteria + decision gate
+
+- C1: synthetic test — Binance flagged red; orders route to Bybit + OKX automatically.
+- C2: dry-run with `enabled=true` and a tiny test address — pre-submit alert fires, ACK works, withdrawal submits at the exchange.
+- C3: synthetic test — feed the news classifier a fake outage headline; exchange flips to YELLOW after 1 signal, RED after 3.
+
+**C1 + C3 mandatory pass. C2 mandatory only after operator whitelists a cold-storage address. C4 deferred — doc-only.**
+
+---
+
 ## §S0.5 — Analytic phase (~5 days, post Sprint 0)
 
 The analytic phase **executes** the cut list. Sprint 0 is verdict-only; the analytic phase does the actual deletions.
@@ -642,38 +937,80 @@ For each entry in the cut list:
 
 ## §A — End-of-Sprint-0 deliverables checklist
 
-Before declaring Sprint 0 + analytic phase complete:
+Before declaring Sprint 0 + risk-hardening + analytic phase complete:
 
+**§S0 — Validation core**
 - [ ] `data/audit/sprint0_validation_reports/` — one per (model × symbol × tf)
 - [ ] `data/audit/sprint0_model_bakeoff.md` — forecast + path bake-off rankings
 - [ ] `data/audit/sprint0_calibration/` — reliability diagrams
 - [ ] `data/audit/sprint0_cut_list.md` — Keep / Shadow / Kill verdicts
-- [ ] `data/audit/sprint0_kill_log.md` — list of removed strategies + reasons
-- [ ] `data/audit/sprint0_hierarchy_proposal.md` — the regime → forecast → execution refactor design
+- [ ] `data/audit/sprint0_kill_log.md` — removed strategies + reasons
+- [ ] `data/audit/sprint0_hierarchy_proposal.md` — sequential pipeline design
 - [ ] Dashboard `Audit` tab populated with live data
-- [ ] Kill switch firing correctly under synthetic stress
+- [ ] Kill switch (§S0-3) firing correctly under synthetic stress
 - [ ] Execution-quality dashboard showing non-zero per-strategy metrics
+
+**§S0a — Market-risk hardening**
+- [ ] `data/risk_caps.json` schema + reload-able
+- [ ] `src/risk/position_caps.py` wired into every order path
+- [ ] `src/risk/correlation_monitor.py` + heatmap tile
+- [ ] `src/risk/leverage_cap.py` + auto-deleverage
+- [ ] `src/risk/tick_circuit_breaker.py` + per-symbol freeze log
+
+**§S0b — Operational-risk hardening**
+- [ ] `src/ops/state_backup.py` running on schedule, ≥4 successful runs in last 24h
+- [ ] `src/ops/offsite_snapshot.py` + at least one verified restore dry-run
+- [ ] `src/ops/state_reconciler.py` blocks trade-loop until clean
+- [ ] `src/ops/network_health.py` SAFE-MODE switch tested
+- [ ] `RUNBOOK.md` "Power outage" section + recommended UPS
+
+**§S0c — Counterparty-risk hardening**
+- [ ] `src/risk/capital_allocator.py` routing across ≥2 exchanges
+- [ ] `src/ops/cold_storage_withdraw.py` (enabled=false until operator whitelists)
+- [ ] `src/ops/exchange_health.py` + per-exchange status tiles
+- [ ] `RUNBOOK.md` "Custodian integration" deferred-options section
+
+**§S0.5 — Analytic phase**
+- [ ] Strategy registry trimmed to Keep + Shadow only
+- [ ] Killed model joblibs moved to `models/archive/`
+- [ ] Dashboard panels for killed strategies removed
 - [ ] Test suite green
 - [ ] `restart_all.ps1` runs clean for 24 hours with the trimmed code
-- [ ] `MODEL_AUDIT_2026-05-10.md` written (marketing-ready summary)
+- [ ] `MODEL_AUDIT_2026-05-10.md` written (audit summary)
 
-When all of these are checked, **then** the v2 distribution roadmap (Sprint 1 onward in `COMPETITIVE_ASSESSMENT_2026-05-10_v2.md` §9) becomes safe to begin.
+When all of these are checked, **then** the personal-use roadmap from `COMPETITIVE_ASSESSMENT_2026-05-10_v2.md` (revised Sprint 1+ from the personal-use reframe) becomes safe to begin.
 
 ---
 
 ## §B — Estimated effort summary
 
-| Section | Days | Can parallelize? |
-|---|---:|---|
-| §0 cross-cutting setup | 1 | no |
-| §S0-1 validation rigor | 5 | partial (5 sub-files; maybe 3 days with help) |
-| §S0-2 model bake-off | 7 | yes (each cell is one cluster task) |
-| §S0-3 kill switch | 3 | partial |
-| §S0-4 exec-quality dashboard | 3 | yes (parallel with S0-3) |
-| §S0-5 calibration audit | 1 | yes (parallel with S0-3 / S0-4) |
-| §S0-6 cut list | 1 | no |
-| §S0.5 analytic phase | 5 | no |
-| **Total Sprint 0 + analytic** | **~26 days serial** / **~17 days with 2-PC parallelism** | |
+| Phase | Section | Days | Parallelizable? |
+|---|---|---:|---|
+| Sprint 0 | §0 cross-cutting setup | 1 | no |
+| Sprint 0 | §S0-1 validation rigor | 5 | partial |
+| Sprint 0 | §S0-2 model bake-off | 7 | **yes** (cluster-parallel via Phase 94) |
+| Sprint 0 | §S0-3 kill switch | 3 | partial |
+| Sprint 0 | §S0-4 exec-quality dashboard | 3 | yes (with S0-3) |
+| Sprint 0 | §S0-5 calibration audit | 1 | yes (with S0-3/S0-4) |
+| Sprint 0 | §S0-6 cut list | 1 | no |
+| **Sprint 0a** | M1 position-sizing enforcer | 1 | yes |
+| **Sprint 0a** | M2 correlation monitor | 1 | yes |
+| **Sprint 0a** | M3 leverage cap enforcer | 1 | yes |
+| **Sprint 0a** | M4 tick circuit breaker | 2 | yes (with O1/O2) |
+| **Sprint 0b** | O1 state backups | 1 | yes |
+| **Sprint 0b** | O2 offsite snapshots | 2 | yes |
+| **Sprint 0b** | O3 restart reconciler | 2 | partial |
+| **Sprint 0b** | O4 network outage SAFE MODE | 1 | yes |
+| **Sprint 0b** | O5 UPS runbook | 1 | yes |
+| **Sprint 0c** | C1 multi-exchange split | 2 | partial |
+| **Sprint 0c** | C2 cold-storage withdraw | 2 | yes (with C1) |
+| **Sprint 0c** | C3 exchange health monitor | 1 | yes |
+| Analytic | §S0.5 cut-list execution | 5 | no |
+| **TOTAL** | | **~43 days serial** / **~25–28 days with 2-PC parallelism** | |
+
+**Parallelism note:** Sprints 0a + 0b can run concurrently (different code areas — risk vs ops). Sprint 0c depends on 0b-O4 (network health) for C3 inputs. Critical path is roughly: §0 → §S0-1 → §S0-2 → §S0-6 (~14 days) → analytic (5 days), with 0a/0b/0c overlapping the bake-off wait time.
+
+---
 
 ---
 
@@ -686,6 +1023,13 @@ These are the points where the plan can't decide for you:
 3. **Vol-adjusted barrier multipliers (k₁, k₂).** 1.8 / 1.2 is the standard. If labels come out too sparse (>50 % horizon hits = label 0), narrow the bands.
 4. **Sharpe threshold for `live` verdict.** 1.0 is moderate-conservative. If ALL your strategies are coming out below 1.0 on walk-forward, the bar may be wrong for your TF/asset — consider 0.7.
 5. **What counts as "in the cut" for the MVP.** §S0-6 ranks; you decide where the bar is. Default: top-5 by walk-forward Sharpe across all (strategy × symbol × tf) cells.
+6. **Per-trade equity cap (§S0a M1).** Default 1 %. The hard ceiling 5 % is immutable; below that, operator chooses based on risk tolerance.
+7. **Total exposure cap (§S0a M1).** Default 50 %. Tighter (e.g. 30 %) for stronger drawdown control; looser (70 %) only with high-confidence audited strategies.
+8. **Tick circuit-breaker σ threshold (§S0a M4).** Default 4σ. If too sensitive in your asset universe (high-vol meme coins), raise to 5σ before lowering coverage.
+9. **Backup retention (§S0b O1).** Default hourly×24 / daily×7 / weekly×4 / monthly×∞. Storage cost minimal at this scale; loosen only if disk pressure.
+10. **Offsite provider (§S0b O2).** Backblaze B2 (cheapest), AWS S3 (most reliable), OneDrive (if you already pay M365). I'll default to B2 unless overridden in `data/offsite_config.json`.
+11. **Cold-storage chain (§S0c C2).** TRC20 (Tron, low fees) vs ERC20 (Ethereum, more secure but higher gas) vs both. Operator picks based on hardware-wallet support.
+12. **Exchange allocation split (§S0c C1).** Default 50/30/20 across Binance/Bybit/OKX assumes you have all three set up. If not, drop to single-exchange + queue C1 for later.
 
 ---
 
@@ -701,4 +1045,4 @@ Otherwise: push through. The discomfort of finding what doesn't work is exactly 
 
 ---
 
-*File: TECH_IMPLEMENTATION_PLAN_2026-05-10.md — companion to COMPETITIVE_ASSESSMENT_2026-05-10_v2.md §11–§12. Sprint 0 + analytic phase = ~3–4 weeks of work that gates everything in the v2 distribution roadmap.*
+*File: TECH_IMPLEMENTATION_PLAN_2026-05-10.md — companion to COMPETITIVE_ASSESSMENT_2026-05-10_v2.md §11–§12. Sprint 0 + 0a/0b/0c risk hardening + analytic phase = ~5–7 weeks of work that gates everything in the personal-use roadmap. Personal-use reframe applied: kill switches + capital preservation prioritized over distribution / monetization features.*
