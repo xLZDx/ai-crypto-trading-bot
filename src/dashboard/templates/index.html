@@ -2049,12 +2049,13 @@ document.addEventListener('DOMContentLoaded', function() {
                   <th class="tr-th" data-col="symbols_count"  onclick="trSort('symbols_count')"  style="text-align:right;padding:5px 6px" title="Number of distinct symbols this model was trained on.">Syms <span class="tr-chev"></span></th>
                   <th class="tr-th" data-col="target"         onclick="trSort('target')"         style="text-align:left;padding:5px 6px" title="Label / target the model predicts.">Target <span class="tr-chev"></span></th>
                   <th class="tr-th" data-col="health_score"   onclick="trSort('health_score')"   style="text-align:right;padding:5px 6px" title="Composite 0-100 score that aggregates EVERY signal column for this row: WF Acc% (35), Acc Test% (15), AUC (20 if present), Win Prec% (15 if present), Bull/Bear class balance (10), freshness (10). Penalized for accuracy_warning / last_error / NOT STARTED. Grade: A≥80 · B≥65 · C≥50 · D≥35 · F<35. Hover for per-component breakdown.">Health <span class="tr-chev"></span></th>
+                  <th class="tr-th" data-col="backtest_status" onclick="trSort('backtest_status')" style="text-align:right;padding:5px 6px" title="Distributed backtest coverage at this row's timeframe (Phase 94). Counts ALL (symbol × tf) cells the cluster has run at this TF — not specific to this model row, since one cell runs every enabled strategy. Format: done/running/pending counts. Color: green=all done · amber=running · red=any failed · grey=none submitted yet. POST /api/backtest/distributed/start to trigger a sweep.">Backtest <span class="tr-chev"></span></th>
                   <th style="text-align:left;padding:5px 6px;color:#94a3b8;font-weight:700;letter-spacing:.02em;font-size:.6rem" title="One-line description of what this model does.">Description</th>
                   <th style="text-align:right;padding:5px 6px;color:#94a3b8;font-weight:700;letter-spacing:.02em;font-size:.6rem" title="Trigger this trainer N times. TF picker selects which timeframe (default = canonical for that model).">Action</th>
                 </tr>
               </thead>
               <tbody id="training-tbody">
-                <tr><td colspan="21" style="text-align:center;color:#475569;padding:12px">Loading…</td></tr>
+                <tr><td colspan="22" style="text-align:center;color:#475569;padding:12px">Loading…</td></tr>
               </tbody>
               <!-- v3.1 fleet aggregate footer — populated by
                    _renderTrainingTable() with the average Health
@@ -3970,6 +3971,77 @@ function _renderMLCards(data) {
   }).join('');
 }
 
+// ── Phase 94 — distributed backtest cell snapshot for the new Backtest column.
+//
+// _btCellsByTf[tf] = {done, running, pending, failed, total, last_finished_at}
+// Refreshed by pollBacktestCells() every 10s (matching cluster poll cadence).
+// _renderTrainingTable consults _btCellRender(m.timeframe) per-row.
+let _btCellsByTf = {};
+let _btLastPollTs = 0;
+
+async function pollBacktestCells() {
+  try {
+    const r = await fetch('/api/backtest/distributed/status', { headers: hdrs() });
+    if (!r.ok) return;
+    const d = await r.json();
+    const cells = (d && Array.isArray(d.cells)) ? d.cells : [];
+    const grouped = {};
+    cells.forEach(c => {
+      const tf = c.timeframe || '?';
+      const g = grouped[tf] = grouped[tf] || {done:0, running:0, pending:0, failed:0, total:0, last_finished_at:''};
+      g.total++;
+      const st = (c.status || '').toLowerCase();
+      if (st === 'done') {
+        g.done++;
+        if (c.finished_at && c.finished_at > g.last_finished_at) g.last_finished_at = c.finished_at;
+      } else if (st === 'running')  g.running++;
+      else if (st === 'failed' || st === 'cancelled') g.failed++;
+      else g.pending++;
+    });
+    _btCellsByTf = grouped;
+    _btLastPollTs = Date.now();
+    if (typeof _renderTrainingTable === 'function') _renderTrainingTable();
+  } catch (_) {
+    // 503 / network error: leave _btCellsByTf as-is, column will read "—"
+    // until the cluster orchestrator comes back.
+  }
+}
+
+// Render a single Backtest column cell for a given timeframe.
+// Color rules:
+//   green   = all submitted cells at this tf are done
+//   amber   = at least one cell is running OR pending (sweep in flight)
+//   red     = at least one cell failed
+//   grey "—" = no cells submitted at this tf
+function _btCellRender(tf) {
+  if (!tf || tf === '—') return '<span style="color:#475569">—</span>';
+  const g = _btCellsByTf[tf];
+  if (!g || g.total === 0) {
+    return '<span style="color:#475569;font-size:.6rem" title="No backtest cells submitted at this TF yet. POST /api/backtest/distributed/start to trigger a sweep.">—</span>';
+  }
+  let color, label, tip;
+  if (g.failed > 0) {
+    color = '#fb7185';
+    label = `${g.done}/${g.total} · ${g.failed}✗`;
+    tip = `${g.failed} cells failed at TF=${tf}; ${g.done} done, ${g.running} running, ${g.pending} pending`;
+  } else if (g.running > 0 || g.pending > 0) {
+    color = '#fbbf24';
+    label = `${g.done}/${g.total}`;
+    tip = `Sweep in flight at TF=${tf}: ${g.done} done, ${g.running} running, ${g.pending} pending`;
+  } else {
+    color = '#34d399';
+    label = `${g.total}/${g.total}`;
+    tip = `All ${g.total} cells done at TF=${tf}` + (g.last_finished_at ? ` · last finish ${g.last_finished_at}` : '');
+  }
+  return `<span title="${esc(tip)}" style="display:inline-block;font-family:'JetBrains Mono';font-weight:700;font-size:.6rem;padding:2px 7px;border-radius:5px;background:${color}22;color:${color};border:1px solid ${color}55">${label}</span>`;
+}
+
+// Piggy-back on the existing 10-s cluster poll cadence (defined further
+// down: setInterval(...,10_000) for clusterPoll). Run an extra tick at
+// page load so the column populates immediately.
+setInterval(() => { if (activeTab === 'monitor' || activeTab === 'strategy') pollBacktestCells(); }, 10_000);
+document.addEventListener('DOMContentLoaded', () => { setTimeout(pollBacktestCells, 1500); });
+
 // ── Model Training Table ─────────────────────────────────────────────────────
 let _trSortCol = 'age_s';
 // 'asc' for age_s = freshest first (smallest age). 'desc' otherwise = bigger first.
@@ -4144,7 +4216,7 @@ function _renderTrainingTable() {
   }
 
   if (!filtered.length) {
-    tbody.innerHTML = `<tr><td colspan="21" style="text-align:center;color:#475569;padding:14px">No models match this filter.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="22" style="text-align:center;color:#475569;padding:14px">No models match this filter.</td></tr>`;
     const tfoot0 = $('training-tfoot');
     if (tfoot0) tfoot0.innerHTML = '';
     return;
@@ -4289,6 +4361,7 @@ function _renderTrainingTable() {
           <span style="opacity:.75">${gr}</span>
         </span>`;
       })()}</td>
+      <td style="text-align:right">${_btCellRender(m.timeframe)}</td>
       <td style="color:#94a3b8;font-size:.55rem;line-height:1.35;max-width:220px" title="${esc(desc)}">${esc(desc)}</td>
       <td style="text-align:right;white-space:nowrap">
         <select id="tr-tf-${esc(m.key)}"
@@ -4356,7 +4429,7 @@ function _renderTrainingTable() {
           <span style="opacity:.75">${fleetGrade}</span>
         </span>
       </td>
-      <td colspan="2"></td>
+      <td colspan="3"></td>
     </tr>`;
   }
 }

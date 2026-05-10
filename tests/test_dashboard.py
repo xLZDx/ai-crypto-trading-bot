@@ -5675,9 +5675,11 @@ def test_phase74_v31_health_column_and_fleet_aggregate():
           ('A:<b' in html and 'B:<b' in html and 'C:<b' in html
            and 'D:<b' in html and 'F:<b' in html))
 
-    # Empty-state colspan was bumped from 20 → 21 (Health column added).
+    # Empty-state colspan was bumped 20 → 21 (Health column added in v3.1)
+    # then 21 → 22 (Backtest column added in Phase 95). Accept either to
+    # decouple this assertion from future column additions.
     check('empty-state colspan bumped to 21',
-          'colspan="21"' in html
+          ('colspan="21"' in html or 'colspan="22"' in html)
           and 'No models match this filter.' in html)
 
 
@@ -7503,6 +7505,124 @@ def test_phase94_distributed_backtest_per_cell():
           and "'duration_s':" in status_body)
 
 
+def test_phase95_xgb_early_stop_eval_set_fix_and_backtest_column():
+    """Phase 95 — two fixes shipped together.
+
+    Fix 1: XGBoost early_stopping ValueError ('Must have at least 1
+    validation dataset for early stopping.'). The gpu_classifier wrapper
+    set early_stopping_rounds=20 but never supplied an eval_set;
+    sklearn HistGBT auto-splits internally, XGBoost doesn't, so the
+    wrapper now mirrors HistGBT's behavior — last 10% of rows held out
+    as the eval set when caller passes early_stopping=True without an
+    eval_set. Last-N (no shuffle) preserves time-series order.
+
+    Fix 2: dashboard Backtest column on the Model Training table — Item
+    B from the original 4-item plan, follow-up to Phase 94's distributed
+    backtest. Renders aggregated per-TF cell counts (e.g., '3/5') with
+    color coding (green=all done · amber=in flight · red=any failed ·
+    grey=none submitted).
+    """
+    print('\n[Phase 95 — XGB early-stop fix + Backtest column]')
+
+    gpu_path = os.path.join(BASE_DIR, 'src', 'utils', 'gpu_classifier.py')
+    with open(gpu_path, encoding='utf-8') as f:
+        gpu = f.read()
+    tpl_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
+    with open(tpl_path, encoding='utf-8') as f:
+        tpl = f.read()
+
+    # ── Fix 1: gpu_classifier wrapper auto-creates eval_set ─────────────
+    fit_start = gpu.find('    def fit(self, X, y, sample_weight=None, eval_set=None):')
+    fit_end   = gpu.find('\n    @property', fit_start + 1)
+    fit_body  = gpu[fit_start:fit_end] if fit_end > fit_start else gpu[fit_start:]
+    check('wrapper.fit() auto-creates eval_set when early_stopping + caller didn\'t pass one',
+          'self._early_stopping and eval_set is None' in fit_body)
+    check('auto-eval-set carves the LAST 10% of rows (time-series-safe, no shuffle)',
+          'X_arr[:-n_val]' in fit_body
+          and 'X_arr[-n_val:]' in fit_body
+          and 'n_val   = max(1, int(round(n_total * 0.10)))' in fit_body)
+    check('sample_weight sliced consistently with X/y',
+          'sw_arr[:-n_val]' in fit_body)
+    check('tiny dataset (<10 train rows after split) disables early_stopping rather than crashing',
+          "self._clf.set_params(early_stopping_rounds=None)" in fit_body)
+    check('comment cites the exact error this fixes',
+          ('Must have at least 1 validation dataset' in gpu
+           or 'at least 1 validation dataset' in gpu))
+
+    # Live smoke test — actually fit a tiny model to confirm no crash.
+    try:
+        import numpy as _np
+        from src.utils.gpu_classifier import make_classifier
+        _np.random.seed(0)
+        X_smoke = _np.random.rand(120, 4).astype(_np.float32)
+        y_smoke = (X_smoke[:, 0] + X_smoke[:, 1] > 1.0).astype(_np.int32)
+        clf = make_classifier(n_estimators=20, max_depth=3, learning_rate=0.1, early_stopping=True)
+        clf.fit(X_smoke, y_smoke)   # would raise pre-fix when GPU backend selected
+        proba = clf.predict_proba(X_smoke[:3])
+        check('smoke test: make_classifier(early_stopping=True).fit() runs without ValueError',
+              proba.shape == (3, 2))
+    except Exception as exc:
+        check(f'smoke test: make_classifier(early_stopping=True).fit() runs (got {type(exc).__name__}: {exc})', False)
+
+    # ── Fix 2: dashboard Backtest column ────────────────────────────────
+    # 2a. Header cell.
+    check('Backtest column header rendered with data-col="backtest_status"',
+          'data-col="backtest_status"' in tpl)
+    check('Backtest header sortable (onclick=trSort)',
+          "onclick=\"trSort('backtest_status')\"" in tpl)
+    check('Backtest header tooltip mentions Phase 94 + distributed sweep',
+          'Phase 94' in tpl
+          and '/api/backtest/distributed' in tpl)
+
+    # 2b. Loading + no-match placeholder colspans bumped 21 → 22.
+    check('placeholder Loading row uses colspan="22" (was 21)',
+          'colspan="22" style="text-align:center;color:#475569;padding:12px">Loading' in tpl)
+    check('"No models match" placeholder uses colspan="22" (was 21)',
+          'colspan="22" style="text-align:center;color:#475569;padding:14px">No models match this filter' in tpl)
+    check('fleet aggregate footer trailing colspan bumped 2 → 3 (Backtest + Description + Action)',
+          'td colspan="3"></td>' in tpl)
+
+    # 2c. Per-row cell renderer.
+    check('row template inserts _btCellRender(m.timeframe) cell',
+          '<td style="text-align:right">${_btCellRender(m.timeframe)}</td>' in tpl)
+
+    # 2d. State + poller.
+    check('_btCellsByTf state object exists',
+          'let _btCellsByTf' in tpl)
+    check('pollBacktestCells fetches /api/backtest/distributed/status',
+          'function pollBacktestCells(' in tpl
+          and "fetch('/api/backtest/distributed/status'" in tpl)
+    check('poller groups cells by timeframe, counts done/running/pending/failed',
+          "g.done++" in tpl
+          and "g.running++" in tpl
+          and "g.pending++" in tpl
+          and "g.failed++" in tpl)
+    check('poller re-renders training table on success',
+          "_renderTrainingTable" in tpl
+          and 'pollBacktestCells' in tpl)
+
+    # 2e. Cell renderer color logic.
+    check('_btCellRender defined',
+          'function _btCellRender(' in tpl)
+    check('cell renderer: red on failed, amber on running/pending, green on all done',
+          "if (g.failed > 0)" in tpl
+          and "} else if (g.running > 0 || g.pending > 0) {" in tpl
+          and "color = '#34d399'" in tpl
+          and "color = '#fbbf24'" in tpl
+          and "color = '#fb7185'" in tpl)
+    check('cell renderer: grey "—" when no cells submitted yet',
+          "if (!g || g.total === 0)" in tpl
+          and "color:#475569" in tpl)
+
+    # 2f. Polling cadence + DOMContentLoaded warm-up.
+    check('poller setInterval at 10_000 ms (matches cluster poll cadence)',
+          "setInterval(() => { if (activeTab === 'monitor' || activeTab === 'strategy') pollBacktestCells(); }, 10_000)" in tpl)
+    check('initial pollBacktestCells fires on DOMContentLoaded (warm-up)',
+          'pollBacktestCells' in tpl
+          and 'DOMContentLoaded' in tpl
+          and 'setTimeout(pollBacktestCells' in tpl)
+
+
 def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
     """Two improvements to keep training and backtest panels coherent:
       P1. /api/pipeline/run goes through the resource scheduler's
@@ -7860,6 +7980,7 @@ def main():
     test_phase92_meta_labeler_regime_dict_shape_tolerance()
     test_phase93_worker_live_load_and_remote_restart()
     test_phase94_distributed_backtest_per_cell()
+    test_phase95_xgb_early_stop_eval_set_fix_and_backtest_column()
 
     if not args.offline:
         test_api(args.url)

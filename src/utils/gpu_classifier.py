@@ -165,12 +165,47 @@ class _XGBClassifierWrapper:
     def fit(self, X, y, sample_weight=None, eval_set=None):
         """Fit. If class_weight='balanced' and caller didn't pass
         sample_weight, compute per-row weights to balance classes —
-        XGBoost has no native class_weight kwarg."""
+        XGBoost has no native class_weight kwarg.
+
+        2026-05-10 fix — XGBoost requires at least one eval_set when
+        early_stopping_rounds is set; otherwise it raises
+        "Must have at least 1 validation dataset for early stopping."
+        sklearn's HistGBT auto-splits internally via validation_fraction;
+        we mirror that here by carving the LAST 10 % of rows off as the
+        validation set when (a) early_stopping=True and (b) the caller
+        didn't supply an eval_set. Last-N (no shuffle) is the safe
+        choice for time-series data, which is what every trainer in
+        this repo passes."""
         if sample_weight is None and self._class_weight == "balanced":
             from sklearn.utils.class_weight import compute_sample_weight
             sample_weight = compute_sample_weight("balanced", y)
         kwargs: dict[str, Any] = {}
-        if sample_weight is not None:
+
+        # Auto-eval-set for early stopping. Only if caller didn't pass one.
+        if self._early_stopping and eval_set is None:
+            import numpy as _np
+            X_arr = _np.asarray(X)
+            y_arr = _np.asarray(y)
+            n_total = len(y_arr)
+            n_val   = max(1, int(round(n_total * 0.10)))
+            if n_total - n_val < 10:
+                # Too few training rows to split sanely — disable
+                # early stopping rather than crash. Better to over-fit
+                # a tiny dataset than to drop the call entirely.
+                self._clf.set_params(early_stopping_rounds=None)
+            else:
+                X_tr, X_val = X_arr[:-n_val], X_arr[-n_val:]
+                y_tr, y_val = y_arr[:-n_val], y_arr[-n_val:]
+                # Also slice sample_weight if present so weights line up.
+                if sample_weight is not None:
+                    sw_arr = _np.asarray(sample_weight)
+                    kwargs["sample_weight"] = sw_arr[:-n_val]
+                eval_set = [(X_val, y_val)]
+                # Replace X, y with the train slice so eval_set is held out.
+                X = X_tr
+                y = y_tr
+
+        if sample_weight is not None and "sample_weight" not in kwargs:
             kwargs["sample_weight"] = sample_weight
         if eval_set is not None:
             kwargs["eval_set"] = eval_set
