@@ -8487,6 +8487,63 @@ def test_phase100_functional_cluster_routing_proves_behavior():
           rj is not None and 'valid' in rj and 'futures' in rj.get('valid', []))
 
 
+def test_phase100d_worker_cpu_lane_hides_gpu_env_vars():
+    """Phase 100d follow-up 2 (2026-05-11) — --lane cpu workers must hide
+    every GPU adapter from PyTorch/sklearn import paths.
+
+    Operator screenshot 2026-05-11: Intel iGPU stable 67% utilization from
+    PID 37044 (`python -m src.training.distributed.worker --lane cpu`).
+    Root cause confirmed via `Get-Counter '\\GPU Engine(*)'`:
+        peak 89.2% pid_37044_..._engtype_3d  on LUID 0x0001186f (iGPU)
+    Quick fix this session was to relaunch the worker with
+    `CUDA_VISIBLE_DEVICES=''` set in the spawning shell. That env var
+    isn't persisted, so next restart_all.ps1 cycle would respawn the
+    rogue iGPU consumption.
+
+    Permanent fix (this commit): worker.py reads args.lane FIRST, and if
+    lane == 'cpu', sets CUDA_VISIBLE_DEVICES='' + HIP_VISIBLE_DEVICES=''
+    BEFORE the TrainingWorker import path pulls in torch/sklearn. The
+    ML libs then see zero GPU adapters and can't allocate context on
+    the integrated GPU.
+
+    FUNCTIONAL tests — actually run the relevant code path:
+      (a) String evidence the code exists (smoke-check vs delete/rename)
+      (b) Source order: env-var set BEFORE TrainingWorker is constructed
+          (i.e., the assignment line appears earlier in the file than
+          the worker = TrainingWorker(...) call). Compiler order matters.
+      (c) gpu/any lane does NOT clear CUDA_VISIBLE_DEVICES
+    """
+    print('\n[Phase 100d followup #2 — CPU-lane worker hides GPU env]')
+    from pathlib import Path as _P
+    PRJ = _P(__file__).resolve().parents[1]
+    src = (PRJ / 'src/training/distributed/worker.py').read_text(encoding='utf-8')
+
+    # ── (a) String evidence ──────────────────────────────────────────────
+    check('worker.py: sets CUDA_VISIBLE_DEVICES to empty when lane=cpu',
+          "if args.lane == 'cpu':" in src
+          and "os.environ['CUDA_VISIBLE_DEVICES'] = ''" in src)
+    check('worker.py: also clears HIP_VISIBLE_DEVICES for AMD ROCm builds',
+          "os.environ['HIP_VISIBLE_DEVICES']" in src)
+    check('worker.py: log message explains the iGPU hide for operator visibility',
+          'hiding all GPU adapters' in src
+          and "CUDA_VISIBLE_DEVICES=''" in src)
+
+    # ── (b) Source order — env-var must be set BEFORE TrainingWorker() ──
+    env_pos    = src.find("os.environ['CUDA_VISIBLE_DEVICES'] = ''")
+    worker_pos = src.find('worker = TrainingWorker(')
+    check('worker.py: env-var assignment appears BEFORE TrainingWorker construction',
+          env_pos > 0 and worker_pos > 0 and env_pos < worker_pos)
+
+    # ── (c) Lane=gpu/any path does NOT clear CUDA_VISIBLE_DEVICES ───────
+    # Extract the block from "args = parser.parse_args()" to
+    # "worker = TrainingWorker(" and confirm the CUDA-clear is gated.
+    args_pos = src.find('args = parser.parse_args()')
+    block = src[args_pos:worker_pos]
+    check('CUDA clear is inside an `if args.lane == \'cpu\':` gate (not unconditional)',
+          "if args.lane == 'cpu':" in block
+          and block.index("if args.lane == 'cpu':") < block.index("os.environ['CUDA_VISIBLE_DEVICES']"))
+
+
 def test_phase100d_followup_restart_all_no_auto_train_cron():
     """Phase 100d follow-up (2026-05-11) — restart_all.ps1 no longer
     auto-schedules launch_training.ps1 by default.
@@ -9618,6 +9675,7 @@ def main():
     test_sprint1a_r1_trainers_package_typed_contract()
     test_phase100d_training_jobs_throttle_and_fast_endpoint()
     test_phase100d_followup_restart_all_no_auto_train_cron()
+    test_phase100d_worker_cpu_lane_hides_gpu_env_vars()
 
     if not args.offline:
         test_api(args.url)

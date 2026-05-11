@@ -963,6 +963,22 @@ def main() -> None:
                              "'gpu' = only gpu/exclusive (tft/oft). 'any' = legacy/default.")
     args = parser.parse_args()
 
+    # 2026-05-11 fix — CPU-lane workers must NOT touch any GPU. Operator
+    # screenshot showed Intel iGPU at 67% from a --lane cpu worker because
+    # PyTorch/sklearn import paths probe ALL visible GPU adapters at boot,
+    # allocating context on the integrated GPU even though all training
+    # work would run on CPU. Hide every CUDA device from a CPU-lane worker
+    # so the imports can't bind any adapter. Must run BEFORE TrainingWorker
+    # imports the heavy ML stack — argparse import is fine here.
+    if args.lane == 'cpu':
+        os.environ['CUDA_VISIBLE_DEVICES'] = ''
+        # Some libs (e.g. older torch builds) also probe MPS/ROCm; clear
+        # those too for completeness. No-op when those env vars aren't read.
+        os.environ['HIP_VISIBLE_DEVICES']  = ''
+        logging.getLogger(__name__).info(
+            "[worker] lane=cpu — hiding all GPU adapters via "
+            "CUDA_VISIBLE_DEVICES='' / HIP_VISIBLE_DEVICES=''")
+
     worker = TrainingWorker(
         master_url=args.master,
         node_id=args.id,
