@@ -55,6 +55,13 @@ WATCHDOG_TIMEOUT_BY_KIND   = {
     "cpu":       60 * 60,                 # CPU model: 60 min hard cap
     "gpu":       120 * 60,                # GPU model: 120 min hard cap
     "exclusive": 180 * 60,                # OFT-class: 180 min hard cap
+    # 2026-05-11 — TFT @ 1h needs ~108 min per epoch at current dataset
+    # size (19077 batches @ 2.94 it/s, observed in worker_razer_gpu.out.log
+    # before watchdog killed a healthy run). The 120-min "gpu" cap can't
+    # accommodate multi-epoch neural training. The "neural" kind gets a
+    # 6-hour budget — paired with the worker-side defensive heartbeat, the
+    # cluster will only kill genuinely-stuck neural trainers.
+    "neural":    6 * 60 * 60,             # TFT / multi-epoch neural: 6h hard cap
 }
 WATCHDOG_DEFAULT_TIMEOUT_S = 60 * 60
 
@@ -172,10 +179,18 @@ class Orchestrator:
             task = self._tasks.get(task_id)
             if not task:
                 return
-            task["status"] = status
             # Watchdog timestamp — refresh on every status update from a
             # worker so stale-task detection knows the trainer is alive.
             task["last_update_at"] = datetime.now(timezone.utc).isoformat()
+            # 2026-05-11 — "heartbeat" is a defensive worker-side signal
+            # that ONLY refreshes the stale-window timer. The task's status,
+            # started_at, assigned_to etc. stay as-is. Used by trainers that
+            # don't naturally call back (e.g. Darts/Lightning's tqdm-only
+            # progress); without this, the 5-min stale gate would mis-fire
+            # on long-running but actively-progressing neural runs.
+            if status == "heartbeat":
+                return
+            task["status"] = status
             if node_id:
                 task["assigned_to"] = node_id
             if result:

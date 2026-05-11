@@ -39,7 +39,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 WORKER_PORT = 7701          # HTTP port this worker listens on
 POLL_SEC    = 10            # how often to poll master for tasks
-HEARTBEAT_SEC = 15          # heartbeat interval
+HEARTBEAT_SEC = 15          # worker-registration heartbeat interval
+# 2026-05-11 — task-level heartbeat. Posts status="heartbeat" to the
+# orchestrator every TASK_HEARTBEAT_S so `last_update_at` stays fresh
+# for the full duration of long-running trainers (Darts/Lightning's TFT
+# reports progress via tqdm only, never calling back natively). The
+# cluster watchdog's 5-min stale-window gate stops mis-firing on
+# actively-progressing neural runs as a result.
+TASK_HEARTBEAT_S = 60
 
 
 # ─── Dependency bootstrap ────────────────────────────────────────────────────
@@ -853,6 +860,24 @@ class TrainingWorker:
             self._current_task = task
 
         self._notify_master("running", task_id)
+        # 2026-05-11 — defensive task heartbeat. Some trainers (Darts/
+        # Lightning's TFT, in particular) report progress only via tqdm to
+        # stdout; they never call back to the orchestrator. The cluster
+        # watchdog uses `last_update_at` to decide "is this task stale",
+        # so a healthy multi-hour neural training looks identical to a
+        # zombie crash. This thread POSTs status="heartbeat" every
+        # TASK_HEARTBEAT_S so `last_update_at` stays fresh for the full
+        # task duration. The orchestrator's update_task() treats
+        # "heartbeat" as a stale-window refresh only (no state change).
+        heartbeat_stop = threading.Event()
+        def _task_heartbeat():
+            while not heartbeat_stop.wait(TASK_HEARTBEAT_S):
+                self._notify_master("heartbeat", task_id)
+        hb_thread = threading.Thread(
+            target=_task_heartbeat, daemon=True,
+            name=f"task-heartbeat-{task_id[:8]}",
+        )
+        hb_thread.start()
         try:
             result = _execute_task(task)
             # 2026-05-11 fix — _execute_task / _invoke_master_trainer catches
@@ -880,6 +905,7 @@ class TrainingWorker:
             self._notify_master("failed", task_id, error=str(exc))
             logger.error("[Worker] Task %s FAILED (exception): %s", task_id, exc)
         finally:
+            heartbeat_stop.set()  # Signal heartbeat to exit; daemon=True will GC.
             with self._lock:
                 self._current_task = None
 

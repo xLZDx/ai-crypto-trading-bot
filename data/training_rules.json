@@ -170,7 +170,7 @@
         "hidden_size": 64,
         "_note": "n_epochs reduced from 30 to 10 after the 8h-per-TF wedge observed 2026-05-09"
       },
-      "resource_kind": "gpu",
+      "resource_kind": "neural",
       "est_minutes_per_run": 80,
       "depends_on": []
     },

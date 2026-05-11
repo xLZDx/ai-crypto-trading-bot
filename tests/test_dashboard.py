@@ -5956,7 +5956,7 @@ def test_phase80_v4_b0_training_rules_registry_and_api():
                   'resource_kind', 'est_minutes_per_run', 'params', 'skip_reason'):
             check(f'  model {k!r} has field {f!r}', f in blk)
         check(f'  model {k!r} resource_kind valid',
-              blk.get('resource_kind') in ('cpu', 'gpu', 'exclusive'))
+              blk.get('resource_kind') in ('cpu', 'gpu', 'exclusive', 'neural'))
 
     # 2. Python API
     import importlib, sys
@@ -8563,6 +8563,226 @@ def test_phase100d_followup_4_xgb_wrapper_is_classifier_and_worker_reports_failu
           and inner_pos < failed_branch < done_call)
 
 
+def test_phase101_neural_kind_plus_task_heartbeat_and_proc_health_cache():
+    """Phase 101 (2026-05-11) — three interlocking fixes for the bug that
+    surfaced tonight: cluster watchdog killed a HEALTHY TFT training run
+    after exactly 120 minutes despite the trainer being at Epoch 0
+    step 18544/19077 (97%) with train_loss decreasing 0.0492 → 0.0395
+    (source: logs/worker_razer_gpu.out.log).
+
+    ROOT CAUSE: Darts/Lightning trainers report progress via tqdm to
+    stdout only — they never call back to the orchestrator. The cluster
+    watchdog uses `task["last_update_at"]` to gate stale-task detection.
+    With no callbacks, `last_update_at == started_at` for the full run.
+    Combined with the 120-min "gpu" lane budget, the watchdog kill
+    condition (elapsed > timeout AND stale > 5min) fired the moment
+    elapsed crossed 120 min — every time, regardless of trainer health.
+
+    Also: dashboard polled /api/pipeline/status every 5-10s; each call
+    triggered a full psutil scan (~3-6s cold on Windows with 18 python
+    processes). Cards stuck in "Loading..." for minutes.
+
+    Three coordinated fixes:
+      F1. orchestrator: new "neural" resource_kind with 6h budget — so
+          even with heartbeats off, multi-epoch neural training fits.
+      F2. orchestrator + worker: defensive task-level heartbeat. Worker
+          posts status="heartbeat" every TASK_HEARTBEAT_S during
+          _run_task. Orchestrator's update_task treats "heartbeat" as a
+          stale-window refresh ONLY (no state change). Stops the
+          watchdog mis-firing on tqdm-only trainers.
+      F3. process_health: TTL cache around the psutil scan so dashboard
+          polling within the cache window costs ~0ms.
+
+    FUNCTIONAL tests — exercise the actual code paths.
+    """
+    print('\n[Phase 101 — neural kind + task heartbeat + process_health cache]')
+    import sys, threading, time as _t, datetime as _dt, importlib
+    from pathlib import Path as _P
+    PRJ = _P(__file__).resolve().parents[1]
+    if str(PRJ) not in sys.path:
+        sys.path.insert(0, str(PRJ))
+
+    # ── F1: orchestrator declares "neural" kind with 6h budget ──────────
+    if 'src.training.distributed.orchestrator' in sys.modules:
+        del sys.modules['src.training.distributed.orchestrator']
+    orch_mod = importlib.import_module('src.training.distributed.orchestrator')
+    budgets = orch_mod.WATCHDOG_TIMEOUT_BY_KIND
+    check('WATCHDOG_TIMEOUT_BY_KIND has "neural" key',
+          'neural' in budgets)
+    check('neural budget == 6h (21600s)',
+          budgets.get('neural') == 6 * 60 * 60)
+    check('cpu/gpu/exclusive budgets preserved unchanged',
+          budgets.get('cpu') == 60 * 60
+          and budgets.get('gpu') == 120 * 60
+          and budgets.get('exclusive') == 180 * 60)
+
+    # ── F1b: training_rules.json wires TFT to "neural" ───────────────────
+    import json as _json
+    rules_path = PRJ / 'data' / 'training_rules.json'
+    with open(rules_path, encoding='utf-8') as f:
+        rules = _json.load(f)
+    tft_kind = rules.get('models', {}).get('tft', {}).get('resource_kind')
+    check('training_rules.json: tft.resource_kind == "neural"',
+          tft_kind == 'neural')
+    # rules.py reads this — verify the public API agrees
+    if 'src.training.training_rules' in sys.modules:
+        del sys.modules['src.training.training_rules']
+    rules_mod = importlib.import_module('src.training.training_rules')
+    check('training_rules.resource_kind("tft") returns "neural"',
+          rules_mod.resource_kind('tft') == 'neural')
+
+    # ── F2: orchestrator update_task with status="heartbeat" only
+    #        refreshes last_update_at; everything else preserved.
+    o = orch_mod.Orchestrator()
+    nid = "test-node-hb"
+    o.register_worker({
+        "node_id": nid, "name": "TEST_HB", "ip": "127.0.0.1",
+        "port": 9997, "hostname": "TEST_HB", "status": "busy",
+        "lane": "gpu", "cuda_available": True, "gpu_vram_gb": 8,
+        "cpu_cores": 4, "ram_gb": 8, "current_task": "",
+    })
+    tid = o.submit_task({"model_type": "tft", "timeframe": "1h",
+                         "symbol": "ALL", "config": {}})
+
+    # Mark the task running with the worker, set started_at way in the
+    # past so we can assert it's NOT clobbered by heartbeat.
+    one_hour_ago = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=1)).isoformat()
+    with o._lock:
+        o._tasks[tid]['status']          = 'running'
+        o._tasks[tid]['assigned_to']     = nid
+        o._tasks[tid]['started_at']      = one_hour_ago
+        o._tasks[tid]['last_update_at']  = one_hour_ago
+        o._workers[nid]['status']        = 'busy'
+        o._workers[nid]['current_task']  = tid
+        # Tag result so we can prove it survives heartbeat:
+        o._tasks[tid]['result'] = {'sentinel': 'pre-heartbeat'}
+
+    # Apply heartbeat
+    o.update_task(tid, 'heartbeat', node_id=nid)
+    with o._lock:
+        post_status = o._tasks[tid].get('status')
+        post_started = o._tasks[tid].get('started_at')
+        post_last_upd = o._tasks[tid].get('last_update_at')
+        post_result = o._tasks[tid].get('result')
+
+    check('heartbeat: task["status"] preserved as "running"',
+          post_status == 'running')
+    check('heartbeat: started_at NOT clobbered (still 1h ago)',
+          post_started == one_hour_ago)
+    check('heartbeat: result dict preserved (no overwrite)',
+          isinstance(post_result, dict) and post_result.get('sentinel') == 'pre-heartbeat')
+    check('heartbeat: last_update_at advanced past the old value',
+          post_last_upd is not None and post_last_upd > one_hour_ago)
+
+    # ── F2b: with heartbeat keeping last_update_at fresh, an
+    #         over-elapsed task is NOT killed by the watchdog.
+    # Simulate: started 3h ago (over neural's 6h cap? no — under it; but
+    # we'll prove the kill-gate uses BOTH conditions even at the gpu cap).
+    # Use "gpu" kind so timeout is 120 min, started 3h ago = over budget.
+    nid2 = "test-node-hb2"
+    o.register_worker({
+        "node_id": nid2, "name": "TEST_HB2", "ip": "127.0.0.2",
+        "port": 9996, "hostname": "TEST_HB2", "status": "busy",
+        "lane": "gpu", "cuda_available": True, "gpu_vram_gb": 8,
+        "cpu_cores": 4, "ram_gb": 8, "current_task": "",
+    })
+    tid2 = o.submit_task({"model_type": "base", "timeframe": "1h",   # cpu kind
+                          "symbol": "ALL", "config": {}})
+    three_hours_ago = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=3)).isoformat()
+    fresh_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    with o._lock:
+        o._tasks[tid2]['status']         = 'running'
+        o._tasks[tid2]['assigned_to']    = nid2
+        o._tasks[tid2]['started_at']     = three_hours_ago
+        o._tasks[tid2]['last_update_at'] = fresh_iso   # heartbeat kept it fresh
+        o._workers[nid2]['status']       = 'busy'
+        o._workers[nid2]['current_task'] = tid2
+
+    o._sweep_stale_tasks()
+    with o._lock:
+        survives = o._tasks[tid2].get('status') == 'running'
+    check('watchdog: actively-heartbeating task survives over-elapsed window',
+          survives)
+
+    # ── F2c: worker source ships TASK_HEARTBEAT_S + heartbeat thread ────
+    worker_src = (PRJ / 'src/training/distributed/worker.py').read_text(encoding='utf-8')
+    check('worker.py: TASK_HEARTBEAT_S constant defined',
+          'TASK_HEARTBEAT_S' in worker_src)
+    check('worker.py: _run_task spawns heartbeat thread',
+          'heartbeat_stop = threading.Event()' in worker_src
+          and 'task-heartbeat-' in worker_src)
+    check('worker.py: heartbeat thread calls _notify_master("heartbeat", ...)',
+          'self._notify_master("heartbeat", task_id)' in worker_src)
+    check('worker.py: heartbeat thread stopped in finally (heartbeat_stop.set())',
+          'heartbeat_stop.set()' in worker_src)
+    # Source order: heartbeat_stop.set() must be in the finally block AFTER
+    # the thread starts. Verify positionally.
+    hb_start = worker_src.find('hb_thread.start()')
+    hb_stop = worker_src.find('heartbeat_stop.set()')
+    check('worker.py: heartbeat starts before finally stops it',
+          hb_start > 0 and hb_stop > 0 and hb_start < hb_stop)
+
+    # ── F3: process_health TTL cache eliminates redundant psutil scans ──
+    if 'src.utils.process_health' in sys.modules:
+        del sys.modules['src.utils.process_health']
+    ph = importlib.import_module('src.utils.process_health')
+    check('process_health exports _snapshot_python_procs', hasattr(ph, '_snapshot_python_procs'))
+    check('process_health exports invalidate_scan_cache', hasattr(ph, 'invalidate_scan_cache'))
+    check('process_health._SCAN_TTL_S > 0 by default', ph._SCAN_TTL_S > 0)
+
+    # FUNCTIONAL — monkey-patch _iter_python_procs to count invocations.
+    call_count = {'n': 0}
+    fake_procs = [(1234, 'python -m src.foo', 100_000_000),
+                  (5678, 'python -m src.bar',  50_000_000)]
+    def _fake_iter():
+        call_count['n'] += 1
+        for row in fake_procs:
+            yield row
+    ph.invalidate_scan_cache()  # start clean
+    orig_iter = ph._iter_python_procs
+    try:
+        ph._iter_python_procs = _fake_iter
+        # First call MUST hit the scan
+        s1 = ph._snapshot_python_procs()
+        # Subsequent calls within TTL MUST be served from cache
+        s2 = ph._snapshot_python_procs()
+        s3 = ph._snapshot_python_procs()
+    finally:
+        ph._iter_python_procs = orig_iter
+    check('first scan invokes _iter_python_procs once',
+          call_count['n'] == 1)
+    check('subsequent scans within TTL serve from cache (no extra invocations)',
+          call_count['n'] == 1)
+    check('cached snapshots equal across calls (same list of tuples)',
+          s1 == s2 == s3 == fake_procs)
+
+    # invalidate_scan_cache forces a fresh scan on next call
+    call_count['n'] = 0
+    try:
+        ph._iter_python_procs = _fake_iter
+        ph.invalidate_scan_cache()
+        _ = ph._snapshot_python_procs()
+    finally:
+        ph._iter_python_procs = orig_iter
+    check('invalidate_scan_cache forces re-scan on next call',
+          call_count['n'] == 1)
+
+    # find_process / all_known_processes both go through the cache —
+    # prove by invoking them and confirming they don't re-scan.
+    ph.invalidate_scan_cache()
+    call_count['n'] = 0
+    try:
+        ph._iter_python_procs = _fake_iter
+        ph.find_process(ph.KIND_BOT)             # primes cache, scan #1
+        ph.find_process(ph.KIND_DASH)            # served from cache
+        ph.all_known_processes()                  # served from cache
+        ph.find_process(ph.KIND_TRAIN_ORCH)      # served from cache
+    finally:
+        ph._iter_python_procs = orig_iter
+    check('find_process + all_known_processes share the cache (1 scan for 4 calls)',
+          call_count['n'] == 1)
+
+
 def test_phase100d_followup_3_training_jobs_lock_is_rlock():
     """Phase 100d follow-up 3 (2026-05-11) — _training_jobs_lock must be
     RLock (reentrant), not Lock.
@@ -9860,6 +10080,7 @@ def main():
     test_phase100d_worker_cpu_lane_hides_gpu_env_vars()
     test_phase100d_followup_3_training_jobs_lock_is_rlock()
     test_phase100d_followup_4_xgb_wrapper_is_classifier_and_worker_reports_failure()
+    test_phase101_neural_kind_plus_task_heartbeat_and_proc_health_cache()
 
     if not args.offline:
         test_api(args.url)

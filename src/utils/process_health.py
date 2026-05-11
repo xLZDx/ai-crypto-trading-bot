@@ -39,11 +39,25 @@ Contract
 from __future__ import annotations
 
 import logging
+import os
 import re
+import threading
+import time
 from dataclasses import dataclass
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# 2026-05-11 — TTL cache for the psutil scan. On Windows, iterating every
+# python process and calling memory_info() per process is expensive
+# (~150-300ms per process × ~20 procs = 3-6s cold). The dashboard polls
+# /api/pipeline/status, /api/monitor/health, /api/state and friends every
+# 5-10s, all sharing this code path. Without a cache the dashboard pegs
+# itself; with a 10s TTL most polls cost ~0ms.
+# Override via PROCESS_HEALTH_TTL_S env var (set 0 to disable).
+_SCAN_TTL_S = float(os.environ.get("PROCESS_HEALTH_TTL_S", "10"))
+_scan_lock  = threading.Lock()
+_scan_cache: tuple[float, list[tuple[int, str, int]]] = (0.0, [])
 
 # ── Service kinds (canonical names — used as keys everywhere) ──────────
 KIND_BOT              = "bot"
@@ -87,6 +101,33 @@ class ProcessInfo:
         return self.rss_bytes / (1024 * 1024)
 
 
+def _snapshot_python_procs() -> list[tuple[int, str, int]]:
+    """Return a cached (PID, cmdline, rss) snapshot of running python procs.
+    The underlying psutil scan refreshes only when older than _SCAN_TTL_S.
+    Eliminates redundant scans inside the same dashboard poll window."""
+    global _scan_cache
+    if _SCAN_TTL_S > 0:
+        now = time.monotonic()
+        with _scan_lock:
+            ts, cached = _scan_cache
+            if now - ts < _SCAN_TTL_S:
+                return cached
+    fresh = list(_iter_python_procs())
+    if _SCAN_TTL_S > 0:
+        with _scan_lock:
+            _scan_cache = (time.monotonic(), fresh)
+    return fresh
+
+
+def invalidate_scan_cache() -> None:
+    """Drop the cached snapshot. Use after a process is known to have
+    started or died (e.g. immediately after taskkill) so the next
+    find_process()/all_known_processes() returns fresh data."""
+    global _scan_cache
+    with _scan_lock:
+        _scan_cache = (0.0, [])
+
+
 def _iter_python_procs():
     """Yield (pid, cmdline_str, rss_bytes) for every running python.exe.
     Single-pass — callers should iterate this once and dispatch, not call
@@ -124,7 +165,7 @@ def find_process(kind: str) -> Optional[ProcessInfo]:
     if pat is None:
         raise ValueError(f"Unknown process kind: {kind!r}")
     best: Optional[ProcessInfo] = None
-    for pid, cmdline, rss in _iter_python_procs():
+    for pid, cmdline, rss in _snapshot_python_procs():
         if pat.search(cmdline):
             if best is None or rss > best.rss_bytes:
                 best = ProcessInfo(pid=pid, rss_bytes=rss, cmdline=cmdline)
@@ -139,7 +180,7 @@ def all_known_processes() -> dict[str, Optional[ProcessInfo]]:
     is the highest-RSS match, or None.
     """
     best: dict[str, Optional[ProcessInfo]] = {k: None for k in _PATTERNS}
-    for pid, cmdline, rss in _iter_python_procs():
+    for pid, cmdline, rss in _snapshot_python_procs():
         for kind, pat in _PATTERNS.items():
             if pat.search(cmdline):
                 cur = best[kind]
