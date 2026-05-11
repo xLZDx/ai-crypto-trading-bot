@@ -155,6 +155,19 @@ Total functional test additions through Sprint 1a R1 Step 1: 160+ assertions, al
 - `/api/training/scheduler` endpoint (replaced by `/api/cluster/status`)
 - `_run_trainer_blocking` (once env-var rollback escape hatch is retired)
 
+### Sprint 1a R1 Step 2 — migrate dispatch maps to `TRAINER_REGISTRY`
+**Goal:** Today 3 files duplicate the model_key → train fn dispatch (`src/dashboard/app.py:_TRAINER_DISPATCH`, `src/engine/train_all_models.py:_train_all_inner`, `src/training/distributed/worker.py:handlers`). Sprint 1a R1 Step 2 collapses them to one canonical map — `src.engine.trainers.TRAINER_REGISTRY` shipped in Step 1.
+**Why deferred from tonight's session:** worker.py handlers do worker-side setup (chdir to PROJECT_ROOT, then call the master trainer) before invoking the trainer fn. The migration needs careful adapter logic + live workers to verify the routing actually still works end-to-end. Operator was asleep; safer to do this when they can watch the dashboard render through a manual ▶ Train cycle.
+**Files:** add `CLUSTER_TO_DASHBOARD_KEY` reverse map in `trainers/__init__.py`; worker.py handlers use it to look up the registry train fn. Backward-compatible (old handler functions kept as wrappers around the registry lookup).
+**Tests:** functional — assert worker handler invokes the registry-mapped train fn, asserted via a mock; cross-check `_TRAINER_DISPATCH.keys() == TRAINER_REGISTRY.keys()`.
+
+### Sprint 1a R2 — KPI gate + auto-retire
+**Goal:** Every training run produces a `TrainingResult` (already typed in Step 1). KPI thresholds in `data/training_rules.json` (new `kpi_threshold` block per model). 3 consecutive misses → registry flag `kpi_retired=true`. Operator restores via `/api/registry/<key>/restore`.
+**Pre-req:** Backtest-result → `TrainingResult` hook so wf_sharpe / wf_calmar / wf_max_dd / etc. actually populate from observed BT runs (today these stay None).
+
+### Sprint 1a R3 — Granular comparison dashboard
+**Goal:** New "Model Comparison" tab with sortable KPI grid, drill-down, Promote/Retire/Restore buttons. Same template re-used for Strategy and Combo comparisons. Reads `data/training_runs/<model>__<tf>.parquet` rows (TrainingResult.to_dict() persisted by Step 2's hook).
+
 ### Phase 99 — banner-monitoring respawn agent
 **Decisions locked** in `memory/project_debug_orchestrator_decisions.md`:
 - Recipes file: `data/process_recipes.json`
