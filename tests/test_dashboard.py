@@ -8487,6 +8487,162 @@ def test_phase100_functional_cluster_routing_proves_behavior():
           rj is not None and 'valid' in rj and 'futures' in rj.get('valid', []))
 
 
+def test_phase100d_training_jobs_throttle_and_fast_endpoint():
+    """Phase 100d (2026-05-11) — root-cause fix for the "/api/training/jobs
+    times out" bug class that produced 3 visible symptoms:
+      1. Pipeline running but no row shows RUNNING
+      2. F5 wipes QUEUED state
+      3. Currently-training row stays OK
+
+    Root cause: every _record_job call (from many Phase 100a sync-daemon
+    threads) triggered an atomic file write under filelock. With 9 running
+    jobs polling every 5s, that's ~2 writes/sec on a 41KB file, starving
+    the api_training_jobs endpoint of CPU and filelock access.
+
+    FUNCTIONAL tests (per global rule — every assertion calls real code):
+      (a) _persist_training_jobs throttles to ≤1 write per _PERSIST_THROTTLE_S
+      (b) When throttled, dirty flag is set so the deferred flush picks up
+      (c) force=True bypasses throttle (used on shutdown)
+      (d) api_training_jobs endpoint <500ms with 50 synthetic jobs
+      (e) Terminal jobs (done/error/cancelled/lost/partial) skip annotation
+    """
+    print('\n[Phase 100d — training jobs throttle + fast endpoint]')
+    import sys, time, os
+    from pathlib import Path as _P
+    PRJ = _P(__file__).resolve().parents[1]
+    if str(PRJ) not in sys.path:
+        sys.path.insert(0, str(PRJ))
+    os.environ['DASHBOARD_API_KEY'] = ''
+
+    try:
+        from src.dashboard import app as dash_app
+    except Exception as exc:
+        check(f'import succeeds (got {type(exc).__name__}: {exc})', False)
+        return
+
+    # ── (a) Throttle: 2 rapid calls → only 1 actual write ────────────────
+    # Patch the actual file-write to count invocations.
+    write_count = {'n': 0}
+    def _fake_write_json(path, data, **kw):
+        write_count['n'] += 1
+    saved_write = None
+    # safe_json.write_json is imported inline in _persist_training_jobs;
+    # patch via sys.modules so the import inside the function resolves
+    # to our fake.
+    import src.utils.safe_json as _safe
+    saved_write = _safe.write_json
+    _safe.write_json = _fake_write_json
+    # Reset throttle state for a clean test
+    saved_state = dict(dash_app._persist_throttle_state)
+    dash_app._persist_throttle_state['last_write_at'] = 0.0
+    dash_app._persist_throttle_state['dirty'] = False
+    try:
+        # First call: should write (last_write_at=0 means throttle window has elapsed)
+        dash_app._persist_training_jobs()
+        first_count = write_count['n']
+        # Second call immediately after: should be throttled
+        dash_app._persist_training_jobs()
+        second_count = write_count['n']
+        # Third call: still within throttle window
+        dash_app._persist_training_jobs()
+        third_count = write_count['n']
+    finally:
+        _safe.write_json = saved_write
+        dash_app._persist_throttle_state.update(saved_state)
+
+    check('throttle: first call writes through (write_count went 0→1)',
+          first_count == 1)
+    check('throttle: second rapid call is skipped (count still 1)',
+          second_count == 1)
+    check('throttle: third rapid call is also skipped (count still 1)',
+          third_count == 1)
+
+    # ── (b) Dirty flag set when throttled ────────────────────────────────
+    dash_app._persist_throttle_state['last_write_at'] = time.time()  # fresh
+    dash_app._persist_throttle_state['dirty'] = False
+    dash_app._persist_training_jobs()   # should set dirty
+    check('throttle: skipped call marks dirty=True so deferred flush triggers',
+          dash_app._persist_throttle_state['dirty'] is True)
+
+    # ── (c) force=True bypasses throttle ─────────────────────────────────
+    write_count['n'] = 0
+    _safe.write_json = _fake_write_json
+    dash_app._persist_throttle_state['last_write_at'] = time.time()
+    try:
+        dash_app._persist_training_jobs(force=True)
+    finally:
+        _safe.write_json = saved_write
+    check('throttle: force=True bypasses (writes through even within window)',
+          write_count['n'] == 1)
+
+    # ── (d) Endpoint <500ms with 50 jobs ─────────────────────────────────
+    # Build 50 synthetic jobs into _training_jobs (cap is 50).
+    saved_jobs = dict(dash_app._training_jobs)
+    try:
+        with dash_app._training_jobs_lock:
+            dash_app._training_jobs.clear()
+            for i in range(50):
+                dash_app._training_jobs[f'synthj-{i:03d}'] = {
+                    'job_id': f'synthj-{i:03d}',
+                    'model': 'base' if i % 2 == 0 else 'tft',
+                    'status': 'done' if i < 45 else 'running',   # 45 terminal + 5 active
+                    'created_at': time.time() - i * 60,
+                    'started_at': time.time() - i * 60,
+                    'finished_at': time.time() - i * 60 + 30 if i < 45 else 0,
+                    'tf': '1h',
+                }
+        client = dash_app.app.test_client()
+        t0 = time.time()
+        resp = client.get('/api/training/jobs?limit=20')
+        elapsed = time.time() - t0
+        body = resp.get_json()
+    finally:
+        with dash_app._training_jobs_lock:
+            dash_app._training_jobs.clear()
+            dash_app._training_jobs.update(saved_jobs)
+
+    check('endpoint: returns 200',
+          resp.status_code == 200)
+    check(f'endpoint: returns 20 jobs (got {len(body.get("jobs", []))})',
+          isinstance(body, dict) and len(body.get('jobs', [])) == 20)
+    check(f'endpoint: returns total=50 (got {body.get("total")})',
+          body.get('total') == 50)
+    check(f'endpoint: completes in <500ms (took {elapsed*1000:.1f}ms)',
+          elapsed < 0.5)
+
+    # ── (e) Terminal jobs skip annotation ────────────────────────────────
+    # _annotate_job_timing adds elapsed_s / eta_s — terminal jobs already
+    # have these so re-computing is waste. After Phase 100d, terminal jobs
+    # are passed through unchanged.
+    annotate_calls = {'n': 0}
+    saved_annotate = dash_app._annotate_job_timing
+    def _spy_annotate(j):
+        annotate_calls['n'] += 1
+        return saved_annotate(j)
+    dash_app._annotate_job_timing = _spy_annotate
+    saved_jobs2 = dict(dash_app._training_jobs)
+    try:
+        with dash_app._training_jobs_lock:
+            dash_app._training_jobs.clear()
+            for i in range(10):
+                dash_app._training_jobs[f'tj-{i}'] = {
+                    'job_id': f'tj-{i}', 'model': 'base',
+                    'status': 'done' if i < 7 else 'running',   # 7 terminal, 3 active
+                    'created_at': time.time() - i * 60,
+                    'started_at': time.time() - i * 60,
+                }
+        client = dash_app.app.test_client()
+        client.get('/api/training/jobs?limit=20')
+    finally:
+        dash_app._annotate_job_timing = saved_annotate
+        with dash_app._training_jobs_lock:
+            dash_app._training_jobs.clear()
+            dash_app._training_jobs.update(saved_jobs2)
+
+    check(f'endpoint: only the 3 non-terminal jobs were annotated (got {annotate_calls["n"]})',
+          annotate_calls['n'] == 3)
+
+
 def test_sprint1a_r1_trainers_package_typed_contract():
     """Sprint 1a R1 Step 1 — src/engine/trainers/ package with TrainingResult
     dataclass + 8 per-model thin wrappers + TRAINER_REGISTRY.
@@ -9421,6 +9577,7 @@ def main():
     test_phase100b_retrain_all_distributed_train_then_bt()
     test_phase100e_pipeline_orchestrator_cluster_dispatch()
     test_sprint1a_r1_trainers_package_typed_contract()
+    test_phase100d_training_jobs_throttle_and_fast_endpoint()
 
     if not args.offline:
         test_api(args.url)

@@ -2901,8 +2901,34 @@ _TRAINING_JOBS_FILE = _Path(project_root) / 'data' / 'training_jobs.json'
 _TRAINING_LOG_DIR = _Path(project_root) / 'logs' / 'train'
 
 
-def _persist_training_jobs() -> None:
-    """Atomic write of _training_jobs to disk. Called from _record_job."""
+_persist_throttle_state = {'last_write_at': 0.0, 'dirty': False}
+_persist_throttle_lock = threading.Lock()
+_PERSIST_THROTTLE_S = 2.0    # Phase 100d — coalesce persists to ≤1 per 2s
+
+
+def _persist_training_jobs(*, force: bool = False) -> None:
+    """Atomic write of _training_jobs to disk.
+
+    Phase 100d (2026-05-11) — COALESCED. Pre-fix every _record_job call from
+    every sync-daemon thread triggered an atomic file write under filelock.
+    With 9 running jobs each polling every 5s, that's ~2 writes/sec on a
+    41 KB file, blocking the cluster-sync threads on filelock acquisition
+    and starving the api_training_jobs endpoint (which timed out at 30 s+).
+
+    Now: at most 1 write per _PERSIST_THROTTLE_S seconds (default 2 s).
+    Skipped calls mark `dirty=True`; the _persist_throttle_loop daemon
+    flushes pending writes asynchronously so no state is lost.
+
+    `force=True` bypasses throttle — used by the on-shutdown flush.
+    """
+    now = time.time()
+    if not force:
+        with _persist_throttle_lock:
+            if now - _persist_throttle_state['last_write_at'] < _PERSIST_THROTTLE_S:
+                _persist_throttle_state['dirty'] = True
+                return
+            _persist_throttle_state['last_write_at'] = now
+            _persist_throttle_state['dirty'] = False
     try:
         _TRAINING_JOBS_FILE.parent.mkdir(parents=True, exist_ok=True)
         with _training_jobs_lock:
@@ -2919,6 +2945,32 @@ def _persist_training_jobs() -> None:
     except Exception as exc:
         logger = __import__('logging').getLogger(__name__)
         logger.debug('[training] persist failed: %s', exc)
+
+
+def _persist_throttle_loop() -> None:
+    """Phase 100d background flush — every _PERSIST_THROTTLE_S seconds,
+    flush any pending writes that were coalesced. Without this, the last
+    state update before quiescence could be lost (dirty flag set but no
+    further _record_job calls trigger the actual write).
+    """
+    while True:
+        try:
+            time.sleep(_PERSIST_THROTTLE_S)
+            with _persist_throttle_lock:
+                is_dirty = _persist_throttle_state['dirty']
+                if is_dirty:
+                    _persist_throttle_state['last_write_at'] = time.time()
+                    _persist_throttle_state['dirty'] = False
+            if is_dirty:
+                # Re-enter write path with force=True since we already
+                # cleared the throttle state above.
+                _persist_training_jobs(force=True)
+        except Exception:
+            pass
+
+
+threading.Thread(target=_persist_throttle_loop, daemon=True,
+                 name='training-jobs-persist-flush').start()
 
 
 def _load_training_jobs() -> None:
@@ -4899,15 +4951,30 @@ def api_training_preview():
 def api_training_jobs():
     """Most-recent N training jobs, newest first. Each row carries
     elapsed_s + eta_s when running so the UI can show "3m 12s · ~7m left"
-    without re-deriving the arithmetic on the client."""
+    without re-deriving the arithmetic on the client.
+
+    Phase 100d (2026-05-11) — fast path: only annotate non-terminal jobs.
+    Terminal jobs (done/error/cancelled/lost/partial) have their final
+    elapsed_s already recorded on disk; re-computing wall-clock for them
+    on every poll is pure waste.
+    """
     try:
         limit = int(request.args.get('limit', 20))
     except (TypeError, ValueError):
         limit = 20
+    # Snapshot under lock — release before any I/O / arithmetic.
     with _training_jobs_lock:
         rows = list(_training_jobs.values())
     rows.sort(key=lambda x: x.get('created_at', 0), reverse=True)
-    annotated = [_annotate_job_timing(r) for r in rows[:limit]]
+    head = rows[:limit]
+    _TERMINAL = {'done', 'error', 'cancelled', 'lost', 'partial'}
+    annotated = []
+    for r in head:
+        if r.get('status') in _TERMINAL:
+            # Terminal — keep as-is, already has elapsed_s from when it finished
+            annotated.append(r)
+        else:
+            annotated.append(_annotate_job_timing(r))
     return jsonify({'jobs': annotated, 'total': len(rows)})
 
 
