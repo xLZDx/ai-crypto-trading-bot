@@ -134,9 +134,10 @@ Adding a future worker = register via `POST /api/cluster/register` from that mac
 | **100a** | `345bebb` | 2026-05-11 | Manual ▶ Train per-row routes to cluster. Operator can stack manual clicks; cluster serializes per worker, parallelizes across workers. `AI_TRADER_LOCAL_TRAINING=1` = legacy rollback. |
 | **100 functional tests** | `6c4dce8` | 2026-05-11 | Refactored sync into pure `_aggregate_cluster_task_statuses` for testability. 41 functional assertions (call the code, not string-match). Codified "Functional Tests Prove Behavior" rule globally. |
 | **100b** | `91d4b20` | 2026-05-11 | Retrain ALL routes through cluster. Parallel cells, sequential train→BT per cell. Pure `_retrain_all_step` extracted. 40+ functional assertions. |
-| **100e** | *(pending commit)* | 2026-05-11 | Auto pipeline_orchestrator routes through cluster. Workers (Ivan + Razer) finally get tasks instead of staying idle. `AI_TRADER_PIPELINE_LOCAL=1` = emergency rollback. 25 functional assertions. |
+| **100e** | `9305ce2` | 2026-05-11 | Auto pipeline_orchestrator routes through cluster. Workers (Ivan + Razer) finally get tasks instead of staying idle. `AI_TRADER_PIPELINE_LOCAL=1` = emergency rollback. 25 functional assertions. |
+| **Sprint 1a R1 Step 1** | *(pending commit)* | 2026-05-11 | `src/engine/trainers/` package: `TrainingResult` dataclass + `_common.run_trainer` helper + 8 per-model thin wrappers + `TRAINER_REGISTRY` single-source-of-truth dispatch map. Functional tests (33 assertions). KEY FINDING: per-model files already existed (src/engine/train_*_model.py); R1's actual deliverable is the typed contract (foundation for R2 KPI gate + R3 comparison dashboard). |
 
-Total functional test additions through Phase 100e: 130+ assertions, all proving observable behavior.
+Total functional test additions through Sprint 1a R1 Step 1: 160+ assertions, all proving observable behavior.
 
 ---
 

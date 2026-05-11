@@ -8487,6 +8487,146 @@ def test_phase100_functional_cluster_routing_proves_behavior():
           rj is not None and 'valid' in rj and 'futures' in rj.get('valid', []))
 
 
+def test_sprint1a_r1_trainers_package_typed_contract():
+    """Sprint 1a R1 Step 1 — src/engine/trainers/ package with TrainingResult
+    dataclass + 8 per-model thin wrappers + TRAINER_REGISTRY.
+
+    FUNCTIONAL tests (every assertion calls real code):
+      (a) TrainingResult dataclass shape + .ok property + .to_dict()
+      (b) _common.run_trainer happy path — mocked train_fn + mocked meta
+          returns a populated TrainingResult
+      (c) _common.run_trainer failure path — train_fn raises; result has
+          .error populated, .ok==False, .elapsed_s > 0, traceback in extras
+      (d) Every wrapper module exists and exposes a `train` callable
+      (e) TRAINER_REGISTRY maps all 8 dashboard model_keys to train fns
+    """
+    print('\n[Sprint 1a R1 Step 1 — trainers package + TrainingResult contract]')
+    import sys, time
+    from pathlib import Path as _P
+    PRJ = _P(__file__).resolve().parents[1]
+    if str(PRJ) not in sys.path:
+        sys.path.insert(0, str(PRJ))
+
+    try:
+        from src.engine.trainers import (
+            TrainingResult, TRAINER_REGISTRY,
+            train_base, train_trend, train_futures, train_scalping,
+            train_meta, train_tft, train_oft, train_regime,
+        )
+        from src.engine.trainers import _common
+    except Exception as exc:
+        check(f'import trainers package (got {type(exc).__name__}: {exc})', False)
+        return
+
+    # ── (a) TrainingResult dataclass ─────────────────────────────────────
+    r = TrainingResult(model_key='base', tf='1h')
+    check('TrainingResult constructs with required model_key + tf',
+          r.model_key == 'base' and r.tf == '1h')
+    check('TrainingResult.symbol defaults to BTC/USDT',
+          r.symbol == 'BTC/USDT')
+    check('TrainingResult.ok == True when no error and not cancelled',
+          r.ok is True)
+    r2 = TrainingResult(model_key='tft', tf='15m', error='boom')
+    check('TrainingResult.ok == False when error is set',
+          r2.ok is False)
+    r3 = TrainingResult(model_key='tft', tf='15m', cancelled=True)
+    check('TrainingResult.ok == False when cancelled',
+          r3.ok is False)
+    d = r.to_dict()
+    check('to_dict() returns dict with model_key + tf',
+          isinstance(d, dict) and d['model_key'] == 'base' and d['tf'] == '1h')
+    check('to_dict() drops empty extras key',
+          'extras' not in d)
+    r4 = TrainingResult(model_key='base', tf='1h', extras={'foo': 'bar'})
+    check('to_dict() keeps non-empty extras',
+          'extras' in r4.to_dict() and r4.to_dict()['extras'] == {'foo': 'bar'})
+
+    # ── (b) _common.run_trainer happy path ──────────────────────────────
+    calls = []
+    def _fake_train_ok(timeframe, **kw):
+        calls.append({'tf': timeframe, **kw})
+        # Simulate a quick run
+        time.sleep(0.01)
+
+    saved_read_meta = _common._read_meta
+    _common._read_meta = lambda mk, tf: {
+        'n_samples': 12345, 'n_features': 17, 'n_iterations': 400,
+        'accuracy': 0.514, 'walk_forward_mean_acc': 0.508,
+        'long_accuracy': 50.1, 'short_accuracy': 51.2, 'auc_roc': 0.572,
+    }
+    try:
+        result = _common.run_trainer('base', '1h', symbol='BTC/USDT',
+                                       train_fn=_fake_train_ok)
+    finally:
+        _common._read_meta = saved_read_meta
+
+    check('run_trainer happy: returns TrainingResult instance',
+          isinstance(result, TrainingResult))
+    check('run_trainer happy: train_fn was called with timeframe=tf',
+          len(calls) == 1 and calls[0]['tf'] == '1h')
+    check('run_trainer happy: result.ok == True',
+          result.ok is True)
+    check('run_trainer happy: started_at < finished_at and elapsed_s > 0',
+          result.started_at > 0 and result.finished_at >= result.started_at
+          and result.elapsed_s > 0)
+    check('run_trainer happy: meta-derived fields populated',
+          result.n_samples == 12345 and result.n_features == 17
+          and result.n_iterations == 400)
+    check('run_trainer happy: accuracy fields normalized to percent',
+          result.test_acc == 51.4 and result.wf_acc == 50.8)
+    check('run_trainer happy: long_acc/short_acc as-is when already percent',
+          result.long_acc == 50.1 and result.short_acc == 51.2)
+    check('run_trainer happy: auc_roc kept raw (not pct-normalized)',
+          result.auc_roc == 0.572)
+
+    # ── (c) run_trainer failure path ─────────────────────────────────────
+    def _fake_train_boom(timeframe, **kw):
+        raise ValueError('synthetic failure for test')
+    result_err = _common.run_trainer('trend', '4h', symbol='BTC/USDT',
+                                       train_fn=_fake_train_boom)
+    check('run_trainer fail: result.ok == False',
+          result_err.ok is False)
+    check('run_trainer fail: result.error captures exception',
+          result_err.error is not None
+          and 'ValueError' in result_err.error
+          and 'synthetic failure' in result_err.error)
+    check('run_trainer fail: traceback captured in extras',
+          'traceback_tail' in result_err.extras)
+    check('run_trainer fail: timing recorded (finished_at >= started_at, elapsed_s >= 0)',
+          # round(elapsed_s, 2) can be 0.0 when failure raises in <10ms; the
+          # important invariant is the finally block ran (both timestamps set).
+          result_err.elapsed_s is not None and result_err.elapsed_s >= 0
+          and result_err.finished_at >= result_err.started_at)
+    check('run_trainer fail: started_at + finished_at both set',
+          result_err.started_at > 0 and result_err.finished_at > 0)
+
+    # ── (d) Every wrapper module exposes a `train` callable ──────────────
+    for mod, name in [
+        (train_base,     'train_base'),
+        (train_trend,    'train_trend'),
+        (train_futures,  'train_futures'),
+        (train_scalping, 'train_scalping'),
+        (train_meta,     'train_meta'),
+        (train_tft,      'train_tft'),
+        (train_oft,      'train_oft'),
+        (train_regime,   'train_regime'),
+    ]:
+        check(f'{name}.train is callable',
+              hasattr(mod, 'train') and callable(mod.train))
+
+    # ── (e) TRAINER_REGISTRY covers all 8 dashboard model_keys ───────────
+    expected_keys = {'base', 'trend', 'futures', 'scalping',
+                      'meta', 'tft', 'oft', 'regime'}
+    check('TRAINER_REGISTRY has all 8 keys',
+          set(TRAINER_REGISTRY.keys()) == expected_keys)
+    check('TRAINER_REGISTRY values are callables',
+          all(callable(fn) for fn in TRAINER_REGISTRY.values()))
+    check('TRAINER_REGISTRY["base"] is train_base.train',
+          TRAINER_REGISTRY['base'] is train_base.train)
+    check('TRAINER_REGISTRY["tft"] is train_tft.train',
+          TRAINER_REGISTRY['tft'] is train_tft.train)
+
+
 def test_phase100e_pipeline_orchestrator_cluster_dispatch():
     """Phase 100e — pipeline_orchestrator routes through cluster (was
     calling train_all() in-process, which left Ivan + Razer workers idle).
@@ -9280,6 +9420,7 @@ def main():
     test_phase100_functional_cluster_routing_proves_behavior()
     test_phase100b_retrain_all_distributed_train_then_bt()
     test_phase100e_pipeline_orchestrator_cluster_dispatch()
+    test_sprint1a_r1_trainers_package_typed_contract()
 
     if not args.offline:
         test_api(args.url)
