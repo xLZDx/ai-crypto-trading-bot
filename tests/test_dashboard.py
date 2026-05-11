@@ -8487,6 +8487,45 @@ def test_phase100_functional_cluster_routing_proves_behavior():
           rj is not None and 'valid' in rj and 'futures' in rj.get('valid', []))
 
 
+def test_phase100d_followup_restart_all_no_auto_train_cron():
+    """Phase 100d follow-up (2026-05-11) — restart_all.ps1 no longer
+    auto-schedules launch_training.ps1 by default.
+
+    Operator screenshot 2026-05-11: GPU at 78% / 72°C while cluster
+    reported "GPU lane idle". Root cause: restart_all.ps1's Step 4
+    detached-spawned launch_training.ps1 to run train_all_models.py
+    directly as a subprocess every restart. That subprocess uses
+    GPU/CPU directly, completely outside the cluster's worker
+    routing (Phase 100a/b/e), so cluster's status says "idle"
+    while real hardware is busy.
+
+    Fix: gate the schedule on $env:AI_TRADER_AUTO_TRAIN. Default
+    (env var unset or != '1') = skip the cron entirely. All training
+    paths now route through the cluster. Override stays available
+    for emergency rollback.
+
+    Tests assert on the actual restart_all.ps1 file contents:
+    """
+    print('\n[Phase 100d follow-up — restart_all skips auto-train cron]')
+    from pathlib import Path as _P
+    PRJ = _P(__file__).resolve().parents[1]
+    restart_script = (PRJ / 'restart_all.ps1').read_text(encoding='utf-8')
+
+    check('restart_all.ps1: auto-train cron gated on AI_TRADER_AUTO_TRAIN env var',
+          "if ($env:AI_TRADER_AUTO_TRAIN -eq '1')" in restart_script)
+    check('restart_all.ps1: default branch SKIPS legacy launch_training.ps1 scheduling',
+          'Training auto-schedule SKIPPED (cluster handles all training)'
+          in restart_script)
+    check('restart_all.ps1: rationale comment cites Phase 100a/b/e cluster routing',
+          'Phase 100a' in restart_script
+          and 'Phase 100b' in restart_script
+          and 'Phase 100e' in restart_script)
+    check('restart_all.ps1: AI_TRADER_AUTO_TRAIN=1 override branch present',
+          'AI_TRADER_AUTO_TRAIN=1 — scheduling legacy launch_training.ps1' in restart_script)
+    check('restart_all.ps1: clear operator-facing message about how to trigger training',
+          'Trigger training via dashboard' in restart_script)
+
+
 def test_phase100d_training_jobs_throttle_and_fast_endpoint():
     """Phase 100d (2026-05-11) — root-cause fix for the "/api/training/jobs
     times out" bug class that produced 3 visible symptoms:
@@ -9578,6 +9617,7 @@ def main():
     test_phase100e_pipeline_orchestrator_cluster_dispatch()
     test_sprint1a_r1_trainers_package_typed_contract()
     test_phase100d_training_jobs_throttle_and_fast_endpoint()
+    test_phase100d_followup_restart_all_no_auto_train_cron()
 
     if not args.offline:
         test_api(args.url)

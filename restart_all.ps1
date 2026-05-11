@@ -216,23 +216,43 @@ $procMonitor = Start-Window -Label 'Monitor' -ScriptFile (Join-Path $root 'launc
 Start-Sleep -Seconds 3
 Write-Host "[0/6] Monitor launched." -ForegroundColor Green
 
-# Step 4: ML Training - deferred 10 minutes after restart so the bot stabilises first
+# Step 4: ML Training scheduling
+# Phase 100d follow-up (2026-05-11) — DISABLED by default. Pre-fix this
+# scheduled launch_training.ps1 to run train_all_models.py directly as a
+# subprocess 10 min after restart. train_all_models.py runs LOCALLY (GPU/CPU
+# direct), completely bypassing the cluster orchestrator (Phase 100a/b/e).
+# Operator saw GPU at 78% while cluster reported "GPU lane idle" because
+# this rogue local process was using the GPU outside the cluster's view.
+#
+# All training paths now go through the cluster orchestrator:
+#   - Manual ▶ Train per row → /api/training/run/<key> (Phase 100a)
+#   - Manual ▶ Retrain ALL  → /api/training/run/all   (Phase 100b)
+#   - Auto pipeline         → pipeline_orchestrator   (Phase 100e)
+#
+# To re-enable the legacy local-subprocess cron (NOT recommended), set
+# $env:AI_TRADER_AUTO_TRAIN = '1' before running restart_all.ps1.
 Write-Host ""
-Write-Host "[4/6] Scheduling ML Training to start in 10 minutes..." -ForegroundColor Yellow
-$trainingScript = Join-Path $root 'launch_training.ps1'
-$trainingDelay  = 600   # seconds
 $procTraining = $null
-if (Test-Path $trainingScript) {
-    $cmdLine = 'powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Sleep -Seconds ' + $trainingDelay + '; & ''' + $trainingScript + '''"'
-    $newPid = Start-Detached -CommandLine $cmdLine
-    if ($newPid) {
-        $procTraining = [PSCustomObject]@{ Id = $newPid }
-        Write-Host "  Training will start at $(( Get-Date ).AddSeconds($trainingDelay).ToString('HH:mm:ss')) (PID $newPid, detached)"
+if ($env:AI_TRADER_AUTO_TRAIN -eq '1') {
+    Write-Host "[4/6] AI_TRADER_AUTO_TRAIN=1 — scheduling legacy launch_training.ps1 in 10 min" -ForegroundColor Yellow
+    $trainingScript = Join-Path $root 'launch_training.ps1'
+    $trainingDelay  = 600   # seconds
+    if (Test-Path $trainingScript) {
+        $cmdLine = 'powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Sleep -Seconds ' + $trainingDelay + '; & ''' + $trainingScript + '''"'
+        $newPid = Start-Detached -CommandLine $cmdLine
+        if ($newPid) {
+            $procTraining = [PSCustomObject]@{ Id = $newPid }
+            Write-Host "  Training will start at $(( Get-Date ).AddSeconds($trainingDelay).ToString('HH:mm:ss')) (PID $newPid, detached)"
+        }
+    } else {
+        Write-Host "  WARNING: launch_training.ps1 not found" -ForegroundColor Red
     }
+    Write-Host "[4/6] Legacy training scheduled (override active)." -ForegroundColor Yellow
 } else {
-    Write-Host "  WARNING: launch_training.ps1 not found" -ForegroundColor Red
+    Write-Host "[4/6] Training auto-schedule SKIPPED (cluster handles all training)." -ForegroundColor Green
+    Write-Host "      Trigger training via dashboard's Retrain ALL button or per-row Train." -ForegroundColor DarkGray
+    Write-Host "      Set AI_TRADER_AUTO_TRAIN=1 to re-enable legacy 10-min local cron." -ForegroundColor DarkGray
 }
-Write-Host "[4/6] Training scheduled." -ForegroundColor Green
 
 # Step 5: Dashboard + Bot
 Write-Host ""
