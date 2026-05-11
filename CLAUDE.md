@@ -21,6 +21,14 @@
 - DuckDB connections must set `temp_directory='D:/test 2/AI trading assistance/data/cache/duckdb_temp'` (done in `src/database/parquet_store.py`).
 - Gemini model fallback chain: `gemini-3.1-pro-preview` must be first. Update when a newer model releases.
 
+## Dashboard auth
+- Set `DASHBOARD_API_KEY=<secret>` in `.env`. All `/api/*` routes require header `X-API-Key: <secret>`.
+- If the var is not set, `src/dashboard/app.py` logs a startup warning and serves unprotected (acceptable for localhost-only dev, NOT for any exposed deployment).
+- The cluster orchestrator on port 7700 (`src/server/control_plane.py`) reads `API_KEY` OR `DASHBOARD_API_KEY` for the same purpose; `/health`, `/status`, `/metrics` stay public.
+
+## Open work (pending)
+- **Telegram bot integration** — live trade notifications. Not yet wired. See historic notes; design lives at `core/PLAN_2026_05_08_outstanding.md` if/when picked up.
+
 ## Test path
 - Canonical regression suite: `tests/test_dashboard.py`. 0 failures required before push.
 - After every code change, add/update assertions and verify 0 failures.
