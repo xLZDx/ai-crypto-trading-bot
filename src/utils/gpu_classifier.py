@@ -131,6 +131,21 @@ class _XGBClassifierWrapper:
     cross-validation/ pipeline integration, and this keeps the surface
     minimal."""
 
+    # 2026-05-11 fix — declare ourselves as a classifier to sklearn's
+    # duck-typing checks. Without this, sklearn's CalibratedClassifierCV
+    # raises:
+    #   ValueError: _XGBClassifierWrapper should either be a classifier
+    #   to be used with response_method=['decision_function',
+    #   'predict_proba'] or the response_method should be 'predict'.
+    #   Got a regressor with response_method=['decision_function',
+    #   'predict_proba'] instead.
+    # The `_estimator_type` class attribute is sklearn's recognized
+    # marker for "this is a classifier" without forcing BaseEstimator
+    # inheritance. Source: scikit-learn _check_response_method.
+    # Triggered by cluster task e5bba811-21c (btc_rf @ 5m, 2026-05-11)
+    # failing silently while orchestrator reported status=done.
+    _estimator_type = "classifier"
+
     def __init__(self, *, n_estimators: int, max_depth: int,
                  learning_rate: float, reg_lambda: float,
                  early_stopping: bool, random_state: int,

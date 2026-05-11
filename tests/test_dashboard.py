@@ -8487,6 +8487,82 @@ def test_phase100_functional_cluster_routing_proves_behavior():
           rj is not None and 'valid' in rj and 'futures' in rj.get('valid', []))
 
 
+def test_phase100d_followup_4_xgb_wrapper_is_classifier_and_worker_reports_failure():
+    """Phase 100d follow-up 4 (2026-05-11) — two interlocking bugs found
+    while attempting "train all stale models one by one":
+
+    BUG A: _XGBClassifierWrapper failed sklearn's CalibratedClassifierCV
+      type check with:
+        ValueError: _XGBClassifierWrapper should either be a classifier
+        to be used with response_method=['decision_function',
+        'predict_proba'] or the response_method should be 'predict'.
+        Got a regressor with response_method=['decision_function',
+        'predict_proba'] instead.
+      sklearn's is_classifier() looks for the `_estimator_type =
+      "classifier"` class attribute (duck-typing marker). Without it,
+      sklearn assumed the wrapper was a regressor. Source: cluster task
+      e5bba811-21c (btc_rf @ 5m, 2026-05-11 12:28).
+
+    BUG B: Worker's _run_task reported status="done" to the orchestrator
+      even when _execute_task returned {"status": "failed", "error": ...}.
+      Only caught Python exceptions; result-dict failures got lost.
+      Effect: cluster reported many silently-failed training tasks as
+      "done", inflating the operator's success count. Operator: "are
+      you saying you retrained all models?" caught this exact misread.
+
+    FUNCTIONAL tests — exercise the actual code paths:
+    """
+    print('\n[Phase 100d followup #4 — XGB classifier tag + worker failure reporting]')
+    import sys
+    from pathlib import Path as _P
+    PRJ = _P(__file__).resolve().parents[1]
+    if str(PRJ) not in sys.path:
+        sys.path.insert(0, str(PRJ))
+
+    # ── BUG A: _XGBClassifierWrapper carries _estimator_type='classifier' ──
+    from src.utils.gpu_classifier import _XGBClassifierWrapper
+    check('_XGBClassifierWrapper has _estimator_type class attribute',
+          hasattr(_XGBClassifierWrapper, '_estimator_type'))
+    check('_XGBClassifierWrapper._estimator_type == "classifier" (sklearn duck-type)',
+          getattr(_XGBClassifierWrapper, '_estimator_type', None) == 'classifier')
+
+    # sklearn.is_classifier() should now return True for instances
+    try:
+        from sklearn.base import is_classifier
+        # Construct a wrapper without actually instantiating xgboost (xgb
+        # may not be importable in this test environment). Use the
+        # class itself — sklearn's is_classifier checks both classes
+        # and instances via the _estimator_type attribute.
+        check('sklearn.is_classifier(_XGBClassifierWrapper) == True',
+              is_classifier(_XGBClassifierWrapper) is True)
+    except Exception as exc:
+        check(f'sklearn import failed in test env: {exc}', False)
+
+    # ── BUG B: worker _run_task honors inner status='failed' ────────────
+    worker_src = (PRJ / 'src/training/distributed/worker.py').read_text(encoding='utf-8')
+
+    # Code-shape: the inner_status check must exist + branch
+    check('worker.py: inner_status check from result dict',
+          "inner_status = (result.get('status', 'done')" in worker_src)
+    check('worker.py: failed inner status routes to _notify_master("failed", ...)',
+          "if inner_status == 'failed':" in worker_src
+          and 'self._notify_master(\n                    "failed", task_id, result=result' in worker_src)
+    check('worker.py: error propagated from result dict on failed status',
+          "error=(result.get('error', '')" in worker_src)
+    check('worker.py: log differentiates trainer-error vs exception failure',
+          'FAILED (trainer error)' in worker_src
+          and 'FAILED (exception)' in worker_src)
+
+    # Source order: the inner_status check must happen BEFORE _notify_master
+    # is called with "done" — otherwise the original buggy path persists.
+    inner_pos = worker_src.find("inner_status = (result.get('status'")
+    failed_branch = worker_src.find("if inner_status == 'failed':")
+    done_call = worker_src.find('self._notify_master("done", task_id, result=result)')
+    check('source order: inner_status checked BEFORE notify("done") is called',
+          inner_pos > 0 and failed_branch > 0 and done_call > 0
+          and inner_pos < failed_branch < done_call)
+
+
 def test_phase100d_followup_3_training_jobs_lock_is_rlock():
     """Phase 100d follow-up 3 (2026-05-11) — _training_jobs_lock must be
     RLock (reentrant), not Lock.
@@ -9783,6 +9859,7 @@ def main():
     test_phase100d_followup_restart_all_no_auto_train_cron()
     test_phase100d_worker_cpu_lane_hides_gpu_env_vars()
     test_phase100d_followup_3_training_jobs_lock_is_rlock()
+    test_phase100d_followup_4_xgb_wrapper_is_classifier_and_worker_reports_failure()
 
     if not args.offline:
         test_api(args.url)

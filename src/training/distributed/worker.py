@@ -855,11 +855,30 @@ class TrainingWorker:
         self._notify_master("running", task_id)
         try:
             result = _execute_task(task)
-            self._notify_master("done", task_id, result=result)
-            logger.info("[Worker] Task %s DONE: %s", task_id, result)
+            # 2026-05-11 fix — _execute_task / _invoke_master_trainer catches
+            # trainer exceptions and returns {"status": "failed", "error": ...}
+            # in the result dict. Pre-fix this branch reported "done" to the
+            # orchestrator regardless, so silent training failures were
+            # invisible (e.g. task e5bba811-21c btc_rf @ 5m failed with
+            # XGBClassifierWrapper sklearn-type error but cluster said done,
+            # leaving operator unable to tell training succeeded vs silently
+            # failed). Now honor the worker-side status from the result dict.
+            inner_status = (result.get('status', 'done')
+                             if isinstance(result, dict) else 'done')
+            if inner_status == 'failed':
+                self._notify_master(
+                    "failed", task_id, result=result,
+                    error=(result.get('error', '')
+                           if isinstance(result, dict) else ''),
+                )
+                logger.error("[Worker] Task %s FAILED (trainer error): %s",
+                              task_id, result.get('error') if isinstance(result, dict) else result)
+            else:
+                self._notify_master("done", task_id, result=result)
+                logger.info("[Worker] Task %s DONE: %s", task_id, result)
         except Exception as exc:
             self._notify_master("failed", task_id, error=str(exc))
-            logger.error("[Worker] Task %s FAILED: %s", task_id, exc)
+            logger.error("[Worker] Task %s FAILED (exception): %s", task_id, exc)
         finally:
             with self._lock:
                 self._current_task = None
