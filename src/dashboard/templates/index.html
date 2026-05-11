@@ -1245,6 +1245,9 @@ document.addEventListener('DOMContentLoaded', function() {
     <button class="nav-item" data-tab="institutional">
       <span class="nav-icon">🏛</span> Institutional
     </button>
+    <button class="nav-item" data-tab="arbitrage">
+      <span class="nav-icon">⚖</span> Arbitrage
+    </button>
   </nav>
 
   <!-- Symbol search -->
@@ -2930,6 +2933,16 @@ document.addEventListener('DOMContentLoaded', function() {
       <div id="phase6-content"></div>
     </div><!-- /institutional -->
 
+    <!-- ════════════════ ARBITRAGE (CEX-DEX statistical) ════════════════ -->
+    <!-- Reverse-proxied from arbitrage_strategy dashboard at port 5002.
+         Displayed via iframe so the embedded HTML/JS keeps its own polling
+         loops without polluting the trading-bot Flask process. -->
+    <div id="tab-arbitrage" class="tab-pane">
+      <iframe id="arb-iframe" src="/arb/"
+              style="width:100%;height:calc(100vh - 90px);border:0;background:#0d1117"
+              title="Arbitrage dashboard (proxied from :5002)"></iframe>
+    </div><!-- /arbitrage -->
+
   </div><!-- /content -->
 </div><!-- /main -->
 </div><!-- /shell -->
@@ -3000,6 +3013,7 @@ const TAB_TITLES = {
   logs:         ['Terminal Log',            'Live tail of the trading bot log for diagnostics'],
   chat:         ['AI Assistant',            'Gemini-powered trading analysis and market advisor'],
   institutional:['Institutional Controls',  'REAL/TEST mode + Phase 6 panels: portfolio, alpha, order flow, risk, training, simulation, data, strategies'],
+  arbitrage:    ['Arbitrage',                'CEX-DEX statistical arb on Bybit Spot ↔ Base L2 DEX (proxied from :5002)'],
 };
 
 function switchTab(name) {

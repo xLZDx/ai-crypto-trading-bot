@@ -6733,6 +6733,64 @@ def api_parquet_coverage():
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# Arbitrage tab — reverse-proxy to standalone arb dashboard at port 5002
+# (per Q5 of arbitrage_strategy plan). Two-process architecture; this app
+# proxies /arb/* and /api/arb/* requests so the operator sees a single URL.
+# ────────────────────────────────────────────────────────────────────────────
+
+ARB_UPSTREAM_URL = os.getenv('ARB_DASHBOARD_URL', 'http://127.0.0.1:5002')
+_ARB_HOP_HEADERS = {
+    'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
+    'te', 'trailers', 'transfer-encoding', 'upgrade', 'host',
+    'content-length', 'content-encoding',
+}
+
+
+def _proxy_to_arb(path: str):
+    """Forward request to the arb dashboard. Returns Flask Response."""
+    import requests
+    from flask import Response, request as _req
+    url = f"{ARB_UPSTREAM_URL.rstrip('/')}/{path.lstrip('/')}"
+    headers = {k: v for k, v in _req.headers.items()
+               if k.lower() not in _ARB_HOP_HEADERS}
+    try:
+        resp = requests.request(
+            method=_req.method,
+            url=url,
+            params=_req.args.to_dict(flat=False),
+            data=_req.get_data(),
+            headers=headers,
+            cookies=_req.cookies,
+            allow_redirects=False,
+            timeout=10.0,
+        )
+    except requests.exceptions.ConnectionError:
+        return jsonify({
+            'error': 'arb_dashboard_unreachable',
+            'detail': f'Cannot reach {ARB_UPSTREAM_URL}. '
+                      f'Is arbitrage_strategy/restart_all.ps1 running?',
+        }), 502
+    except Exception as e:
+        return jsonify({'error': 'arb_proxy_failed', 'detail': str(e)}), 502
+    excluded = _ARB_HOP_HEADERS
+    out_headers = [(k, v) for k, v in resp.raw.headers.items()
+                   if k.lower() not in excluded]
+    return Response(resp.content, status=resp.status_code, headers=out_headers)
+
+
+@app.route('/arb', defaults={'path': ''})
+@app.route('/arb/', defaults={'path': ''})
+@app.route('/arb/<path:path>')
+def proxy_arb_html(path: str):
+    """Proxy /arb/* to the arb dashboard's HTML/static surface."""
+    return _proxy_to_arb(path)
+
+
+@app.route('/api/arb/<path:path>',
+           methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])
+def proxy_arb_api(path: str):
+    """Proxy /api/arb/* to the arb dashboard's JSON API."""
+    return _proxy_to_arb(f'api/arb/{path}')
 
 
 if __name__ == '__main__':
