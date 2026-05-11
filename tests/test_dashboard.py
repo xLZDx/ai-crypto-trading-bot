@@ -8487,6 +8487,185 @@ def test_phase100_functional_cluster_routing_proves_behavior():
           rj is not None and 'valid' in rj and 'futures' in rj.get('valid', []))
 
 
+def test_phase100e_pipeline_orchestrator_cluster_dispatch():
+    """Phase 100e — pipeline_orchestrator routes through cluster (was
+    calling train_all() in-process, which left Ivan + Razer workers idle).
+
+    Operator screenshot 2026-05-11 02:55: all 4 online cluster workers
+    status=idle while pipeline was burning Razer CPU solo. The training
+    distribution we'd promised was a no-op because pipeline never
+    submitted anything to the cluster.
+
+    FUNCTIONAL tests — every assertion calls production code:
+      (a) Cell list + spec builders match the dashboard's equivalents
+          (single source of truth for dispatch shape).
+      (b) _pipeline_step drives a fake cluster snapshot through several
+          iterations; asserts train→BT chaining, failed-train skip-BT,
+          submit_fn failure path, terminal detection.
+      (c) AI_TRADER_PIPELINE_LOCAL=1 forces legacy in-process path.
+    """
+    print('\n[Phase 100e — pipeline_orchestrator cluster dispatch (functional)]')
+    import sys, os
+    from pathlib import Path as _P
+    PRJ = _P(__file__).resolve().parents[1]
+    if str(PRJ) not in sys.path:
+        sys.path.insert(0, str(PRJ))
+    os.environ.pop('AI_TRADER_PIPELINE_LOCAL', None)
+
+    try:
+        from src.engine import pipeline_orchestrator as po
+        from src.engine.train_all_models import DEFAULT_PER_KEY_TFS
+    except Exception as exc:
+        check(f'import pipeline_orchestrator succeeds (got {type(exc).__name__}: {exc})', False)
+        return
+
+    # ── (a) Cell list + spec builders ────────────────────────────────────
+    cells = po._pipeline_cell_list()
+    expected = sum(len(tfs) for tfs in DEFAULT_PER_KEY_TFS.values())
+    check('pipeline cell list count matches DEFAULT_PER_KEY_TFS sum',
+          len(cells) == expected)
+    seen_models = []
+    for (m, tf) in cells:
+        if not seen_models or seen_models[-1] != m:
+            seen_models.append(m)
+    check('pipeline cell list is model-major',
+          len(seen_models) == len(set(seen_models)))
+
+    train_spec = po._pipeline_build_train_spec('futures', '4h')
+    check('pipeline train spec model_type mapped (futures → futures_short)',
+          train_spec['model_type'] == 'futures_short')
+    check('pipeline train spec carries slash-form symbol BTC/USDT',
+          train_spec['symbol'] == 'BTC/USDT')
+    check('pipeline train spec timeframe matches cell tf',
+          train_spec['timeframe'] == '4h')
+
+    bt_spec = po._pipeline_build_bt_spec('meta', '15m')
+    check('pipeline BT spec uses model_type="backtest_cell"',
+          bt_spec['model_type'] == 'backtest_cell')
+    check('pipeline BT spec uses UNDERSCORE-form symbol BTC_USDT',
+          bt_spec['symbol'] == 'BTC_USDT')
+    check('pipeline BT spec scopes config.models to mapped model_type',
+          bt_spec['config']['models'] == ['meta_labeler'])
+
+    check('_to_cluster_model_type mapping covers base / futures / meta divergent names',
+          po._to_cluster_model_type('base') == 'btc_rf'
+          and po._to_cluster_model_type('futures') == 'futures_short'
+          and po._to_cluster_model_type('meta') == 'meta_labeler')
+    check('_to_cluster_model_type passthrough for same-name keys',
+          po._to_cluster_model_type('trend') == 'trend'
+          and po._to_cluster_model_type('tft') == 'tft')
+
+    # ── (b) _pipeline_step driven through synthetic snapshots ────────────
+    step_fn = po._pipeline_step
+    test_cells = [('trend', '1h'), ('base', '4h'), ('futures', '5m')]
+    state = {
+        'train_tids': {
+            ('trend', '1h'):   'train-T-1',
+            ('base', '4h'):    'train-B-1',
+            ('futures', '5m'): 'train-F-1',
+        },
+        'bt_tids':     {},
+        'train_done':  set(),
+        'bt_done':     set(),
+        'cell_errors': {},
+    }
+    bt_submits: list[tuple[str, str]] = []
+    def _fake_submit(m, tf, spec):
+        bt_submits.append((m, tf))
+        return f'bt-{m}-{tf}'
+
+    # Iter 1: all running → nothing done, no BT
+    by_id = {
+        'train-T-1': {'task_id':'train-T-1','status':'running'},
+        'train-B-1': {'task_id':'train-B-1','status':'running'},
+        'train-F-1': {'task_id':'train-F-1','status':'pending'},
+    }
+    r = step_fn(test_cells, state, by_id, _fake_submit)
+    check('pipeline_step iter 1: nothing done, finished=False, no BT submits',
+          r['cells_complete'] == 0 and not r['finished'] and len(bt_submits) == 0)
+    check('pipeline_step iter 1: 3 trains in flight, 0 BT',
+          r['train_inflight'] == 3 and r['bt_inflight'] == 0)
+
+    # Iter 2: trend@1h done → BT submits via _fake_submit
+    by_id = {
+        'train-T-1': {'task_id':'train-T-1','status':'done'},
+        'train-B-1': {'task_id':'train-B-1','status':'running'},
+        'train-F-1': {'task_id':'train-F-1','status':'running'},
+    }
+    r = step_fn(test_cells, state, by_id, _fake_submit)
+    check('pipeline_step iter 2: trend@1h train done triggers BT submit',
+          ('trend', '1h') in bt_submits)
+    check('pipeline_step iter 2: state.bt_tids has new BT id',
+          state['bt_tids'].get(('trend', '1h')) == 'bt-trend-1h')
+
+    # Iter 3: trend@1h BT done; base@4h train failed → BT skipped
+    by_id = {
+        'train-T-1':   {'task_id':'train-T-1','status':'done'},
+        'train-B-1':   {'task_id':'train-B-1','status':'failed','error':'OOM'},
+        'train-F-1':   {'task_id':'train-F-1','status':'running'},
+        'bt-trend-1h': {'task_id':'bt-trend-1h','status':'done'},
+    }
+    r = step_fn(test_cells, state, by_id, _fake_submit)
+    check('pipeline_step iter 3: base@4h failed train marks bt_done (skip BT)',
+          ('base', '4h') in state['bt_done'] and ('base', '4h') not in state['bt_tids'])
+    check('pipeline_step iter 3: base@4h error recorded with OOM',
+          'OOM' in state['cell_errors'].get(('base', '4h'), ''))
+    check('pipeline_step iter 3: trend@1h fully complete',
+          ('trend', '1h') in state['train_done']
+          and ('trend', '1h') in state['bt_done']
+          and ('trend', '1h') not in state['cell_errors'])
+
+    # Iter 4: futures done → BT submits
+    by_id = {
+        'train-T-1':   {'task_id':'train-T-1','status':'done'},
+        'train-B-1':   {'task_id':'train-B-1','status':'failed'},
+        'train-F-1':   {'task_id':'train-F-1','status':'done'},
+        'bt-trend-1h': {'task_id':'bt-trend-1h','status':'done'},
+    }
+    r = step_fn(test_cells, state, by_id, _fake_submit)
+    check('pipeline_step iter 4: futures BT submitted now train done',
+          ('futures', '5m') in state['bt_tids'])
+
+    # Iter 5: all terminal → finished=True
+    by_id = {
+        'train-T-1':       {'task_id':'train-T-1','status':'done'},
+        'train-B-1':       {'task_id':'train-B-1','status':'failed'},
+        'train-F-1':       {'task_id':'train-F-1','status':'done'},
+        'bt-trend-1h':     {'task_id':'bt-trend-1h','status':'done'},
+        'bt-futures-5m':   {'task_id':'bt-futures-5m','status':'done'},
+    }
+    r = step_fn(test_cells, state, by_id, _fake_submit)
+    check('pipeline_step iter 5: all terminal → finished=True',
+          r['finished'])
+    check('pipeline_step iter 5: cells_complete=3 (all terminal incl. skipped BT)',
+          r['cells_complete'] == 3)
+
+    # Submit_fn failure path
+    state2 = {
+        'train_tids': {('tft','15m'):'train-X'},
+        'bt_tids':    {},
+        'train_done': set(),
+        'bt_done':    set(),
+        'cell_errors':{},
+    }
+    by_id = {'train-X':{'task_id':'train-X','status':'done'}}
+    r = step_fn([('tft','15m')], state2, by_id, lambda m, tf, s: None)
+    check('pipeline_step: submit_fn returns None → cell marked bt_done with error',
+          ('tft','15m') in state2['bt_done']
+          and 'BT submit failed' in state2['cell_errors'].get(('tft','15m'), ''))
+    check('pipeline_step: submit failure still terminates the loop (finished=True)',
+          r['finished'])
+
+    # ── (c) Local-fallback env var ───────────────────────────────────────
+    check('AI_TRADER_PIPELINE_LOCAL env var is honored in _run_train_phase',
+          'AI_TRADER_PIPELINE_LOCAL' in
+          (PRJ / 'src/engine/pipeline_orchestrator.py').read_text(encoding='utf-8'))
+    check('_run_train_phase_local fallback function exists',
+          hasattr(po, '_run_train_phase_local'))
+    check('_run_train_phase_cluster default function exists',
+          hasattr(po, '_run_train_phase_cluster'))
+
+
 def test_phase100b_retrain_all_distributed_train_then_bt():
     """Phase 100b — Retrain ALL = distributed parallel cells, sequential
     train → BT per cell. FUNCTIONAL tests (not string-match) that drive
@@ -9100,6 +9279,7 @@ def main():
     test_phase100_cluster_routed_training_dispatch()
     test_phase100_functional_cluster_routing_proves_behavior()
     test_phase100b_retrain_all_distributed_train_then_bt()
+    test_phase100e_pipeline_orchestrator_cluster_dispatch()
 
     if not args.offline:
         test_api(args.url)

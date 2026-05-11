@@ -88,17 +88,284 @@ def _update_status(**patch) -> dict:
     return snap
 
 
-def _run_train_phase() -> dict:
-    """Phase 1: full multi-TF training. Returns {ok, error}.
+# ─── Phase 100e — cluster dispatch helpers ────────────────────────────────
+#
+# Pipeline orchestrator used to call train_all() in-process, which ran every
+# trainer locally and left the distributed cluster (LOCAL_RAZER_CPU/GPU +
+# IVAN_CPU/GPU) idle. Operator screenshot 2026-05-11 02:55: all 4 online
+# workers status=idle while pipeline_orchestrator was burning Razer CPU
+# solo. Workers were never asked to do anything.
+#
+# This module now submits each (model, tf) cell to the cluster orchestrator
+# (port 7700) and chains a backtest_cell task after each train succeeds.
+# Multiple cells run in parallel across all 4 lanes; per-cell sequencing
+# (train must complete before BT submits) is strict.
+#
+# Emergency rollback: AI_TRADER_PIPELINE_LOCAL=1 reverts to in-process
+# train_all() — kept as a safety hatch while the cluster path beds in.
 
-    Catches any uncaught exception so the orchestrator can record it and
-    proceed to backtest anyway — partial training is still useful (e.g.
-    if TFT GPU OOM but tabular models trained fine). Backtest doesn't
-    depend on every model existing; missing models just fall through to
-    pure signals.
+import os as _os
+import urllib.request as _urlreq
+import urllib.error as _urlerr
+
+CLUSTER_BASE_URL = _os.getenv('AI_TRADER_CLUSTER_URL', 'http://127.0.0.1:7700')
+
+# Dashboard model_key → cluster worker model_type mapping. Must stay in sync
+# with src/dashboard/app.py:_DASH_TO_CLUSTER_KEY. Diverging-name keys only;
+# rest fall through.
+_PIPELINE_DASH_TO_CLUSTER: dict[str, str] = {
+    'base':     'btc_rf',
+    'futures':  'futures_short',
+    'meta':     'meta_labeler',
+}
+
+
+def _to_cluster_model_type(dash_key: str) -> str:
+    return _PIPELINE_DASH_TO_CLUSTER.get(dash_key, dash_key)
+
+
+def _cluster_post(path: str, body: dict, timeout: float = 15.0) -> tuple[dict, int]:
+    """POST to the cluster orchestrator. Returns (json_body, http_status).
+    503 on connection failures so the caller can treat cluster-unreachable
+    the same as 503."""
+    try:
+        data = json.dumps(body or {}).encode('utf-8')
+        req = _urlreq.Request(f'{CLUSTER_BASE_URL}{path}', data=data,
+                              method='POST',
+                              headers={'Content-Type': 'application/json'})
+        with _urlreq.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode('utf-8')), r.status
+    except (_urlerr.URLError, OSError, json.JSONDecodeError) as exc:
+        return {'error': f'cluster unreachable: {exc}'}, 503
+
+
+def _cluster_get(path: str, timeout: float = 15.0) -> tuple[object, int]:
+    try:
+        with _urlreq.urlopen(f'{CLUSTER_BASE_URL}{path}', timeout=timeout) as r:
+            return json.loads(r.read().decode('utf-8')), r.status
+    except (_urlerr.URLError, OSError, json.JSONDecodeError) as exc:
+        return {'error': f'cluster unreachable: {exc}'}, 503
+
+
+def _pipeline_cell_list() -> list[tuple[str, str]]:
+    """Build (model, tf) cell list in model-major order from
+    DEFAULT_PER_KEY_TFS. Same order/source as the dashboard's
+    _retrain_all_cell_list — single source of truth for "what cells exist".
+    """
+    from src.engine.train_all_models import DEFAULT_PER_KEY_TFS
+    cells: list[tuple[str, str]] = []
+    for model_key in DEFAULT_PER_KEY_TFS:
+        for tf in DEFAULT_PER_KEY_TFS[model_key]:
+            cells.append((model_key, tf))
+    return cells
+
+
+def _pipeline_build_train_spec(model_key: str, tf: str) -> dict:
+    return {
+        'model_type':  _to_cluster_model_type(model_key),
+        'symbol':      'BTC/USDT',
+        'timeframe':   tf,
+        'config':      {},
+        'data_path':   '',
+        'output_path': '',
+    }
+
+
+def _pipeline_build_bt_spec(model_key: str, tf: str) -> dict:
+    return {
+        'model_type': 'backtest_cell',
+        'symbol':     'BTC_USDT',   # underscore form per worker.py contract
+        'timeframe':  tf,
+        'config': {
+            'initial_capital': 10000.0,
+            'fee_preset':      'futures',
+            'models':          [_to_cluster_model_type(model_key)],
+        },
+    }
+
+
+def _pipeline_step(cells: list[tuple[str, str]], state: dict,
+                    by_id: dict, submit_fn) -> dict:
+    """Pure per-iteration step. Same shape as
+    src/dashboard/app.py:_retrain_all_step — when a train cell turns 'done',
+    submit_fn is called to dispatch its BT; failed/cancelled trains skip BT.
+    Mutates state['train_tids']/['bt_tids']/['train_done']/['bt_done']/
+    ['cell_errors'] in place. Returns aggregate counters + finished flag.
+    """
+    train_tids   = state['train_tids']
+    bt_tids      = state['bt_tids']
+    train_done   = state['train_done']
+    bt_done      = state['bt_done']
+    cell_errors  = state['cell_errors']
+    for cell, tid in train_tids.items():
+        if cell in train_done:
+            continue
+        task = by_id.get(tid)
+        if not task:
+            continue
+        s = task.get('status')
+        if s == 'done':
+            train_done.add(cell)
+            m, tf = cell
+            bt_task_id = submit_fn(m, tf, _pipeline_build_bt_spec(m, tf))
+            if bt_task_id:
+                bt_tids[cell] = bt_task_id
+            else:
+                cell_errors[cell] = 'BT submit failed (cluster unreachable)'
+                bt_done.add(cell)
+        elif s in ('failed', 'cancelled'):
+            train_done.add(cell)
+            bt_done.add(cell)
+            cell_errors[cell] = f'train {s}: {task.get("error", "")[:120]}'
+    for cell, tid in bt_tids.items():
+        if cell in bt_done:
+            continue
+        task = by_id.get(tid)
+        if not task:
+            continue
+        s = task.get('status')
+        if s in ('done', 'failed', 'cancelled'):
+            bt_done.add(cell)
+            if s != 'done':
+                cell_errors[cell] = f'BT {s}: {task.get("error", "")[:120]}'
+    cells_complete = sum(1 for c in cells if c in train_done and c in bt_done)
+    train_inflight = sum(1 for c in train_tids if c not in train_done)
+    bt_inflight    = sum(1 for c in bt_tids   if c not in bt_done)
+    finished       = all(c in train_done and c in bt_done for c in cells)
+    return {
+        'cells_complete': cells_complete,
+        'train_inflight': train_inflight,
+        'bt_inflight':    bt_inflight,
+        'finished':       finished,
+    }
+
+
+def _run_train_phase_cluster() -> dict:
+    """Phase 100e — distributed train phase. Submits every (model, tf)
+    cell from DEFAULT_PER_KEY_TFS to the cluster orchestrator; the
+    orchestrator routes to LOCAL_RAZER_CPU/GPU + IVAN_CPU/GPU lanes.
+    Per cell: train must complete before its BT submits. Across cells:
+    full parallelism across all healthy worker lanes — Ivan and Razer
+    BOTH get tasks instead of Ivan staying idle while Razer burns CPU.
     """
     started = time.time()
-    _emit_event("train", "starting train_all (multi-TF)")
+    cells = _pipeline_cell_list()
+    _emit_event("train", "cluster dispatch starting",
+                cells_total=len(cells))
+    _update_status(phase="train",
+                   train={"started_at": _now_iso(), "ok": False,
+                          "finished_at": None, "error": None,
+                          "cells_total": len(cells)})
+
+    train_tids: dict[tuple[str, str], str] = {}
+    submit_failures: list[str] = []
+    for (m, tf) in cells:
+        body, http_status = _cluster_post('/api/cluster/submit',
+                                           _pipeline_build_train_spec(m, tf))
+        if http_status == 200 and body.get('ok') and body.get('task_id'):
+            train_tids[(m, tf)] = body['task_id']
+        else:
+            submit_failures.append(f'{m}@{tf}: {str(body)[:120]}')
+
+    if not train_tids:
+        out = {"started_at": _now_iso(), "finished_at": _now_iso(),
+               "ok": False,
+               "error": f'no train submits succeeded — first 3 failures: {submit_failures[:3]}',
+               "elapsed_s": round(time.time() - started, 1)}
+        _emit_event("train", "cluster dispatch FAILED (no submits)",
+                    error=out["error"])
+        return out
+
+    state = {
+        'train_tids':  train_tids,
+        'bt_tids':     {},
+        'train_done':  set(),
+        'bt_done':     set(),
+        'cell_errors': {},
+    }
+    # Failed-submit cells are marked terminal so the loop exits cleanly
+    for (m, tf) in cells:
+        if (m, tf) not in train_tids:
+            state['train_done'].add((m, tf))
+            state['bt_done'].add((m, tf))
+            state['cell_errors'][(m, tf)] = 'train submit failed at dispatch'
+
+    def _submit_bt(m: str, tf: str, spec: dict) -> str | None:
+        body, http_status = _cluster_post('/api/cluster/submit', spec)
+        if http_status == 200 and body.get('ok') and body.get('task_id'):
+            return body['task_id']
+        return None
+
+    POLL_S = 10.0
+    DEADLINE_S = 12 * 3600
+    last_status_emit = 0.0
+    while True:
+        time.sleep(POLL_S)
+        if time.time() - started > DEADLINE_S:
+            out = {"started_at": _now_iso(), "finished_at": _now_iso(),
+                   "ok": False,
+                   "error": f"pipeline deadline exceeded ({DEADLINE_S}s)",
+                   "elapsed_s": round(time.time() - started, 1)}
+            _emit_event("train", "DEADLINE EXCEEDED", error=out["error"])
+            return out
+        body, http_status = _cluster_get('/api/cluster/tasks')
+        if http_status != 200 or not isinstance(body, list):
+            continue
+        by_id = {t.get('task_id'): t for t in body if isinstance(t, dict)}
+        step = _pipeline_step(cells, state, by_id, _submit_bt)
+        # Emit status update every ~30s and at the very end
+        now = time.time()
+        if step['finished'] or (now - last_status_emit) > 30:
+            _update_status(train={
+                "started_at":      None,   # preserve in patch merge
+                "ok":              not state['cell_errors'],
+                "finished_at":     _now_iso() if step['finished'] else None,
+                "error":           None if not state['cell_errors'] else (
+                                    f"{len(state['cell_errors'])} cell(s) failed"),
+                "cells_total":     len(cells),
+                "cells_complete":  step['cells_complete'],
+                "train_inflight":  step['train_inflight'],
+                "bt_inflight":     step['bt_inflight'],
+            })
+            last_status_emit = now
+        if step['finished']:
+            ok = not state['cell_errors']
+            out = {"started_at": _now_iso(), "finished_at": _now_iso(),
+                   "ok": ok,
+                   "error": None if ok else (
+                       f"{len(state['cell_errors'])} cell(s) failed — "
+                       f"first 3: " +
+                       "; ".join(f'{m}@{tf}: {e}'
+                                  for (m, tf), e in list(state['cell_errors'].items())[:3])
+                   ),
+                   "cells_total":    len(cells),
+                   "cells_complete": step['cells_complete'],
+                   "elapsed_s":      round(time.time() - started, 1)}
+            _emit_event("train",
+                        f"cluster dispatch finished — {step['cells_complete']}/{len(cells)} cells",
+                        ok=ok, elapsed_s=out["elapsed_s"])
+            return out
+
+
+def _run_train_phase() -> dict:
+    """Phase 1: full multi-TF training. Cluster-routed by default
+    (Phase 100e). AI_TRADER_PIPELINE_LOCAL=1 env var forces the legacy
+    in-process train_all() path for emergency rollback.
+
+    Returns {ok, error, ...} same shape regardless of route.
+    """
+    if _os.getenv('AI_TRADER_PIPELINE_LOCAL', '0') == '1':
+        return _run_train_phase_local()
+    return _run_train_phase_cluster()
+
+
+def _run_train_phase_local() -> dict:
+    """Legacy in-process train_all() path. Used only when
+    AI_TRADER_PIPELINE_LOCAL=1 (emergency rollback). Workers stay idle —
+    everything runs on the dashboard host.
+    """
+    started = time.time()
+    _emit_event("train", "starting train_all (multi-TF, LOCAL)")
     _update_status(phase="train",
                    train={"started_at": _now_iso(), "ok": False,
                           "finished_at": None, "error": None})
