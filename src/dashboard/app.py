@@ -2824,7 +2824,14 @@ def api_strategy_bucket_toggle():
 # Per-process job log. Capped at _TRAINING_JOBS_MAX so it can't grow forever
 # even if someone hammers the Train button. Keyed by job_id (uuid hex).
 _training_jobs: dict[str, dict] = {}
-_training_jobs_lock = threading.Lock()
+# 2026-05-11 fix — RLock (reentrant), NOT Lock. Phase 97c's
+# _refresh_orphan_current_state holds this lock while iterating
+# _training_jobs and calls _record_job inside the loop. _record_job
+# acquires the same lock — with a non-reentrant Lock, that deadlocks
+# the daemon thread permanently and starves every endpoint that needs
+# this lock (/api/training/jobs, /api/training/active, etc.).
+# RLock allows the same thread to re-acquire safely.
+_training_jobs_lock = threading.RLock()
 _TRAINING_JOBS_MAX = 50
 
 # Maps the model key shown in the UI to (module, callable, accepts_tf).

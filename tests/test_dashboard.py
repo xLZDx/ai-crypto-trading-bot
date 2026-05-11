@@ -8487,6 +8487,112 @@ def test_phase100_functional_cluster_routing_proves_behavior():
           rj is not None and 'valid' in rj and 'futures' in rj.get('valid', []))
 
 
+def test_phase100d_followup_3_training_jobs_lock_is_rlock():
+    """Phase 100d follow-up 3 (2026-05-11) — _training_jobs_lock must be
+    RLock (reentrant), not Lock.
+
+    Live bug found tonight: /api/training/jobs?limit=10 hangs 30+ seconds
+    AGAIN after the Phase 100d throttle was already in production. Live
+    probe: /api/cluster/workers returns 200 in 2s; /api/training/active
+    (which uses _training_jobs_lock) also hangs. Pattern: anything taking
+    _training_jobs_lock starves.
+
+    Root cause: Phase 97c (commit 0802a36) added
+    _refresh_orphan_current_state which does:
+
+        with _training_jobs_lock:
+            for jid, job in list(_training_jobs.items()):
+                ...
+                if updates:
+                    _record_job(jid, **updates)   # ← _record_job ALSO
+                                                    #   acquires _training_jobs_lock
+
+    threading.Lock is NON-reentrant. The same thread re-acquiring it
+    deadlocks instantly. The Phase 97c daemon thread that triggered an
+    update would hang forever holding the lock, starving every endpoint
+    that needs it. Manifests when orphan records actually require
+    refresh (i.e., pipeline is running and tf/model changes).
+
+    Why Phase 100d's throttle didn't catch this: throttle reduced WRITE
+    contention on the filelock. The deadlock is on the in-memory dict
+    lock — different code path.
+
+    FUNCTIONAL test — proves the lock IS reentrant by acquiring twice
+    from the same thread:
+    """
+    print('\n[Phase 100d followup #3 — _training_jobs_lock is RLock]')
+    import sys, threading
+    from pathlib import Path as _P
+    PRJ = _P(__file__).resolve().parents[1]
+    if str(PRJ) not in sys.path:
+        sys.path.insert(0, str(PRJ))
+
+    try:
+        from src.dashboard import app as dash_app
+    except Exception as exc:
+        check(f'import dash_app (got {type(exc).__name__}: {exc})', False)
+        return
+
+    lock = dash_app._training_jobs_lock
+    # RLock instances are produced by threading.RLock() which returns
+    # a _thread.RLock or threading._RLock — type name contains "RLock".
+    lock_type_name = type(lock).__name__
+    check(f'_training_jobs_lock is RLock-style (type={lock_type_name})',
+          'RLock' in lock_type_name)
+
+    # PROOF that reentrancy works — same thread, two acquires, no hang.
+    # Wrap with a thread-side timeout so if this test EVER deadlocks we
+    # see a failure instead of hanging the regression suite.
+    acquired_both = [False]
+    timed_out = [False]
+    def _two_acquires():
+        try:
+            with lock:
+                with lock:    # would deadlock with non-reentrant Lock
+                    acquired_both[0] = True
+        except Exception:
+            pass
+
+    t = threading.Thread(target=_two_acquires, daemon=True)
+    t.start()
+    t.join(timeout=2.0)
+    if t.is_alive():
+        timed_out[0] = True
+    check('same thread can acquire lock twice without deadlock',
+          acquired_both[0] is True and not timed_out[0])
+
+    # Mirror real Phase 97c pattern: outer `with lock` then call
+    # _record_job which also takes `with lock`. With RLock this works.
+    # With Lock it deadlocks. Use a synthetic job so we don't mutate
+    # production state.
+    success = [False]
+    err = [None]
+    def _phase97c_pattern():
+        try:
+            with lock:
+                # Mirror the orphan-refresh inner call
+                dash_app._record_job('test-rlock-job', model='base',
+                                      status='running')
+            success[0] = True
+        except Exception as exc:
+            err[0] = f'{type(exc).__name__}: {exc}'
+
+    saved = dict(dash_app._training_jobs)
+    try:
+        t = threading.Thread(target=_phase97c_pattern, daemon=True)
+        t.start()
+        t.join(timeout=3.0)
+    finally:
+        # Restore production state — remove the test job
+        with dash_app._training_jobs_lock:
+            dash_app._training_jobs.pop('test-rlock-job', None)
+
+    check('Phase 97c pattern (outer lock + nested _record_job) does NOT deadlock',
+          success[0] is True and not t.is_alive())
+    if err[0]:
+        check(f'no exception raised (got {err[0]})', False)
+
+
 def test_phase100d_worker_cpu_lane_hides_gpu_env_vars():
     """Phase 100d follow-up 2 (2026-05-11) — --lane cpu workers must hide
     every GPU adapter from PyTorch/sklearn import paths.
@@ -9676,6 +9782,7 @@ def main():
     test_phase100d_training_jobs_throttle_and_fast_endpoint()
     test_phase100d_followup_restart_all_no_auto_train_cron()
     test_phase100d_worker_cpu_lane_hides_gpu_env_vars()
+    test_phase100d_followup_3_training_jobs_lock_is_rlock()
 
     if not args.offline:
         test_api(args.url)
