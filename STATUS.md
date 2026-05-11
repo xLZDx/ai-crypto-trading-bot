@@ -135,9 +135,13 @@ Adding a future worker = register via `POST /api/cluster/register` from that mac
 | **100 functional tests** | `6c4dce8` | 2026-05-11 | Refactored sync into pure `_aggregate_cluster_task_statuses` for testability. 41 functional assertions (call the code, not string-match). Codified "Functional Tests Prove Behavior" rule globally. |
 | **100b** | `91d4b20` | 2026-05-11 | Retrain ALL routes through cluster. Parallel cells, sequential train→BT per cell. Pure `_retrain_all_step` extracted. 40+ functional assertions. |
 | **100e** | `9305ce2` | 2026-05-11 | Auto pipeline_orchestrator routes through cluster. Workers (Ivan + Razer) finally get tasks instead of staying idle. `AI_TRADER_PIPELINE_LOCAL=1` = emergency rollback. 25 functional assertions. |
-| **Sprint 1a R1 Step 1** | *(pending commit)* | 2026-05-11 | `src/engine/trainers/` package: `TrainingResult` dataclass + `_common.run_trainer` helper + 8 per-model thin wrappers + `TRAINER_REGISTRY` single-source-of-truth dispatch map. Functional tests (33 assertions). KEY FINDING: per-model files already existed (src/engine/train_*_model.py); R1's actual deliverable is the typed contract (foundation for R2 KPI gate + R3 comparison dashboard). |
+| **Sprint 1a R1 Step 1** | `8b9a58a` | 2026-05-11 | `src/engine/trainers/` package: `TrainingResult` dataclass + `_common.run_trainer` helper + 8 per-model thin wrappers + `TRAINER_REGISTRY` single-source-of-truth dispatch map. Functional tests (33 assertions). KEY FINDING: per-model files already existed (src/engine/train_*_model.py); R1's actual deliverable is the typed contract (foundation for R2 KPI gate + R3 comparison dashboard). |
+| **Phase 100d** | `ea898aa` | 2026-05-11 | Throttle `_persist_training_jobs` to ≤1 write per 2s + deferred-flush daemon; `api_training_jobs` skips annotation for terminal jobs. Endpoint went from 30s+ timeout → 84ms with 50 jobs. |
+| **Phase 100d follow-up 1** | `a0c2abb` | 2026-05-11 | `restart_all.ps1` no longer auto-schedules legacy `launch_training.ps1` (was bypassing cluster routing). Gated on `AI_TRADER_AUTO_TRAIN=1` env var. |
+| **Phase 100d follow-up 2** | `1fdc6b1` | 2026-05-11 | `worker.py --lane cpu` self-isolates from GPU via `CUDA_VISIBLE_DEVICES=''` + `HIP_VISIBLE_DEVICES=''` BEFORE TrainingWorker imports. Fixes Intel iGPU 67% pegging by CPU-lane workers. |
+| **Phase 100d follow-up 3** | `a9005f0` | 2026-05-11 | **CRITICAL** — `_training_jobs_lock` changed from `threading.Lock()` → `threading.RLock()`. Phase 97c's `_refresh_orphan_current_state` was deadlocking the lock (acquired outer + called `_record_job` which re-acquires non-reentrant Lock). Endpoint went from hanging 30s+ → 222ms. Live-verified by submitting meta @ 1h which dispatched to cluster worker `1e087088` in parallel with regime @ 1h on `408b0354`. |
 
-Total functional test additions through Sprint 1a R1 Step 1: 160+ assertions, all proving observable behavior.
+Total functional test additions through 2026-05-11 night session: **180+ assertions**, all proving observable behavior via real code execution (no string-match-only tests).
 
 ---
 
@@ -209,8 +213,8 @@ Same 14 failures across recent runs — string-match assertions for code that's 
 
 ## Global rules in effect (CLAUDE.md hierarchy)
 
-1. **`~/.claude/CLAUDE.md`** — user-home global (cross-volume): Functional Tests Prove Behavior + Code Review Before Reporting Done
-2. **`D:\test 2\CLAUDE.md`** — volume global (all D:\test 2 projects): Approval Gate (double-ask), No Guessing, Verify Before Claiming Fixed, Regression Test Maintenance, Functional Tests Prove Behavior, Git Lifecycle (todo-in-commits), Shell Pre-Approved, D:-drive-only disk policy, Plan Persistence, Save Rules Globally
+1. **`~/.claude/CLAUDE.md`** — user-home global (cross-volume): Functional Tests Prove Behavior + Code Review Before Reporting Done + **Cite the Source — Stop Guessing** (added 2026-05-11) + **Validate Application Logs Before Claiming Success** (added 2026-05-11) + **Screenshot Timestamps — Never Trust a Static Image** (added 2026-05-11)
+2. **`D:\test 2\CLAUDE.md`** — volume global (all D:\test 2 projects): Approval Gate (double-ask), **No Guessing — Cite the Source in Every Response** (strengthened 2026-05-11), Verify Before Claiming Fixed, **Validate Application Logs Before Claiming Success** (added 2026-05-11), **Screenshot Timestamps — Never Trust a Static Image** (added 2026-05-11), Regression Test Maintenance, Functional Tests Prove Behavior, Git Lifecycle (todo-in-commits), Shell Pre-Approved, D:-drive-only disk policy, Plan Persistence, Save Rules Globally
 3. **`D:\test 2\AI trading assistance\CLAUDE.md`** — project-specific only: ParquetClient, testnet default, Gemini model chain, training pipeline paths, cluster orchestrator port
 
 ### Key methodology rules
