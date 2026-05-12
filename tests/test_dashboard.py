@@ -6645,8 +6645,8 @@ def test_phase87_dual_lane_workers_concurrent_cpu_gpu():
     check('cpu kind routes to {cpu, any}',
           'if kind == "cpu":' in orch
           and 'worker_lane == "cpu"' in orch)
-    check('gpu/exclusive kind routes to {gpu, any}',
-          'if kind in ("gpu", "exclusive"):' in orch
+    check('gpu/exclusive/neural kind routes to {gpu, any}',
+          'if kind in ("gpu", "exclusive", "neural"):' in orch
           and 'worker_lane == "gpu"' in orch)
     check('dispatch picks first idle worker matching lane (not blind round-robin)',
           'next(' in orch
@@ -8703,6 +8703,15 @@ def test_phase101_neural_kind_plus_task_heartbeat_and_proc_health_cache():
         survives = o._tasks[tid2].get('status') == 'running'
     check('watchdog: actively-heartbeating task survives over-elapsed window',
           survives)
+
+    # ── F2d: lane dispatch must route "neural" kind to GPU workers ──────
+    # Without this, _lane_accepts falls through to "return True" and
+    # neural tasks land on any idle worker (including CPU lanes), which
+    # cannot run Darts/Lightning.
+    orch_src = (PRJ / 'src/training/distributed/orchestrator.py').read_text(encoding='utf-8')
+    check('orchestrator.py: _lane_accepts handles "neural" -> gpu',
+          'kind in ("gpu", "exclusive", "neural")' in orch_src
+          or "kind in ('gpu', 'exclusive', 'neural')" in orch_src)
 
     # ── F2c: worker source ships TASK_HEARTBEAT_S + heartbeat thread ────
     worker_src = (PRJ / 'src/training/distributed/worker.py').read_text(encoding='utf-8')

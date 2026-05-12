@@ -361,6 +361,10 @@ class Orchestrator:
             #                                                    sweep coordinator
             #                                                    serialises so OFT
             #                                                    runs alone)
+            #   resource_kind=neural     -> lane in {gpu, any}  (TFT-class — needs
+            #                                                    GPU; gets the 6h
+            #                                                    watchdog budget
+            #                                                    from Phase 101.)
             try:
                 from src.training.training_rules import resource_kind as _rkind
             except Exception:
@@ -371,7 +375,7 @@ class Orchestrator:
                     return True
                 if kind == "cpu":
                     return worker_lane == "cpu"
-                if kind in ("gpu", "exclusive"):
+                if kind in ("gpu", "exclusive", "neural"):
                     return worker_lane == "gpu"
                 return True
 
