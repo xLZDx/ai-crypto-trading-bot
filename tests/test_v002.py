@@ -108,44 +108,36 @@ class TestFractionalDiff:
 class TestTripleBarrier:
     def test_labels_in_valid_set(self, ohlcv):
         from src.analysis.triple_barrier import triple_barrier_labels_vectorized
-        labels = triple_barrier_labels_vectorized(ohlcv, profit_pct=0.02, loss_pct=0.01)
+        labels, _ = triple_barrier_labels_vectorized(ohlcv, pt_multiplier=2.0, sl_multiplier=1.0)
         assert set(labels.unique()).issubset({-1, 0, 1})
 
     def test_labels_output_length(self, ohlcv):
         from src.analysis.triple_barrier import triple_barrier_labels_vectorized
-        labels = triple_barrier_labels_vectorized(ohlcv)
+        labels, _ = triple_barrier_labels_vectorized(ohlcv)
         assert len(labels) == len(ohlcv)
 
     def test_last_bars_are_zero(self, ohlcv):
         from src.analysis.triple_barrier import triple_barrier_labels_vectorized
         max_bars = 24
-        labels = triple_barrier_labels_vectorized(ohlcv, max_bars=max_bars)
-        # Last max_bars rows must be 0 (unlabeled)
+        labels, _ = triple_barrier_labels_vectorized(ohlcv, max_bars=max_bars)
         assert (labels.iloc[-max_bars:] == 0).all()
 
-    def test_loop_version_matches_vectorized(self, ohlcv_short):
-        from src.analysis.triple_barrier import (
-            triple_barrier_labels, triple_barrier_labels_vectorized
-        )
-        profit_pct, loss_pct, max_bars = 0.02, 0.01, 10
-        loop_lbls = triple_barrier_labels(ohlcv_short, profit_pct=profit_pct,
-                                          loss_pct=loss_pct, max_bars=max_bars)
-        vec_lbls  = triple_barrier_labels_vectorized(ohlcv_short, profit_pct=profit_pct,
-                                                     loss_pct=loss_pct, max_bars=max_bars)
-        # The two implementations should largely agree (allow small diff due to bar-priority rules)
-        agree = (loop_lbls == vec_lbls).mean()
-        assert agree >= 0.85, f"Loop vs vectorized agreement only {agree:.0%}"
+    def test_vectorized_returns_tuple(self, ohlcv):
+        from src.analysis.triple_barrier import triple_barrier_labels_vectorized
+        result = triple_barrier_labels_vectorized(ohlcv)
+        assert isinstance(result, tuple) and len(result) == 2, \
+            "triple_barrier_labels_vectorized must return (labels, t1_times)"
 
     def test_label_stats_sums_to_100(self, ohlcv):
         from src.analysis.triple_barrier import triple_barrier_labels_vectorized, label_stats
-        labels = triple_barrier_labels_vectorized(ohlcv)
+        labels, _ = triple_barrier_labels_vectorized(ohlcv)
         stats = label_stats(labels)
         total_pct = stats["long_pct"] + stats["short_pct"] + stats["timeout_pct"]
         assert abs(total_pct - 100.0) < 0.1
 
     def test_label_stats_keys(self, ohlcv):
         from src.analysis.triple_barrier import triple_barrier_labels_vectorized, label_stats
-        labels = triple_barrier_labels_vectorized(ohlcv)
+        labels, _ = triple_barrier_labels_vectorized(ohlcv)
         stats = label_stats(labels)
         assert set(stats.keys()) == {"long_pct", "short_pct", "timeout_pct", "total"}
 

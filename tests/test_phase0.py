@@ -151,14 +151,17 @@ def test_data_bus():
     out = _deserialize(blob)
     check("serialize/deserialize roundtrip (dict)", out == payload)
 
-    # Pickle fallback for numpy
+    # msgpack cannot serialize numpy arrays — callers must convert first (.tolist()).
+    # Verify that attempting to serialize ndarray raises ValueError (not a silent failure).
     try:
         import numpy as np
         arr = np.array([1.0, 2.0, 3.0])
-        blob = _serialize({"x": arr})
-        # msgpack doesn't handle ndarray → falls back, but encoding may be msgpack with bytes
-        # We accept either path as long as no exception
-        check("serialize numpy without crashing", True)
+        try:
+            _serialize({"x": arr})
+            check("numpy array serialization raises ValueError", False,
+                  "expected ValueError but no exception raised")
+        except ValueError:
+            check("numpy array serialization raises ValueError", True)
     except ImportError:
         check("numpy serialization", None, "numpy not installed")
 

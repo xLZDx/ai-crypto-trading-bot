@@ -7,12 +7,16 @@ import numpy as np
 
 class PurgedKFold:
     """
-    Time-series aware k-fold that purges training data around test boundaries.
+    Walk-forward k-fold that purges training data around test boundaries.
+
+    Each fold uses ONLY data that precedes the test window (no future data).
+    Fold 0 is always skipped because it has zero prior observations.
 
     Parameters:
-        n_splits: Number of folds
-        t1: Series of closing timestamps (for embargo calculation)
-        pct_embargo: Fraction of data to embargo around test set (prevents leakage)
+        n_splits: Number of folds (the first fold is skipped, so effective
+                  walk-forward folds = n_splits - 1 or more depending on embargo).
+        t1: Series of closing timestamps (reserved for future t1-aware purging).
+        pct_embargo: Fraction of data to embargo before the test window start.
     """
 
     def __init__(self, n_splits=5, t1=None, pct_embargo=0.0):
@@ -22,29 +26,35 @@ class PurgedKFold:
 
     def split(self, X, y=None, groups=None):
         """
-        Generate train/test indices for walk-forward validation.
+        Generate walk-forward train/test index pairs.
+
+        For fold k:
+          test  = [k * fold_size, (k+1) * fold_size)
+          train = [0, test_start - embargo_size)
+
+        Folds where train is empty are silently skipped (always fold 0,
+        and any fold where embargo_size >= test_start).
 
         Yields:
-            (train_indices, test_indices): Both numpy arrays
+            (train_indices, test_indices): Both numpy arrays of integer positions.
         """
         n_samples = len(X)
         fold_size = n_samples // self.n_splits
         embargo_size = max(1, int(n_samples * self.pct_embargo))
 
         for fold in range(self.n_splits):
-            # Test set: fold-th contiguous block
             test_start = fold * fold_size
-            test_end = (fold + 1) * fold_size if fold < self.n_splits - 1 else n_samples
+            test_end = (
+                (fold + 1) * fold_size if fold < self.n_splits - 1 else n_samples
+            )
             test_idx = np.arange(test_start, test_end)
 
-            # Embargo: exclude samples in window around test set
-            embargo_start = max(0, test_start - embargo_size)
-            embargo_end = min(n_samples, test_end + embargo_size)
+            # Walk-forward: train only on strictly past data (before embargo zone)
+            train_end = max(0, test_start - embargo_size)
+            train_idx = np.arange(0, train_end)
 
-            # Train set: everything except test + embargo
-            train_idx = np.concatenate([
-                np.arange(0, embargo_start),
-                np.arange(embargo_end, n_samples)
-            ])
+            if len(train_idx) == 0:
+                # Fold 0 always produces an empty train set; skip it.
+                continue
 
             yield train_idx, test_idx

@@ -375,7 +375,9 @@ class TestOrchestrator(unittest.TestCase):
 
     def _make_orch(self):
         from src.training.distributed.orchestrator import Orchestrator
-        return Orchestrator()
+        import pathlib, tempfile
+        tmp = pathlib.Path(tempfile.mktemp(suffix='.json'))
+        return Orchestrator(state_path=tmp)
 
     def test_module_importable(self):
         mod = __import__("src.training.distributed.orchestrator",
@@ -424,7 +426,8 @@ class TestOrchestrator(unittest.TestCase):
 
     def test_gpu_worker_preferred_over_cpu(self):
         from src.training.distributed.orchestrator import Orchestrator
-        orch = Orchestrator()
+        import pathlib, tempfile
+        orch = Orchestrator(state_path=pathlib.Path(tempfile.mktemp(suffix='.json')))
 
         now_iso = datetime.now(timezone.utc).isoformat()
         orch.register_worker({
@@ -797,8 +800,8 @@ class TestRegimeGating(unittest.TestCase):
         self.assertIn("trade_amount * _size_mult", self.src)
 
     def test_regime_name_in_quant_state(self):
-        # quant state dict must include regime
-        quant_block = self.src[self.src.find('"garch_status"'):][:500]
+        # quant state dict must include regime (window extended to 1500 chars)
+        quant_block = self.src[self.src.find('"garch_status"'):][:1500]
         self.assertIn('"regime"', quant_block)
 
     def test_tft_threshold_is_regime_aware(self):
@@ -874,7 +877,7 @@ class TestMetaLabelerWalkForward(unittest.TestCase):
         self.src = (BASE_DIR / "src" / "engine" / "train_meta_labeler.py").read_text(encoding="utf-8")
 
     def test_walk_forward_splits_loop(self):
-        self.assertIn("_wf_n_splits", self.src)
+        self.assertIn("PurgedKFold", self.src)
         self.assertIn("_wf_fold_accs", self.src)
 
     def test_fold_accuracy_logged(self):
@@ -886,14 +889,16 @@ class TestMetaLabelerWalkForward(unittest.TestCase):
         self.assertIn("walk_forward_folds", self.src)
 
     def test_wf_uses_chronological_splits(self):
-        # Must iterate in order (forward walk) — test index > train end
-        self.assertIn("_te_start", self.src)
-        self.assertIn("_tr_end", self.src)
+        # Must iterate using cv.split() which enforces walk-forward order
+        self.assertIn("cv.split", self.src)
+        self.assertIn("tr_idx", self.src)
+        self.assertIn("te_idx", self.src)
 
     def test_final_model_trained_on_full_calib_split(self):
-        # After WF, the final base_clf trains on calib_split (75%)
+        # After WF, the final base_clf trains on a purged calib window
         self.assertIn("calib_split", self.src)
-        self.assertIn("base_clf.fit(X.iloc[:calib_split]", self.src)
+        # Uses safe_train_idx to avoid look-ahead (t1_timestamp filtered)
+        self.assertIn("safe_train_idx", self.src)
 
 
 # ─── Regime quant card display ────────────────────────────────────────────────

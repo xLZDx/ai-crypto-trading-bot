@@ -33,6 +33,81 @@ from src.analysis.fractional_diff import add_fractional_diff
 from src.analysis.triple_barrier import triple_barrier_labels_vectorized, label_stats
 
 
+_RULES_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    'data', 'training_rules.json',
+)
+
+# (model_key, param_key) → (expected_type, min_val, max_val)
+# min/max only checked for numeric types.
+_HP_SCHEMA: dict = {
+    'n_estimators': (int, 1, 10_000),
+    'max_depth':    (int, 1, 50),
+    'class_weight': (str, None, None),
+}
+_HP_DEFAULTS: dict = {'n_estimators': 500, 'max_depth': 8, 'class_weight': 'balanced'}
+
+
+def _load_model_params(model_key: str) -> tuple:
+    """Load and validate HP from training_rules.json for *model_key*.
+
+    Returns:
+        (params_dict, rules_version, params_hash_hex16)
+        Falls back to _HP_DEFAULTS on any error; warns explicitly in every case.
+    """
+    import hashlib
+
+    def _warn_fallback(reason: str):
+        log.warning("HP load: %s — using defaults %s", reason, _HP_DEFAULTS)
+
+    try:
+        with open(_RULES_PATH, 'r', encoding='utf-8') as fh:
+            rules = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        _warn_fallback(f"cannot read training_rules.json ({exc})")
+        return dict(_HP_DEFAULTS), None, None
+
+    rules_version = rules.get('_version')
+    entry = rules.get('models', {}).get(model_key, {})
+
+    if 'params' not in entry:
+        _warn_fallback(f"model '{model_key}' has no 'params' key in training_rules.json")
+        return dict(_HP_DEFAULTS), rules_version, None
+
+    raw_params = entry['params']
+    validated: dict = {}
+
+    for key, (expected_type, lo, hi) in _HP_SCHEMA.items():
+        if key not in raw_params:
+            log.warning("HP load: '%s' missing for model '%s'; using default %s=%s",
+                        key, model_key, key, _HP_DEFAULTS[key])
+            validated[key] = _HP_DEFAULTS[key]
+            continue
+
+        val = raw_params[key]
+        if not isinstance(val, expected_type):
+            log.warning("HP load: '%s' expected %s got %s; using default",
+                        key, expected_type.__name__, type(val).__name__)
+            validated[key] = _HP_DEFAULTS[key]
+            continue
+
+        if lo is not None and not (lo <= val <= hi):
+            log.warning("HP load: '%s'=%s out of range [%s, %s]; using default",
+                        key, val, lo, hi)
+            validated[key] = _HP_DEFAULTS[key]
+            continue
+
+        validated[key] = val
+
+    params_hash = hashlib.sha256(
+        json.dumps(validated, sort_keys=True).encode()
+    ).hexdigest()[:16]
+
+    log.info("HP loaded from training_rules.json (version=%s, hash=%s): %s",
+             rules_version, params_hash, validated)
+    return validated, rules_version, params_hash
+
+
 FEATURE_COLUMNS = [
     'frac_diff_d40',        # fractional diff replaces raw return
     'volatility',
@@ -122,6 +197,11 @@ def prepare_data(filepath):
     df.loc[df['bb_pb'] > 0.9, 'signal_bb'] = -1.0
 
     news_path = os.path.join(base_dir, 'data', 'raw', 'cryptocompare_news.csv')
+    if not os.path.exists(news_path):
+        log.warning(
+            "News sentiment CSV not found: %s — 'news_sentiment' feature will be 0.0 for all rows",
+            news_path,
+        )
     df = add_news_sentiment(df, news_path)
 
     # Dynamic Volatility-based Triple Barrier
@@ -194,6 +274,11 @@ def train_model(timeframe: str = '1h'):
     log.info("Dataset: %d total samples | %d features | symbols: %s",
              len(combined_df), len(FEATURE_COLUMNS), symbols)
 
+    # B3: load HP from training_rules.json (guards: missing-key warn, type/range
+    # validate, schema check, version+hash saved to meta for audit trail).
+    # training_rules.json uses max_depth=8; the old hard-coded value was 6.
+    hp, rules_version, params_hash = _load_model_params('base')
+
     # Walk-forward cross-validation
     t1_series = combined_df['t1_timestamp']
     # Embargo = 2 * horizon (24 bars for base model)
@@ -202,9 +287,13 @@ def train_model(timeframe: str = '1h'):
     fold_accuracies = []
     for fold_i, (train_idx, test_idx) in enumerate(cv.split(X)):
         base_clf = make_classifier(
-            random_state=42, n_estimators=500, max_depth=6,
-            learning_rate=0.03, l2_regularization=0.5,
-            early_stopping=True, class_weight='balanced'
+            random_state=42,
+            n_estimators=hp['n_estimators'],
+            max_depth=hp['max_depth'],
+            learning_rate=0.03,
+            l2_regularization=0.5,
+            early_stopping=True,
+            class_weight=hp['class_weight'],
         )
         weights = compute_sample_weight('balanced', y.iloc[train_idx])
         base_clf.fit(X.iloc[train_idx], y.iloc[train_idx], sample_weight=weights)
@@ -215,26 +304,34 @@ def train_model(timeframe: str = '1h'):
     log.info("Walk-forward mean accuracy: %.2f%% ± %.2f%%",
              np.mean(fold_accuracies) * 100, np.std(fold_accuracies) * 100)
 
-    # Final model on full data with probability calibration
-    log.info("Training final model with isotonic probability calibration...")
+    # Final model — B2: three non-overlapping splits
+    #   train  [0 : 70%]   — model fit
+    #   cal    [70% : 85%] — isotonic calibration (held out, no leakage)
+    #   test   [85% : 100%]— evaluation only
+    log.info("Training final model with isotonic probability calibration (3-split)...")
     n = len(X)
-    calib_split = int(n * 0.80)
+    train_end = int(n * 0.70)
+    cal_end   = int(n * 0.85)
     base_clf = make_classifier(
-        random_state=42, n_estimators=500, max_depth=6,
-        learning_rate=0.03, l2_regularization=0.5,
-        early_stopping=True, class_weight='balanced'
+        random_state=42,
+        n_estimators=hp['n_estimators'],
+        max_depth=hp['max_depth'],
+        learning_rate=0.03,
+        l2_regularization=0.5,
+        early_stopping=True,
+        class_weight=hp['class_weight'],
     )
-    calib_start_time = combined_df.index[calib_split]
-    valid_train_mask = combined_df['t1_timestamp'].iloc[:calib_split] < calib_start_time
-    safe_train_idx = np.arange(calib_split)[valid_train_mask]
-    
+    calib_start_time = combined_df.index[train_end]
+    valid_train_mask = combined_df['t1_timestamp'].iloc[:train_end] < calib_start_time
+    safe_train_idx = np.arange(train_end)[valid_train_mask]
+
     calibrated = CalibratedClassifierCV(base_clf, method='isotonic', cv='prefit', n_jobs=-1)
     weights_calib = compute_sample_weight('balanced', y.iloc[safe_train_idx])
     base_clf.fit(X.iloc[safe_train_idx], y.iloc[safe_train_idx], sample_weight=weights_calib)
-    calibrated.fit(X.iloc[calib_split:], y.iloc[calib_split:])
+    calibrated.fit(X.iloc[train_end:cal_end], y.iloc[train_end:cal_end])
 
-    X_test = X.iloc[int(n * 0.90):]
-    y_test = y.iloc[int(n * 0.90):]
+    X_test = X.iloc[cal_end:]
+    y_test = y.iloc[cal_end:]
     predictions = calibrated.predict(X_test)
     accuracy = accuracy_score(y_test, predictions)
     report = classification_report(y_test, predictions, output_dict=True, zero_division=0)
@@ -271,13 +368,17 @@ def train_model(timeframe: str = '1h'):
         "model": "Base (HistGBT + Calibrated)",
         "accuracy": accuracy * 100,
         "long_accuracy": long_acc, "short_accuracy": short_acc,
-        "n_samples": len(combined_df), "n_train": calib_split, "n_test": len(X_test),
+        "n_samples": len(combined_df), "n_train": train_end, "n_test": len(X_test),
         "n_features": len(FEATURE_COLUMNS), "n_iterations": n_iter,
         "walk_forward_mean_acc": round(float(np.mean(fold_accuracies)) * 100, 2),
         "walk_forward_std_acc": round(float(np.std(fold_accuracies)) * 100, 2),
         "target": "triple_barrier_long_win",
         "symbols": symbols, "timeframe": timeframe,
-        "last_trained": datetime.now(timezone.utc).isoformat()
+        "last_trained": datetime.now(timezone.utc).isoformat(),
+        # B3: audit trail — which rules version + HP hash produced this artifact
+        "hp_rules_version": rules_version,
+        "hp_params_hash": params_hash,
+        "hp": hp,
     }
     if proba_test is not None:
         from src.utils.model_metrics import merge_metrics_into_meta
