@@ -1038,14 +1038,11 @@ def _build_monitor_services_snapshot() -> dict:
         'hint': None if zmq_up else 'enable orderbook_collector / distributed training to bind',
     }
 
-    # ── FastAPI control plane (:8100) ──────────────────────────────────────
-    try:
-        with urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=0.5) as resp:
-            out['fastapi'] = {'label': 'FastAPI Control Plane', 'up': resp.status == 200,
-                              'detail': 'localhost:8100'}
-    except Exception:
-        out['fastapi'] = {'label': 'FastAPI Control Plane', 'up': False,
-                          'error': 'unreachable', 'detail': 'localhost:8100'}
+    # Phase A11 (2026-05-12): FastAPI control plane (:8100) removed.
+    # All 6 endpoints (/health, /status, /metrics, /control/bot/start,
+    # /control/bot/stop, /control/training/start) were duplicated by
+    # existing dashboard routes or scripts. Deleting the service kills
+    # one process + one log file + one auth surface.
 
     # ── Realtime feed (Binance L2) — check status JSON ─────────────────────
     try:

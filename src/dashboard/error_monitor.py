@@ -516,16 +516,14 @@ def _probe_parquet() -> tuple[str, str, str] | None:
 
 
 def _probe_fastapi() -> tuple[str, str, str] | None:
-    import urllib.request
-    try:
-        with urllib.request.urlopen("http://127.0.0.1:8100/health", timeout=0.5) as resp:
-            if resp.status == 200:
-                return None
-            return ("warning", "service:fastapi",
-                    f"FastAPI control plane HTTP {resp.status} on :8100")
-    except Exception as exc:
-        return ("warning", "service:fastapi",
-                f"FastAPI control plane DOWN on :8100 — {type(exc).__name__}")
+    """Phase A11 (2026-05-12): FastAPI control plane on :8100 removed.
+
+    All 6 endpoints it exposed were duplicated by dashboard routes or
+    scripts. The probe is kept as a no-op stub so callers in
+    _probe_all() don't break; remove it from the probe list when
+    convenient.
+    """
+    return None
 
 
 def _probe_realtime() -> tuple[str, str, str] | None:

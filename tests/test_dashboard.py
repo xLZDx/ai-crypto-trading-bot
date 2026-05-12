@@ -1425,9 +1425,17 @@ def test_phase12_dashboard_controls():
 
 
 def test_phase13_realtime_and_fastapi():
-    """Realtime heartbeat + FastAPI control plane: filesystem + import-time
-    checks (offline) plus one HTTP probe per service when --offline is off."""
-    print('\n[Phase 13 — Realtime heartbeat + FastAPI control plane]')
+    """Realtime heartbeat checks.
+
+    Phase A11 (2026-05-12): the FastAPI control plane on :8100 was
+    DELETED. The 6 endpoints it exposed (/health, /status, /metrics,
+    /control/bot/start, /control/bot/stop, /control/training/start)
+    were all duplicates of dashboard routes or scripts. This test now
+    asserts the deletion landed cleanly — file is gone, restart_all
+    doesn't launch it, and (defense in depth) stop_all doesn't try
+    to kill it either.
+    """
+    print('\n[Phase 13 — Realtime heartbeat + (FastAPI control plane DELETED in A11)]')
 
     # ── Realtime heartbeat ──────────────────────────────────────────────
     rt_src = open(os.path.join(BASE_DIR, 'src', 'data_ingestion', 'realtime_db_writer.py'),
@@ -1439,74 +1447,23 @@ def test_phase13_realtime_and_fastapi():
     check('realtime_db_writer flips status on connect/disconnect/error',
           rt_src.count('_write_status(') >= 4)
 
-    # ── FastAPI control plane ───────────────────────────────────────────
+    # ── Phase A11 deletion landing checks ───────────────────────────────
     fapi_src_path = os.path.join(BASE_DIR, 'src', 'server', 'control_plane.py')
-    check('src/server/control_plane.py exists', os.path.exists(fapi_src_path))
-    if os.path.exists(fapi_src_path):
-        fapi_src = open(fapi_src_path, encoding='utf-8').read()
-        for ep in ('/health', '/status', '/metrics',
-                   '/control/bot/start', '/control/bot/stop',
-                   '/control/training/start'):
-            check(f'control_plane defines {ep}',
-                  f'"{ep}"' in fapi_src or f"'{ep}'" in fapi_src)
-        check('control_plane requires X-API-Key on /control/*',
-              '_require_api_key' in fapi_src)
+    check('Phase A11: src/server/control_plane.py REMOVED',
+          not os.path.exists(fapi_src_path))
 
     launcher = os.path.join(BASE_DIR, 'launch_fastapi.ps1')
-    check('launch_fastapi.ps1 exists', os.path.exists(launcher))
-    if os.path.exists(launcher):
-        l_src = open(launcher, encoding='utf-8').read()
-        check('launch_fastapi.ps1 binds :8100 by default',
-              "FASTAPI_BIND_PORT = '8100'" in l_src)
-        check('launch_fastapi.ps1 is idempotent (skips if /health up)',
-              '/health' in l_src and 'skipping launch' in l_src.lower())
+    check('Phase A11: launch_fastapi.ps1 REMOVED',
+          not os.path.exists(launcher))
 
-    # ── restart_all wiring ──────────────────────────────────────────────
     ra = open(os.path.join(BASE_DIR, 'restart_all.ps1'), encoding='utf-8').read()
-    check('restart_all.ps1 starts FastAPI',
-          'launch_fastapi.ps1' in ra and 'src.server.control_plane' in ra.replace('\\.', '.'))
-    check('restart_all.ps1 saves fastapi PID',
-          'fastapi = $fastapiId' in ra)
-    sa = open(os.path.join(BASE_DIR, 'stop_all.ps1'), encoding='utf-8').read()
-    check('stop_all.ps1 covers fastapi key',
-          "'fastapi'" in sa)
-    check('stop_all.ps1 stray-sweep matches control_plane',
-          'control_plane' in sa)
+    check('Phase A11: restart_all.ps1 no longer launches FastAPI',
+          'launch_fastapi.ps1' not in ra)
+    check('Phase A11: restart_all.ps1 no longer references control_plane module',
+          'src.server.control_plane' not in ra.replace('\\.', '.'))
 
-    # ── FastAPI app importable + has expected routes ────────────────────
-    try:
-        import sys as _sys
-        _sys.path.insert(0, BASE_DIR)
-        from src.server.control_plane import app as _fastapi_app  # noqa: F401
-        paths = {getattr(r, 'path', None) for r in _fastapi_app.routes}
-        for needed in ('/health', '/status', '/metrics',
-                       '/control/bot/start', '/control/bot/stop',
-                       '/control/training/start'):
-            check(f'FastAPI route registered: {needed}', needed in paths)
-    except Exception as e:
-        check('FastAPI app imports cleanly', False, str(e))
-
-    # ── Live HTTP probe (skipped in --offline) ──────────────────────────
+    # ── Realtime heartbeat freshness (only meaningful when bot is running) ──
     if not getattr(test_phase13_realtime_and_fastapi, '_offline', False):
-        try:
-            import urllib.request, json as _json
-            with urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=2) as r:
-                body = _json.loads(r.read().decode('utf-8'))
-                check('FastAPI /health responds 200',
-                      r.status == 200 and body.get('status') == 'ok',
-                      f'body={body}')
-        except Exception as e:
-            check('FastAPI /health responds 200', None, f'skipped: {e}')
-        try:
-            import urllib.request, json as _json
-            with urllib.request.urlopen('http://127.0.0.1:8100/status', timeout=2) as r:
-                body = _json.loads(r.read().decode('utf-8'))
-                check('FastAPI /status returns components dict',
-                      'components' in body and isinstance(body['components'], dict))
-        except Exception as e:
-            check('FastAPI /status returns components dict', None, f'skipped: {e}')
-
-        # Realtime heartbeat: file exists and is fresh (< 10 min old)
         rt_path = os.path.join(BASE_DIR, 'data', 'realtime_status.json')
         if os.path.exists(rt_path):
             try:

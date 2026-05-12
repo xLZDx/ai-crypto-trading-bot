@@ -277,19 +277,12 @@ if ($wdRunning) {
 }
 Write-Host "[5.5/6] Watchlist Downloader ready." -ForegroundColor Green
 
-# Step 5.6: FastAPI Control Plane (Phase 13) - :8100 health/status/control
-Write-Host ""
-Write-Host "[5.6/6] Starting FastAPI Control Plane (:8100)..." -ForegroundColor Yellow
-$fapiRunning = Get-WmiObject Win32_Process -Filter "Name='python.exe'" 2>$null |
-    Where-Object { $_.CommandLine -match 'src\.server\.control_plane' }
-if ($fapiRunning) {
-    Write-Host "  FastAPI already running (PID $($fapiRunning.ProcessId)) - skipping." -ForegroundColor DarkCyan
-    $procFastapi = Get-Process -Id $fapiRunning.ProcessId -ErrorAction SilentlyContinue
-} else {
-    $procFastapi = Start-Window -Label 'FastAPI' -ScriptFile (Join-Path $root 'launch_fastapi.ps1') -LogName 'fastapi.log'
-    Start-Sleep -Seconds 2
-}
-Write-Host "[5.6/6] FastAPI Control Plane ready." -ForegroundColor Green
+# Step 5.6: FastAPI Control Plane - REMOVED in Phase A11 (2026-05-12).
+# All 6 endpoints (/health, /status, /metrics, /control/bot/start,
+# /control/bot/stop, /control/training/start) were duplicates of
+# dashboard routes / scripts. Removing the service kills one process,
+# one auth surface, and one log file. If a downstream tool depends on
+# :8100, route it through the dashboard at :5000/api/* instead.
 
 # Step 5.7: Realtime DB Writer (Phase 7) - Binance WS -> QuestDB
 Write-Host ""
