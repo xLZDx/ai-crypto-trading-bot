@@ -349,7 +349,7 @@ class TestAgentBus:
 
         agent = DummyAgent(bus=bus, interval_sec=0.05)
         agent.start()
-        time.sleep(0.18)
+        time.sleep(0.5)  # filelock writes in _loop add ~80ms overhead per cycle
         agent.stop()
         assert len(cycles) >= 2, "Agent should have run at least 2 cycles"
 
@@ -1150,11 +1150,15 @@ class TestSimulatorEndpoints:
         assert "total" in d
 
     def test_config_endpoint(self):
-        r = self.client.post(
-            "/api/simulator/config",
-            json={"symbol": "ETH_USDT", "speed": 500.0},
-            headers=self._hdrs(),
-        )
+        from unittest.mock import MagicMock, patch
+        mock_sim = MagicMock()
+        mock_sim.get_status.return_value = {"config": {"symbol": "ETH_USDT", "speed": 500.0}}
+        with patch("src.dashboard.app._get_simulator", return_value=(mock_sim, MagicMock(), MagicMock())):
+            r = self.client.post(
+                "/api/simulator/config",
+                json={"symbol": "ETH_USDT", "speed": 500.0},
+                headers=self._hdrs(),
+            )
         assert r.status_code == 200
         d = r.get_json()
         assert d["ok"] is True

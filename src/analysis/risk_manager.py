@@ -1,22 +1,126 @@
 import math
 import logging
 import pandas as pd
-from typing import List, Dict
+from typing import List, Dict, Optional
 from src.analysis.volatility import VolatilityForecaster
 from src.analysis.kelly_criterion import KellySizer
 
 logger = logging.getLogger(__name__)
+
+
+def calc_liquidation_price(
+    entry: float,
+    leverage: float,
+    side: str,
+    *,
+    maint_margin_rate: float = 0.005,
+    taker_fee_rate: float = 0.0004,
+    accumulated_funding: float = 0.0,
+    margin_type: str = "isolated",
+) -> float:
+    """Return the liquidation price for a Binance USDT-M futures position.
+
+    Derived from first principles (per-unit isolated margin balance):
+      LONG:  liq = (entry*(1 - 1/leverage + taker_fee_rate) + accumulated_funding)
+                   / (1 - maint_margin_rate - taker_fee_rate)
+      SHORT: liq = (entry*(1 + 1/leverage - taker_fee_rate) + accumulated_funding)
+                   / (1 + maint_margin_rate + taker_fee_rate)
+
+    Args:
+        entry:              Position entry price (quote currency).
+        leverage:           Leverage multiplier (e.g. 2.0 for 2×).
+        side:               "long" or "short" (case-insensitive).
+        maint_margin_rate:  Binance maintenance margin rate (default 0.5%).
+        taker_fee_rate:     Taker fee rate applied at open and close (default 0.04%).
+        accumulated_funding: Unrealised funding payments per unit (quote currency).
+                            Positive = long paid; negative = long received.
+        margin_type:        Must be "isolated". Cross-margin uses a different formula.
+
+    Returns:
+        Liquidation price as a float.
+
+    Raises:
+        ValueError: If entry ≤ 0, leverage ≤ 0, or side is not 'long'/'short'.
+        AssertionError: If margin_type is not "isolated".
+    """
+    if margin_type != "isolated":
+        raise ValueError(
+            f"calc_liquidation_price only supports isolated margin; got {margin_type!r}. "
+            "Cross-margin requires a different formula."
+        )
+    if entry <= 0:
+        raise ValueError(f"entry must be > 0, got {entry}")
+    if leverage <= 0:
+        raise ValueError(f"leverage must be > 0, got {leverage}")
+
+    side = side.lower()
+    if side not in ("long", "short"):
+        raise ValueError(f"side must be 'long' or 'short', got {side!r}")
+
+    if side == "long":
+        numerator   = entry * (1.0 - 1.0 / leverage + taker_fee_rate) + accumulated_funding
+        denominator = 1.0 - maint_margin_rate - taker_fee_rate
+    else:  # short: positive accumulated_funding = short received payment = more margin buffer
+        numerator   = entry * (1.0 + 1.0 / leverage - taker_fee_rate) + accumulated_funding
+        denominator = 1.0 + maint_margin_rate + taker_fee_rate
+
+    return numerator / denominator
 
 class HullRiskManager:
     """
     Risk management module based on John Hull's concepts.
     ("Options, Futures, and Other Derivatives").
     """
-    
-    def __init__(self, default_risk_usd: float = 20.0):
+
+    def __init__(self, default_risk_usd: float = 20.0) -> None:
         self.default_risk_usd = default_risk_usd
         self.vol_forecaster = VolatilityForecaster()
         self._kelly = KellySizer(window=50, half_kelly=True)
+
+    def size_from_stop_distance(
+        self,
+        entry: float,
+        stop_price: float,
+        risk_usd: float,
+        *,
+        leverage: float = 1.0,
+        max_notional_usd: Optional[float] = None,
+    ) -> float:
+        """Position notional in quote currency (USDT) sized to risk exactly risk_usd on stop hit.
+
+        Sizes the position so that if price reaches stop_price the unrealised
+        loss equals exactly risk_usd. Returns the notional value of the
+        position (entry_price × units), NOT the margin required.
+
+        Example: entry=100, stop=95, risk_usd=20 → stop_distance=5 →
+                 units=4, notional=400 USDT (at 10× lever: margin=40 USDT).
+
+        Args:
+            entry:           Entry price (quote currency, e.g. USDT).
+            stop_price:      Stop-loss price; must differ from entry.
+            risk_usd:        Maximum loss in quote currency if stop is hit.
+            leverage:        Leverage multiplier; used only when max_notional_usd
+                             is None to derive an implicit cap (equity × leverage).
+                             Pass explicitly if you want a hard cap.
+            max_notional_usd: Hard cap on returned notional. If None, no cap applied.
+
+        Returns:
+            Position notional in USDT, rounded to 2 decimal places.
+            Returns 0.0 if stop_price == entry (division-by-zero guard).
+        """
+        stop_distance = abs(entry - stop_price)
+        if stop_distance == 0.0:
+            return 0.0
+        if entry <= 0 or risk_usd <= 0:
+            return 0.0
+
+        units = risk_usd / stop_distance
+        notional = round(units * entry, 2)
+
+        if max_notional_usd is not None:
+            notional = min(notional, max_notional_usd)
+
+        return notional
 
     def calculate_historical_volatility(self, data: List[Dict], periods: int = 30) -> float:
         """
@@ -25,27 +129,27 @@ class HullRiskManager:
         """
         if len(data) < periods + 1:
             return 0.01 # Default value
-            
+
         recent_data = data[-(periods+1):]
         log_returns = []
-        
+
         for i in range(1, len(recent_data)):
             prev_close = recent_data[i-1]['close']
             curr_close = recent_data[i]['close']
             if prev_close > 0:
                 log_return = math.log(curr_close / prev_close)
                 log_returns.append(log_return)
-                
+
         if not log_returns:
             return 0.01
-            
+
         mean_return = sum(log_returns) / len(log_returns)
-        
+
         variance_sum = sum((r - mean_return) ** 2 for r in log_returns)
         variance = variance_sum / (len(log_returns) - 1)
-        
+
         daily_volatility = math.sqrt(variance)
-        
+
         # Annualized volatility (assuming 1h candles, 24*365 = 8760 hours in a year)
         annual_volatility = daily_volatility * math.sqrt(8760)
         return annual_volatility
@@ -57,7 +161,7 @@ class HullRiskManager:
         The lower the volatility, the larger the position.
         """
         volatility = self.calculate_historical_volatility(data)
-        
+
         # Check for GARCH volatility spike
         garch_reduction = 1.0
         if len(data) >= 100:
@@ -66,21 +170,21 @@ class HullRiskManager:
             if garch_res.get('volatility_spike', False):
                 logger.warning("GARCH predicts sharp volatility spike! Reducing position size by 50%.")
                 garch_reduction = 0.5
-        
+
         # Base logic: if volatility is 50% (0.5), risk the base amount.
         # If volatility is 100% (1.0), risk 2x less ($10).
         # If volatility is 25% (0.25), risk 2x more ($40).
-        
+
         baseline_volatility = 0.50 # 50% annual
-        
+
         # Protection against division by zero or abnormally low volatility
-        volatility = max(volatility, 0.05) 
-        
+        volatility = max(volatility, 0.05)
+
         scaling_factor = baseline_volatility / volatility
-        
+
         # Limit scaling from 0.25x to 3.0x
         scaling_factor = max(0.25, min(scaling_factor, 3.0))
-        
+
         adjusted_position = self.default_risk_usd * scaling_factor * garch_reduction
         return round(adjusted_position, 2)
 

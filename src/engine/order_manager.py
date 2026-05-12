@@ -200,6 +200,11 @@ class OrderManager:
     def execute_futures_order(self, symbol, side, amount_coin, reduce_only=False):
         """Sends a real market order to the Futures account (LONG / SHORT).
 
+        This method is execution-only. Position sizing (amount_coin) must be
+        computed by the caller using HullRiskManager.size_from_stop_distance()
+        or HullRiskManager.get_kelly_position_size() before this call. The
+        liquidation-proximity gate lives in FuturesAgent._on_signal().
+
         Returns:
           - the CCXT order dict on success
           - {'reduce_only_rejected': True, 'error_code': -2022} if Binance

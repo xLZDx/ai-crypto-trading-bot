@@ -19,6 +19,8 @@ import logging
 import os
 
 from src.engine.agents.agent_bus import BaseAgent
+from src.analysis.risk_manager import calc_liquidation_price
+from src.analysis.live_funding import fetch_funding_rate
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,15 @@ FUNDING_ARB_THRESHOLD = 0.001    # 0.1% funding = strong short signal
 LEVERAGE = 2.0                    # conservative for safety
 FEE_MAKER = 0.0002
 FEE_TAKER = 0.0004
+
+# Minimum distance from entry to liquidation price (fraction of entry).
+# Positions where liq is within 3% of entry are too close to sustain any
+# adverse tick and will be rejected.
+_MIN_LIQ_DISTANCE: float = 0.03
+
+# Funding rates above this threshold (0.3%) in the opposing direction are
+# a strong headwind; block the trade rather than fight the carry cost.
+_MAX_ADVERSE_FUNDING: float = 0.003
 
 
 class FuturesAgent(BaseAgent):
@@ -94,7 +105,55 @@ class FuturesAgent(BaseAgent):
             logger.info("[FuturesAgent] %s BLOCKED — near liquidation cluster (%.2f).", sym, liq_prox)
             return
 
-        # Funding arbitrage override — strong directional edge
+        # ── G3: Live funding gate (fail-closed) ───────────────────────────
+        # Fetch current funding rate. If unavailable (exchange error / network),
+        # block the trade rather than entering with unknown carry cost.
+        live_rate = fetch_funding_rate(sym)
+        if live_rate is None:
+            logger.warning(
+                "[FuturesAgent] %s BLOCKED — live funding rate unavailable (fail-closed).", sym
+            )
+            return
+
+        # Block when funding strongly opposes the intended direction.
+        # Long trades are hurt by high positive funding; shorts by high negative.
+        side_str = "long" if direction > 0 else "short"
+        adverse_funding = (live_rate > _MAX_ADVERSE_FUNDING and direction > 0) or \
+                          (live_rate < -_MAX_ADVERSE_FUNDING and direction < 0)
+        if adverse_funding:
+            logger.info(
+                "[FuturesAgent] %s BLOCKED — adverse funding %.4f%% exceeds threshold (dir=%+d).",
+                sym, live_rate * 100, direction,
+            )
+            return
+
+        # ── G1: Liquidation proximity gate ────────────────────────────────
+        # Resolve the current entry price: prefer explicit field, fall back to
+        # live data. If price is unknown, skip the gate (don't block blindly).
+        entry_price: float | None = payload.get("price") or payload.get("close")
+        if entry_price is None:
+            try:
+                df = self.data_getter(sym)
+                if df is not None and len(df) > 0:
+                    entry_price = float(df["close"].iloc[-1])
+            except Exception as exc:
+                logger.debug("[FuturesAgent] Could not resolve entry price for %s: %s", sym, exc)
+
+        if entry_price is not None and entry_price > 0:
+            try:
+                liq_price = calc_liquidation_price(entry_price, LEVERAGE, side_str)
+                liq_dist = abs(liq_price - entry_price) / entry_price
+                if liq_dist < _MIN_LIQ_DISTANCE:
+                    logger.warning(
+                        "[FuturesAgent] %s BLOCKED — liq %.2f within %.1f%% of entry %.2f "
+                        "(min %.0f%% required).",
+                        sym, liq_price, liq_dist * 100, entry_price, _MIN_LIQ_DISTANCE * 100,
+                    )
+                    return
+            except (ValueError, AssertionError) as exc:
+                logger.warning("[FuturesAgent] liq calc skipped for %s: %s", sym, exc)
+
+        # ── Funding arbitrage override — strong directional edge ───────────
         if abs(funding_signal) > 0.5:
             logger.info("[FuturesAgent] %s funding arb signal: dir=%+d funding=%.4f",
                         sym, int(funding_signal), float(raw_signals.get("funding_rate", 0)))
