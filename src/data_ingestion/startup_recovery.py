@@ -69,10 +69,24 @@ def _questdb_last_ts(symbol: str, timeframe: str) -> datetime | None:
     return None
 
 
+def _as_utc(ts: datetime | None) -> datetime | None:
+    """Coerce a possibly-naive datetime to UTC-aware so it can be compared.
+
+    Phase C+ fix (2026-05-12): ParquetClient.get_latest_candle_ts returns a
+    naive datetime; ParquetStore.symbol_status returns an ISO string we
+    parse to a TZ-aware datetime. Mixing them under `max()` raised
+    `TypeError: can't compare offset-naive and offset-aware datetimes`,
+    blocking startup_recovery for every (symbol, tf) pair on every restart.
+    """
+    if ts is None:
+        return None
+    return ts if ts.tzinfo is not None else ts.replace(tzinfo=timezone.utc)
+
+
 def _last_known(symbol: str, timeframe: str) -> datetime | None:
     """Take the max of QuestDB and Parquet last-timestamps."""
-    a = _questdb_last_ts(symbol, timeframe)
-    b = _parquet_last_ts(symbol, timeframe)
+    a = _as_utc(_questdb_last_ts(symbol, timeframe))
+    b = _as_utc(_parquet_last_ts(symbol, timeframe))
     if a and b:
         return max(a, b)
     return a or b
