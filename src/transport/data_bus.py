@@ -17,13 +17,25 @@ INSTITUTIONAL_UPGRADE_PLAN.md). When that migration fires, the public methods
 (`publish_orderflow`, `subscribe_orderflow`, `push_batch`, `pull_batch`)
 keep their signatures; only the internals change.
 
-Wire format: msgpack (compact, fast, language-agnostic). Falls back to pickle
-when the payload contains numpy arrays or torch tensors.
+Wire format (Phase A6, 2026-05-12):
+  byte 0      : version (0x01 = HMAC + msgpack)
+  bytes 1..33 : HMAC-SHA256 over msgpack_bytes using ZMQ_BUS_KEY
+  bytes 33..  : msgpack-packed payload
+
+Previously the wire format was msgpack with a `\\x00pickle:` fallback for
+numpy/torch payloads. The pickle path was a critical RCE vector — any
+process that could connect to the local ZMQ ports could forge a payload
+and trigger arbitrary code execution on every subscriber. Phase A6 removes
+pickle entirely and HMAC-signs every envelope. Callers that need to send
+tensors must convert to plain Python (`.tolist()`, dicts) before publish.
 """
 from __future__ import annotations
 
+import hmac
+import hashlib
 import logging
-import pickle
+import os
+import secrets
 import threading
 import time
 from typing import Callable, Iterable
@@ -40,24 +52,102 @@ logger = logging.getLogger("data_bus")
 
 ORDERFLOW_TOPIC_DEFAULT = b"orderflow"
 
+# ── Phase A6: HMAC envelope ─────────────────────────────────────────────────
+_ENVELOPE_VERSION = b"\x01"
+_HMAC_LEN = 32  # SHA-256
+
+
+def _load_bus_key() -> bytes:
+    """Load the HMAC key for envelope signing.
+
+    Operator sets ZMQ_BUS_KEY in .env (any non-empty string; 32+ bytes
+    recommended). All processes that share the data bus MUST share the
+    same key — otherwise the subscriber will reject every publisher's
+    envelope as forged.
+
+    If the env var is missing, generate an ephemeral 32-byte key at
+    module load time AND log a CRITICAL warning. Single-process tests
+    will work; cross-process pub/sub will silently drop every message
+    because the subscriber's key won't match the publisher's. This
+    keeps the security default fail-CLOSED while leaving a clear
+    operator path forward.
+    """
+    raw = os.getenv("ZMQ_BUS_KEY", "")
+    if raw:
+        # Hash any provided key to a fixed 32-byte derived key. This
+        # accepts both short human-typed strings and long base64 keys.
+        return hashlib.sha256(raw.encode("utf-8")).digest()
+    key = secrets.token_bytes(32)
+    logger.critical(
+        "ZMQ_BUS_KEY not set in .env — generated an ephemeral key for "
+        "this process only. Cross-process pub/sub will FAIL silently "
+        "(subscribers reject envelopes signed with a different key). "
+        "Add ZMQ_BUS_KEY=<random 32+ char string> to .env on every "
+        "machine in the cluster to enable cross-process messaging."
+    )
+    return key
+
+
+_BUS_KEY = _load_bus_key()
+
 
 def _serialize(payload) -> bytes:
-    """Use msgpack when possible (compact); pickle for numpy/torch payloads."""
+    """Pack with msgpack, sign with HMAC-SHA256, wrap in envelope.
+
+    Raises ValueError if msgpack can't serialize the payload (e.g.
+    numpy arrays or torch tensors). Callers must convert to plain
+    Python (lists / dicts) first — pickle fallback was removed in
+    Phase A6 because it permitted RCE on any subscriber.
+    """
     try:
         import msgpack
-        return msgpack.packb(payload, use_bin_type=True)
-    except Exception:
-        return b"\x00pickle:" + pickle.dumps(payload, protocol=4)
+        body = msgpack.packb(payload, use_bin_type=True)
+    except (ImportError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"data_bus._serialize: msgpack cannot pack {type(payload).__name__} "
+            f"({exc}). Convert tensors/arrays to plain Python first "
+            f"(e.g. arr.tolist() / tensor.cpu().numpy().tolist())."
+        ) from exc
+    sig = hmac.new(_BUS_KEY, body, hashlib.sha256).digest()
+    return _ENVELOPE_VERSION + sig + body
 
 
 def _deserialize(blob: bytes):
-    if blob.startswith(b"\x00pickle:"):
-        return pickle.loads(blob[len(b"\x00pickle:"):])
+    """Unwrap envelope, verify HMAC, unpack msgpack.
+
+    Raises ValueError on:
+      - version mismatch (legacy / forged envelope)
+      - too-short envelope
+      - HMAC mismatch (forged or wrong key)
+      - msgpack decode failure
+    """
+    if len(blob) < 1 + _HMAC_LEN:
+        raise ValueError(
+            f"data_bus._deserialize: envelope too short ({len(blob)} bytes)"
+        )
+    version = blob[:1]
+    if version != _ENVELOPE_VERSION:
+        raise ValueError(
+            f"data_bus._deserialize: unknown envelope version {version!r}; "
+            f"expected {_ENVELOPE_VERSION!r}. This is either a legacy "
+            f"(pre-A6, unauthenticated) message or a forged envelope."
+        )
+    sig_received = blob[1:1 + _HMAC_LEN]
+    body = blob[1 + _HMAC_LEN:]
+    sig_expected = hmac.new(_BUS_KEY, body, hashlib.sha256).digest()
+    if not hmac.compare_digest(sig_received, sig_expected):
+        raise ValueError(
+            "data_bus._deserialize: HMAC verification failed. The "
+            "envelope was either forged or signed with a different "
+            "ZMQ_BUS_KEY than this process holds."
+        )
     try:
         import msgpack
-        return msgpack.unpackb(blob, raw=False)
-    except Exception:
-        return pickle.loads(blob)
+        return msgpack.unpackb(body, raw=False)
+    except Exception as exc:
+        raise ValueError(
+            f"data_bus._deserialize: msgpack decode failed: {exc}"
+        ) from exc
 
 
 class DataBus:
