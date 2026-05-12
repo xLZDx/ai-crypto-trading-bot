@@ -55,7 +55,13 @@ class InferenceEngine:
         try:
             import torch
             from src.models.order_flow_transformer import OrderFlowTransformer, OFTConfig
-            ckpt = torch.load(str(self.oft_model_path), map_location="cpu", weights_only=False)
+            # Phase A7 (2026-05-12): weights_only=True refuses to
+            # unpickle arbitrary classes from the checkpoint —
+            # closes the RCE-via-replaced-model-file vector flagged
+            # by security review. Our checkpoint format here stores
+            # only `config` (dict of basic types) + `state_dict`
+            # (tensor dict), both of which weights_only allows.
+            ckpt = torch.load(str(self.oft_model_path), map_location="cpu", weights_only=True)
             cfg_dict = ckpt.get("config", {})
             cfg = OFTConfig(**{k: v for k, v in cfg_dict.items()
                               if k in OFTConfig.__dataclass_fields__})

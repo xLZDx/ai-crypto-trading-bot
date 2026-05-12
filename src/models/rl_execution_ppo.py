@@ -173,7 +173,10 @@ class PPOAgent(BaseExecutionAgent):
         torch.save({"net": self.net.state_dict(), "obs_dim": self.obs_dim}, path)
 
     def load(self, path: str) -> None:
-        ckpt = torch.load(path, map_location=self.device, weights_only=False)
+        # Phase A7 (2026-05-12): weights_only=True — checkpoint
+        # contains only `net` (state_dict) + `obs_dim` (int), both
+        # safe for weights_only mode.
+        ckpt = torch.load(path, map_location=self.device, weights_only=True)
         self.net.load_state_dict(ckpt["net"])
 
 

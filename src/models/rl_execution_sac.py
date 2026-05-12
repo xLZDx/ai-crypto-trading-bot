@@ -224,7 +224,10 @@ class SACAgent(BaseExecutionAgent):
         }, path)
 
     def load(self, path: str) -> None:
-        ckpt = torch.load(path, map_location=self.device, weights_only=False)
+        # Phase A7 (2026-05-12): weights_only=True — checkpoint
+        # contains state_dicts + log_alpha tensor + obs_dim int,
+        # all safe for weights_only mode.
+        ckpt = torch.load(path, map_location=self.device, weights_only=True)
         self.actor.load_state_dict(ckpt["actor"])
         self.q1.load_state_dict(ckpt["q1"])
         self.q2.load_state_dict(ckpt["q2"])
