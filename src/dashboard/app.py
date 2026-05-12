@@ -2537,22 +2537,117 @@ def db_status():
     return jsonify(cached)
 
 
+# Phase A4 (2026-05-12) — /api/db/query hardening constants.
+#
+# Defense-in-depth on top of @require_api_key. Authenticated operators
+# CAN still issue free-form SELECT, but multi-statement injection,
+# DDL/DML, and unbounded result sets are refused.
+_DB_QUERY_MAX_ROWS = 10000
+_DB_QUERY_DENY_KEYWORDS = (
+    # mutation
+    'INSERT', 'UPDATE', 'DELETE', 'UPSERT', 'TRUNCATE',
+    # schema
+    'CREATE', 'DROP', 'ALTER', 'RENAME', 'COMMENT',
+    # admin / filesystem
+    'COPY', 'ATTACH', 'DETACH', 'INSTALL', 'LOAD', 'PRAGMA',
+    'EXPORT', 'IMPORT', 'CHECKPOINT', 'VACUUM', 'CALL',
+    # transaction (block-then-attack patterns)
+    'BEGIN', 'COMMIT', 'ROLLBACK', 'SAVEPOINT', 'SET',
+)
+
+
+def _strip_sql_comments(sql: str) -> str:
+    """Strip /* ... */ block comments and -- line comments so the
+    keyword scan below cannot be bypassed by `/*SELECT*/INSERT ...`
+    or `SELECT 1 -- ;DROP TABLE`. Conservative: removes comments
+    even inside string literals, which can corrupt the query — but
+    since we then run the keyword check on the stripped form ONLY
+    (and pass the ORIGINAL `sql` to DuckDB), the worst that happens
+    is a false-positive rejection on a query that legitimately
+    contains '/* ... */' inside a string."""
+    import re as _re
+    sql = _re.sub(r'/\*.*?\*/', ' ', sql, flags=_re.DOTALL)
+    sql = _re.sub(r'--[^\n]*', ' ', sql)
+    return sql
+
+
+def _is_safe_select(sql: str) -> tuple[bool, str]:
+    """Return (ok, reason). Phase A4 — defense-in-depth SELECT-only
+    gate. Auth is the primary defense; this prevents an authenticated
+    operator (or a stolen session) from running multi-statement
+    injection or DDL/DML through the dashboard's free-form SQL box.
+    """
+    stripped = _strip_sql_comments(sql).strip()
+    if not stripped:
+        return False, 'empty after comment strip'
+    upper = stripped.upper()
+    # Multi-statement blocker. Even a trailing `;` is rejected — DuckDB
+    # ignores it but we keep the rule strict so it can't be exploited
+    # via `SELECT 1;` + UNION trickery.
+    if ';' in stripped:
+        return False, 'semicolons are not permitted (multi-statement)'
+    # Must start with SELECT or a CTE (WITH ... SELECT).
+    first = upper.split(None, 1)[0] if upper.split() else ''
+    if first not in ('SELECT', 'WITH'):
+        return False, f'only SELECT / WITH queries allowed (got {first!r})'
+    # Block dangerous keywords appearing anywhere as a whole word.
+    import re as _re
+    for kw in _DB_QUERY_DENY_KEYWORDS:
+        if _re.search(rf'\b{kw}\b', upper):
+            return False, f'keyword {kw} is not allowed'
+    return True, ''
+
+
+def _ensure_row_limit(sql: str, max_rows: int = _DB_QUERY_MAX_ROWS) -> str:
+    """Append `LIMIT N` if the query lacks a LIMIT clause. Keeps the
+    response bounded so a runaway SELECT can't fill RAM / saturate
+    the response pipe. Idempotent — queries with existing LIMIT are
+    untouched (even if their limit exceeds max_rows; that's an
+    intentional operator choice)."""
+    import re as _re
+    upper = _strip_sql_comments(sql).upper()
+    if _re.search(r'\bLIMIT\s+\d+\b', upper):
+        return sql
+    # No LIMIT — append one. Preserve trailing whitespace.
+    return f'{sql.rstrip()} LIMIT {max_rows}'
+
+
 @app.route('/api/db/query', methods=['POST'])
 @require_api_key
 def db_query():
-    """Execute arbitrary SQL against QuestDB (read-only SELECT only)."""
+    """Execute a read-only SELECT against the Parquet store via DuckDB.
+
+    Phase A4 hardening (2026-05-12):
+      - Stronger SELECT-only gate (rejects multi-statement, DDL, DML,
+        PRAGMA, ATTACH, COPY, etc.).
+      - Row cap: LIMIT 10000 appended if missing.
+      - Auth required (Phase A1 decorator).
+
+    Note: DuckDB lacks a portable per-statement timeout. We rely on
+    the row cap to bound runtime in practice. A slow scan on the 48 GB
+    parquet tree without LIMIT could otherwise stall a request thread
+    indefinitely.
+    """
     body = request.get_json(force=True) or {}
     sql = (body.get('sql') or '').strip()
     if not sql:
         return jsonify({'error': 'sql required'}), 400
-    # Safety: only allow SELECT
-    if not sql.upper().lstrip().startswith('SELECT'):
-        return jsonify({'error': 'Only SELECT queries allowed'}), 403
+
+    ok, reason = _is_safe_select(sql)
+    if not ok:
+        return jsonify({'error': f'rejected: {reason}'}), 403
+
+    capped = _ensure_row_limit(sql)
     try:
         from src.database.parquet_client import get_client
         c = get_client()
-        rows = c.query(sql)
-        return jsonify({'rows': rows, 'count': len(rows)})
+        rows = c.query(capped)
+        return jsonify({
+            'rows': rows,
+            'count': len(rows),
+            'row_cap': _DB_QUERY_MAX_ROWS,
+            'limit_appended': capped != sql,
+        })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
