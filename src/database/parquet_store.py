@@ -111,7 +111,11 @@ def _safe_path_uri(uri: str, field_name: str = 'path') -> str:
 # Supported timeframe identifiers. None preserves the legacy
 # `{SYMBOL}/yyyymm=*/` layout (used by the in-flight 1-sec migration);
 # everything else writes to `{SYMBOL}/{TIMEFRAME}/yyyymm=*/`.
-SUPPORTED_TIMEFRAMES = ("1s", "1m", "5m", "15m", "1h", "4h", "1d", "1w", "1M", "funding")
+# "news" is the non-OHLCV partition layout used by news articles
+# stored under `_NEWS/news/yyyymm=*/`; added 2026-05-12 after the
+# Phase A5 whitelist regression broke `/api/news` (live validation
+# turned up `unsafe timeframe 'news'` 500).
+SUPPORTED_TIMEFRAMES = ("1s", "1m", "5m", "15m", "1h", "4h", "1d", "1w", "1M", "funding", "news")
 
 
 def _symbol_dir(base_dir: Path, symbol: str, timeframe: str | None = None) -> Path:

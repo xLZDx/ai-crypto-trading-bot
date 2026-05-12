@@ -952,13 +952,27 @@ class TrainingWorker:
                 # through register_worker into the cluster's worker dict
                 # and on to the dashboard's Live Load column.
                 live = _sample_live_load()
+                # 2026-05-12 live-validation fix: the orchestrator POSTs to
+                # http://<reported_ip>:<port>/task to dispatch work. If we
+                # report our LAN IP but actually bound 127.0.0.1, the master
+                # gets "connection refused" and re-queues the task forever.
+                # Report the address the master can actually reach us at:
+                #   bind_host=127.0.0.1   -> register as 127.0.0.1
+                #   bind_host=0.0.0.0     -> register LAN IP (cluster mode)
+                #   bind_host=specific IP -> register that IP literally
+                if self.bind_host == "127.0.0.1":
+                    reported_ip = "127.0.0.1"
+                elif self.bind_host == "0.0.0.0":
+                    reported_ip = self.hw["ip"]
+                else:
+                    reported_ip = self.bind_host
                 req.post(
                     f"{self.master_url}/api/cluster/register",
                     json={
                         "node_id":       self.node_id,
                         "name":          self.name,
                         "hostname":      self.hw["hostname"],
-                        "ip":            self.hw["ip"],
+                        "ip":            reported_ip,
                         "port":          self.port,
                         "gpu_name":      self.hw["gpu_name"],
                         "gpu_vram_gb":   self.hw["gpu_vram_gb"],

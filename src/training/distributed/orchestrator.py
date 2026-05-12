@@ -380,7 +380,18 @@ class Orchestrator:
             if status == "heartbeat":
                 return
             task["status"] = status
-            if node_id:
+            # 2026-05-12 live-validation fix: a status transition back to
+            # "pending" (e.g. from `_send_task_to_worker` after the worker
+            # POST fails) was leaving the task orphaned — out of `_queue`
+            # because `_dispatch_pending` had removed it on assignment,
+            # but no caller re-added it. The scheduler then never picked
+            # it up again. Re-add to the queue AND clear assigned_to so
+            # the next dispatch cycle picks a different worker.
+            if status == "pending":
+                task["assigned_to"] = ""
+                if task_id not in self._queue:
+                    self._queue.append(task_id)
+            elif node_id:
                 task["assigned_to"] = node_id
             if result:
                 task["result"] = result

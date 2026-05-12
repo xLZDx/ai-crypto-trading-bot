@@ -5003,8 +5003,14 @@ def api_training_rules():
                     'reason':  _r.skip_reason(model, tf) if status == 'skip' else '',
                 })
         from pathlib import Path as _P
-        raw = _P(PROJECT_ROOT) / 'data' / 'training_rules.json'
-        rules_obj = json.loads(raw.read_text(encoding='utf-8')) if raw.exists() else {}
+        import json as _json
+        # Phase C+ live-validation fix: `PROJECT_ROOT` was never defined in
+        # this module — the convention is `_PROJECT_ROOT` (line ~748). Also
+        # `json` is never module-level imported here (app.py uses
+        # per-function `import json as _json`). Both surfaced as 500s on
+        # /api/training/rules during live E2E.
+        raw = _P(_PROJECT_ROOT) / 'data' / 'training_rules.json'
+        rules_obj = _json.loads(raw.read_text(encoding='utf-8')) if raw.exists() else {}
         return jsonify({
             'ok':         True,
             'tf_order':   list(_r.TF_ORDER),
@@ -6898,7 +6904,9 @@ def api_balance_virtual_reset():
 @require_api_key
 def api_news():
     """Most recent news from `_NEWS/news/yyyymm=*/`. The news partition uses
-    `published_at` (not `timestamp`) as its time column — query directly."""
+    `ts` as its time column (DuckDB binder reports candidates: url, ts, title).
+    Pre-2026-05-12 the docstring claimed `published_at` but the actual schema
+    is `ts` — live validation revealed the mismatch as a Binder Error."""
     import traceback as _tb
     try:
         from src.database.parquet_store import _partition_glob, get_store
@@ -6908,7 +6916,12 @@ def api_news():
         if not list(Path(store.base_dir).glob("_NEWS/news/yyyymm=*/*.parquet")):
             return jsonify([])
         # Use a direct DuckDB query — the generic .query() expects a `timestamp` col.
-        sql = f"SELECT * FROM read_parquet('{glob}') ORDER BY published_at DESC LIMIT 50"
+        # Live-validation 2026-05-12: historical news parquet files have
+        # inconsistent column schemas (some early 2018 partitions lack
+        # certain columns). `union_by_name=true` makes DuckDB NULL-fill
+        # missing columns across files instead of crashing on cast.
+        sql = (f"SELECT * FROM read_parquet('{glob}', union_by_name=true) "
+               f"ORDER BY ts DESC LIMIT 50")
         df = store._conn_or_open().execute(sql).df()
         if df is None or df.empty:
             return jsonify([])

@@ -103,7 +103,13 @@ $killedPids = @()
 if (Test-Path $pidFile) {
     try {
         $pids = Get-Content $pidFile -Raw | ConvertFrom-Json
-        foreach ($key in @('bot','dash','monitor','training','realtime','orch','orderbook')) {
+        # 2026-05-12 live-validation fix: previously the watchdog PIDs were
+        # NOT in the kill list, so each restart_all left the previous
+        # watchdog processes alive AND spawned new ones. Live audit caught
+        # 2× debug_supervisor + 2× dashboard_watchdog + 2× training_sweep
+        # after a single restart. Add them + cluster_orch to the kill list.
+        foreach ($key in @('bot','dash','monitor','training','realtime','orch','orderbook',
+                            'debug','watchdog','sweep_watchdog','cluster_orch')) {
             $pidVal = $pids.$key
             if ($pidVal -and $pidVal -ne 0) {
                 try {
@@ -125,7 +131,9 @@ Get-WmiObject Win32_Process -Filter "Name='python.exe'" 2>$null | ForEach-Object
     # restart_all during a manual long-running retrain doesn't kill the
     # training process mid-pipeline. `launch_training` (the auto-scheduled
     # 10-min-after-boot trainer) is still killed.
-    if ($cmd -match 'src\\main\.py|src/main\.py|launch_bot|src\\dashboard\\app|launch_dashboard|launch_training') {
+    # 2026-05-12 fix: also kill stray watchdogs + cluster orchestrator on
+    # restart so we don't accumulate duplicates across reboots.
+    if ($cmd -match 'src\\main\.py|src/main\.py|launch_bot|src\\dashboard\\app|launch_dashboard|launch_training|scripts\.debug_supervisor|scripts\.dashboard_watchdog|scripts\.training_sweep_watchdog|src\.training\.distributed\.orchestrator') {
         if ($_.ProcessId -notin $killedPids) {
             try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
             Write-Host "  Stopped stray process PID $($_.ProcessId): $($cmd.Substring(0,[Math]::Min(80,$cmd.Length)))"
@@ -253,6 +261,28 @@ if ($env:AI_TRADER_AUTO_TRAIN -eq '1') {
     Write-Host "      Trigger training via dashboard's Retrain ALL button or per-row Train." -ForegroundColor DarkGray
     Write-Host "      Set AI_TRADER_AUTO_TRAIN=1 to re-enable legacy 10-min local cron." -ForegroundColor DarkGray
 }
+
+# Step 4.9: Cluster training orchestrator (:7700) — REQUIRED by the
+# dashboard's /api/cluster/* endpoints, which proxy here. Without this
+# the Cluster tab returns 503 "cluster orchestrator unreachable".
+# Surfaced 2026-05-12 during live E2E validation.
+Write-Host ""
+Write-Host "[4.9/6] Starting Cluster Training Orchestrator (:7700)..." -ForegroundColor Yellow
+$coRunning = Get-WmiObject Win32_Process -Filter "Name='python.exe'" 2>$null |
+    Where-Object { $_.CommandLine -match 'src\.training\.distributed\.orchestrator' }
+if ($coRunning) {
+    Write-Host "  Cluster orchestrator already running (PID $($coRunning.ProcessId)) - skipping." -ForegroundColor DarkCyan
+    $procClusterOrch = Get-Process -Id $coRunning.ProcessId -ErrorAction SilentlyContinue
+} else {
+    $newPid = Start-Detached -CommandLine "`"$venvPython`" -m src.training.distributed.orchestrator --port 7700" -LogFile "$root\logs\cluster.log"
+    if ($newPid) {
+        $procClusterOrch = [PSCustomObject]@{ Id = $newPid }
+        Write-Host "  Cluster orchestrator started (PID $newPid, detached, :7700)"
+    } else {
+        $procClusterOrch = $null
+    }
+}
+Write-Host "[4.9/6] Cluster orchestrator ready." -ForegroundColor Green
 
 # Step 5: Dashboard + Bot
 Write-Host ""
@@ -420,11 +450,13 @@ $realtimeId  = if ($procRealtime)  { $procRealtime.Id  } else { 0 }
 $orchId      = if ($procOrch)      { $procOrch.Id      } else { 0 }
 $fastapiId   = if ($procFastapi)   { $procFastapi.Id   } else { 0 }
 $obId        = if ($procOrderbook) { $procOrderbook.Id } else { 0 }
-$debugId     = if ($procDebug)     { $procDebug.Id     } else { 0 }
-$watchdogId  = if ($procWatchdog)  { $procWatchdog.Id  } else { 0 }
-$pidData = @{ bot = $botId; dash = $dashId; monitor = $monId; watchlist = $watchlistId; training = $trainingId; realtime = $realtimeId; orch = $orchId; fastapi = $fastapiId; orderbook = $obId; debug = $debugId; watchdog = $watchdogId; mcp = 0 }
+$debugId     = if ($procDebug)        { $procDebug.Id        } else { 0 }
+$watchdogId  = if ($procWatchdog)     { $procWatchdog.Id     } else { 0 }
+$sweepWdId   = if ($procSweepWatchdog) { $procSweepWatchdog.Id } else { 0 }
+$clusterOrchId = if ($procClusterOrch) { $procClusterOrch.Id  } else { 0 }
+$pidData = @{ bot = $botId; dash = $dashId; monitor = $monId; watchlist = $watchlistId; training = $trainingId; realtime = $realtimeId; orch = $orchId; fastapi = $fastapiId; orderbook = $obId; debug = $debugId; watchdog = $watchdogId; sweep_watchdog = $sweepWdId; cluster_orch = $clusterOrchId; mcp = 0 }
 $pidData | ConvertTo-Json | Set-Content (Join-Path $root 'data\process_ids.json')
-Write-Host "[6/6] PIDs saved: monitor=$monId  dash=$dashId  bot=$botId  debug=$debugId  watchdog=$watchdogId  watchlist=$watchlistId  training=$trainingId  realtime=$realtimeId  orch=$orchId  fastapi=$fastapiId  orderbook=$obId" -ForegroundColor Green
+Write-Host "[6/6] PIDs saved: monitor=$monId  dash=$dashId  bot=$botId  cluster=$clusterOrchId  debug=$debugId  watchdog=$watchdogId  sweep=$sweepWdId  watchlist=$watchlistId  training=$trainingId  realtime=$realtimeId  orch=$orchId  fastapi=$fastapiId  orderbook=$obId" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "==========================================" -ForegroundColor Green
