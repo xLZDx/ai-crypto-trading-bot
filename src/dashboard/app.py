@@ -144,15 +144,65 @@ if not DASHBOARD_API_KEY:
     )
 
 
+# Phase A9 (2026-05-12) — short-lived session tokens.
+#
+# The HTML template previously rendered DASHBOARD_API_KEY directly into
+# the page (visible in view-source + browser devtools + any XSS gadget).
+# A leaked API key is permanent until rotated. A leaked session token
+# expires within an hour and rotates on every page load.
+#
+# Auth surface (require_api_key) accepts EITHER:
+#   - the raw DASHBOARD_API_KEY (for scripts, curl, cluster polling)
+#   - a session token that the dashboard issued recently
+_SESSION_TTL_S = 3600   # 1-hour rolling window
+_session_tokens: dict[str, float] = {}  # token → issued_at (epoch s)
+_session_lock = threading.Lock()
+
+
+def _mint_session_token() -> str:
+    """Generate a fresh session token and remember its issue time.
+
+    Also opportunistically GC tokens older than 2× TTL so the dict
+    stays bounded under heavy reload churn (cheap; runs at most once
+    per index() render)."""
+    import secrets as _secrets
+    now = time.time()
+    tok = _secrets.token_urlsafe(48)
+    with _session_lock:
+        _session_tokens[tok] = now
+        # Cheap GC — sweep tokens older than 2× TTL.
+        cutoff = now - 2 * _SESSION_TTL_S
+        stale = [t for t, ts in _session_tokens.items() if ts < cutoff]
+        for t in stale:
+            _session_tokens.pop(t, None)
+    return tok
+
+
+def _is_session_token_valid(tok: str) -> bool:
+    """Return True if tok was minted within the last TTL window."""
+    if not tok:
+        return False
+    with _session_lock:
+        ts = _session_tokens.get(tok)
+    if ts is None:
+        return False
+    return (time.time() - ts) <= _SESSION_TTL_S
+
+
 def require_api_key(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not DASHBOARD_API_KEY:
             return f(*args, **kwargs)
         token = request.headers.get("X-API-Key", "")
-        if token != DASHBOARD_API_KEY:
-            return jsonify({"error": "Unauthorized"}), 401
-        return f(*args, **kwargs)
+        # Phase A9: accept either the raw master key OR a session
+        # token. Master key is for scripts / curl / cluster polling;
+        # the dashboard JS uses session tokens issued by index().
+        if token == DASHBOARD_API_KEY:
+            return f(*args, **kwargs)
+        if _is_session_token_valid(token):
+            return f(*args, **kwargs)
+        return jsonify({"error": "Unauthorized"}), 401
     return decorated
 
 
@@ -164,7 +214,14 @@ def index():
     after restart_all.ps1 reloaded the bot, making refresh buttons look
     broken when really the JS was just from a prior dashboard process."""
     from flask import make_response
-    resp = make_response(render_template('index.html', api_key=DASHBOARD_API_KEY or ''))
+    # Phase A9 (2026-05-12) — mint a short-lived session token instead
+    # of leaking the master API key into the rendered HTML. The JS
+    # still sends it as X-API-Key; require_api_key accepts both the
+    # master key (scripts/curl) and valid session tokens (browser).
+    # If DASHBOARD_API_KEY is unset (open-dev mode), render an empty
+    # string and require_api_key will fall through anyway.
+    session_token = _mint_session_token() if DASHBOARD_API_KEY else ''
+    resp = make_response(render_template('index.html', api_key=session_token))
     resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     resp.headers['Pragma']        = 'no-cache'
     resp.headers['Expires']       = '0'
