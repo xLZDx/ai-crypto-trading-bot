@@ -5975,15 +5975,120 @@ def api_backtest_distributed_status():
 # automated path lives in master_agent._heal_zombie; this is the
 # eyes-on-glass equivalent for cases the supervisor isn't catching
 # (e.g. worker is fine but operator wants a clean state).
+def _normalize_worker_ip(raw: str) -> str | None:
+    """Canonicalize an IP string via the stdlib `ipaddress` module so
+    that aliases (`192.168.0.05` vs `192.168.0.5`, IPv6-mapped IPv4
+    like `::ffff:192.168.0.5`) compare equal in the allowlist set.
+
+    Returns the canonical str form, or None if the input does not
+    parse as a valid IP. Hostnames are rejected — DNS-based targeting
+    would be a separate SSRF vector.
+    """
+    import ipaddress
+    try:
+        addr = ipaddress.ip_address((raw or '').strip())
+    except (ValueError, TypeError):
+        return None
+    return str(addr)
+
+
+def _is_safe_worker_target(ip: str, port: int) -> bool:
+    """Phase A3 denylist (2026-05-12): refuse loopback / link-local /
+    reserved / multicast targets even if registered. The allowlist
+    alone is insufficient because an authenticated attacker can
+    `POST /api/cluster/register {"ip":"127.0.0.1","port":7700}` to
+    re-admit the orchestrator itself as a "worker" — fully bypassing
+    the allowlist and pointing /restart at internal services. Per
+    the security review 2026-05-12.
+    """
+    import ipaddress
+    if not (1 <= port <= 65535):
+        return False
+    try:
+        addr = ipaddress.ip_address(ip)
+    except (ValueError, TypeError):
+        return False
+    if addr.is_loopback or addr.is_link_local or addr.is_reserved or addr.is_multicast:
+        return False
+    if addr.is_unspecified:  # 0.0.0.0 / ::
+        return False
+    return True
+
+
+def _known_worker_addresses() -> set[tuple[str, int]]:
+    """Return the set of (ip, port) tuples for currently-registered
+    cluster workers. Used by /api/cluster/worker_restart to refuse any
+    target that isn't a known worker — defends against SSRF where an
+    operator-authenticated session points the restart probe at an
+    internal service (e.g. http://127.0.0.1:7700/restart) instead of
+    a legitimate worker.
+
+    Phase A3 (2026-05-12): the endpoint previously accepted ARBITRARY
+    ip+port from the request body and POSTed to it. Combined with the
+    pre-Phase-A1 lack of auth, that was a textbook write-side SSRF.
+
+    All IPs are normalized via `_normalize_worker_ip` so registered
+    aliases like `192.168.0.05` compare equal to `192.168.0.5`.
+    """
+    body, status = _cluster_proxy_get('/api/cluster/workers')
+    if status != 200 or not isinstance(body, list):
+        return set()
+    known: set[tuple[str, int]] = set()
+    for w in body:
+        try:
+            raw_ip = w.get('ip') or w.get('host') or ''
+            wip = _normalize_worker_ip(raw_ip)
+            wport = int(w.get('port') or 0)
+            if wip and wport:
+                known.add((wip, wport))
+        except (TypeError, ValueError):
+            continue
+    return known
+
+
 @app.route('/api/cluster/worker_restart', methods=['POST'])
 @require_api_key
 def cluster_worker_restart():
     import urllib.request as _ur, urllib.error as _ue, json as _j
     body = request.get_json(force=True) or {}
-    ip   = body.get('ip', '')
-    port = int(body.get('port', 0))
+    raw_ip = body.get('ip') or ''
+    try:
+        port = int(body.get('port', 0))
+    except (TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'port must be an integer'}), 400
+
+    ip = _normalize_worker_ip(raw_ip)
     if not ip or not port:
-        return jsonify({'ok': False, 'error': 'ip and port required'}), 400
+        return jsonify({'ok': False,
+                        'error': 'ip (valid address) and port required'}), 400
+
+    # Phase A3 (2026-05-12) — denylist FIRST. Refuse loopback /
+    # link-local / reserved / multicast regardless of registry
+    # contents. Closes the bypass where an authenticated client
+    # registers a fake worker at 127.0.0.1:7700 (the orchestrator
+    # itself) and uses it as an SSRF target.
+    if not _is_safe_worker_target(ip, port):
+        return jsonify({
+            'ok': False,
+            'error': f'target {ip}:{port} rejected by safety denylist',
+            'hint': 'workers must run on non-loopback, non-reserved IPs',
+        }), 403
+
+    # Phase A3 (2026-05-12) — IP/port allowlist. Refuse any target
+    # that isn't a currently-registered cluster worker.
+    allowed = _known_worker_addresses()
+    if (ip, port) not in allowed:
+        # Helpful error message — list a few known workers so the
+        # operator can fix a typo without needing to re-query the
+        # cluster panel.
+        sample = sorted(allowed)[:5]
+        return jsonify({
+            'ok': False,
+            'error': f'target {ip}:{port} is not a registered worker',
+            'hint': 'pass an ip+port reported by /api/cluster/workers',
+            'known_workers_sample': [f'{a}:{b}' for a, b in sample],
+        }), 403
+
     try:
         # confirm=True is required by the worker's /restart gate (added
         # after the 2026-05-10 accidental restart incident — a probe
