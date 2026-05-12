@@ -11,7 +11,14 @@ from typing import List, Optional
 
 import pandas as pd
 import requests
-import xml.etree.ElementTree as ET
+# Phase S6 (2026-05-12): defusedxml replaces stdlib xml.etree to
+# close XXE and billion-laughs vectors. RSS feeds are fetched over
+# HTTP from public sources with no signature verification; a
+# poisoned response (DNS hijack, CDN cache, BGP, or compromised
+# source site) with malicious entity expansion could DoS or
+# (depending on parser config) read local files.
+# defusedxml.ElementTree is API-compatible with xml.etree.ElementTree.
+import defusedxml.ElementTree as ET
 from dotenv import find_dotenv, load_dotenv
 
 logger = logging.getLogger(__name__)

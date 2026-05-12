@@ -137,8 +137,14 @@ def _acquire_run_lock(force: bool = False) -> bool:
     }
     try:
         os.makedirs(os.path.dirname(_LOCK_PATH), exist_ok=True)
-        with open(_LOCK_PATH, 'w', encoding='utf-8') as f:
-            _json.dump(payload, f, indent=2)
+        # Phase A12 (2026-05-12): atomic write via safe_json. The
+        # previous raw open(,'w') had a race where a concurrent
+        # _acquire_run_lock / _release_run_lock could see a half-
+        # written file and produce a corrupted lock state. safe_json
+        # uses filelock + write-temp-then-rename to make the write
+        # atomic from any reader's point of view.
+        from src.utils.safe_json import write_json as _safe_write
+        _safe_write(_LOCK_PATH, payload)
     except Exception as exc:
         log.warning("Could not write lock file %s: %s — proceeding anyway",
                     _LOCK_PATH, exc)
@@ -150,9 +156,10 @@ def _release_run_lock() -> None:
     crashes are auto-reclaimed by _acquire_run_lock on next launch."""
     try:
         if os.path.exists(_LOCK_PATH):
-            with open(_LOCK_PATH, 'r', encoding='utf-8') as f:
-                import json as _j
-                prev = _j.load(f)
+            # Phase A12 (2026-05-12): read via safe_json so a concurrent
+            # write in progress doesn't yield a torn/incomplete dict.
+            from src.utils.safe_json import read_json as _safe_read
+            prev = _safe_read(_LOCK_PATH, default={}) or {}
             if int(prev.get('pid', 0)) == os.getpid():
                 os.remove(_LOCK_PATH)
     except Exception:
@@ -181,8 +188,12 @@ def _set_current(model_key: str | None, tf: str | None,
             'updated_iso': _dt.datetime.now(_dt.timezone.utc).isoformat(),
         }
         os.makedirs(os.path.dirname(_CURRENT_PATH), exist_ok=True)
-        with open(_CURRENT_PATH, 'w', encoding='utf-8') as f:
-            _json.dump(payload, f, indent=2)
+        # Phase A12 (2026-05-12): atomic write via safe_json — same
+        # race-condition fix as _acquire_run_lock above. The dashboard
+        # orphan detector reads this file frequently; a half-written
+        # state would surface as a transient bogus orphan banner.
+        from src.utils.safe_json import write_json as _safe_write
+        _safe_write(_CURRENT_PATH, payload)
     except Exception:
         # Best-effort — don't let a status-file failure crash training.
         pass
