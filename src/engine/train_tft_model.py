@@ -189,11 +189,15 @@ def load_frame_from_db(symbol: str, timeframe: str) -> pd.DataFrame | None:
         db = get_client()
         if not db.is_available():
             return None
+        # Phase A5 (2026-05-12): parameterized — symbol/timeframe were
+        # interpolated via f-string, a SQL injection path if the
+        # watchlist API ever accepts unsanitized values.
         df = db.query_df(
-            f"SELECT ts as timestamp, open, high, low, close, volume, funding_rate "
-            f"FROM market_data "
-            f"WHERE symbol='{symbol}' AND timeframe='{timeframe}' "
-            f"ORDER BY ts"
+            "SELECT ts as timestamp, open, high, low, close, volume, funding_rate "
+            "FROM market_data "
+            "WHERE symbol = ? AND timeframe = ? "
+            "ORDER BY ts",
+            params=[symbol, timeframe],
         )
         if df.empty or len(df) < 500:
             return None

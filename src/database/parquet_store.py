@@ -49,7 +49,62 @@ class SymbolStatus:
 
 
 def _safe_symbol(symbol: str) -> str:
-    return symbol.replace("/", "_").upper()
+    """Normalize a market symbol for filesystem use.
+
+    Phase A5 (2026-05-12): in addition to the historical / → _ +
+    uppercase normalization, reject characters outside [A-Z0-9_.-].
+    The result of this function flows into Parquet directory paths
+    AND into DuckDB f-string SQL (read_parquet glob, COPY TO). A
+    symbol like `BTC'/USDT` would otherwise produce a path with
+    embedded quotes that breaks out of the SQL string literal.
+    """
+    import re as _re
+    norm = symbol.replace("/", "_").upper()
+    if not _re.fullmatch(r'[A-Z0-9_.\-]+', norm):
+        raise ValueError(
+            f"unsafe symbol {symbol!r} — only [A-Z0-9_.-] allowed after "
+            f"slash-to-underscore normalization (got {norm!r})"
+        )
+    return norm
+
+
+def _safe_timeframe(timeframe: str | None) -> str | None:
+    """Phase A5 (2026-05-12): timeframe also flows into directory
+    paths + DuckDB SQL. Whitelist against SUPPORTED_TIMEFRAMES.
+    None passes through (legacy layout). Empty string passes through
+    as None for backward compatibility with older callers."""
+    if timeframe is None or timeframe == '':
+        return None
+    if timeframe not in SUPPORTED_TIMEFRAMES:
+        raise ValueError(
+            f"unsafe timeframe {timeframe!r} — must be one of "
+            f"{SUPPORTED_TIMEFRAMES}"
+        )
+    return timeframe
+
+
+def _safe_path_uri(uri: str, field_name: str = 'path') -> str:
+    """Reject SQL meta-characters in a file URI before it gets
+    interpolated into a DuckDB `COPY ... TO 'path'` or
+    `read_csv_auto('path')` statement.
+
+    Phase A5 (2026-05-12): DuckDB cannot parameterize file paths
+    (they are identifiers, not values), so a filename containing
+    a single quote can break out of the string literal. e.g. a CSV
+    named `foo'); DROP TABLE x; --.csv` on a writable directory
+    would let an attacker who controls watchlist input execute
+    arbitrary SQL via ingest_csv.
+
+    Single quotes, semicolons, and SQL comment markers are
+    rejected outright. Newlines and control chars are also banned
+    (filename smuggling). Returns the input unchanged when safe.
+    """
+    if not isinstance(uri, str):
+        raise ValueError(f"{field_name}: expected string, got {type(uri).__name__}")
+    for bad in ("'", '"', ';', '--', '/*', '*/', '\x00', '\n', '\r'):
+        if bad in uri:
+            raise ValueError(f"{field_name}: unsafe character {bad!r} in {uri!r}")
+    return uri
 
 
 # Supported timeframe identifiers. None preserves the legacy
@@ -60,9 +115,10 @@ SUPPORTED_TIMEFRAMES = ("1s", "1m", "5m", "15m", "1h", "4h", "1d", "1w", "1M", "
 
 def _symbol_dir(base_dir: Path, symbol: str, timeframe: str | None = None) -> Path:
     sym = _safe_symbol(symbol)
-    if timeframe is None:
+    tf = _safe_timeframe(timeframe)
+    if tf is None:
         return base_dir / sym
-    return base_dir / sym / timeframe
+    return base_dir / sym / tf
 
 
 def _partition_glob(base_dir: Path, symbol: str, timeframe: str | None = None) -> str:
@@ -70,6 +126,10 @@ def _partition_glob(base_dir: Path, symbol: str, timeframe: str | None = None) -
 
     timeframe=None  ⇒  data/parquet/BTC_USDT/yyyymm=*/*.parquet         (legacy)
     timeframe='1m'  ⇒  data/parquet/BTC_USDT/1m/yyyymm=*/*.parquet
+
+    Phase A5 (2026-05-12): symbol + timeframe validation happens
+    inside _symbol_dir → _safe_symbol/_safe_timeframe. The returned
+    path is safe to interpolate into DuckDB read_parquet('...') calls.
     """
     return (_symbol_dir(base_dir, symbol, timeframe) / "yyyymm=*" / "*.parquet").as_posix()
 
@@ -166,8 +226,14 @@ class ParquetStore:
             not_in = ", ".join(f"'{m}'" for m in sorted(existing))
             skip_clause = f"AND strftime({timestamp_col}, '%Y-%m') NOT IN ({not_in})"
 
-        csv_uri = csv_path.as_posix()
-        out_uri = out_root.as_posix()
+        csv_uri = _safe_path_uri(csv_path.as_posix(), 'csv_path')
+        out_uri = _safe_path_uri(out_root.as_posix(), 'out_root')
+        # Phase A5 (2026-05-12): paths above are validated by
+        # _safe_path_uri (reject SQL meta-chars: quotes, semicolons,
+        # comment markers). DuckDB COPY/read_csv_auto cannot
+        # parameterize file paths — they are identifiers, not values —
+        # so input sanitization is the only defense against path
+        # injection breaking out of the SQL string literal.
         # Note: no `ORDER BY` — Binance archive CSVs are already chronological.
         # Removing the sort eliminates the gigantic sort buffer that caused OOMs
         # on large files (ADA/ATOM/AVAX/BNB) and gives a 3-5× speedup on 1-sec

@@ -199,14 +199,22 @@ async def cold_rollover_loop(symbols: list[str], timeframes: list[str],
 
             for sym in symbols:
                 for tf in timeframes:
-                    sql = (f"SELECT timestamp, open, high, low, close, volume "
-                           f"FROM market_data "
-                           f"WHERE symbol = '{sym}' AND timeframe = '{tf}' "
-                           f"  AND timestamp >= '{d_start.isoformat()}' "
-                           f"  AND timestamp <  '{d_end.isoformat()}' "
-                           f"ORDER BY timestamp")
+                    # Phase A5 (2026-05-12): parameterized — sym/tf
+                    # originate from watchlist JSON which goes through
+                    # the auth-gated API but is still untrusted as a
+                    # data-plane value.
+                    sql = ("SELECT timestamp, open, high, low, close, volume "
+                           "FROM market_data "
+                           "WHERE symbol = ? AND timeframe = ? "
+                           "  AND timestamp >= ? "
+                           "  AND timestamp <  ? "
+                           "ORDER BY timestamp")
                     try:
-                        df = qdb.query_df(sql)
+                        df = qdb.query_df(sql, params=[
+                            sym, tf,
+                            d_start.isoformat(),
+                            d_end.isoformat(),
+                        ])
                     except Exception as exc:
                         logger.warning("[rollover] %s/%s query failed: %s", sym, tf, exc)
                         continue

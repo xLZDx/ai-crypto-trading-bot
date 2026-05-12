@@ -128,10 +128,15 @@ class DataLens:
                 end_iso = (datetime.fromisoformat(str(end).replace("Z", "+00:00"))
                            if not isinstance(end, datetime) else end).isoformat()
                 for key in macro_keys:
-                    sql = (f"SELECT timestamp, value FROM model_signals "
-                           f"WHERE symbol='{key}' "
-                           f"AND timestamp >= '{start_iso}' AND timestamp < '{end_iso}'")
-                    rows = self._q().query(sql)
+                    # Phase A5 (2026-05-12): parameterized. All three
+                    # values come from internal sources (hardcoded
+                    # macro_keys list + datetime → ISO conversion)
+                    # but parameterizing eliminates the risk class
+                    # entirely.
+                    sql = ("SELECT timestamp, value FROM model_signals "
+                           "WHERE symbol = ? "
+                           "AND timestamp >= ? AND timestamp < ?")
+                    rows = self._q().query(sql, params=[key, start_iso, end_iso])
                     if not rows:
                         continue
                     macro_df = __import__("pandas").DataFrame(rows)

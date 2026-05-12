@@ -516,13 +516,18 @@ class ParquetClient:
         except Exception:
             return False
 
-    def query(self, sql: str) -> list[dict]:
+    def query(self, sql: str, params: list | tuple | None = None) -> list[dict]:
         """Execute SQL against the Parquet store via DuckDB.
 
         Convention: callers reference tables by their bare name
-        (e.g. `SELECT * FROM market_data WHERE symbol='BTC/USDT'`). We
+        (e.g. `SELECT * FROM market_data WHERE symbol = ?`). We
         rewrite each known table reference to a `read_parquet(...)` glob
         before running the query. Tables with no files yet return [].
+
+        Phase A5 (2026-05-12): added `params` for parameterized
+        execution. Callers should pass values via `?` placeholders +
+        params list instead of f-string interpolation. The existing
+        f-string call sites are being migrated as part of Phase A5.
         """
         if not self.is_available():
             return []
@@ -542,14 +547,22 @@ class ParquetClient:
         try:
             con = self._conn()
             with self._duck_lock:
-                res = con.execute(rewritten).fetch_arrow_table()
+                if params is None:
+                    res = con.execute(rewritten).fetch_arrow_table()
+                else:
+                    res = con.execute(rewritten, list(params)).fetch_arrow_table()
             return res.to_pylist()
         except Exception as exc:
             logger.warning("ParquetClient: query failed — %s | SQL: %s",
                            exc, rewritten[:200])
             return []
 
-    def query_df(self, sql: str):
+    def query_df(self, sql: str, params: list | tuple | None = None):
+        """Same as `query()` but returns a pandas DataFrame.
+
+        Phase A5 (2026-05-12): `params` mirror argument added for
+        parameterized execution; pass values via `?` placeholders.
+        """
         import pandas as pd
         if not self.is_available():
             return pd.DataFrame()
@@ -559,7 +572,9 @@ class ParquetClient:
         try:
             con = self._conn()
             with self._duck_lock:
-                return con.execute(rewritten).df()
+                if params is None:
+                    return con.execute(rewritten).df()
+                return con.execute(rewritten, list(params)).df()
         except Exception as exc:
             logger.warning("ParquetClient: query_df failed — %s", exc)
             return pd.DataFrame()
