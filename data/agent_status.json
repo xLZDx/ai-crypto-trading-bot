@@ -2,58 +2,508 @@
   "ExecutionAgent": {
     "status": "idle",
     "current_task": "Waiting for next cycle",
-    "last_heartbeat": "2026-05-10T16:35:39.850231+00:00",
-    "last_heartbeat_ts": 1778430939.850248,
+    "last_heartbeat": "2026-05-12T21:44:31.554025+00:00",
+    "last_heartbeat_ts": 1778622271.554044,
     "interval_sec": 60.0,
     "history": [
       {
         "task": "Waiting for next cycle",
-        "ts": 1778430639.738034,
+        "ts": 1778619145.662299,
         "status": "idle"
       },
       {
         "task": "Executing cycle",
-        "ts": 1778430699.755191,
+        "ts": 1778619207.517829,
         "status": "running"
       },
       {
         "task": "Waiting for next cycle",
-        "ts": 1778430699.766584,
+        "ts": 1778619207.544635,
         "status": "idle"
       },
       {
         "task": "Executing cycle",
-        "ts": 1778430759.778952,
+        "ts": 1778619267.575421,
         "status": "running"
       },
       {
         "task": "Waiting for next cycle",
-        "ts": 1778430759.787833,
+        "ts": 1778619267.602089,
         "status": "idle"
       },
       {
         "task": "Executing cycle",
-        "ts": 1778430819.798792,
+        "ts": 1778619327.634828,
         "status": "running"
       },
       {
         "task": "Waiting for next cycle",
-        "ts": 1778430819.813707,
+        "ts": 1778619327.669778,
         "status": "idle"
       },
       {
         "task": "Executing cycle",
-        "ts": 1778430879.830379,
+        "ts": 1778619387.709263,
         "status": "running"
       },
       {
         "task": "Waiting for next cycle",
-        "ts": 1778430879.836532,
+        "ts": 1778619387.736152,
         "status": "idle"
       },
       {
         "task": "Executing cycle",
-        "ts": 1778430939.840568,
+        "ts": 1778619447.762432,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778619447.780669,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778619507.802934,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778619507.823654,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778619567.852242,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778619567.89237,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778619627.979343,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778619628.00671,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778619688.034941,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778619688.059571,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778619748.084253,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778619748.118048,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778619808.149512,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778619808.177259,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778619868.20761,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778619868.246812,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778619928.32136,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778619928.349122,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778619988.376055,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778619988.444158,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620048.472679,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620048.496714,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620108.519668,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620108.547063,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620168.624103,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620168.806978,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620228.850723,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620228.87757,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620288.90554,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620288.925233,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620348.943816,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620348.977078,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620409.006612,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620409.082168,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620469.118576,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620469.139932,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620529.157561,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620529.175407,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620589.192503,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620589.219822,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620649.25155,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620649.295014,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620709.3488,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620709.38074,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620769.412865,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620769.445072,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620829.461763,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620829.501263,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620889.593039,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620889.621572,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620949.674814,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620949.713216,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621009.759089,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621009.79145,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621069.826165,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621069.856743,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621130.021425,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621130.051535,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621190.084096,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621190.114032,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621250.141923,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621250.157786,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621310.176873,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621310.215088,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621370.247954,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621370.276676,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621430.311517,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621430.341204,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621490.370372,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621490.402329,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621550.430834,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621550.453084,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621610.475399,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621610.511727,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621670.556579,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621670.57335,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621730.59054,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621730.61736,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621790.643339,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621790.674381,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621850.711445,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621850.729691,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621910.747573,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621910.776683,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621970.805544,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621970.820921,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622151.30869,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622151.32705,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622211.345557,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622211.488055,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622271.521166,
         "status": "running"
       }
     ]
@@ -61,58 +511,508 @@
   "StrategySimulatorAgent": {
     "status": "idle",
     "current_task": "Waiting for next cycle",
-    "last_heartbeat": "2026-05-10T16:36:26.775145+00:00",
-    "last_heartbeat_ts": 1778430986.775165,
+    "last_heartbeat": "2026-05-12T21:45:00.479692+00:00",
+    "last_heartbeat_ts": 1778622300.479711,
     "interval_sec": 5.0,
     "history": [
       {
         "task": "Waiting for next cycle",
-        "ts": 1778430961.28064,
+        "ts": 1778621840.011769,
         "status": "idle"
       },
       {
         "task": "Executing cycle",
-        "ts": 1778430966.284919,
+        "ts": 1778621845.033045,
         "status": "running"
       },
       {
         "task": "Waiting for next cycle",
-        "ts": 1778430966.557545,
+        "ts": 1778621845.055674,
         "status": "idle"
       },
       {
         "task": "Executing cycle",
-        "ts": 1778430971.562457,
+        "ts": 1778621850.074383,
         "status": "running"
       },
       {
         "task": "Waiting for next cycle",
-        "ts": 1778430971.646834,
+        "ts": 1778621850.092108,
         "status": "idle"
       },
       {
         "task": "Executing cycle",
-        "ts": 1778430976.699339,
+        "ts": 1778621855.13471,
         "status": "running"
       },
       {
         "task": "Waiting for next cycle",
-        "ts": 1778430976.730563,
+        "ts": 1778621855.43609,
         "status": "idle"
       },
       {
         "task": "Executing cycle",
-        "ts": 1778430981.764946,
+        "ts": 1778621860.460287,
         "status": "running"
       },
       {
         "task": "Waiting for next cycle",
-        "ts": 1778430981.768353,
+        "ts": 1778621860.476508,
         "status": "idle"
       },
       {
         "task": "Executing cycle",
-        "ts": 1778430986.771643,
+        "ts": 1778621865.492768,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621865.516294,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621870.530824,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621870.549097,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621875.566585,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621875.586721,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621880.605445,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621880.631525,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621885.684599,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621885.739957,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621890.77765,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621890.839144,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621895.958273,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621896.010527,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621901.066008,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621901.087727,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621906.111101,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621906.141326,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621911.17854,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621911.202435,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621916.261063,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621916.888148,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621921.932483,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621922.335001,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621927.526415,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621927.552041,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621932.586282,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621932.609599,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621937.64139,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621937.738656,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621942.767879,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621942.800382,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621947.888615,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621954.53834,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621972.822423,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621973.303449,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621979.135687,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621981.166618,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621988.214691,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621989.247428,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622004.829067,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622030.116865,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622036.709282,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622038.690455,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622045.437898,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622046.291118,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622052.277028,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622055.403805,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622075.320665,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622076.376433,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622082.877696,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622083.416959,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622088.769175,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622090.602972,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622097.788563,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622098.010186,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622103.521754,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622105.628729,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622113.897962,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622114.058603,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622120.170959,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622121.976319,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622127.237217,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622145.310864,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622151.833076,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622154.298403,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622160.697005,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622163.495714,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622170.71549,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622172.241513,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622177.808497,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622181.30768,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622189.408314,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622192.827132,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622214.496639,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622216.494501,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622225.530623,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622228.538465,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622236.679796,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622238.002333,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622244.326867,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622255.771524,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622264.744406,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622275.954582,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622281.005456,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622281.206669,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622287.169714,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622288.85279,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622294.309559,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622294.603309,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622299.667759,
         "status": "running"
       }
     ]
@@ -120,58 +1020,508 @@
   "ScalpingAgent": {
     "status": "idle",
     "current_task": "Waiting for next cycle",
-    "last_heartbeat": "2026-05-10T16:35:38.522533+00:00",
-    "last_heartbeat_ts": 1778430938.522556,
+    "last_heartbeat": "2026-05-12T21:45:04.441272+00:00",
+    "last_heartbeat_ts": 1778622304.441291,
     "interval_sec": 60.0,
     "history": [
       {
         "task": "Waiting for next cycle",
-        "ts": 1778430638.438163,
+        "ts": 1778617899.226315,
         "status": "idle"
       },
       {
         "task": "Executing cycle",
-        "ts": 1778430698.451467,
+        "ts": 1778617960.402935,
         "status": "running"
       },
       {
         "task": "Waiting for next cycle",
-        "ts": 1778430698.46324,
+        "ts": 1778618000.925058,
         "status": "idle"
       },
       {
         "task": "Executing cycle",
-        "ts": 1778430758.474068,
+        "ts": 1778618060.940744,
         "status": "running"
       },
       {
         "task": "Waiting for next cycle",
-        "ts": 1778430758.482635,
+        "ts": 1778618106.489224,
         "status": "idle"
       },
       {
         "task": "Executing cycle",
-        "ts": 1778430818.498497,
+        "ts": 1778618166.511941,
         "status": "running"
       },
       {
         "task": "Waiting for next cycle",
-        "ts": 1778430818.506771,
+        "ts": 1778618201.713797,
         "status": "idle"
       },
       {
         "task": "Executing cycle",
-        "ts": 1778430878.513759,
+        "ts": 1778618261.726276,
         "status": "running"
       },
       {
         "task": "Waiting for next cycle",
-        "ts": 1778430878.516817,
+        "ts": 1778618310.553709,
         "status": "idle"
       },
       {
         "task": "Executing cycle",
-        "ts": 1778430938.519394,
+        "ts": 1778618370.578971,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778618414.080002,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778618474.105884,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778618513.530286,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778618573.543479,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778618612.289716,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778618672.304492,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778618709.035581,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778618769.056192,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778618805.443532,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778618865.466624,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778618919.929803,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778618979.956672,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778619033.934103,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778619093.973033,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778619148.766946,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778619208.796076,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778619255.738368,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778619315.759142,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778619360.372002,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778619420.401538,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778619472.124172,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778619532.157725,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778619584.539576,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778619644.568482,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778619686.699516,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778619746.725881,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778619790.724241,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778619850.753288,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778619894.567377,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778619954.595506,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778619999.258786,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620059.29058,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620100.610391,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620160.638116,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620208.310551,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620268.342635,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620317.338179,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620377.372528,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620427.79772,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620487.823691,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620537.731873,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620597.880358,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620650.371857,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620710.411175,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620760.258,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620820.291006,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620874.339256,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620934.383695,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620981.7583,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621041.787971,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621041.820106,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621101.849656,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621101.867884,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621161.885701,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621161.917495,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621222.130207,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621222.163039,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621282.773586,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621282.824239,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621342.87679,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621342.908778,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621402.940925,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621402.969308,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621463.119645,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621463.149735,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621523.179838,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621523.214838,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621583.250125,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621583.280105,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621643.310774,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621643.339049,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621703.370349,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621703.396233,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621763.420735,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621763.449889,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621823.48248,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621823.512573,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621883.546596,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621883.565408,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621943.588221,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621943.618674,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622003.666113,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622004.030346,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622124.123866,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622124.141723,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622184.159143,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622184.189994,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622244.220102,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622244.371218,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622304.407984,
         "status": "running"
       }
     ]
@@ -179,58 +1529,508 @@
   "ContinuousTrainerAgent": {
     "status": "idle",
     "current_task": "Waiting for next cycle",
-    "last_heartbeat": "2026-05-10T16:36:04.839912+00:00",
-    "last_heartbeat_ts": 1778430964.83994,
+    "last_heartbeat": "2026-05-12T21:44:35.578817+00:00",
+    "last_heartbeat_ts": 1778622275.578836,
     "interval_sec": 30.0,
     "history": [
       {
         "task": "Waiting for next cycle",
-        "ts": 1778430814.802528,
+        "ts": 1778620672.431715,
         "status": "idle"
       },
       {
         "task": "Executing cycle",
-        "ts": 1778430844.804938,
+        "ts": 1778620702.460333,
         "status": "running"
       },
       {
         "task": "Waiting for next cycle",
-        "ts": 1778430844.807475,
+        "ts": 1778620702.481915,
         "status": "idle"
       },
       {
         "task": "Executing cycle",
-        "ts": 1778430874.809435,
+        "ts": 1778620732.500217,
         "status": "running"
       },
       {
         "task": "Waiting for next cycle",
-        "ts": 1778430874.810832,
+        "ts": 1778620732.520265,
         "status": "idle"
       },
       {
         "task": "Executing cycle",
-        "ts": 1778430904.82425,
+        "ts": 1778620762.558103,
         "status": "running"
       },
       {
         "task": "Waiting for next cycle",
-        "ts": 1778430904.828699,
+        "ts": 1778620762.581663,
         "status": "idle"
       },
       {
         "task": "Executing cycle",
-        "ts": 1778430934.832145,
+        "ts": 1778620792.604779,
         "status": "running"
       },
       {
         "task": "Waiting for next cycle",
-        "ts": 1778430934.834467,
+        "ts": 1778620792.626928,
         "status": "idle"
       },
       {
         "task": "Executing cycle",
-        "ts": 1778430964.836966,
+        "ts": 1778620822.659819,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620822.692939,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620852.722074,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620852.836442,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620882.960275,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620882.98331,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620913.005287,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620913.023201,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620943.04104,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620943.060497,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620973.080843,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620973.100776,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621003.120311,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621003.140837,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621033.160149,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621033.177988,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621063.200204,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621063.218126,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621093.236204,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621093.255128,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621123.272531,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621123.294491,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621153.315479,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621153.337354,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621183.358407,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621183.379086,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621213.399234,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621213.424696,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621243.444133,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621243.467985,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621273.488559,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621273.511064,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621303.532837,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621303.550616,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621333.570469,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621333.59279,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621363.615596,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621363.64051,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621393.66972,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621393.694192,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621423.720661,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621423.751545,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621453.788885,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621453.88075,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621483.909093,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621483.933048,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621513.968012,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621514.106928,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621544.128971,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621544.146316,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621574.167681,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621574.190345,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621604.224503,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621604.247916,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621634.280805,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621634.301486,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621664.573549,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621664.591691,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621694.609631,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621694.64342,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621724.66131,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621724.683577,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621754.704364,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621754.726067,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621784.747063,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621784.773839,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621814.79668,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621814.822666,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621844.846437,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621844.867031,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621874.888721,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621874.908807,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621904.932551,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621904.952612,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621934.97145,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621934.995577,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621965.121955,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621967.120527,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621998.157769,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622001.253438,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622034.28294,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622035.346071,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622066.952981,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622071.168715,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622138.160547,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622172.765916,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622203.456866,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622209.938342,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622241.731869,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778622243.078051,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622274.505754,
         "status": "running"
       }
     ]
@@ -238,8 +2038,8 @@
   "RiskAgent": {
     "status": "idle",
     "current_task": "Waiting for next cycle",
-    "last_heartbeat": "2026-05-10T16:34:25.181192+00:00",
-    "last_heartbeat_ts": 1778430865.181211,
+    "last_heartbeat": "2026-05-12T21:41:13.414692+00:00",
+    "last_heartbeat_ts": 1778622073.414708,
     "interval_sec": 300.0,
     "history": [
       {
@@ -291,6 +2091,156 @@
         "task": "Executing cycle",
         "ts": 1778430865.145926,
         "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778430865.181211,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778617871.801389,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778617871.832242,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778618171.860445,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778618171.8737,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778618471.923499,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778618471.945268,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778618771.967416,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778618771.983838,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778619072.002993,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778619072.027164,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778619372.057065,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778619372.070221,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778619672.083707,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778619672.116684,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778619972.155683,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778619972.184197,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620272.21236,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620272.247,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620572.501972,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620572.527001,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620872.98095,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778620873.021756,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621173.197518,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621173.232067,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621473.263448,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621473.293487,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778621773.324628,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778621773.349342,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778622073.384463,
+        "status": "running"
       }
     ]
   },
@@ -331,8 +2281,8 @@
   "SpotAgent": {
     "status": "idle",
     "current_task": "Waiting for next cycle",
-    "last_heartbeat": "2026-05-10T16:19:23.939205+00:00",
-    "last_heartbeat_ts": 1778429963.939267,
+    "last_heartbeat": "2026-05-12T21:16:05.755912+00:00",
+    "last_heartbeat_ts": 1778620565.755933,
     "interval_sec": 3600.0,
     "history": [
       {
@@ -384,14 +2334,24 @@
         "task": "Executing cycle",
         "ts": 1778429963.930596,
         "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778429963.939267,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620565.738401,
+        "status": "running"
       }
     ]
   },
   "DataAgent": {
     "status": "idle",
     "current_task": "Waiting for next cycle",
-    "last_heartbeat": "2026-05-10T16:19:23.902717+00:00",
-    "last_heartbeat_ts": 1778429963.902735,
+    "last_heartbeat": "2026-05-12T21:16:05.692716+00:00",
+    "last_heartbeat_ts": 1778620565.692733,
     "interval_sec": 3600.0,
     "history": [
       {
@@ -443,14 +2403,24 @@
         "task": "Executing cycle",
         "ts": 1778429963.873162,
         "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778429963.902735,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620565.675571,
+        "status": "running"
       }
     ]
   },
   "FuturesAgent": {
     "status": "idle",
     "current_task": "Waiting for next cycle",
-    "last_heartbeat": "2026-05-10T16:19:50.694148+00:00",
-    "last_heartbeat_ts": 1778429990.694161,
+    "last_heartbeat": "2026-05-12T21:16:28.115403+00:00",
+    "last_heartbeat_ts": 1778620588.115422,
     "interval_sec": 3600.0,
     "history": [
       {
@@ -502,14 +2472,24 @@
         "task": "Executing cycle",
         "ts": 1778429985.035381,
         "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778429990.694161,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620581.905504,
+        "status": "running"
       }
     ]
   },
   "SignalAgent": {
     "status": "idle",
     "current_task": "Waiting for next cycle",
-    "last_heartbeat": "2026-05-10T16:21:01.686926+00:00",
-    "last_heartbeat_ts": 1778430061.68694,
+    "last_heartbeat": "2026-05-12T21:22:16.410163+00:00",
+    "last_heartbeat_ts": 1778620936.410178,
     "interval_sec": 3600.0,
     "history": [
       {
@@ -560,6 +2540,16 @@
       {
         "task": "Executing cycle",
         "ts": 1778430050.812971,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778430061.68694,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778620844.423772,
         "status": "running"
       }
     ]
@@ -619,6 +2609,90 @@
       {
         "task": "Replay SOL_USDT/1m bar 2000",
         "ts": 1778417860.899234,
+        "status": "running"
+      }
+    ]
+  },
+  "DummyAgent": {
+    "status": "idle",
+    "current_task": "Waiting for next cycle",
+    "last_heartbeat": "2026-05-12T20:33:09.420781+00:00",
+    "last_heartbeat_ts": 1778617989.420802,
+    "interval_sec": 0.05,
+    "history": [
+      {
+        "task": "Executing cycle",
+        "ts": 1778617988.92649,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778617988.936826,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778617988.996505,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778617989.005967,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778617989.064782,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778617989.073982,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778617989.133702,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778617989.143759,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778617989.203397,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778617989.213202,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778617989.273266,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778617989.282708,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778617989.342692,
+        "status": "running"
+      },
+      {
+        "task": "Waiting for next cycle",
+        "ts": 1778617989.351903,
+        "status": "idle"
+      },
+      {
+        "task": "Executing cycle",
+        "ts": 1778617989.410717,
         "status": "running"
       }
     ]

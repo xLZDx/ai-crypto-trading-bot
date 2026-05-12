@@ -1,15 +1,15 @@
 {
     "model": "Base (HistGBT + Calibrated)",
-    "accuracy": 49.862093776232165,
-    "long_accuracy": 50.50720376359894,
-    "short_accuracy": 49.417780477926286,
-    "n_samples": 667111,
-    "n_train": 533688,
-    "n_test": 66712,
+    "accuracy": 50.19806228235599,
+    "long_accuracy": 50.01394797405677,
+    "short_accuracy": 50.27186447311407,
+    "n_samples": 668136,
+    "n_train": 467695,
+    "n_test": 100221,
     "n_features": 33,
-    "n_iterations": 500,
-    "walk_forward_mean_acc": 52.69,
-    "walk_forward_std_acc": 0.73,
+    "n_iterations": 100,
+    "walk_forward_mean_acc": 52.41,
+    "walk_forward_std_acc": 0.66,
     "target": "triple_barrier_long_win",
     "symbols": [
         "BTC_USDT",
@@ -34,10 +34,17 @@
         "SUI_USDT"
     ],
     "timeframe": "1h",
-    "last_trained": "2026-05-10T09:44:17.379619+00:00",
-    "auc_roc": 0.5038394123276076,
-    "win_precision": 51.28205128205128,
-    "win_rate_pct": 50.551624895071356,
-    "n_high_conf": 39,
+    "last_trained": "2026-05-12T21:03:51.352113+00:00",
+    "hp_rules_version": "v4_b0_2026_05_09",
+    "hp_params_hash": "3ec4c6877ff2a608",
+    "hp": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "class_weight": "balanced"
+    },
+    "auc_roc": 0.5041435486257346,
+    "win_precision": 52.168473728106754,
+    "win_rate_pct": 49.80992007663065,
+    "n_high_conf": 2398,
     "threshold": 0.6
 }

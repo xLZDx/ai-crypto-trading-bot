@@ -1,10 +1,18 @@
 {
     "mode": "virtual",
-    "timestamp": "2026-05-04T17:23:08.414047+00:00",
-    "cash_usdt": 100000.0,
+    "timestamp": "2026-05-12T20:32:59.739596+00:00",
+    "cash_usdt": 12345.67,
     "holdings": {},
-    "equity_usdt": 100000.0,
+    "equity_usdt": 12345.67,
     "pnl_24h": 0.0,
     "drawdown_pct": 0.0,
-    "trade_count_24h": 0
+    "trade_count_24h": 0,
+    "deposits": [
+        {
+            "ts": "2026-05-12T20:32:59.739558+00:00",
+            "amount": 12345.67,
+            "note": "seed"
+        }
+    ],
+    "revenue_total": 0.0
 }

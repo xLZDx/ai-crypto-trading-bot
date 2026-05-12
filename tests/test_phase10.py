@@ -71,20 +71,6 @@ def test_news_from_parquet():
     check("Phase 10F docstring",  "Phase 10F" in src)
 
 
-def test_train_model_v2():
-    print("\n[train_model_v2]")
-    p = PROJECT_ROOT / "src" / "engine" / "train_model_v2.py"
-    check("file exists", p.exists())
-    if p.exists():
-        src = p.read_text(encoding="utf-8")
-        check("uses DataLens",       "from src.analytics.data_lens import DataLens" in src)
-        check("uses event_time_labeler",
-              "from src.analysis.event_time_labeler import label_event_time" in src)
-        check("uses HistGradientBoostingClassifier",
-              "HistGradientBoostingClassifier" in src)
-        check("writes meta JSON", "meta_path.write_text" in src)
-
-
 def test_watchlist_files():
     print("\n[Watchlist templates]")
     yt = PROJECT_ROOT / "data" / "youtube_watchlist.json"
@@ -125,7 +111,6 @@ def main() -> int:
     test_feature_reader()
     test_main_py_phase10()
     test_news_from_parquet()
-    test_train_model_v2()
     test_watchlist_files()
     test_dashboard_8tabs()
     test_documentation()

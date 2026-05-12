@@ -17,9 +17,69 @@
       "reason": "3 consecutive failed health checks",
       "killed_count": 2,
       "new_pid": 78876
+    },
+    {
+      "ts": 1778438277.5543606,
+      "reason": "3 consecutive failed health checks",
+      "killed_count": 0,
+      "new_pid": 37612
+    },
+    {
+      "ts": 1778438947.157958,
+      "reason": "3 consecutive failed health checks",
+      "killed_count": 2,
+      "new_pid": 34336
+    },
+    {
+      "ts": 1778440465.536371,
+      "reason": "3 consecutive failed health checks",
+      "killed_count": 0,
+      "new_pid": 4944
+    },
+    {
+      "ts": 1778440621.9171176,
+      "reason": "3 consecutive failed health checks",
+      "killed_count": 0,
+      "new_pid": 37008
+    },
+    {
+      "ts": 1778440798.2483668,
+      "reason": "3 consecutive failed health checks",
+      "killed_count": 0,
+      "new_pid": 30204
+    },
+    {
+      "ts": 1778453285.67275,
+      "reason": "3 consecutive failed health checks",
+      "killed_count": 1,
+      "new_pid": 43268
+    },
+    {
+      "ts": 1778458328.6027024,
+      "reason": "3 consecutive failed health checks",
+      "killed_count": 2,
+      "new_pid": 38400
+    },
+    {
+      "ts": 1778611292.8663263,
+      "reason": "3 consecutive failed health checks",
+      "killed_count": 0,
+      "new_pid": 26540
+    },
+    {
+      "ts": 1778611419.1295292,
+      "reason": "3 consecutive failed health checks",
+      "killed_count": 0,
+      "new_pid": 33480
+    },
+    {
+      "ts": 1778611485.330624,
+      "reason": "3 consecutive failed health checks",
+      "killed_count": 0,
+      "new_pid": 37300
     }
   ],
   "tripped": false,
-  "last_check_ts": 1778430983.24524,
-  "last_restart_ts": 1778332873.4786894
+  "last_check_ts": 1778622299.7740846,
+  "last_restart_ts": 1778611485.3306267
 }

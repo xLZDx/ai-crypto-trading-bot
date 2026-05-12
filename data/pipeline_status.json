@@ -1,1 +1,12 @@
-{}
+{
+    "train": {
+        "started_at": null,
+        "ok": true,
+        "finished_at": null,
+        "error": null,
+        "cells_total": 25,
+        "cells_complete": 0,
+        "train_inflight": 15,
+        "bt_inflight": 10
+    }
+}

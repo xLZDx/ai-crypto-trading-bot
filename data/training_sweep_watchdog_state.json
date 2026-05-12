@@ -1,6 +1,9 @@
 {
-  "restarts": [],
+  "restarts": [
+    1778439583.6080484,
+    1778461544.7790635
+  ],
   "tripped": false,
-  "last_status_ts": 1778417869.791266,
-  "last_status_payload_hash": "{\"process_alive\": true}"
+  "last_status_ts": 1778621400.6041713,
+  "last_status_payload_hash": "{\"current_label\": \"TFT Model\", \"current_model_key\": \"tft\", \"current_tf\": \"15m\", \"process_alive\": true, \"train\": {\"bt_inflight\": 10, \"cells_complete\": 0, \"cells_total\": 25, \"error\": null, \"finished_at\": null, \"ok\": true, \"started_at\": null, \"train_inflight\": 15}}"
 }

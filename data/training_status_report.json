@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-05-10T16:30:51.359550+00:00",
+  "generated_at": "2026-05-12T20:32:11.027707+00:00",
   "host": "RAZER",
   "execution": "LOCAL_ONLY",
   "status": "not_started",
@@ -21,16 +21,16 @@
   "model": {
     "present": true,
     "path": "D:\\test 2\\AI trading assistance\\models\\tft_model.pt",
-    "size_bytes": 6814907,
-    "mtime_iso": "2026-05-03T10:37:47.796481+00:00",
-    "age_s": 625983.5
+    "size_bytes": 6812347,
+    "mtime_iso": "2026-05-12T13:11:18.388032+00:00",
+    "age_s": 26450.5
   },
   "checkpoint": {
     "present": true,
     "path": "D:\\test 2\\AI trading assistance\\models\\tft_model.pt.ckpt",
     "size_bytes": 7810284,
-    "mtime_iso": "2026-05-03T10:37:48.016282+00:00",
-    "age_s": 625983.3
+    "mtime_iso": "2026-05-12T13:11:18.483564+00:00",
+    "age_s": 26450.4
   },
   "meta": {
     "symbols": [
@@ -65,15 +65,12 @@
     "present": true
   },
   "dashboard": {
-    "reachable": true,
-    "tft_in_response": true,
-    "tft_last_trained": "2026-05-03T10:37:48.036726+00:00",
-    "tft_model_path": "D:\\test 2\\AI trading assistance\\models\\tft_model.pt",
-    "tft_n_epochs": 30
+    "reachable": false,
+    "error": "TimeoutError: timed out"
   },
   "summary_bullets": [
     "NOT STARTED \u2014 no log activity detected.",
-    "Model file present: 6.8 MB, mtime 2026-05-03T10:37:47.796481+00:00",
-    "Dashboard reflects TFT (last_trained=2026-05-03T10:37:48.036726+00:00)."
+    "Model file present: 6.8 MB, mtime 2026-05-12T13:11:18.388032+00:00",
+    "Dashboard NOT reachable: TimeoutError: timed out."
   ]
 }

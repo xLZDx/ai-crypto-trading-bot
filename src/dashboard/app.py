@@ -636,13 +636,12 @@ def add_watchlist():
 
         def _bg_download():
             try:
-                from src.tools.binance_archive_downloader import bulk_download_for_symbol as archive_dl
+                from src.data_ingestion.binance_archive_downloader import download_symbol as archive_dl
                 from src.data_ingestion.binance_downloader import download_history
-                # Full 1h and 1d history from archive (resumes from last downloaded month)
-                archive_dl(symbol, '1h', start_year=2017)
-                archive_dl(symbol, '1d', start_year=2017)
-                # 1m limited to recent 2 years to avoid massive downloads
-                archive_dl(symbol, '1m', start_year=2023)
+                # Full history from archive (resumes from last downloaded month on disk)
+                archive_dl(symbol, '1h')
+                archive_dl(symbol, '1d')
+                archive_dl(symbol, '1m')
                 # Patch latest candles via REST API
                 download_history(symbol=symbol, timeframe='1h', limit=1000)
                 download_history(symbol=symbol, timeframe='1m', limit=1000)

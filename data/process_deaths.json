@@ -1,5 +1,16 @@
 [
   {
+    "role": "watchdog",
+    "pid": 34200,
+    "died_at": "2026-05-12T21:18:02.125271+00:00",
+    "rss_mb": 20.5,
+    "cpu_pct": 0.0,
+    "age_s": 40653.0,
+    "exit_clue": "",
+    "last_log_line": "",
+    "log_tail": []
+  },
+  {
     "role": "dash",
     "pid": 36720,
     "died_at": "2026-05-10T16:20:26.290716+00:00",

@@ -1,0 +1,30 @@
+{
+  "n_components": 3,
+  "n_components_active": 4,
+  "weights": [
+    0.326674340248613,
+    0.2409575721742926,
+    0.1131250691117992,
+    0.006664164006168362,
+    0.3125788544591269
+  ],
+  "regimes": {
+    "0": "RANGING",
+    "1": "TRENDING",
+    "2": "VOLATILE"
+  },
+  "label_map": {
+    "4": 0,
+    "1": 1,
+    "0": 2,
+    "2": 2,
+    "3": 0
+  },
+  "n_samples": 815718,
+  "model_path": "\\\\192.168.0.105\\AITrader\\models\\regime_classifier.joblib",
+  "last_trained": "2026-05-11T14:31:35.633179+00:00",
+  "model_type": "BayesianGaussianMixture",
+  "weight_concentration_prior": 0.01,
+  "accuracy_note": "Unsupervised BayesianGMM \u2014 no labelled accuracy",
+  "accuracy": null
+}

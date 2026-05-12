@@ -1,14 +1,14 @@
 {
     "model": "Trend (HistGBT + Calibrated)",
-    "accuracy": 52.29556345648477,
-    "long_accuracy": 52.23541972507674,
-    "short_accuracy": 53.05520438263801,
-    "n_samples": 646897,
-    "n_train": 517517,
-    "n_test": 64690,
+    "accuracy": 52.72326112448312,
+    "long_accuracy": 52.83170035552737,
+    "short_accuracy": 51.39767394409305,
+    "n_samples": 648111,
+    "n_train": 518488,
+    "n_test": 64812,
     "n_features": 20,
     "n_iterations": 500,
-    "walk_forward_mean_acc": 51.65,
+    "walk_forward_mean_acc": 51.74,
     "target": "triple_barrier_long_win",
     "symbols": [
         "BTC_USDT",
@@ -33,10 +33,10 @@
         "SUI_USDT"
     ],
     "timeframe": "1h",
-    "last_trained": "2026-05-10T04:01:34.956671+00:00",
-    "auc_roc": 0.5080772796143843,
-    "win_precision": 58.50785340314136,
-    "win_rate_pct": 51.84727160302983,
-    "n_high_conf": 764,
+    "last_trained": "2026-05-12T21:24:30.540908+00:00",
+    "auc_roc": 0.5063960863018058,
+    "win_precision": 59.92366412213741,
+    "win_rate_pct": 52.511880515953834,
+    "n_high_conf": 786,
     "threshold": 0.6
 }

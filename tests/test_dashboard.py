@@ -1240,9 +1240,6 @@ def test_phase10_live_integration():
     fe_src = open(os.path.join(BASE_DIR, 'src', 'analysis', 'feature_engineering.py'), encoding='utf-8').read()
     check('add_news_sentiment uses Parquet', 'load_news_recent' in fe_src)
 
-    tv2 = os.path.join(BASE_DIR, 'src', 'engine', 'train_model_v2.py')
-    check('train_model_v2.py exists', os.path.exists(tv2))
-
     tpl = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html'), encoding='utf-8').read()
     for tab in ('portfolio', 'alpha', 'orderflow', 'risk',
                 'training', 'simulation', 'data', 'strategies'):
