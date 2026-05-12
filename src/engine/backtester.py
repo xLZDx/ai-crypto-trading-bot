@@ -378,13 +378,15 @@ def _batch_ml_predict(df: pd.DataFrame, model_filename: str) -> pd.Series:
     Returns a signal Series: +1 (long), -1 (short), 0 (hold/uncertain).
     Uses the model's feature_names_in_ to pick the right columns.
     """
+    import io
     import joblib
+    from src.utils.model_integrity import verify_and_load_bytes
     MODEL_DIR = os.path.join(PROJECT_ROOT, "models")
     model_path = os.path.join(MODEL_DIR, model_filename)
     if not os.path.exists(model_path):
         return pd.Series(0.0, index=df.index)
     try:
-        model = joblib.load(model_path)
+        model = joblib.load(io.BytesIO(verify_and_load_bytes(model_path)))
         
         def find_features(obj, depth=0):
             if depth > 5 or obj is None: return None

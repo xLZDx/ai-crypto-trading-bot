@@ -49,10 +49,12 @@ class ScalpingAgent(BaseAgent):
 
     def _load_model(self) -> None:
         try:
+            import io
             import joblib
+            from src.utils.model_integrity import verify_and_load_bytes
             path = os.path.join(PROJECT_ROOT, "models", "scalping_model.joblib")
             if os.path.exists(path):
-                self._scalping_model = joblib.load(path)
+                self._scalping_model = joblib.load(io.BytesIO(verify_and_load_bytes(path)))
                 logger.info("[ScalpingAgent] Scalping model loaded.")
         except Exception as e:
             logger.warning("[ScalpingAgent] Model load error: %s", e)

@@ -46,10 +46,12 @@ class FuturesAgent(BaseAgent):
 
     def _load_model(self) -> None:
         try:
+            import io
             import joblib
+            from src.utils.model_integrity import verify_and_load_bytes
             path = os.path.join(PROJECT_ROOT, "models", "futures_short_model.joblib")
             if os.path.exists(path):
-                self._futures_model = joblib.load(path)
+                self._futures_model = joblib.load(io.BytesIO(verify_and_load_bytes(path)))
                 logger.info("[FuturesAgent] Futures model loaded.")
         except Exception as e:
             logger.warning("[FuturesAgent] Model load error: %s", e)

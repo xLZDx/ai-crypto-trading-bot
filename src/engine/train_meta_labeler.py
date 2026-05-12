@@ -80,9 +80,14 @@ def _build_signal_dataset(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
 
     # --- 1. Load primary models ---
     try:
-        base_model = joblib.load(os.path.join(models_dir, 'btc_rf_model.joblib'))
-        trend_model = joblib.load(os.path.join(models_dir, 'trend_model.joblib'))
-        regime_model_data = joblib.load(os.path.join(models_dir, 'regime_classifier.joblib'))
+        import io
+        from src.utils.model_integrity import verify_and_load_bytes
+        base_path = os.path.join(models_dir, 'btc_rf_model.joblib')
+        trend_path = os.path.join(models_dir, 'trend_model.joblib')
+        regime_path = os.path.join(models_dir, 'regime_classifier.joblib')
+        base_model = joblib.load(io.BytesIO(verify_and_load_bytes(base_path)))
+        trend_model = joblib.load(io.BytesIO(verify_and_load_bytes(trend_path)))
+        regime_model_data = joblib.load(io.BytesIO(verify_and_load_bytes(regime_path)))
     except FileNotFoundError as e:
         log.error("Primary models for meta-labeler not found: %s. Train them first.", e)
         return pd.DataFrame()
@@ -290,9 +295,11 @@ def train_meta_labeler(timeframe: str = '1h'):
     from src.utils.safe_json import write_json
     from datetime import datetime, timezone
 
+    from src.utils.model_integrity import sign_model
     paths = artifact_paths('meta', timeframe)
     paths['model'].parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(calibrated, paths['model'])
+    sign_model(str(paths['model']))
     log.info("Meta-labeler saved -> %s", paths['model'])
 
     meta = {
@@ -316,6 +323,7 @@ def train_meta_labeler(timeframe: str = '1h'):
     write_json(str(paths['meta']), meta)
     if paths['is_canonical']:
         joblib.dump(calibrated, paths['legacy_model'])
+        sign_model(str(paths['legacy_model']))
         write_json(str(paths['legacy_meta']), meta)
         log.info("Also wrote legacy artifacts -> %s / %s",
                  paths['legacy_model'].name, paths['legacy_meta'].name)

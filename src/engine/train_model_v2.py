@@ -107,6 +107,8 @@ def train(symbol: str, timeframe: str, *, lookback_days: int = 365,
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     out_path = MODELS_DIR / out_name
     joblib.dump({"model": model, "feature_cols": cols}, out_path)
+    from src.utils.model_integrity import sign_model
+    sign_model(str(out_path))
 
     meta = {
         "symbol":         symbol,

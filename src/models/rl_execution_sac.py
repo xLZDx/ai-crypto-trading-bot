@@ -222,12 +222,21 @@ class SACAgent(BaseExecutionAgent):
             "log_alpha":  self.log_alpha.detach().cpu(),
             "obs_dim":    self.obs_dim,
         }, path)
+        # Phase A8: sign the checkpoint so subsequent loads can verify it.
+        from src.utils.model_integrity import sign_model
+        sign_model(str(path))
 
     def load(self, path: str) -> None:
         # Phase A7 (2026-05-12): weights_only=True — checkpoint
         # contains state_dicts + log_alpha tensor + obs_dim int,
         # all safe for weights_only mode.
-        ckpt = torch.load(path, map_location=self.device, weights_only=True)
+        # Phase A8 (2026-05-12): verify_and_load_bytes returns the
+        # HMAC-verified bytes in one open(), closing the TOCTOU
+        # window between verify and torch.load.
+        import io
+        from src.utils.model_integrity import verify_and_load_bytes
+        buf = io.BytesIO(verify_and_load_bytes(path))
+        ckpt = torch.load(buf, map_location=self.device, weights_only=True)
         self.actor.load_state_dict(ckpt["actor"])
         self.q1.load_state_dict(ckpt["q1"])
         self.q2.load_state_dict(ckpt["q2"])

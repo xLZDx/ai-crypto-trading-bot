@@ -4,6 +4,8 @@ import logging
 import pandas as pd
 from pathlib import Path
 
+from src.utils.model_integrity import verify_model_or_raise
+
 logger = logging.getLogger(__name__)
 
 class InferenceEngine:
@@ -40,6 +42,7 @@ class InferenceEngine:
             return
 
         try:
+            verify_model_or_raise(str(self.model_path))
             from darts.models import TFTModel
             # Load PyTorch model (will map to GPU/CUDA if available)
             self._model = TFTModel.load(str(self.model_path))
@@ -53,7 +56,9 @@ class InferenceEngine:
             logger.info("OFT model not found at %s. OFT inference disabled.", self.oft_model_path)
             return
         try:
+            import io
             import torch
+            from src.utils.model_integrity import verify_and_load_bytes
             from src.models.order_flow_transformer import OrderFlowTransformer, OFTConfig
             # Phase A7 (2026-05-12): weights_only=True refuses to
             # unpickle arbitrary classes from the checkpoint —
@@ -61,7 +66,11 @@ class InferenceEngine:
             # by security review. Our checkpoint format here stores
             # only `config` (dict of basic types) + `state_dict`
             # (tensor dict), both of which weights_only allows.
-            ckpt = torch.load(str(self.oft_model_path), map_location="cpu", weights_only=True)
+            # Phase A8 (2026-05-12): verify_and_load_bytes returns
+            # HMAC-verified bytes in a single open(), closing the
+            # TOCTOU window vs. a separate verify_model_or_raise.
+            buf = io.BytesIO(verify_and_load_bytes(str(self.oft_model_path)))
+            ckpt = torch.load(buf, map_location="cpu", weights_only=True)
             cfg_dict = ckpt.get("config", {})
             cfg = OFTConfig(**{k: v for k, v in cfg_dict.items()
                               if k in OFTConfig.__dataclass_fields__})

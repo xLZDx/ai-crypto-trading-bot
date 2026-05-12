@@ -5,6 +5,7 @@ Key design: builds a rich, superset feature DataFrame, then reads the model's
 own `feature_names_in_` to select exactly the columns it was trained on.
 This avoids hardcoding feature lists that drift out of sync with training scripts.
 """
+import io
 import os
 import sys
 import logging
@@ -16,6 +17,7 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from src.utils.safe_json import read_json
+from src.utils.model_integrity import verify_and_load_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +39,7 @@ class MLPredictor:
 
         if os.path.exists(self.model_path):
             try:
-                loaded = joblib.load(self.model_path)
+                loaded = joblib.load(io.BytesIO(verify_and_load_bytes(self.model_path)))
                 # train_model_v2.py wraps as {"model": estimator, "feature_cols": [...]};
                 # legacy trainers dump the estimator directly. Accept both.
                 if isinstance(loaded, dict) and "model" in loaded and hasattr(loaded["model"], "predict"):

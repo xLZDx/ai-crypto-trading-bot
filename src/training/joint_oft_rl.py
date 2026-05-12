@@ -128,12 +128,15 @@ def train_oft(symbol: str, timeframe: str, *, n_epochs: int = 5,
     )
 
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    oft_path = MODELS_DIR / "oft_model.pt"
     torch.save({
         "state_dict": model.state_dict(),
         "config":     vars(cfg),
         "calibrator": trainer.calibrator,
-    }, MODELS_DIR / "oft_model.pt")
-    logger.info("[oft] saved checkpoint -> %s", MODELS_DIR / "oft_model.pt")
+    }, oft_path)
+    from src.utils.model_integrity import sign_model
+    sign_model(str(oft_path))
+    logger.info("[oft] saved checkpoint -> %s", oft_path)
     return {"status": "ok", **res}
 
 

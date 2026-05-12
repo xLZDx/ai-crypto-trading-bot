@@ -44,15 +44,17 @@ class SpotAgent(BaseAgent):
 
     def _load_models(self) -> None:
         try:
+            import io
             import joblib
+            from src.utils.model_integrity import verify_and_load_bytes
             models_dir = os.path.join(PROJECT_ROOT, "models")
             base_path = os.path.join(models_dir, "btc_rf_model.joblib")
             trend_path = os.path.join(models_dir, "trend_model.joblib")
             if os.path.exists(base_path):
-                self._base_model = joblib.load(base_path)
+                self._base_model = joblib.load(io.BytesIO(verify_and_load_bytes(base_path)))
                 logger.info("[SpotAgent] Base model loaded.")
             if os.path.exists(trend_path):
-                self._trend_model = joblib.load(trend_path)
+                self._trend_model = joblib.load(io.BytesIO(verify_and_load_bytes(trend_path)))
                 logger.info("[SpotAgent] Trend model loaded.")
         except Exception as e:
             logger.warning("[SpotAgent] Model load error: %s", e)

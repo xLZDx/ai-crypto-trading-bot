@@ -671,6 +671,8 @@ def _train_sklearn_model(task: dict) -> dict:
 
     model_file = output_path / f"{model_type}_{symbol.replace('/','_')}_worker.joblib"
     joblib.dump(model, model_file)
+    from src.utils.model_integrity import sign_model
+    sign_model(str(model_file))
 
     return {
         "accuracy":   round(float(acc), 4),

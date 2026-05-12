@@ -171,12 +171,21 @@ class PPOAgent(BaseExecutionAgent):
 
     def save(self, path: str) -> None:
         torch.save({"net": self.net.state_dict(), "obs_dim": self.obs_dim}, path)
+        # Phase A8: sign the checkpoint so subsequent loads can verify it.
+        from src.utils.model_integrity import sign_model
+        sign_model(str(path))
 
     def load(self, path: str) -> None:
         # Phase A7 (2026-05-12): weights_only=True — checkpoint
         # contains only `net` (state_dict) + `obs_dim` (int), both
         # safe for weights_only mode.
-        ckpt = torch.load(path, map_location=self.device, weights_only=True)
+        # Phase A8 (2026-05-12): verify_and_load_bytes returns the
+        # HMAC-verified bytes in one open(), closing the TOCTOU
+        # window between verify and torch.load.
+        import io
+        from src.utils.model_integrity import verify_and_load_bytes
+        buf = io.BytesIO(verify_and_load_bytes(path))
+        ckpt = torch.load(buf, map_location=self.device, weights_only=True)
         self.net.load_state_dict(ckpt["net"])
 
 

@@ -196,9 +196,11 @@ class ContinuousTrainerAgent(BaseAgent):
 
             # Save model
             import joblib
+            from src.utils.model_integrity import sign_model
             out_path = MODELS_DIR / "scalping_model.joblib"
             MODELS_DIR.mkdir(parents=True, exist_ok=True)
             joblib.dump(model, out_path)
+            sign_model(str(out_path))
 
             self._record_event("ScalpingML", len(X_tr), loss, loss * 0.95, acc)
             logger.info(

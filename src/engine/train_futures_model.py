@@ -199,9 +199,11 @@ def train_futures_model(timeframe: str = '1h'):
     from src.utils.safe_json import write_json
     from datetime import datetime, timezone
 
+    from src.utils.model_integrity import sign_model
     paths = artifact_paths('futures', timeframe)
     paths['model'].parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(calibrated, paths['model'])
+    sign_model(str(paths['model']))
     log.info("Model saved -> %s", paths['model'])
 
     meta = {
@@ -221,6 +223,7 @@ def train_futures_model(timeframe: str = '1h'):
     write_json(str(paths['meta']), meta)
     if paths['is_canonical']:
         joblib.dump(calibrated, paths['legacy_model'])
+        sign_model(str(paths['legacy_model']))
         write_json(str(paths['legacy_meta']), meta)
         log.info("Also wrote legacy artifacts -> %s / %s",
                  paths['legacy_model'].name, paths['legacy_meta'].name)

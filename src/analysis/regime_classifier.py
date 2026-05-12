@@ -106,12 +106,14 @@ class RegimeClassifier:
         self._load()
 
     def _load(self) -> None:
+        import io
         import os
         if not os.path.exists(self.MODEL_PATH):
             return
         try:
             import joblib
-            data = joblib.load(self.MODEL_PATH)
+            from src.utils.model_integrity import verify_and_load_bytes
+            data = joblib.load(io.BytesIO(verify_and_load_bytes(self.MODEL_PATH)))
             self._model = data["model"]
             self._label_map = data.get("label_map", {i: i for i in range(self.n_components)})
             self._is_trained = True
@@ -183,6 +185,8 @@ class RegimeClassifier:
 
         os.makedirs(os.path.dirname(self.MODEL_PATH), exist_ok=True)
         joblib.dump({"model": self._model, "label_map": label_map}, self.MODEL_PATH)
+        from src.utils.model_integrity import sign_model
+        sign_model(self.MODEL_PATH)
         logger.info(
             "BayesianGMM regime classifier trained. %d active components: %s",
             len(active),

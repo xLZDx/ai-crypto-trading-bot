@@ -12,7 +12,9 @@ runs predict_proba. It is fast enough to call on every candle.
 """
 from __future__ import annotations
 
+import io
 import logging
+from src.utils.model_integrity import verify_and_load_bytes
 import os
 from typing import Tuple
 
@@ -69,7 +71,7 @@ class MetaLabeler:
                            self.model_path)
             return
         try:
-            self.model = joblib.load(self.model_path)
+            self.model = joblib.load(io.BytesIO(verify_and_load_bytes(self.model_path)))
             self.is_loaded = True
             logger.info("Meta-labeler loaded from %s", self.model_path)
         except Exception as e:
