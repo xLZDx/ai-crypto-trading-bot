@@ -737,11 +737,17 @@ def _train_garch(task: dict) -> dict:
 class TrainingWorker:
 
     def __init__(self, master_url: str, node_id: str, name: str, port: int = WORKER_PORT,
-                 lane: str = "any"):
+                 lane: str = "any", bind_host: str = "127.0.0.1"):
         self.master_url = master_url.rstrip("/")
         self.node_id    = node_id
         self.name       = name
         self.port       = port
+        # 2026-05-12 Phase A2 — bind host for the inbound HTTP server.
+        # Default 127.0.0.1 prevents LAN exposure on single-machine
+        # setups. For cluster mode (worker on a different machine than
+        # the master), pass bind_host=0.0.0.0 or a specific LAN IP so
+        # the master can reach /restart, /system_info, etc.
+        self.bind_host  = bind_host
         # 2026-05-10 — dual-lane support. lane = "cpu" | "gpu" | "any".
         # "any" (default) = legacy behaviour, accepts any task. "cpu" only
         # accepts cpu-lane tasks; "gpu" only accepts gpu/exclusive tasks.
@@ -987,7 +993,19 @@ class TrainingWorker:
         logger.info("=" * 60)
 
         threading.Thread(target=self._heartbeat_loop, daemon=True, name="worker-hb").start()
-        self._app.run(host="0.0.0.0", port=self.port, debug=False, use_reloader=False)
+        # 2026-05-12 Phase A2: bind defaults to localhost. Worker
+        # accepts inbound POSTs from master (e.g. /restart). For a
+        # multi-machine cluster (worker on Ivan reaching master on
+        # the operator's laptop), the worker must bind to the LAN IP
+        # so the master can call back — set WORKER_BIND_HOST in .env
+        # or pass --host. The default keeps single-machine setups safe
+        # by refusing any non-localhost inbound traffic.
+        logger.info("Bind host: %s", self.bind_host)
+        if self.bind_host == "127.0.0.1":
+            logger.info("⚠ LOCALHOST-ONLY MODE — master cannot reach this worker remotely.")
+            logger.info("  For cluster mode: set WORKER_BIND_HOST=0.0.0.0 in .env")
+            logger.info("  or restart with --host 0.0.0.0")
+        self._app.run(host=self.bind_host, port=self.port, debug=False, use_reloader=False)
 
 
 def main() -> None:
@@ -1006,6 +1024,12 @@ def main() -> None:
                         help="Which task lane this worker accepts. 'cpu' = only "
                              "CPU-resource models (base/trend/futures/scalping/meta/regime). "
                              "'gpu' = only gpu/exclusive (tft/oft). 'any' = legacy/default.")
+    # 2026-05-12 Phase A2: bind defaults to localhost (single-machine
+    # safe). For multi-machine cluster mode, set WORKER_BIND_HOST in
+    # .env or pass --host 0.0.0.0 (or a specific LAN IP).
+    parser.add_argument("--host", type=str,
+                        default=os.getenv("WORKER_BIND_HOST", "127.0.0.1"),
+                        help="Bind host (default 127.0.0.1; set 0.0.0.0 for cluster mode)")
     args = parser.parse_args()
 
     # 2026-05-11 fix — CPU-lane workers must NOT touch any GPU. Operator
@@ -1030,6 +1054,7 @@ def main() -> None:
         name=args.name,
         port=args.port,
         lane=args.lane,
+        bind_host=args.host,
     )
     worker.start()
 

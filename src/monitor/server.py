@@ -125,6 +125,13 @@ def raw_log(component: str):
 
 
 if __name__ == "__main__":
+    import os
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"Monitor running at http://127.0.0.1:5001")
-    app.run(host="0.0.0.0", port=5001, debug=False, use_reloader=False)
+    # 2026-05-12 Phase A2: bind to localhost by default. The monitor UI
+    # is consumed by the dashboard's same-host JS only, so 127.0.0.1 is
+    # the right default. Override via MONITOR_BIND_HOST env var if you
+    # ever need cross-machine access (and add auth first — these
+    # endpoints are currently unauthenticated).
+    bind_host = os.getenv("MONITOR_BIND_HOST", "127.0.0.1")
+    print(f"Monitor running at http://{bind_host}:5001")
+    app.run(host=bind_host, port=5001, debug=False, use_reloader=False)

@@ -577,6 +577,17 @@ def main() -> None:
     )
     parser = argparse.ArgumentParser(description="AI Trading — Training Orchestrator")
     parser.add_argument("--port", type=int, default=ORCH_PORT, help=f"HTTP port (default {ORCH_PORT})")
+    # 2026-05-12 Phase A2: bind defaults to localhost. The previous
+    # 0.0.0.0 bind exposed the orchestrator to the LAN with no auth on
+    # any endpoint (cluster/register, cluster/task_update, etc.). For
+    # single-machine operation this is the safe default. For cluster
+    # mode (workers on separate machines like Ivan), the operator must
+    # set ORCHESTRATOR_BIND_HOST=0.0.0.0 (or the master's LAN IP) in
+    # .env or pass --host explicitly.
+    import os as _os
+    parser.add_argument("--host", type=str,
+                        default=_os.getenv("ORCHESTRATOR_BIND_HOST", "127.0.0.1"),
+                        help="Bind host (default 127.0.0.1; set 0.0.0.0 for cluster mode)")
     args = parser.parse_args()
 
     orch = Orchestrator()
@@ -585,12 +596,18 @@ def main() -> None:
 
     local_ip = _local_ip()
     logger.info("=" * 60)
-    logger.info("Training Orchestrator — http://%s:%d", local_ip, args.port)
-    logger.info("Workers connect with:")
-    logger.info("  python -m src.training.distributed.worker --master http://%s:%d", local_ip, args.port)
+    logger.info("Training Orchestrator — bind=%s port=%d", args.host, args.port)
+    logger.info("Master LAN IP (for workers to connect): %s", local_ip)
+    if args.host == "127.0.0.1":
+        logger.info("⚠ LOCALHOST-ONLY MODE — remote workers cannot connect.")
+        logger.info("  For cluster mode: set ORCHESTRATOR_BIND_HOST=0.0.0.0 in .env")
+        logger.info("  or restart with --host 0.0.0.0")
+    else:
+        logger.info("Workers connect with:")
+        logger.info("  python -m src.training.distributed.worker --master http://%s:%d", local_ip, args.port)
     logger.info("=" * 60)
 
-    app.run(host="0.0.0.0", port=args.port, debug=False, use_reloader=False)
+    app.run(host=args.host, port=args.port, debug=False, use_reloader=False)
 
 
 def _local_ip() -> str:

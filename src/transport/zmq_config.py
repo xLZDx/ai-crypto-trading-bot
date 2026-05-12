@@ -20,7 +20,12 @@ TRAINING_BATCH_PORT  = int(os.getenv("ZMQ_TRAINING_BATCH_PORT",  "5556"))
 CONTROL_FANOUT_PORT  = int(os.getenv("ZMQ_CONTROL_FANOUT_PORT",  "5557"))
 
 # ── FastAPI control plane ────────────────────────────────────────────────────
-CONTROL_API_HOST = os.getenv("CONTROL_API_HOST", "0.0.0.0")
+# 2026-05-12 Phase A2 — default bind to localhost. The control plane
+# is consumed only by same-host clients (the dashboard JS and local
+# scripts). Phase A11 schedules deletion of this service entirely;
+# until then, the safe default prevents LAN exposure. To restore
+# 0.0.0.0 binding temporarily, set CONTROL_API_HOST in .env.
+CONTROL_API_HOST = os.getenv("CONTROL_API_HOST", "127.0.0.1")
 CONTROL_API_PORT = int(os.getenv("CONTROL_API_PORT", "8100"))
 
 # ── Master / cluster ─────────────────────────────────────────────────────────

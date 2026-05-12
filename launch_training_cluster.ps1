@@ -35,4 +35,9 @@ Write-Host "============================================================" -Foreg
 Write-Host ""
 
 Set-Location $ProjectRoot
-python -m src.training.distributed.orchestrator --port 7700 2>&1 | Tee-Object -FilePath $LogFile
+# 2026-05-12 Phase A2: the orchestrator defaults to bind 127.0.0.1
+# now. This launcher is for cluster mode (master + remote workers),
+# so we explicitly pass --host 0.0.0.0 to accept inbound from any
+# LAN worker. If you want single-machine only, drop the --host flag
+# or run "python -m src.training.distributed.orchestrator" directly.
+python -m src.training.distributed.orchestrator --port 7700 --host 0.0.0.0 2>&1 | Tee-Object -FilePath $LogFile

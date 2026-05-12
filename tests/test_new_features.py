@@ -584,6 +584,10 @@ class TestWorker(unittest.TestCase):
         self.assertEqual(tw.master_url, "http://192.168.0.1:7700")
         self.assertEqual(tw.node_id, "test-001")
         self.assertIsNone(tw._current_task)
+        # Phase A2 (2026-05-12) — bind_host defaults to localhost when
+        # caller omits the argument. Cluster-mode callers must pass
+        # bind_host=0.0.0.0 (or a LAN IP) explicitly.
+        self.assertEqual(tw.bind_host, "127.0.0.1")
 
 
 # ─── Orchestrator Local IP ────────────────────────────────────────────────────
