@@ -30,29 +30,39 @@ logger = logging.getLogger(__name__)
 # ── Agent status file ─────────────────────────────────────────────────────────
 _STATUS_FILE = Path(__file__).resolve().parents[3] / 'data' / 'agent_status.json'
 _status_write_lock = threading.Lock()
+# Phase C7 (2026-05-12): history cap bumped 10 -> 100 so the operator has
+# meaningful context when diagnosing why an agent stalled. The previous 10
+# entries covered <1 minute of activity for fast agents.
+_MAX_HISTORY = 100
 
 
 def _write_agent_status(name: str, status: str, task: str, interval_sec: float) -> None:
+    """Atomic per-agent heartbeat write.
+
+    Phase C reviewer fix: do not hold `_status_write_lock` across the
+    `safe_json` filelock acquisition. Build the new snapshot under the
+    threading lock (so two agent threads can't race on the in-memory
+    merge), then write OUTSIDE the threading lock so a 5-second filelock
+    timeout on the JSON file does not stall every other agent's heartbeat.
+    Failures log at debug rather than silently swallowing.
+    """
+    from src.utils.safe_json import read_json, write_json  # atomic JSON I/O
     now = datetime.now(timezone.utc).isoformat()
     now_ts = datetime.now(timezone.utc).timestamp()
-    with _status_write_lock:
-        try:
-            data: dict = {}
-            if _STATUS_FILE.exists():
-                try:
-                    data = json.loads(_STATUS_FILE.read_text(encoding='utf-8'))
-                except Exception:
-                    pass
+    try:
+        with _status_write_lock:
+            data = read_json(str(_STATUS_FILE), default={}) or {}
+            if not isinstance(data, dict):
+                data = {}
             prev = data.get(name, {})
             history: list = list(prev.get('history', []))
-            # Append previous task to history if task changed
             if prev.get('current_task') and prev['current_task'] != task:
                 history.append({
                     'task': prev['current_task'],
                     'ts':   prev.get('last_heartbeat_ts', now_ts - interval_sec),
                     'status': prev.get('status', 'idle'),
                 })
-            history = history[-10:]  # keep last 10
+            history = history[-_MAX_HISTORY:]
             data[name] = {
                 'status': status,
                 'current_task': task,
@@ -61,10 +71,12 @@ def _write_agent_status(name: str, status: str, task: str, interval_sec: float) 
                 'interval_sec': interval_sec,
                 'history': history,
             }
-            _STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
-            _STATUS_FILE.write_text(json.dumps(data, indent=2), encoding='utf-8')
-        except Exception:
-            pass
+            snapshot = dict(data)  # cheap; releases _status_write_lock next
+        # Disk write OUTSIDE the threading lock — filelock contention from
+        # another process must not block every agent thread.
+        write_json(str(_STATUS_FILE), snapshot, indent=2)
+    except Exception as exc:
+        logger.debug("[agent_bus] _write_agent_status(%s) failed: %s", name, exc)
 
 
 @dataclass

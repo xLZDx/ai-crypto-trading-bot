@@ -24,6 +24,7 @@ import logging
 import os
 import shutil
 import sys
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -152,40 +153,54 @@ class ParquetStore:
         self.base_dir = Path(base_dir)
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self._conn = None  # lazy
+        # Phase C4 (2026-05-12): a single in-memory DuckDB connection is not
+        # safe to call concurrently. ParquetClient already learned this in
+        # the 2026-05-08 dashboard incident — applying the same guard here
+        # so ingest/query/status calls from multiple threads serialize.
+        # RLock (not Lock): status() -> symbol_status() reacquires.
+        self._lock = threading.RLock()
 
     # ── Connection ──────────────────────────────────────────────────────────
 
     def _conn_or_open(self):
-        if self._conn is None:
-            import duckdb
-            self._conn = duckdb.connect(database=":memory:")
-            self._conn.execute("PRAGMA threads=4")
-            self._conn.execute("PRAGMA enable_progress_bar=false")
-            # Bound memory and force disk-spill to D: drive (per project rule:
-            # all cache/temp data on D: only). 6 GB is enough headroom for
-            # sorting a year of 1-sec ticks from a 6 GB gzipped CSV without
-            # OOMing; anything that exceeds it spills to temp_directory.
-            temp_dir = (PROJECT_ROOT / "data" / "cache" / "duckdb_temp").as_posix()
-            (PROJECT_ROOT / "data" / "cache" / "duckdb_temp").mkdir(parents=True, exist_ok=True)
-            try:
-                self._conn.execute("PRAGMA memory_limit='6GB'")
-                self._conn.execute(f"PRAGMA temp_directory='{temp_dir}'")
-            except Exception as exc:
-                logger.warning("[ParquetStore] could not apply memory pragmas: %s", exc)
-        return self._conn
+        with self._lock:
+            if self._conn is None:
+                import duckdb
+                self._conn = duckdb.connect(database=":memory:")
+                self._conn.execute("PRAGMA threads=4")
+                self._conn.execute("PRAGMA enable_progress_bar=false")
+                # Bound memory and force disk-spill to D: drive (per project rule:
+                # all cache/temp data on D: only). 6 GB is enough headroom for
+                # sorting a year of 1-sec ticks from a 6 GB gzipped CSV without
+                # OOMing; anything that exceeds it spills to temp_directory.
+                temp_dir = (PROJECT_ROOT / "data" / "cache" / "duckdb_temp").as_posix()
+                (PROJECT_ROOT / "data" / "cache" / "duckdb_temp").mkdir(parents=True, exist_ok=True)
+                try:
+                    self._conn.execute("PRAGMA memory_limit='6GB'")
+                    self._conn.execute(f"PRAGMA temp_directory='{temp_dir}'")
+                except Exception as exc:
+                    logger.warning("[ParquetStore] could not apply memory pragmas: %s", exc)
+            return self._conn
 
     def close(self) -> None:
-        if self._conn is not None:
-            try:
-                self._conn.close()
-            except Exception:
-                pass
-            self._conn = None
+        with self._lock:
+            if self._conn is not None:
+                try:
+                    self._conn.close()
+                except Exception:
+                    pass
+                self._conn = None
 
     def _reset_connection(self) -> None:
-        """Drop and reopen — used after an OOM corrupts the connection state."""
-        self.close()
-        self._conn_or_open()
+        """Drop and reopen — used after an OOM corrupts the connection state.
+
+        Calls `close()` and `_conn_or_open()` while holding `self._lock`.
+        Both callees also acquire `self._lock`, so `self._lock` MUST be an
+        `RLock` (re-entrant). A plain `Lock` would self-deadlock here.
+        """
+        with self._lock:
+            self.close()
+            self._conn_or_open()
 
     # ── Ingest ──────────────────────────────────────────────────────────────
 
@@ -215,6 +230,20 @@ class ParquetStore:
         if not csv_path.exists():
             raise FileNotFoundError(f"CSV not found: {csv_path}")
 
+        with self._lock:
+            return self._ingest_csv_locked(
+                csv_path, symbol, timestamp_col, compression, skip_existing, timeframe,
+            )
+
+    def _ingest_csv_locked(
+        self,
+        csv_path: Path,
+        symbol: str,
+        timestamp_col: str,
+        compression: str,
+        skip_existing: bool,
+        timeframe: str | None,
+    ) -> dict:
         conn = self._conn_or_open()
         sym = _safe_symbol(symbol)
         out_root = _symbol_dir(self.base_dir, symbol, timeframe)
@@ -341,37 +370,38 @@ class ParquetStore:
         `start` and `end` accept ISO-8601 strings or datetime objects (UTC).
         `timeframe`: e.g. '1s', '1m', '1d'. None = legacy layout.
         """
-        conn = self._conn_or_open()
-        sym = _safe_symbol(symbol)
-        sym_dir = _symbol_dir(self.base_dir, symbol, timeframe)
-        glob = _partition_glob(self.base_dir, symbol, timeframe)
+        with self._lock:
+            conn = self._conn_or_open()
+            sym = _safe_symbol(symbol)
+            sym_dir = _symbol_dir(self.base_dir, symbol, timeframe)
+            glob = _partition_glob(self.base_dir, symbol, timeframe)
 
-        # If no partitions exist, return an empty DataFrame with the right schema.
-        if not sym_dir.exists() or not any(sym_dir.glob("yyyymm=*/*.parquet")):
-            import pandas as pd
-            cols = list(columns) if columns else list(DEFAULT_COLUMNS)
-            return pd.DataFrame(columns=cols)
+            # If no partitions exist, return an empty DataFrame with the right schema.
+            if not sym_dir.exists() or not any(sym_dir.glob("yyyymm=*/*.parquet")):
+                import pandas as pd
+                cols = list(columns) if columns else list(DEFAULT_COLUMNS)
+                return pd.DataFrame(columns=cols)
 
-        col_sql = ", ".join(columns) if columns else "*"
-        where = []
-        params: list = []
-        if start is not None:
-            where.append("timestamp >= ?")
-            params.append(_to_dt(start))
-        if end is not None:
-            where.append("timestamp < ?")
-            params.append(_to_dt(end))
-        where_sql = ("WHERE " + " AND ".join(where)) if where else ""
-        limit_sql = f"LIMIT {int(limit)}" if limit else ""
+            col_sql = ", ".join(columns) if columns else "*"
+            where = []
+            params: list = []
+            if start is not None:
+                where.append("timestamp >= ?")
+                params.append(_to_dt(start))
+            if end is not None:
+                where.append("timestamp < ?")
+                params.append(_to_dt(end))
+            where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+            limit_sql = f"LIMIT {int(limit)}" if limit else ""
 
-        sql = f"""
-            SELECT {col_sql}
-            FROM read_parquet('{glob}')
-            {where_sql}
-            ORDER BY timestamp
-            {limit_sql}
-        """
-        return conn.execute(sql, params).df()
+            sql = f"""
+                SELECT {col_sql}
+                FROM read_parquet('{glob}')
+                {where_sql}
+                ORDER BY timestamp
+                {limit_sql}
+            """
+            return conn.execute(sql, params).df()
 
     # ── Status / introspection ──────────────────────────────────────────────
 
@@ -407,39 +437,40 @@ class ParquetStore:
         if not files:
             return SymbolStatus(symbol, 0, 0, 0, None, None)
 
-        conn = self._conn_or_open()
-        glob = _partition_glob(self.base_dir, symbol, timeframe)
+        with self._lock:
+            conn = self._conn_or_open()
+            glob = _partition_glob(self.base_dir, symbol, timeframe)
 
-        # Pick the time column. News partitions store `published_at`; the
-        # rest store `timestamp`. Probe the schema first to keep this generic.
-        try:
-            cols = conn.execute(
-                f"DESCRIBE SELECT * FROM read_parquet('{glob}') LIMIT 1"
-            ).fetchall()
-            col_names = {c[0] for c in cols}
-        except Exception:
-            col_names = set()
-        time_col = ('timestamp' if 'timestamp' in col_names
-                    else ('published_at' if 'published_at' in col_names else None))
+            # Pick the time column. News partitions store `published_at`; the
+            # rest store `timestamp`. Probe the schema first to keep this generic.
+            try:
+                cols = conn.execute(
+                    f"DESCRIBE SELECT * FROM read_parquet('{glob}') LIMIT 1"
+                ).fetchall()
+                col_names = {c[0] for c in cols}
+            except Exception:
+                col_names = set()
+            time_col = ('timestamp' if 'timestamp' in col_names
+                        else ('published_at' if 'published_at' in col_names else None))
 
-        if time_col is None:
-            return SymbolStatus(
-                symbol=symbol, partitions=len(partition_dirs),
-                rows=0, size_bytes=int(size_bytes),
-                earliest=None, latest=None,
-            )
+            if time_col is None:
+                return SymbolStatus(
+                    symbol=symbol, partitions=len(partition_dirs),
+                    rows=0, size_bytes=int(size_bytes),
+                    earliest=None, latest=None,
+                )
 
-        try:
-            row = conn.execute(
-                f"""
-                SELECT COUNT(*) AS rows,
-                       MIN({time_col}) AS earliest,
-                       MAX({time_col}) AS latest
-                FROM read_parquet('{glob}')
-                """
-            ).fetchone()
-        except Exception:
-            row = None
+            try:
+                row = conn.execute(
+                    f"""
+                    SELECT COUNT(*) AS rows,
+                           MIN({time_col}) AS earliest,
+                           MAX({time_col}) AS latest
+                    FROM read_parquet('{glob}')
+                    """
+                ).fetchone()
+            except Exception:
+                row = None
 
         if row is None:
             return SymbolStatus(

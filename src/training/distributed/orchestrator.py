@@ -49,6 +49,14 @@ MAX_TASK_RETRIES = 2
 # has been running longer than the per-lane TIMEOUT and hasn't received
 # a status update in STALE_UPDATE_S, mark it failed (error =
 # "watchdog_timeout") and free the worker so it picks up the next task.
+# Phase C1 (2026-05-12): orchestrator state is volatile until persisted.
+# A crash or restart used to lose the entire queue + worker registry.
+# Persist after every mutation via safe_json atomic write; reload on
+# __init__. Running tasks at shutdown time are re-queued because the
+# worker that owned them may not survive the restart.
+ORCH_STATE_PATH = PROJECT_ROOT / "data" / "orchestrator_state.json"
+ORCH_STATE_SCHEMA_VERSION = 1
+
 WATCHDOG_POLL_S            = 30
 WATCHDOG_STALE_UPDATE_S    = 5 * 60       # 5 min without an update + over-budget = dead
 WATCHDOG_TIMEOUT_BY_KIND   = {
@@ -72,13 +80,17 @@ class Orchestrator:
     or run as a standalone process.
     """
 
-    def __init__(self):
+    def __init__(self, state_path: Path | None = None):
         self._lock    = threading.Lock()
         self._workers: dict[str, dict] = {}      # node_id → WorkerInfo dict
         self._tasks:   dict[str, dict] = {}       # task_id → TrainingTask dict
         self._queue:   list[str]       = []       # task_ids in order
         self._running  = False
         self._schedule_thread: threading.Thread | None = None
+        # Phase C1 — state persistence. Tests inject `state_path` to point
+        # at a tmpdir; production uses the project-rooted default.
+        self._state_path: Path = state_path if state_path is not None else ORCH_STATE_PATH
+        self._load_state()
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -100,6 +112,156 @@ class Orchestrator:
     def stop(self) -> None:
         self._running = False
 
+    # ── State persistence (Phase C1) ──────────────────────────────────────────
+
+    @staticmethod
+    def _is_safe_worker_entry(w: dict) -> bool:
+        """Phase C reviewer fix (SSRF): persisted state could carry a worker
+        IP that points outside the LAN. _send_task_to_worker POSTs to that
+        IP; an attacker with file-write could re-target the orchestrator at
+        an internal/cloud-metadata endpoint. Accept only loopback or RFC1918
+        private addresses + a sane port range. Python's `is_private` includes
+        link-local (169.254.0.0/16) — which is exactly the cloud metadata
+        target — so we explicitly exclude link-local, multicast, reserved,
+        and unspecified ranges.
+        """
+        import ipaddress
+        ip = w.get("ip", "")
+        port = w.get("port", 0)
+        if not isinstance(port, int) or not (1024 <= port <= 65535):
+            return False
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return False
+        if (addr.is_link_local or addr.is_multicast
+                or addr.is_reserved or addr.is_unspecified):
+            return False
+        return addr.is_private or addr.is_loopback
+
+    @staticmethod
+    def _is_safe_local_path(p: str, allowed_root: Path) -> bool:
+        """Phase C reviewer fix (path injection): persisted task fields
+        `data_path` / `output_path` flow to the worker's pd.read_csv +
+        joblib.dump. Reject anything outside the allowed project subtree.
+        Empty string is treated as 'use default' and allowed."""
+        if not p:
+            return True
+        try:
+            abs_p = Path(p).resolve()
+            abs_root = allowed_root.resolve()
+            abs_p.relative_to(abs_root)
+            return True
+        except (ValueError, OSError):
+            return False
+
+    def _load_state(self) -> None:
+        """Restore _workers / _tasks / _queue from disk if a saved state exists.
+
+        Running tasks are re-queued because the worker that owned them may
+        not survive the restart (worker heartbeats will refresh worker
+        liveness within ~30 s; their tasks won't auto-resume).
+        Phase C reviewer hardening: drop worker entries with non-LAN IPs and
+        neutralize task path fields that escape the project tree.
+        """
+        try:
+            from src.utils.safe_json import read_json
+        except Exception:
+            return
+        data = read_json(str(self._state_path), default=None)
+        if not isinstance(data, dict):
+            return
+        try:
+            workers = data.get("workers", {}) or {}
+            tasks   = data.get("tasks",   {}) or {}
+            queue   = list(data.get("queue", []) or [])
+            if not isinstance(workers, dict) or not isinstance(tasks, dict):
+                return
+            # Phase C reviewer fix (SSRF): filter worker registry to LAN-only IPs.
+            data_root  = PROJECT_ROOT / "data"
+            model_root = PROJECT_ROOT / "models"
+            sanitized_workers: dict[str, dict] = {}
+            for nid, w in workers.items():
+                if not isinstance(w, dict):
+                    continue
+                if self._is_safe_worker_entry(w):
+                    sanitized_workers[nid] = w
+                else:
+                    logger.warning(
+                        "[Orch] _load_state: dropped worker %s with unsafe ip=%r port=%r",
+                        nid, w.get("ip"), w.get("port"),
+                    )
+            workers = sanitized_workers
+
+            # Phase C1 — re-queue any in-flight task whose worker is gone.
+            # Phase C reviewer fix: neutralize untrusted path fields.
+            for tid, t in list(tasks.items()):
+                if not isinstance(t, dict):
+                    tasks.pop(tid, None)
+                    continue
+                if not self._is_safe_local_path(t.get("data_path", ""), data_root):
+                    logger.warning("[Orch] _load_state: blanking unsafe data_path on task %s", tid)
+                    t["data_path"] = ""
+                if not self._is_safe_local_path(t.get("output_path", ""), model_root):
+                    logger.warning("[Orch] _load_state: blanking unsafe output_path on task %s", tid)
+                    t["output_path"] = str(model_root)
+                if t.get("status") == "running":
+                    t["status"] = "pending"
+                    t["assigned_to"] = ""
+                    if tid not in queue:
+                        queue.append(tid)
+                    logger.info("[Orch] Re-queued task %s (was running at shutdown)", tid)
+            # Drop queue entries that don't have a task dict any more.
+            queue = [tid for tid in queue if tid in tasks]
+            self._workers, self._tasks, self._queue = workers, tasks, queue
+            logger.info(
+                "[Orch] Loaded persisted state: %d workers, %d tasks, %d queued",
+                len(self._workers), len(self._tasks), len(self._queue),
+            )
+        except Exception as exc:  # never let a corrupt state file block startup
+            logger.warning("[Orch] _load_state failed, starting fresh: %s", exc)
+
+    def _snapshot_state_locked(self) -> dict:
+        """Caller MUST hold `self._lock`. Cheap shallow copies of the three
+        in-memory dicts — keeps the snapshot consistent so the disk write
+        can happen without holding the lock."""
+        return {
+            "schema_version": ORCH_STATE_SCHEMA_VERSION,
+            "saved_at":       datetime.now(timezone.utc).isoformat(),
+            "workers":        dict(self._workers),
+            "tasks":          {tid: dict(t) for tid, t in self._tasks.items()},
+            "queue":          list(self._queue),
+        }
+
+    def _write_snapshot(self, snapshot: dict) -> None:
+        """Disk write. Safe to call without holding `self._lock` (and
+        intentionally called that way — see _persist below). Failures are
+        logged but never raise so the orchestrator stays operational even
+        if disk is full / read-only."""
+        try:
+            from src.utils.safe_json import write_json
+        except Exception:
+            return
+        try:
+            write_json(str(self._state_path), snapshot, indent=2)
+        except Exception as exc:
+            logger.debug("[Orch] _persist failed: %s", exc)
+
+    def _persist(self) -> None:
+        """Atomic snapshot of in-memory state to `data/orchestrator_state.json`.
+
+        Phase C reviewer fix: snapshot acquired under the lock (consistent
+        state) but the disk write happens AFTER releasing the lock so a
+        slow filelock acquire (e.g. another process reading the file)
+        cannot stall the scheduler or watchdog.
+
+        Caller MUST NOT be holding `self._lock` when calling this — we
+        re-acquire it internally for the cheap dict-copy step.
+        """
+        with self._lock:
+            snapshot = self._snapshot_state_locked()
+        self._write_snapshot(snapshot)
+
     # ── Worker registration ───────────────────────────────────────────────────
 
     def register_worker(self, info: dict) -> None:
@@ -120,6 +282,8 @@ class Orchestrator:
             if prev.get("status") == "busy" and info.get("status") == "idle" and prev.get("current_task"):
                 info["status"] = "busy"
             self._workers[node_id] = {**prev, **info}
+        # Persist OUTSIDE the lock — filelock contention must not stall the scheduler.
+        self._persist()
         logger.debug("[Orch] Worker registered: %s (%s)", info.get("name", node_id), info.get("ip"))
 
     def list_workers(self) -> list[dict]:
@@ -143,33 +307,58 @@ class Orchestrator:
     # ── Task submission ───────────────────────────────────────────────────────
 
     def submit_task(self, task_spec: dict) -> str:
-        """Submit a training task. Returns task_id."""
-        task_id = str(uuid.uuid4())[:12]
-        now_iso = datetime.now(timezone.utc).isoformat()
-        task = {
-            "task_id":         task_id,
-            "model_type":      task_spec.get("model_type", "btc_rf"),
-            "symbol":          task_spec.get("symbol", "BTC/USDT"),
-            "timeframe":       task_spec.get("timeframe", "1m"),
-            "config":          task_spec.get("config", {}),
-            "data_path":       task_spec.get("data_path", ""),
-            "output_path":     task_spec.get("output_path", str(PROJECT_ROOT / "models")),
-            "status":          "pending",
-            "assigned_to":     "",
-            "created_at":      now_iso,
-            "started_at":      "",
-            "finished_at":     "",
-            # Watchdog timestamp — refreshed on every update_task() and on
-            # dispatch. If now - last_update_at > stale window AND elapsed
-            # > timeout, the watchdog kills the task.
-            "last_update_at":  now_iso,
-            "result":          {},
-            "error":           "",
-            "retries":         0,
-        }
+        """Submit a training task. Returns task_id.
+
+        Phase C2 (2026-05-12): dedupes by (model_type, symbol, timeframe).
+        If a pending or running task with the same triple already exists,
+        the existing task_id is returned instead of queueing a duplicate.
+        Done/failed/cancelled tasks are NOT deduped — resubmitting after
+        completion is the legitimate retrain path.
+        """
+        model_type = task_spec.get("model_type", "btc_rf")
+        symbol     = task_spec.get("symbol",     "BTC/USDT")
+        timeframe  = task_spec.get("timeframe",  "1m")
+
         with self._lock:
+            # Phase C2 — dedup before allocating a new task_id.
+            for existing_id, existing in self._tasks.items():
+                if (existing.get("status") in ("pending", "running")
+                        and existing.get("model_type") == model_type
+                        and existing.get("symbol")     == symbol
+                        and existing.get("timeframe")  == timeframe):
+                    logger.info(
+                        "[Orch] Task dedup: %s/%s/%s already %s as %s — returning existing id",
+                        model_type, symbol, timeframe, existing.get("status"), existing_id,
+                    )
+                    return existing_id
+
+            task_id = str(uuid.uuid4())[:12]
+            now_iso = datetime.now(timezone.utc).isoformat()
+            task = {
+                "task_id":         task_id,
+                "model_type":      model_type,
+                "symbol":          symbol,
+                "timeframe":       timeframe,
+                "config":          task_spec.get("config", {}),
+                "data_path":       task_spec.get("data_path", ""),
+                "output_path":     task_spec.get("output_path", str(PROJECT_ROOT / "models")),
+                "status":          "pending",
+                "assigned_to":     "",
+                "created_at":      now_iso,
+                "started_at":      "",
+                "finished_at":     "",
+                # Watchdog timestamp — refreshed on every update_task() and on
+                # dispatch. If now - last_update_at > stale window AND elapsed
+                # > timeout, the watchdog kills the task.
+                "last_update_at":  now_iso,
+                "result":          {},
+                "error":           "",
+                "retries":         0,
+            }
             self._tasks[task_id] = task
             self._queue.append(task_id)
+        # Persist OUTSIDE the lock.
+        self._persist()
         logger.info("[Orch] Task submitted: %s / %s / %s", task_id, task["model_type"], task["symbol"])
         return task_id
 
@@ -221,18 +410,21 @@ class Orchestrator:
                     if task_id not in self._queue:
                         self._queue.append(task_id)
                     logger.warning("[Orch] Task %s failed — retry %d/%d", task_id, task["retries"], MAX_TASK_RETRIES)
+        # Persist OUTSIDE the lock.
+        self._persist()
 
     def cancel_task(self, task_id: str) -> bool:
+        cancelled = False
         with self._lock:
             task = self._tasks.get(task_id)
-            if not task:
-                return False
-            if task["status"] == "pending":
+            if task and task["status"] == "pending":
                 task["status"] = "cancelled"
                 if task_id in self._queue:
                     self._queue.remove(task_id)
-                return True
-        return False
+                cancelled = True
+        if cancelled:
+            self._persist()
+        return cancelled
 
     def get_task(self, task_id: str) -> dict | None:
         with self._lock:
@@ -331,6 +523,8 @@ class Orchestrator:
                         self._workers[nid]["tasks_failed"] = (
                             self._workers[nid].get("tasks_failed", 0) + 1
                         )
+        # Persist OUTSIDE the lock.
+        self._persist()
 
     def _dispatch_pending(self) -> None:
         with self._lock:
@@ -412,6 +606,11 @@ class Orchestrator:
                     args=(worker, dict(task)),
                     daemon=True,
                 ).start()
+            _did_assign = bool(assigned_workers)
+        # Persist OUTSIDE the lock so a crash mid-dispatch doesn't lose the
+        # "assigned to X" record. Done only when something actually changed.
+        if _did_assign:
+            self._persist()
 
     def _send_task_to_worker(self, worker: dict, task: dict) -> None:
         import requests
