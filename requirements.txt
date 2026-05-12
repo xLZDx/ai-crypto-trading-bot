@@ -6,6 +6,8 @@ defusedxml>=0.7.1
 
 # Web / API
 flask
+flask-cors>=4.0.0           # Phase A10 (2026-05-12): CORS restricted to 127.0.0.1
+flask-limiter>=3.5.0        # Phase A10 (2026-05-12): rate-limit /api/chat
 websockets
 mcp
 debugpy

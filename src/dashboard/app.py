@@ -34,6 +34,52 @@ app = Flask(__name__)
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 app.jinja_env.auto_reload = True
 
+# ─── Phase A10 (2026-05-12): CORS restricted to localhost ────────────────────
+# The dashboard JS lives on the same origin as the API (port 5000); no
+# legitimate cross-origin request needs to reach /api/*. Restrict the
+# Access-Control-Allow-Origin to localhost variants so a browser running
+# on the operator's other machine can't javascript-fetch the dashboard
+# even if it somehow reached port 5000 (LAN exposure mitigated separately
+# by Phase A2 bind-127.0.0.1).
+try:
+    from flask_cors import CORS as _CORS
+    _CORS_ALLOWED = [
+        'http://127.0.0.1:5000',
+        'http://localhost:5000',
+        # Phase A11 will migrate control_plane endpoints here; keep
+        # the JS-served origin permissive for the same-machine UI.
+    ]
+    _CORS(app, resources={r"/api/*": {"origins": _CORS_ALLOWED}},
+          supports_credentials=False, max_age=600)
+except ImportError:
+    import logging as _logging
+    _logging.getLogger(__name__).warning(
+        "flask-cors not installed — CORS headers will be Flask defaults "
+        "(open). pip install flask-cors>=4.0.0")
+
+# ─── Phase A10 (2026-05-12): rate-limit expensive endpoints ─────────────────
+# /api/chat proxies to Gemini API — every call costs operator credits
+# AND consumes the daily Gemini quota. Without rate-limiting, a runaway
+# JS bug or an authenticated client looping on the chat endpoint can
+# burn the operator's quota in seconds. flask-limiter sits in front of
+# specific routes (we DON'T apply a global limit — the cluster needs
+# to poll cluster_status/etc. freely).
+try:
+    from flask_limiter import Limiter as _Limiter
+    from flask_limiter.util import get_remote_address as _get_remote_addr
+    _limiter = _Limiter(
+        key_func=_get_remote_addr,
+        app=app,
+        default_limits=[],  # NO global default — per-route only
+        storage_uri="memory://",
+    )
+except ImportError:
+    _limiter = None
+    import logging as _logging
+    _logging.getLogger(__name__).warning(
+        "flask-limiter not installed — /api/chat is unrate-limited "
+        "and can burn Gemini quota. pip install flask-limiter>=3.5.0")
+
 # ─── Gemini model health cache ────────────────────────────────────────────────
 # Paid / most capable models first; free-tier as fallback when paid unavailable.
 _AI_MODELS_CONFIG = [
@@ -351,8 +397,20 @@ def _exec_bot_command(lower_msg):
     return None, None
 
 
+def _chat_rate_limit():
+    """Phase A10 (2026-05-12) — wrap chat() with flask-limiter if
+    available. 20 requests per minute per remote IP is enough headroom
+    for a chatty operator session and well below Gemini's per-minute
+    free-tier quota. If flask-limiter is missing (degraded install),
+    the decorator is a no-op."""
+    if _limiter is None:
+        return lambda f: f
+    return _limiter.limit("20 per minute", key_func=_get_remote_addr)
+
+
 @app.route('/api/chat', methods=['POST'])
 @require_api_key
+@_chat_rate_limit()
 def chat():
     global _active_model
     try:
