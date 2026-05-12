@@ -693,6 +693,7 @@ def _proc_stats(pid) -> dict:
 
 
 @app.route('/api/monitor/health')
+@require_api_key
 def monitor_health():
     pids = read_json('data/process_ids.json', default={})
     out = {}
@@ -972,6 +973,7 @@ def _refresh_monitor_services_async():
 
 
 @app.route('/api/monitor/services')
+@require_api_key
 def monitor_services():
     """ParquetClient store / DuckDB / Simulator / ZMQ / FastAPI / Realtime
     feed status. TTL-cached (30 s) — see _monitor_services_cache_ttl."""
@@ -989,6 +991,7 @@ def monitor_services():
 
 
 @app.route('/api/monitor/logs/<component>')
+@require_api_key
 def monitor_logs(component):
     log_file = _LOG_MAP.get(component)
     if not log_file:
@@ -1027,6 +1030,7 @@ def monitor_logs(component):
 
 
 @app.route('/api/monitor/start/<service>', methods=['POST'])
+@require_api_key
 def monitor_start(service):
     svc = _SERVICES.get(service)
     if not svc:
@@ -1052,6 +1056,7 @@ def monitor_start(service):
 
 
 @app.route('/api/monitor/stop/<service>', methods=['POST'])
+@require_api_key
 def monitor_stop(service):
     if service not in _SERVICES:
         return jsonify({'error': 'unknown service'}), 404
@@ -1171,6 +1176,7 @@ def get_agents():
 
 
 @app.route('/api/monitor/model_stats')
+@require_api_key
 def monitor_model_stats():
     models_dir = _PROJECT_ROOT / 'models'
     _MODEL_FILES = [
@@ -1661,6 +1667,7 @@ def strategy_full():
 
 
 @app.route('/api/backtest/summary', methods=['GET'])
+@require_api_key
 def backtest_summary():
     """
     Aggregate latest_comparison.json + wf_results.json into one sortable table.
@@ -1752,6 +1759,7 @@ def backtest_summary():
 
 
 @app.route('/api/strategy-sync', methods=['GET'])
+@require_api_key
 def strategy_sync_get():
     """Return full strategy registry with sync status and enabled flags."""
     try:
@@ -1762,6 +1770,7 @@ def strategy_sync_get():
 
 
 @app.route('/api/strategy-sync', methods=['POST'])
+@require_api_key
 def strategy_sync_post():
     """
     Toggle a strategy's live/backtest flag.
@@ -2069,6 +2078,7 @@ def _refresh_db_summary_async():
 
 
 @app.route('/api/simulator/status', methods=['GET'])
+@require_api_key
 def simulator_status():
     """Non-blocking. Returns sim.get_status() inline (fast in-memory dict
     access) and a TTL-cached DuckDB summary refreshed on a background
@@ -2114,6 +2124,7 @@ def simulator_status():
 
 
 @app.route('/api/simulator/start', methods=['POST'])
+@require_api_key
 def simulator_start():
     """Start or resume the simulator replay. Returns immediately — if agents
     are still initializing, the start config is queued and applied as soon
@@ -2136,6 +2147,7 @@ def simulator_start():
 
 
 @app.route('/api/simulator/pause', methods=['POST'])
+@require_api_key
 def simulator_pause():
     try:
         sim, _, _ = _get_simulator()
@@ -2146,6 +2158,7 @@ def simulator_pause():
 
 
 @app.route('/api/simulator/resume', methods=['POST'])
+@require_api_key
 def simulator_resume():
     try:
         sim, _, _ = _get_simulator()
@@ -2156,6 +2169,7 @@ def simulator_resume():
 
 
 @app.route('/api/simulator/stop', methods=['POST'])
+@require_api_key
 def simulator_stop():
     try:
         sim, trainer, strat_sim = _get_simulator()
@@ -2168,6 +2182,7 @@ def simulator_stop():
 
 
 @app.route('/api/simulator/config', methods=['POST'])
+@require_api_key
 def simulator_config():
     """Update simulator config (symbol, timeframe, speed, scenario, date range)."""
     try:
@@ -2182,6 +2197,7 @@ def simulator_config():
 
 
 @app.route('/api/simulator/strategy_stats', methods=['GET'])
+@require_api_key
 def simulator_strategy_stats():
     """Return per-strategy virtual account performance (live from StrategySimulatorAgent)."""
     try:
@@ -2201,6 +2217,7 @@ def simulator_strategy_stats():
 
 
 @app.route('/api/simulator/strategy_reset', methods=['POST'])
+@require_api_key
 def simulator_strategy_reset():
     """Reset all virtual strategy accounts to initial capital."""
     try:
@@ -2212,6 +2229,7 @@ def simulator_strategy_reset():
 
 
 @app.route('/api/simulator/training_history', methods=['GET'])
+@require_api_key
 def simulator_training_history():
     """Return recent training events and cumulative paper P&L series."""
     try:
@@ -2227,6 +2245,7 @@ def simulator_training_history():
 
 
 @app.route('/api/simulator/patterns', methods=['GET'])
+@require_api_key
 def simulator_patterns():
     """Return top patterns from the training pattern DB."""
     try:
@@ -2241,6 +2260,7 @@ def simulator_patterns():
 
 
 @app.route('/api/simulator/available_data', methods=['GET'])
+@require_api_key
 def simulator_available_data():
     """List all GZ files available for replay."""
     try:
@@ -2385,6 +2405,7 @@ def _refresh_dl_status_async():
 
 
 @app.route('/api/monitor/downloader/status')
+@require_api_key
 def monitor_downloader_status():
     """Returns the state of both data folders. TTL-cached (10 s) — see
     _dl_status_cache_ttl. Pre-fix this route did two psutil.process_iter()
@@ -2402,6 +2423,7 @@ def monitor_downloader_status():
 
 
 @app.route('/api/monitor/downloader/migrate', methods=['POST'])
+@require_api_key
 def monitor_migrate_to_historical():
     """
     Move healthy *_spot_1s.csv.gz files from data/raw/ to data/raw/historical/.
@@ -2487,6 +2509,7 @@ def _refresh_db_status_async():
 
 
 @app.route('/api/db/status')
+@require_api_key
 def db_status():
     """ParquetClient store status + table row counts.
 
@@ -2515,6 +2538,7 @@ def db_status():
 
 
 @app.route('/api/db/query', methods=['POST'])
+@require_api_key
 def db_query():
     """Execute arbitrary SQL against QuestDB (read-only SELECT only)."""
     body = request.get_json(force=True) or {}
@@ -2534,6 +2558,7 @@ def db_query():
 
 
 @app.route('/api/db/strategy_history')
+@require_api_key
 def db_strategy_history():
     """Return PNL history for one strategy over last N days."""
     strategy = request.args.get('strategy', '')
@@ -2550,6 +2575,7 @@ def db_strategy_history():
 
 # ─── Stability comparison: per-strategy × per-timeframe heatmap data ─────────
 @app.route('/api/strategy/stability', methods=['GET'])
+@require_api_key
 def api_strategy_stability():
     """Build a (strategy × timeframe) matrix from latest_comparison.json
     and wf_results.json. Drives the Stability heatmap on the Strategy tab.
@@ -2678,6 +2704,7 @@ def api_strategy_stability():
 
 # ─── Strategy TF pinning (Phase A) ────────────────────────────────────────────
 @app.route('/api/strategy/tf_pinning', methods=['GET'])
+@require_api_key
 def api_strategy_tf_pinning_get():
     """Return the current pinning state (auto + manual + effective per
     strategy). The orchestrator writes 'auto' after each multi-TF backtest;
@@ -2715,6 +2742,7 @@ def api_strategy_tf_pinning_set():
 
 # ─── Bucket aggregate comparison (Pure rule vs ML-driven vs Meta-filtered) ───
 @app.route('/api/strategy/bucket_compare', methods=['GET'])
+@require_api_key
 def api_strategy_bucket_compare():
     """Aggregate WF Sharpe, WF consistency, Win%, MaxDD, total trades, total
     PnL per bucket. Pulls from data/backtest/latest_comparison.json (in-sample)
@@ -4398,6 +4426,7 @@ def api_training_stop(job_id: str):
 
 
 @app.route('/api/training/active', methods=['GET'])
+@require_api_key
 def api_training_active():
     """Return a {model_key: job_id} map of currently-active training jobs.
     The Strategy/ML row JS uses this to decide whether to render Train or
@@ -4412,6 +4441,7 @@ def api_training_active():
 
 
 @app.route('/api/training/scheduler', methods=['GET'])
+@require_api_key
 def api_training_scheduler():
     """Expose the resource-aware scheduler snapshot (cpu/gpu counters +
     caps + exclusive flag) plus the per-model resource kind. Used by the
@@ -4746,6 +4776,7 @@ def _annotate_job_timing(j: dict) -> dict:
 #                                          a hypothetical sweep, with ETA
 
 @app.route('/api/training/rules', methods=['GET'])
+@require_api_key
 def api_training_rules():
     """Return the canonical training rules registry + a flat matrix the
     UI can render directly. The UI calls this on load + after any save."""
@@ -4917,6 +4948,7 @@ def _try_submit(cluster_url: str, spec: dict, submitted: list, failed: list) -> 
 
 
 @app.route('/api/training/preview', methods=['GET'])
+@require_api_key
 def api_training_preview():
     """Preview which (model, tf) combos a sweep would actually run, given
     operator overrides. Used by the UI's "Run Sweep" button to show
@@ -4955,6 +4987,7 @@ def api_training_preview():
 
 
 @app.route('/api/training/jobs', methods=['GET'])
+@require_api_key
 def api_training_jobs():
     """Most-recent N training jobs, newest first. Each row carries
     elapsed_s + eta_s when running so the UI can show "3m 12s · ~7m left"
@@ -5073,6 +5106,7 @@ def _run_resample_blocking(job_id: str, symbols: list[str],
 
 
 @app.route('/api/data/archive_topup', methods=['GET'])
+@require_api_key
 def api_data_archive_topup():
     """Snapshot of the 1s archive top-up — file sizes + last-modified
     times for every <sym>_spot_1s.csv.gz in data/raw/historical/.
@@ -5153,6 +5187,7 @@ def _refresh_data_coverage_async() -> None:
 
 
 @app.route('/api/data/coverage', methods=['GET'])
+@require_api_key
 def api_data_coverage():
     """Return the (symbol × timeframe) coverage matrix.
     TTL-cached (2 min) on a background thread so a slow gzip walk
@@ -5287,6 +5322,7 @@ def api_data_backfill():
 
 
 @app.route('/api/data/resample/jobs', methods=['GET'])
+@require_api_key
 def api_data_resample_jobs():
     """Most-recent N resample jobs, newest first. Used by the status pill
     in the Data Coverage panel."""
@@ -5339,6 +5375,7 @@ def _pipeline_proc_alive() -> bool:
 
 
 @app.route('/api/pipeline/status', methods=['GET'])
+@require_api_key
 def api_pipeline_status():
     """Return the orchestrator status snapshot. Combines the on-disk status
     file (survives dashboard restarts) with the live subprocess-alive
@@ -5457,6 +5494,7 @@ def api_backtest_long_horizon():
 
 
 @app.route('/api/news/sentiment_model', methods=['GET'])
+@require_api_key
 def api_news_sentiment_model():
     """Return which sentiment backend is active (cryptobert / finbert /
     lexicon). Useful for the operator to confirm whether new scraper runs
@@ -5480,6 +5518,7 @@ def api_news_sentiment_model():
 
 
 @app.route('/api/news/buffer', methods=['GET'])
+@require_api_key
 def api_news_buffer_status():
     """Return the live news buffer's status (rows cached, snapshot age,
     refresh count, last error). Returns ready=false when the bot hasn't
@@ -5499,6 +5538,7 @@ def api_news_buffer_status():
 
 
 @app.route('/api/auto_retrain/status', methods=['GET'])
+@require_api_key
 def api_auto_retrain_status():
     """Return the last auto-retrain result (or empty when never run)."""
     from src.utils.safe_json import read_json
@@ -5654,6 +5694,7 @@ def api_pipeline_run():
 
 
 @app.route('/api/db/training_history')
+@require_api_key
 def db_training_history():
     """Return training telemetry for one model."""
     model = request.args.get('model', '')
@@ -5669,6 +5710,7 @@ def db_training_history():
 
 
 @app.route('/api/db/market_stats')
+@require_api_key
 def db_market_stats():
     """Return stored market data summary per symbol/timeframe."""
     try:
@@ -5690,6 +5732,7 @@ def db_market_stats():
 
 
 @app.route('/api/db/ingest', methods=['POST'])
+@require_api_key
 def db_ingest():
     """Trigger background CSV.gz → QuestDB ingestion for given symbols."""
     body = request.get_json(force=True) or {}
@@ -5773,24 +5816,28 @@ def _get_orchestrator():
 
 
 @app.route('/api/cluster/status')
+@require_api_key
 def cluster_status():
     body, status = _cluster_proxy_get('/api/cluster/status')
     return jsonify(body), status
 
 
 @app.route('/api/cluster/workers')
+@require_api_key
 def cluster_workers():
     body, status = _cluster_proxy_get('/api/cluster/workers')
     return jsonify(body), status
 
 
 @app.route('/api/cluster/tasks')
+@require_api_key
 def cluster_tasks():
     body, status = _cluster_proxy_get('/api/cluster/tasks')
     return jsonify(body), status
 
 
 @app.route('/api/cluster/submit', methods=['POST'])
+@require_api_key
 def cluster_submit():
     spec = request.get_json(force=True) or {}
     body, status = _cluster_proxy_post('/api/cluster/submit', spec)
@@ -5798,6 +5845,7 @@ def cluster_submit():
 
 
 @app.route('/api/cluster/submit_all', methods=['POST'])
+@require_api_key
 def cluster_submit_all():
     spec = request.get_json(force=True) or {}
     body, status = _cluster_proxy_post('/api/cluster/submit_all', spec)
@@ -5805,6 +5853,7 @@ def cluster_submit_all():
 
 
 @app.route('/api/cluster/register', methods=['POST'])
+@require_api_key
 def cluster_register():
     orch = _get_orchestrator()
     if orch is None:
@@ -5814,6 +5863,7 @@ def cluster_register():
 
 
 @app.route('/api/cluster/task_update', methods=['POST'])
+@require_api_key
 def cluster_task_update():
     orch = _get_orchestrator()
     if orch is None:
@@ -5830,6 +5880,7 @@ def cluster_task_update():
 
 
 @app.route('/api/cluster/task/<task_id>', methods=['DELETE'])
+@require_api_key
 def cluster_cancel_task(task_id):
     body, status = _cluster_proxy_post(f'/api/cluster/task/{task_id}',
                                         body={}, method='DELETE')
@@ -5846,6 +5897,7 @@ def cluster_cancel_task(task_id):
 # so the dashboard column (Item B) can render per-cell progress.
 
 @app.route('/api/backtest/distributed/start', methods=['POST'])
+@require_api_key
 def api_backtest_distributed_start():
     body       = request.get_json(force=True) or {}
     timeframes = tuple(body.get('timeframes', ['1h']))
@@ -5879,6 +5931,7 @@ def api_backtest_distributed_start():
 
 
 @app.route('/api/backtest/distributed/status')
+@require_api_key
 def api_backtest_distributed_status():
     """Per-cell status snapshot — filtered view of cluster /tasks for
     model_type='backtest_cell'. Dashboard polls this for the Item-B
@@ -5923,6 +5976,7 @@ def api_backtest_distributed_status():
 # eyes-on-glass equivalent for cases the supervisor isn't catching
 # (e.g. worker is fine but operator wants a clean state).
 @app.route('/api/cluster/worker_restart', methods=['POST'])
+@require_api_key
 def cluster_worker_restart():
     import urllib.request as _ur, urllib.error as _ue, json as _j
     body = request.get_json(force=True) or {}
@@ -5954,6 +6008,7 @@ def cluster_worker_restart():
 
 
 @app.route('/api/balance/real')
+@require_api_key
 def api_balance_real():
     try:
         from src.engine.dual_balance import read_real
@@ -6076,6 +6131,7 @@ def api_balance_refresh():
 
 
 @app.route('/api/portfolio')
+@require_api_key
 def api_portfolio():
     """Mode-aware Performance Overview snapshot.
 
@@ -6238,6 +6294,7 @@ def api_portfolio():
 
 
 @app.route('/api/balance/by_mode')
+@require_api_key
 def api_balance_by_mode():
     """Return the balance appropriate for the active trade mode.
        paper   → internal virtual balance (with deposits/revenue split)
@@ -6303,6 +6360,7 @@ def _run_schtasks(args: list[str]) -> dict:
 
 
 @app.route('/api/scheduler/list', methods=['GET'])
+@require_api_key
 def api_scheduler_list():
     """Return all Windows scheduled tasks whose name starts with AI-Trader-."""
     res = _run_schtasks(['/Query', '/FO', 'CSV', '/NH'])
@@ -6325,6 +6383,7 @@ def api_scheduler_list():
 
 
 @app.route('/api/scheduler/register', methods=['POST'])
+@require_api_key
 def api_scheduler_register():
     """body: {name, mode: 'daily'|'every_minutes'|'once', value}"""
     body = request.get_json(silent=True) or {}
@@ -6373,6 +6432,7 @@ def api_scheduler_register():
 
 
 @app.route('/api/scheduler/run', methods=['POST'])
+@require_api_key
 def api_scheduler_run():
     """body: {name}"""
     body = request.get_json(silent=True) or {}
@@ -6385,6 +6445,7 @@ def api_scheduler_run():
 
 
 @app.route('/api/scheduler/unregister', methods=['POST'])
+@require_api_key
 def api_scheduler_unregister():
     """body: {name}"""
     body = request.get_json(silent=True) or {}
@@ -6397,6 +6458,7 @@ def api_scheduler_unregister():
 
 
 @app.route('/api/scheduler/report', methods=['GET'])
+@require_api_key
 def api_scheduler_report():
     """Return the latest training_status_report.json (the file the scheduled
     task writes). Includes file mtime + age so the UI can show 'last run'."""
@@ -6426,6 +6488,7 @@ _VIRTUAL_DEFAULT_CASH = 100_000.0
 
 @app.route('/api/balance/virtual')
 @app.route('/api/balance/test')  # legacy alias — frontend uses 'test' mode label
+@require_api_key
 def api_balance_virtual():
     try:
         from src.engine.dual_balance import read_virtual, reset_virtual, compute_summary
@@ -6465,6 +6528,7 @@ def api_balance_virtual_deposit():
 
 
 @app.route('/api/control/trade_mode', methods=['GET', 'POST'])
+@require_api_key
 def api_control_trade_mode():
     """Get / set the live-trading mode.
 
@@ -6474,6 +6538,11 @@ def api_control_trade_mode():
       testnet — orders go to Binance testnet (legacy default).
       mainnet — orders go to Binance mainnet (real money). POST to mainnet
                 requires confirm=true in the body to discourage misclicks.
+
+    Auth (Phase A1, 2026-05-12): both GET and POST are now gated by
+    @require_api_key. Previously GET was open and POST had an inline
+    check — security review flagged that GET leaked the current mode
+    to anyone reaching the dashboard.
     """
     if request.method == 'GET':
         ctrl = read_json('data/control.json', default={}) or {}
@@ -6481,10 +6550,6 @@ def api_control_trade_mode():
             'trade_mode': (ctrl.get('trade_mode') or 'testnet').lower(),
             'valid':      ['paper', 'testnet', 'mainnet'],
         })
-    # POST — manually enforce auth (decorator can't gate a single method
-    # of a multi-method route).
-    if DASHBOARD_API_KEY and request.headers.get('X-API-Key', '') != DASHBOARD_API_KEY:
-        return jsonify({'ok': False, 'error': 'unauthorized'}), 401
     body = request.get_json(silent=True) or {}
     mode = (body.get('mode') or '').strip().lower()
     if mode not in ('paper', 'testnet', 'mainnet'):
@@ -6506,6 +6571,7 @@ def api_control_trade_mode():
 
 
 @app.route('/api/balance/virtual/reset', methods=['POST'])
+@require_api_key
 def api_balance_virtual_reset():
     try:
         from src.engine.dual_balance import reset_virtual
@@ -6517,6 +6583,7 @@ def api_balance_virtual_reset():
 
 
 @app.route('/api/news')
+@require_api_key
 def api_news():
     """Most recent news from `_NEWS/news/yyyymm=*/`. The news partition uses
     `published_at` (not `timestamp`) as its time column — query directly."""
@@ -6544,6 +6611,7 @@ def api_news():
 
 
 @app.route('/api/oft_signal/<path:symbol>')
+@require_api_key
 def api_oft_signal(symbol):
     """Return the latest OFT prediction for a symbol from inference_engine."""
     try:
@@ -6560,6 +6628,7 @@ def api_oft_signal(symbol):
 
 
 @app.route('/api/orchestrator/sources')
+@require_api_key
 def api_orchestrator_sources():
     try:
         from src.data_governance import list_sources
@@ -6569,6 +6638,7 @@ def api_orchestrator_sources():
 
 
 @app.route('/api/orchestrator/config')
+@require_api_key
 def api_orchestrator_config():
     try:
         from src.data_governance import GovernanceConfig
@@ -6584,6 +6654,7 @@ def api_orchestrator_config():
 
 
 @app.route('/api/retention/stats')
+@require_api_key
 def api_retention_stats():
     try:
         from src.database.retention_manager import RetentionManager
@@ -6593,6 +6664,7 @@ def api_retention_stats():
 
 
 @app.route('/api/rate_limiter/stats')
+@require_api_key
 def api_rate_limiter_stats():
     try:
         from src.data_ingestion.rate_limiter import stats as rl_stats
@@ -6602,6 +6674,7 @@ def api_rate_limiter_stats():
 
 
 @app.route('/api/decision_summary/<path:symbol>')
+@require_api_key
 def api_decision_summary(symbol):
     try:
         from src.analytics import DecisionMetrics
@@ -6614,6 +6687,7 @@ def api_decision_summary(symbol):
 # ─── Error monitor + log retention ─────────────────────────────────────────────
 
 @app.route('/api/errors/recent')
+@require_api_key
 def api_errors_recent():
     """Return active error/warning entries (last 30 min). The dashboard
     banner polls this and shows critical entries until they auto-clear."""
@@ -6641,6 +6715,7 @@ def api_errors_recent():
 
 
 @app.route('/api/errors/dismiss', methods=['POST'])
+@require_api_key
 def api_errors_dismiss():
     """Manual dismiss from the UI. Body: {key}."""
     try:
@@ -6656,6 +6731,7 @@ def api_errors_dismiss():
 
 
 @app.route('/api/errors/dismiss_all', methods=['POST'])
+@require_api_key
 def api_errors_dismiss_all():
     """Wipe every active entry. Used by the banner's 'Clear All' button."""
     try:
@@ -6667,6 +6743,7 @@ def api_errors_dismiss_all():
 
 
 @app.route('/api/debug/deaths')
+@require_api_key
 def api_debug_deaths():
     """Recent process deaths captured by scripts/debug_supervisor.py.
 
@@ -6749,6 +6826,7 @@ def _write_runtime_overrides(payload: dict) -> dict:
 
 
 @app.route('/api/risk/overrides', methods=['GET'])
+@require_api_key
 def api_risk_overrides_get():
     return jsonify(_read_runtime_overrides())
 
@@ -6788,6 +6866,7 @@ def api_risk_overrides_set():
 _parquet_coverage_cache = {'ts': 0.0, 'data': None}
 
 @app.route('/api/parquet/coverage')
+@require_api_key
 def api_parquet_coverage():
     """Coverage iterates 25+ symbols × multiple timeframes × COUNT/MIN/MAX.
     First call is slow (~30-60 s); cache the result for 5 minutes."""
@@ -6862,8 +6941,16 @@ def proxy_arb_html(path: str):
 
 @app.route('/api/arb/<path:path>',
            methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'])
+@require_api_key
 def proxy_arb_api(path: str):
-    """Proxy /api/arb/* to the arb dashboard's JSON API."""
+    """Proxy /api/arb/* to the arb dashboard's JSON API.
+
+    Auth note (Phase A1, 2026-05-12): the JSON proxy now requires
+    X-API-Key. The HTML proxy at /arb/* stays open because the browser
+    cannot send custom headers on top-level navigation; that surface
+    relies on the arb dashboard's own auth (port 5002) and the global
+    bind-to-127.0.0.1 in Phase A2.
+    """
     return _proxy_to_arb(f'api/arb/{path}')
 
 
