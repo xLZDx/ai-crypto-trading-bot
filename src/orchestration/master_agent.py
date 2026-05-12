@@ -164,8 +164,13 @@ class MasterAgent:
         flags = 0
         if sys.platform == "win32":
             flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-        proc = subprocess.Popen(cmd, cwd=str(PROJECT_ROOT), env=env,
-                                stdout=log_out, stderr=log_err, creationflags=flags)
+        try:
+            proc = subprocess.Popen(cmd, cwd=str(PROJECT_ROOT), env=env,
+                                    stdout=log_out, stderr=log_err, creationflags=flags)
+        finally:
+            # Parent process no longer needs these handles; the child inherits its own copies.
+            log_out.close()
+            log_err.close()
         self._restart_counts[name] = self._restart_counts.get(name, 0) + 1
         logger.info("[master_agent] Spawned %s (lane=%s, port=%d) pid=%d (respawn #%d)",
                     name, lane, port, proc.pid, self._restart_counts[name])

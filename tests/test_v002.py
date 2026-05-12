@@ -349,7 +349,7 @@ class TestAgentBus:
 
         agent = DummyAgent(bus=bus, interval_sec=0.05)
         agent.start()
-        time.sleep(0.5)  # filelock writes in _loop add ~80ms overhead per cycle
+        time.sleep(2.0)  # filelock I/O adds ~80ms/cycle; 2s gives margin under full-suite load
         agent.stop()
         assert len(cycles) >= 2, "Agent should have run at least 2 cycles"
 

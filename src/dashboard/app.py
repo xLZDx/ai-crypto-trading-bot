@@ -766,6 +766,71 @@ _LOG_MAP = {
 _managed: dict = {}
 _managed_lock = threading.Lock()
 
+# ── E2: Parquet manifest cache ────────────────────────────────────────────────
+# Rebuilding the manifest requires globbing 48 GB of Parquet partitions.
+# We do it at most once every 5 minutes (background thread) and always
+# serve the stale manifest immediately so the monitor route never blocks.
+_PARQUET_MANIFEST_PATH = _PROJECT_ROOT / 'data' / 'parquet_manifest.json'
+_PARQUET_MANIFEST_TTL  = 300.0  # seconds
+_parquet_manifest_lock = threading.Lock()
+_parquet_manifest_building = False
+
+
+def _rebuild_parquet_manifest() -> None:
+    """Rglob data/parquet/, write summary to parquet_manifest.json (atomic)."""
+    global _parquet_manifest_building
+    try:
+        parquet_dir = _PROJECT_ROOT / 'data' / 'parquet'
+        if not parquet_dir.exists():
+            payload: dict = {'label': 'Parquet Store', 'up': False,
+                             'error': 'data/parquet/ not found', 'built_at': _time.time()}
+        else:
+            files = list(parquet_dir.rglob('*.parquet'))
+            total_bytes = sum(f.stat().st_size for f in files if f.is_file())
+            payload = {
+                'label': 'Parquet Store', 'up': True,
+                'detail': f'{len(files):,} files · {total_bytes / 1e9:.2f} GB',
+                'file_count': len(files),
+                'total_bytes': total_bytes,
+                'built_at': _time.time(),
+            }
+        from src.utils.safe_json import write_json
+        write_json(str(_PARQUET_MANIFEST_PATH), payload)
+    except Exception as exc:
+        _log.getLogger(__name__).warning('[E2] parquet manifest rebuild failed: %s', exc)
+    finally:
+        with _parquet_manifest_lock:
+            _parquet_manifest_building = False
+
+
+def _parquet_store_status() -> dict:
+    """Return cached parquet summary; trigger background rebuild when stale."""
+    global _parquet_manifest_building
+    import json as _j
+    cached: dict | None = None
+    if _PARQUET_MANIFEST_PATH.exists():
+        try:
+            cached = _j.loads(_PARQUET_MANIFEST_PATH.read_text(encoding='utf-8'))
+        except Exception:
+            cached = None
+
+    now = _time.time()
+    is_fresh = (cached is not None and
+                now - float(cached.get('built_at', 0)) < _PARQUET_MANIFEST_TTL)
+
+    if not is_fresh:
+        with _parquet_manifest_lock:
+            if not _parquet_manifest_building:
+                _parquet_manifest_building = True
+                t = threading.Thread(target=_rebuild_parquet_manifest, daemon=True)
+                t.start()
+
+    if cached is not None:
+        return cached
+    # No manifest yet; return a placeholder so the caller gets a valid dict.
+    return {'label': 'Parquet Store', 'up': False,
+            'detail': 'scanning… (first load — check back in ~30 s)'}
+
 
 def _find_external_pid(script_name: str):
     """Scan all running processes for one whose cmdline contains script_name."""
@@ -978,21 +1043,11 @@ def _build_monitor_services_snapshot() -> dict:
         }
 
     # ── Parquet store (count partitions, sum size) ─────────────────────────
+    # E2: persisted manifest avoids 48 GB rglob every 30 s. Manifest is
+    # rebuilt in the background when it's > 5 min stale; the cached value
+    # is served immediately so this route never waits on disk I/O.
     try:
-        pq_root = _PROJECT_ROOT / 'data' / 'parquet'
-        if pq_root.exists():
-            files = list(pq_root.rglob('*.parquet'))
-            size_gb = sum(f.stat().st_size for f in files) / 1e9
-            symbols = len({p.parts[len(pq_root.parts)] for p in files if len(p.parts) > len(pq_root.parts)})
-            out['parquet'] = {
-                'label': 'Parquet Store',
-                'up': len(files) > 0,
-                'detail': f'{len(files):,} files · {symbols} symbols · {size_gb:.2f} GB',
-            }
-        else:
-            out['parquet'] = {'label': 'Parquet Store', 'up': False,
-                              'error': 'data/parquet missing',
-                              'hint': 'run scripts/migrate_news_to_parquet.py / archive downloader'}
+        out['parquet'] = _parquet_store_status()
     except Exception as e:
         out['parquet'] = {'label': 'Parquet Store', 'up': False, 'error': str(e)}
 
