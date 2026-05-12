@@ -133,7 +133,7 @@ Get-WmiObject Win32_Process -Filter "Name='python.exe'" 2>$null | ForEach-Object
     # 10-min-after-boot trainer) is still killed.
     # 2026-05-12 fix: also kill stray watchdogs + cluster orchestrator on
     # restart so we don't accumulate duplicates across reboots.
-    if ($cmd -match 'src\\main\.py|src/main\.py|launch_bot|src\\dashboard\\app|launch_dashboard|launch_training|scripts\.debug_supervisor|scripts\.dashboard_watchdog|scripts\.training_sweep_watchdog|src\.training\.distributed\.orchestrator') {
+    if ($cmd -match 'src\\main\.py|src/main\.py|launch_bot|src\\dashboard\\app|launch_dashboard|launch_training|scripts\.debug_supervisor|scripts\.dashboard_watchdog|scripts\.training_sweep_watchdog|src\.training\.distributed\.orchestrator|src\.monitor\.server|src/monitor/server') {
         if ($_.ProcessId -notin $killedPids) {
             try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
             Write-Host "  Stopped stray process PID $($_.ProcessId): $($cmd.Substring(0,[Math]::Min(80,$cmd.Length)))"
@@ -220,8 +220,15 @@ function Start-Window {
 # Step 0: Monitor server (dashboard)
 Write-Host ""
 Write-Host "[0/6] Starting Monitor server (http://127.0.0.1:5001)..." -ForegroundColor Yellow
-$procMonitor = Start-Window -Label 'Monitor' -ScriptFile (Join-Path $root 'launch_monitor.ps1')
-Start-Sleep -Seconds 3
+$monRunning = Get-WmiObject Win32_Process -Filter "Name='python.exe'" 2>$null |
+    Where-Object { $_.CommandLine -match 'src\.monitor\.server|src/monitor/server' }
+if ($monRunning) {
+    Write-Host "  Monitor already running (PID $($monRunning.ProcessId)) - skipping." -ForegroundColor DarkCyan
+    $procMonitor = Get-Process -Id $monRunning.ProcessId -ErrorAction SilentlyContinue
+} else {
+    $procMonitor = Start-Window -Label 'Monitor' -ScriptFile (Join-Path $root 'launch_monitor.ps1')
+    Start-Sleep -Seconds 3
+}
 Write-Host "[0/6] Monitor launched." -ForegroundColor Green
 
 # Step 4: ML Training scheduling
@@ -380,12 +387,19 @@ Write-Host "[5.9/6] Orderbook Collector ready." -ForegroundColor Green
 # crashes - that's the whole point.
 Write-Host ""
 Write-Host "[5.95/6] Starting Debug Supervisor (process crash detector)..." -ForegroundColor Yellow
-$newPid = Start-Detached -CommandLine "`"$venvPython`" -m scripts.debug_supervisor" -LogFile "$root\logs\debug_supervisor.log"
-if ($newPid) {
-    $procDebug = [PSCustomObject]@{ Id = $newPid }
-    Write-Host "  Debug Supervisor started (PID $newPid, detached)"
+$dsRunning = Get-WmiObject Win32_Process -Filter "Name='python.exe'" 2>$null |
+    Where-Object { $_.CommandLine -match 'scripts\.debug_supervisor' }
+if ($dsRunning) {
+    Write-Host "  Debug Supervisor already running (PID $($dsRunning.ProcessId)) - skipping." -ForegroundColor DarkCyan
+    $procDebug = Get-Process -Id $dsRunning.ProcessId -ErrorAction SilentlyContinue
 } else {
-    $procDebug = $null
+    $newPid = Start-Detached -CommandLine "`"$venvPython`" -m scripts.debug_supervisor" -LogFile "$root\logs\debug_supervisor.log"
+    if ($newPid) {
+        $procDebug = [PSCustomObject]@{ Id = $newPid }
+        Write-Host "  Debug Supervisor started (PID $newPid, detached)"
+    } else {
+        $procDebug = $null
+    }
 }
 Write-Host "[5.95/6] Debug Supervisor ready." -ForegroundColor Green
 
