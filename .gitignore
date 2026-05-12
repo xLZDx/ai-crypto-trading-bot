@@ -20,6 +20,14 @@ logs/
 models/*.joblib
 models/*.pt
 models/*.ckpt
+models/archive/
+
+# Runtime-only data files (never commit)
+data/orchestrator_state.json
+data/train_all_models.lock
+data/training_current.json
+data/*.tmp
+tft_train.bat
 
 # Generated parquet / DuckDB stores (runtime data, multi-GB)
 data/parquet/
