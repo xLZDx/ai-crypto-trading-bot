@@ -3,6 +3,17 @@ Dashboard test module — run after any implementation change to catch regressio
 Usage:
     python tests/test_dashboard.py              # requires dashboard running on port 5000
     python tests/test_dashboard.py --offline    # only static/file checks, no HTTP
+
+NOTE (F7): The assertions in this file are SUPPLEMENTARY string-match checks.
+They verify that code symbols (DOM ids, JS function names, Python imports, route
+strings) exist in source files — cheap guards against accidental deletions.
+They do NOT prove behavioral correctness.  Behavioral proof lives in:
+  - tests/test_dashboard_api.py  — Flask test_client() round-trips (F3/F4)
+  - tests/test_safe_json.py      — concurrent write/read behavior (F1)
+  - tests/test_parquet_store.py  — ingest/query/threading behavior (F5)
+  - tests/test_model_integrity.py— HMAC sign/verify behavior (F6)
+String-match checks here pass even with wrong logic — always pair with
+a behavioral test for new functionality.
 """
 
 import sys
