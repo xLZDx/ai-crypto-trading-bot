@@ -4291,19 +4291,46 @@ async function restoreCell(key) {
   } catch (e) { alert('Restore error: ' + e); }
 }
 
-// Map a row to the KEEP / REVIEW / RETIRE classification.
-//   RETIRE: marked retired by kpi_gate (3-strike rule) OR the row has retired=true.
-//   REVIEW: trained but wf_sharpe < 0.5 OR wf_max_dd > 0.15 — borderline cell
-//           that needs operator attention but isn't auto-retired yet.
-//   KEEP:   trained, wf_sharpe >= 0.5 AND wf_max_dd <= 0.15 — passing all KPI floors.
+// Per-model KPI thresholds loaded from data/training_rules.json via
+// /api/training/rules. Falls back to a conservative built-in if the fetch
+// fails. Wired by _loadKpiThresholds() at DOMContentLoaded.
+const _DEFAULT_KPI_THRESHOLDS = { wf_acc: 50.0, wf_win_rate: 35.0, wf_total_trades: 30 };
+let _kpiThresholds = {};  // {model_key: {wf_acc, wf_win_rate, wf_total_trades}}
+
+async function _loadKpiThresholds() {
+  try {
+    const r = await fetch('/api/training/rules', { headers: hdrs() });
+    if (!r.ok) return;
+    const j = await r.json();
+    const models = (j && j.models) || {};
+    for (const mk of Object.keys(models)) {
+      const t = (models[mk] || {}).kpi_threshold;
+      if (t && typeof t === 'object') _kpiThresholds[mk] = t;
+    }
+  } catch (e) { console.warn('kpi thresholds load failed:', e); }
+}
+document.addEventListener('DOMContentLoaded', _loadKpiThresholds);
+
+// Map a row to the KEEP / REVIEW / RETIRE classification using thresholds
+// from training_rules.json (per-model). Falls back to the default schema
+// when a model has no override.
+//   RETIRE: marked retired by kpi_gate (3-strike rule) OR row.retired=true.
 //   UNTRAINED: row.last_run is null.
+//   REVIEW: any threshold KPI below its floor.
+//   KEEP:   every threshold KPI at or above its floor.
 function _classifyCell(row) {
   if (row.retired) return 'retire';
   const r = row.last_run;
   if (!r) return 'untrained';
-  const sharpe = r.wf_sharpe ?? 0;
-  const maxdd  = Math.abs(r.wf_max_dd ?? 1);
-  if (sharpe < 0.5 || maxdd > 0.15) return 'review';
+  const thr = _kpiThresholds[row.model] || _DEFAULT_KPI_THRESHOLDS;
+  // Pull the row's KPIs; null/undefined treated as failure so the cell
+  // can't sneak a KEEP because the metric simply wasn't recorded.
+  const acc       = r.wf_acc;
+  const winRate   = r.wf_win_rate;
+  const trades    = r.wf_total_trades;
+  if (thr.wf_acc != null         && (acc == null         || acc       < thr.wf_acc))         return 'review';
+  if (thr.wf_win_rate != null    && (winRate == null     || winRate   < thr.wf_win_rate))    return 'review';
+  if (thr.wf_total_trades != null && (trades == null     || trades    < thr.wf_total_trades)) return 'review';
   return 'keep';
 }
 
@@ -4357,37 +4384,49 @@ async function loadStrongWeakAnalytics() {
     const r = await fetch('/api/model_comparison', { headers: hdrs() });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const j = await r.json();
-    const rows = (j.rows || j.cells || []).filter(x => x.last_run && (x.last_run.wf_sharpe != null));
+    const allRows = (j.rows || j.cells || []);
+    // Rank by whichever WF metric is recorded. Sharpe is the canonical
+    // ranking metric but model meta JSONs ship `walk_forward_mean_acc`
+    // (which the kpi_gate also persists as `wf_acc`), so accept both.
+    const _metric = (r) => (r.last_run||{}).wf_sharpe ?? (r.last_run||{}).wf_acc ?? null;
+    const _metricLabel = (r) => ((r.last_run||{}).wf_sharpe != null) ? 'Sharpe' : 'Acc%';
+    const rows = allRows.filter(x => _metric(x) != null);
     if (!rows.length) {
-      out.innerHTML = '<em>No trained cells yet — run training first.</em>';
+      const total = allRows.length;
+      out.innerHTML = `<em style="color:#94a3b8">No KPI data yet — ${total} cells configured but none have completed a walk-forward training run. Kick off training from the Strategy tab to populate this ranking.</em>`;
+      _saveMCState({strongWeakHtml: out.innerHTML});
       return;
     }
-    // Group by tf, sort by wf_sharpe desc.
+    // Group by tf, sort by primary metric desc.
     const byTf = {};
     for (const x of rows) (byTf[x.tf || '?'] ||= []).push(x);
     for (const tf of Object.keys(byTf)) {
-      byTf[tf].sort((a, b) => (b.last_run.wf_sharpe ?? 0) - (a.last_run.wf_sharpe ?? 0));
+      byTf[tf].sort((a, b) => (_metric(b) ?? -1e9) - (_metric(a) ?? -1e9));
     }
-    const fmt = v => v == null ? '—' : Number(v).toFixed(3);
+    const fmt = v => v == null ? '—' : Number(v).toFixed(2);
     const parts = [];
     for (const tf of Object.keys(byTf).sort()) {
       const list = byTf[tf];
       const strong = list.slice(0, 3);
       const weak   = list.slice(-3).reverse();
+      const cellLine = c => `<div>${c.model} → ${_metricLabel(c)} ${fmt(_metric(c))}` +
+                            ((c.last_run||{}).wf_win_rate != null ? ` · WinRate ${fmt(c.last_run.wf_win_rate)}` : '') +
+                            `</div>`;
       parts.push(`<div style="margin-bottom:10px">
         <div style="color:#cbd5e1;font-weight:700;margin-bottom:4px">TF ${tf} <span style="color:#475569">(${list.length} cells)</span></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:.7rem">
           <div>
             <div style="color:#34d399;margin-bottom:3px">STRONG (top 3)</div>
-            ${strong.map(c => `<div>${c.model} → Sharpe ${fmt(c.last_run.wf_sharpe)} · MaxDD ${fmt(c.last_run.wf_max_dd)}</div>`).join('') || '<em style="color:#475569">—</em>'}
+            ${strong.map(cellLine).join('') || '<em style="color:#475569">—</em>'}
           </div>
           <div>
             <div style="color:#fb7185;margin-bottom:3px">WEAK (bottom 3)</div>
-            ${weak.map(c => `<div>${c.model} → Sharpe ${fmt(c.last_run.wf_sharpe)} · MaxDD ${fmt(c.last_run.wf_max_dd)}</div>`).join('') || '<em style="color:#475569">—</em>'}
+            ${weak.map(cellLine).join('') || '<em style="color:#475569">—</em>'}
           </div>
         </div></div>`);
     }
     out.innerHTML = parts.join('');
+    _saveMCState({strongWeakHtml: out.innerHTML});
   } catch (e) {
     out.innerHTML = `<span style="color:#fb7185">Error: ${e.message || e}</span>`;
   }
@@ -7515,17 +7554,24 @@ function renderModelStats(models, cuda) {
     const accLabel = isUnsupervised ? (m.model_type || 'N/A') : `${(acc||0).toFixed(1)}%`;
     const syms = (m.symbols||[]).map(s => `<span class="ms-tag">${esc(s)}</span>`).join('');
     const trainedAt = m.last_trained ? new Date(m.last_trained).toLocaleString() : 'Never';
-    // Phase 3.3 — KEEP / REVIEW / RETIRE badge based on KPI values.
-    // Mirrors _classifyCell logic from Model Comparison tab. wf_mean_sharpe
-    // comes from the model meta JSON's walk-forward results; if missing,
-    // classify untrained.
-    const _wfSharpe = m.wf_mean_sharpe ?? m.wf_sharpe ?? null;
-    const _wfMaxDd  = Math.abs(m.wf_max_dd ?? m.wf_mean_max_dd ?? 1);
+    // Phase 3.3 — KEEP / REVIEW / RETIRE badge using the same KPI thresholds
+    // as data/training_rules.json (loaded by _loadKpiThresholds at boot).
+    // Model meta JSON publishes `walk_forward_mean_acc` and `win_rate_pct`;
+    // map them to the threshold schema (wf_acc / wf_win_rate / wf_total_trades).
+    const _thr = (typeof _kpiThresholds === 'object' && _kpiThresholds[m.key])
+                  ? _kpiThresholds[m.key]
+                  : (typeof _DEFAULT_KPI_THRESHOLDS === 'object' ? _DEFAULT_KPI_THRESHOLDS
+                  : { wf_acc: 50.0, wf_win_rate: 35.0, wf_total_trades: 30 });
+    const _wfAcc     = m.walk_forward_mean_acc ?? null;
+    const _wfWinRate = m.win_rate_pct ?? null;
+    const _wfTrades  = m.n_test ?? m.n_samples ?? null;  // best-available proxy
     let _cls;
     if (m.retired)                       _cls = 'retire';
     else if (!m.model_exists)            _cls = 'untrained';
-    else if (_wfSharpe == null)          _cls = 'review'; // trained but no WF stats
-    else if (_wfSharpe < 0.5 || _wfMaxDd > 0.15) _cls = 'review';
+    else if (_wfAcc == null)             _cls = 'review';
+    else if (_thr.wf_acc != null         && _wfAcc       < _thr.wf_acc)         _cls = 'review';
+    else if (_thr.wf_win_rate != null    && (_wfWinRate  == null || _wfWinRate < _thr.wf_win_rate)) _cls = 'review';
+    else if (_thr.wf_total_trades != null && (_wfTrades   == null || _wfTrades  < _thr.wf_total_trades)) _cls = 'review';
     else                                 _cls = 'keep';
     const clsBadge = ({
       keep:     '<span class="status-badge keep">Keep</span>',
