@@ -337,8 +337,14 @@ class TestAgentBus:
         # Should not raise
         bus.publish("evt", "s", {})
 
-    def test_base_agent_start_stop(self):
+    def test_base_agent_start_stop(self, tmp_path):
+        """Use a tmp agent_status.json so this test does NOT leak its
+        DummyAgent heartbeat into the live data/agent_status.json — that
+        leak caused the 2026-05-13 'Agent DummyAgent heartbeat STALE'
+        banner that persisted for hours after the test process exited.
+        """
         from src.engine.agents.agent_bus import AgentBus, BaseAgent
+        import src.engine.agents.agent_bus as bus_mod
         bus = AgentBus()
         cycles = []
 
@@ -347,11 +353,31 @@ class TestAgentBus:
             def _run_cycle(self):
                 cycles.append(1)
 
-        agent = DummyAgent(bus=bus, interval_sec=0.05)
-        agent.start()
-        time.sleep(2.0)  # filelock I/O adds ~80ms/cycle; 2s gives margin under full-suite load
-        agent.stop()
-        assert len(cycles) >= 2, "Agent should have run at least 2 cycles"
+        # Redirect the heartbeat file to a per-test temp path so it never
+        # touches the real data/agent_status.json. Restore on teardown
+        # whether or not the assertion passed.
+        orig = bus_mod._STATUS_FILE
+        bus_mod._STATUS_FILE = tmp_path / "agent_status.json"
+        try:
+            agent = DummyAgent(bus=bus, interval_sec=0.05)
+            agent.start()
+            time.sleep(2.0)  # filelock I/O adds ~80ms/cycle; 2s gives margin under full-suite load
+            agent.stop()
+            assert len(cycles) >= 2, "Agent should have run at least 2 cycles"
+        finally:
+            bus_mod._STATUS_FILE = orig
+            # Belt-and-braces: if a previous test run leaked DummyAgent into
+            # the real status file (or if anything else wrote it), drop it
+            # so the dashboard banner self-heals on next probe cycle.
+            try:
+                import json as _json
+                if orig.exists():
+                    data = _json.loads(orig.read_text(encoding='utf-8') or '{}')
+                    if isinstance(data, dict) and 'DummyAgent' in data:
+                        del data['DummyAgent']
+                        orig.write_text(_json.dumps(data, indent=2), encoding='utf-8')
+            except Exception:
+                pass
 
     def test_write_status_file(self, tmp_path):
         from src.engine.agents.agent_bus import _write_agent_status, _STATUS_FILE

@@ -54,6 +54,49 @@ function Start-Detached {
     }
 }
 
+# EARLY KILL — terminate any running bot/dashboard/cluster BEFORE any slow
+# pre-step. Pre-fix: startup_recovery ran first and could take 10+ minutes
+# (archive gap fill iterates every symbol × timeframe). During those 10 min
+# the OLD buggy bot kept running — on 2026-05-13 that meant 600 seconds of
+# spammed sell orders + Gemini-quota burn while the operator waited for
+# the restart to advance past [0/6]. Killing first means the bleeding stops
+# as soon as the operator types `restart_all.ps1`.
+Write-Host ""
+Write-Host "[pre-step] Early-kill bot/dashboard/training (stops any runaway loop immediately)..." -ForegroundColor Yellow
+$pidFile = Join-Path $root 'data\process_ids.json'
+$earlyKilled = @()
+if (Test-Path $pidFile) {
+    try {
+        $pids = Get-Content $pidFile -Raw | ConvertFrom-Json
+        foreach ($key in @('bot','dash','monitor','training','realtime','orch','orderbook',
+                            'debug','watchdog','sweep_watchdog','cluster_orch')) {
+            $pidVal = $pids.$key
+            if ($pidVal -and $pidVal -ne 0) {
+                try {
+                    Stop-Process -Id $pidVal -Force -ErrorAction SilentlyContinue
+                    $earlyKilled += $pidVal
+                } catch {}
+            }
+        }
+    } catch {}
+}
+# Fallback cmdline scan — handles bots/dashboards launched outside the PID
+# file (e.g. manual Start-Process during a debug session).
+Get-WmiObject Win32_Process -Filter "Name='python.exe'" 2>$null | ForEach-Object {
+    $cmd = $_.CommandLine
+    if ($cmd -match 'src\\main\.py|src/main\.py|-m\s+src\.main|launch_bot|src\\dashboard\\app|-m\s+src\.dashboard|launch_dashboard|launch_training|scripts\.debug_supervisor|scripts\.dashboard_watchdog|scripts\.training_sweep_watchdog|src\.training\.distributed\.orchestrator|src\.monitor\.server|src/monitor/server') {
+        if ($_.ProcessId -notin $earlyKilled) {
+            try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+            $earlyKilled += $_.ProcessId
+        }
+    }
+}
+if ($earlyKilled.Count -gt 0) {
+    Write-Host ("  Early-killed {0} process(es) before pre-flight: {1}" -f $earlyKilled.Count, ($earlyKilled -join ', ')) -ForegroundColor Green
+} else {
+    Write-Host "  No live bot/dashboard found — clean slate." -ForegroundColor DarkGray
+}
+
 # Step 0: ParquetClient store — file-based, no daemon. Just verifies the
 # data directory + DuckDB import. (Was QuestDB Docker/native-binary launch
 # before the Phase 1-5 migration; see commits 43db156..b64b733.)
@@ -72,11 +115,28 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "  WARNING: Parquet store unavailable. Run: pip install duckdb pyarrow" -ForegroundColor Red
 }
 
-Write-Host "  Running startup_recovery (archive gap fill)..."
-$env:PYTHONIOENCODING = 'utf-8'
-& $venvPy -m src.data_ingestion.startup_recovery --archive-only 2>&1 |
-    Out-File -Append -FilePath (Join-Path $root 'logs\startup_recovery.log')
-Write-Host "  Startup recovery complete." -ForegroundColor Green
+# startup_recovery (archive gap fill) is slow — bounded to 5 minutes so a
+# stuck recovery (no-op symbol iteration on a network blip) cannot stall
+# the entire restart. Set $env:SKIP_STARTUP_RECOVERY=1 to skip entirely.
+if ($env:SKIP_STARTUP_RECOVERY -eq '1') {
+    Write-Host "  Skipping startup_recovery (SKIP_STARTUP_RECOVERY=1)." -ForegroundColor DarkGray
+} else {
+    Write-Host "  Running startup_recovery (archive gap fill, 5-min cap)..."
+    $env:PYTHONIOENCODING = 'utf-8'
+    $recoveryJob = Start-Job -ScriptBlock {
+        param($pyExe, $rootDir)
+        & $pyExe -m src.data_ingestion.startup_recovery --archive-only 2>&1 |
+            Out-File -Append -FilePath (Join-Path $rootDir 'logs\startup_recovery.log')
+    } -ArgumentList $venvPy, $root
+    if (Wait-Job $recoveryJob -Timeout 300) {
+        Receive-Job $recoveryJob -ErrorAction SilentlyContinue | Out-Null
+        Write-Host "  Startup recovery complete." -ForegroundColor Green
+    } else {
+        Stop-Job $recoveryJob -ErrorAction SilentlyContinue
+        Write-Host "  Startup recovery hit 5-min cap — continuing (the bot's first cycle will pick up any remaining gaps)." -ForegroundColor DarkYellow
+    }
+    Remove-Job $recoveryJob -Force -ErrorAction SilentlyContinue
+}
 
 # Housekeeping: clear DuckDB spill from previous sessions. parquet_store.py
 # uses data/cache/duckdb_temp; DuckDB doesn't reliably clean it up on

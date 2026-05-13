@@ -1059,7 +1059,7 @@ let _lastPortfolioPayload = null;
 async function loadPortfolioByMode() {
   try {
     const mode = _ltCurrentMode || 'testnet';
-    const r = await fetch('/api/portfolio?mode=' + encodeURIComponent(mode, { headers: hdrs() }),
+    const r = await fetch('/api/portfolio?mode=' + encodeURIComponent(mode),
                           { headers: hdrs() });
     if (r.status === 401) { console.error('loadPortfolioByMode 401'); return; }
     const d = await r.json();
@@ -1155,7 +1155,7 @@ async function ltLoadBalance() {
   //   mainnet → live    same as testnet
   try {
     const mode = _ltCurrentMode || 'testnet';
-    const r = await fetch('/api/balance/by_mode?mode=' + encodeURIComponent(mode, { headers: hdrs() }),
+    const r = await fetch('/api/balance/by_mode?mode=' + encodeURIComponent(mode),
                           { headers: hdrs() });
     if (r.status === 401) { console.error('ltLoadBalance 401'); return; }
     const d = await r.json();
@@ -4283,7 +4283,7 @@ function sortMC(col) {
 async function restoreCell(key) {
   if (!confirm('Restore (un-retire) ' + key + '?')) return;
   try {
-    const r = await fetch('/api/registry/' + encodeURIComponent(key, { headers: hdrs() }) + '/restore',
+    const r = await fetch('/api/registry/' + encodeURIComponent(key) + '/restore',
       { method: 'POST', headers: hdrs() });
     const j = await r.json();
     if (j.ok) { loadModelComparison(); }
@@ -4463,15 +4463,45 @@ async function loadBakeOff() {
   const area   = document.getElementById('bake-off-area');
   if (area) area.textContent = 'Running bake-off…';
   try {
-    const r = await fetch('/api/bake_off?metric=' + encodeURIComponent(metric, { headers: hdrs() }) +
-                          '&retire_pct=' + encodeURIComponent(rpct) + '&top=50',
-                          { headers: hdrs() });
+    // 2026-05-13: the bulk hdrs() patcher accidentally injected its options
+    // dict as the SECOND argument to encodeURIComponent(metric, …) instead
+    // of into fetch(). encodeURIComponent ignores extra args silently so
+    // this didn't crash, but the second `{ headers: hdrs() }` on fetch was
+    // load-bearing — leave it intact.
+    const url = '/api/bake_off?metric=' + encodeURIComponent(metric) +
+                '&retire_pct=' + encodeURIComponent(rpct) + '&top=50';
+    const r = await fetch(url, { headers: hdrs() });
     const j = await r.json();
     if (!j.ok) {
       area.innerHTML = '<span style="color:#f55">Error: ' + (j.error || 'unknown') + '</span>';
+      _saveMCState({bakeOffHtml: area.innerHTML});
       return;
     }
     const cuts = j.cut_list || {keep:[], review:[], retire:[]};
+    // Empty-state guidance — when every cell has n_runs=0 the bake-off has
+    // nothing to rank. Showing 30 misleading REVIEW rows hides the actual
+    // condition (no training has been done). Operator 2026-05-13: "some
+    // issue with CIO agent and model x TF" was rooted in this — no data
+    // looks like a bug.
+    const allRows = j.rows || [];
+    const popRows = allRows.filter(r => r.metric_value != null);
+    if (allRows.length && !popRows.length) {
+      area.innerHTML = `
+        <div style="padding:14px;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.3);border-radius:8px;color:#fbbf24">
+          <div style="font-weight:700;margin-bottom:6px">No bake-off data yet</div>
+          <div style="color:#94a3b8;font-size:11px;line-height:1.6">
+            All ${allRows.length} (model × timeframe) cells are configured but none have a completed
+            walk-forward training run. Bake-off ranks cells by KPIs from <code>data/training_runs/&lt;model&gt;__&lt;tf&gt;.parquet</code>,
+            which is populated by the kpi_gate after a training run finishes.
+          </div>
+          <div style="margin-top:10px;color:#cbd5e1;font-size:11px">
+            <b>Next step:</b> trigger training from the Strategy tab → Models card (Train all)
+            or click 🤖 Auto-orchestrate (top right) to launch a CIO Optuna study.
+          </div>
+        </div>`;
+      _saveMCState({bakeOffHtml: area.innerHTML});
+      return;
+    }
     let html = '<div style="margin-bottom:8px;color:#aaa">Metric: <b>' + j.metric +
                '</b> &middot; retire bottom <b>' + (j.retire_below_pct * 100).toFixed(0) +
                '%</b> &middot; rows: <b>' + (j.rows||[]).length + '</b></div>';
@@ -4512,6 +4542,7 @@ async function loadBakeOff() {
     });
     html += '</tbody></table>';
     area.innerHTML = html;
+    _saveMCState({bakeOffHtml: area.innerHTML});
   } catch (e) {
     area.innerHTML = '<span style="color:#f55">Fetch error: ' + e + '</span>';
   }
