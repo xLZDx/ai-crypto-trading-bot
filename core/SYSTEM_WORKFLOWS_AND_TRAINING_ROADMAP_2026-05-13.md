@@ -8,6 +8,45 @@
 
 ## Part 1 — Process Topology
 
+```mermaid
+flowchart TB
+    OP([Operator])
+    OP -->|restart_all.ps1| RA[restart_all.ps1]
+    OP -->|browser| BR[Browser :5000]
+
+    RA --> EK[Early-kill zombies<br/>pre-step 2026-05-13]
+    EK --> PQ[Parquet store check]
+    PQ --> SR[startup_recovery<br/>5-min cap, skippable]
+    SR --> LP{Launch 11 detached processes}
+
+    LP --> MON[monitor :5001<br/>component health probe]
+    LP --> CO[cluster_orch :7700<br/>training task queue]
+    LP --> DASH[dashboard :5000<br/>Flask UI + auth]
+    LP --> BOT[bot src.main<br/>trading engine]
+    LP --> WD[watchlist_downloader]
+    LP --> RT[realtime_db_writer<br/>Binance WS to Parquet]
+    LP --> OB[orderbook_collector<br/>L2 book to Parquet]
+    LP --> DO[data_orchestrator<br/>multi-source feeds]
+    LP --> DS[debug_supervisor<br/>crash detector]
+    LP --> DW[dashboard_watchdog<br/>auto-respawn]
+    LP --> SW[sweep_watchdog<br/>training stall detector]
+
+    BR --> DASH
+    BOT -.->|read+write| PERS[(D:/ persistence<br/>parquet + JSON + models)]
+    DASH -.->|read| PERS
+    CO -.->|read+write| PERS
+
+    classDef op fill:#3b82f6,color:#fff
+    classDef proc fill:#1e293b,color:#cbd5e1,stroke:#475569
+    classDef store fill:#0f172a,color:#94a3b8,stroke:#1e3a8a
+    class OP op
+    class MON,CO,DASH,BOT,WD,RT,OB,DO,DS,DW,SW proc
+    class PERS store
+```
+
+<details>
+<summary>ASCII fallback (same content, if Mermaid doesn't render)</summary>
+
 ```
                 ┌─────────────────────────────────────┐
                 │       OPERATOR (browser, terminal)  │
@@ -68,9 +107,80 @@
    └─────────────────────────────────────────────────────────┘
 ```
 
+</details>
+
 ---
 
 ## Part 2 — Live Trading Flow (one cycle)
+
+```mermaid
+flowchart TD
+    WS([Binance WebSocket tick])
+    WS --> MA[MarketAnalyzer.handle_tick<br/>updates state.market_data]
+    MA --> RC[RegimeClassifier]
+    RC -->|publish 'regime'<br/>0=ranging 1=trending 2=volatile| BUS{{AgentBus<br/>in-process, sync dispatch}}
+
+    MA --> SA[SignalAgent<br/>RSI / MACD / OU / etc.]
+    SA --> META[MetaLabeler.filter<br/>isotonic-calibrated]
+    META -->|publish 'signal'<br/>with meta_pass flag| BUS
+
+    BUS -->|signal| SPOT[SpotAgent]
+    BUS -->|signal| FUT[FuturesAgent]
+    BUS -->|signal| DB[DatabaseAgent<br/>writes to Parquet]
+
+    SCALP[ScalpingAgent<br/>_run_cycle every 60s<br/>1m model on liquid syms] -->|publish 'trade_signal'| BUS
+
+    SPOT --> SPOT_CHK{symbol in whitelist?<br/>regime != volatile?<br/>meta_pass=true?<br/>conf >= 0.62?}
+    SPOT_CHK -->|all yes| SPOT_PUB[publish 'trade_signal'<br/>market=spot, fee=spot]
+    SPOT_CHK -->|any no| DROP1((drop))
+
+    FUT --> FUT_CHK{live funding gate<br/>liq proximity .85<br/>adverse funding 30bp<br/>min liq distance 3%}
+    FUT_CHK -->|all pass| FUT_PUB[publish 'trade_signal'<br/>market=futures, lev=2.0]
+    FUT_CHK -->|any fail| DROP2((fail-closed drop))
+
+    SPOT_PUB --> BUS2{{AgentBus 'trade_signal'}}
+    FUT_PUB --> BUS2
+
+    BUS2 --> RA[RiskAgent._on_signal]
+
+    RA --> G1{Risk gates<br/>fail-closed default}
+    G1 -.- G1a[data_freshness<br/>last bar <=300s]
+    G1 -.- G1b[API latency<br/>p99 <500ms]
+    G1 -.- G1c[circuit breaker<br/>3 consec losses]
+    G1 -.- G1d[drawdown <10% cum]
+    G1 -.- G1e[daily loss <5%]
+    G1 -.- G1f[liquidity proximity <.85]
+    G1 -.- G1g[beta-neutrality cap]
+    G1 -.- G1h[AgenticLLM veto<br/>60s decision cache<br/>fail-OPEN]
+    G1 -.- G1i[Kelly position size]
+
+    G1 -->|approved| RA_PUB[publish 'order'<br/>pending]
+    G1 -->|blocked| DROP3((drop with reason))
+
+    RA_PUB --> BUS3{{AgentBus 'order'}}
+    BUS3 -->|order pending| EX[ExecutionAgent]
+    EX --> POS{existing position<br/>same direction?}
+    POS -->|yes| SKIP((skip - dedup))
+    POS -->|opposite| CLOSE[close first]
+    POS -->|none| OPEN[open new]
+    CLOSE --> BIN[Binance API<br/>real CCXT call]
+    OPEN --> BIN
+    BIN --> FILLED[order filled]
+    FILLED -->|publish 'order' closed/open| BUS3
+    BUS3 -->|order closed| RA_PNL[RiskAgent._on_order_filled<br/>update Kelly + drawdown<br/>check kill switch]
+    BUS3 -->|any order event| DB
+
+    RA_PNL --> END([Cycle complete])
+```
+
+**Single-cycle invariants** (tested in `tests/test_signal_topic_topology.py`):
+- One upstream `signal` → exactly one `_on_signal` per matching market specialist.
+- One `trade_signal` → RiskAgent invoked exactly once.
+- One approved order → ExecutionAgent invoked exactly once.
+- Test agents (`Dummy*` / `Test*`) never appear in `agent_status.json`.
+
+<details>
+<summary>ASCII fallback</summary>
 
 ```
 Binance WS tick arrives
@@ -164,15 +274,94 @@ SignalAgent — for each (symbol, strategy):
         [recompute drawdown]
 ```
 
-**Single-cycle invariants** (any violation = bug):
-- One upstream `signal` invokes exactly ONE market specialist's `_on_signal` per matching symbol.
-- One `trade_signal` invokes RiskAgent exactly once.
-- One approved order invokes ExecutionAgent exactly once.
-- `DummyAgent` / `TestAgent` etc. never appear in `agent_status.json` (filtered by error_monitor).
+</details>
 
 ---
 
 ## Part 3 — Training Workflow
+
+```mermaid
+flowchart TD
+    TRIG([Trigger])
+    TRIG -->|operator clicks 'Train all'| SUB[POST /api/cluster/submit]
+    TRIG -->|topbar Auto-orchestrate| SUB
+    TRIG -->|CIO Optuna apply_best chain| SUB
+
+    SUB --> CO[cluster_orch :7700]
+
+    CO --> KG1{KPI gate<br/>is_retired model, tf ?}
+    KG1 -->|yes| REJ1([Reject - operator must<br/>POST /api/registry/.../restore])
+    KG1 -->|no| MLE_PRE[ML Engineer Agent<br/>pre-flight]
+
+    MLE_PRE --> VAL{Validators}
+    VAL -.- V1[data_freshness<br/>last bar within TF tolerance]
+    VAL -.- V2[label_imbalance >= 5%]
+    VAL -.- V3[nan_density < 5%]
+    VAL -.- V4[drift z-score < 2.0<br/>vs risk/drift_baselines/]
+    VAL -.- V5[feature_count == 23]
+    VAL -->|any fail| REJ2([Reject with reason])
+    VAL -->|all pass| SCHED[Schedule on lane worker]
+
+    SCHED --> LANE{Lane assignment}
+    LANE --> L0[Lane 0: meta + regime]
+    LANE --> L1[Lane 1: base + trend]
+    LANE --> L2[Lane 2: futures + scalping]
+    LANE --> L3[Lane 3: oft + tft<br/>GPU exclusivity]
+
+    L0 --> PIPE
+    L1 --> PIPE
+    L2 --> PIPE
+    L3 --> PIPE
+
+    PIPE[TrainerAgent pipeline] --> P1[1. ParquetClient.query<br/>load model, tf data]
+    P1 --> P2[2. Feature engineering<br/>RSI, MACD, ATR, OFI, VWAP,<br/>keltner, fractional_diff, time]
+    P2 --> P3[3. Triple Barrier labels<br/>pt=2.5, sl=1.5, max_bars=12<br/>keep timeouts as negative class]
+    P3 --> P4[4. cio_overrides MERGE<br/>schema-bounded from rules.json]
+    P4 --> P5[5. Walk-forward CV<br/>60/20/20 + purge gaps]
+    P5 --> P6[6. PurgedKFold<br/>real t1-span purging]
+    P6 --> P7[7. CalibratedClassifierCV<br/>isotonic, Sortino threshold 0.40-0.70]
+    P7 --> P8[8. HMAC-SHA256 sign<br/>model_integrity.py]
+    P8 --> P9[9. Persist .joblib + _meta.json]
+
+    P9 --> POST[ML Engineer Agent<br/>evaluate_trained_model]
+    POST --> PSR[Compute PSR Bailey-LdP<br/>z = SR - bench * sqrt n-1 /<br/>sqrt 1 - skew*SR + k-1 /4 *SR^2]
+    PSR --> WF_CHECK[Walk-forward consistency check<br/>per-fold variance]
+    WF_CHECK --> BASE_CMP[Compare to baseline]
+
+    BASE_CMP --> KG2[KPI gate.evaluate_run]
+    KG2 --> APPEND[Append to<br/>training_runs/model__tf.parquet]
+    APPEND --> STRIKE{Last 3 runs all below<br/>per-model thresholds<br/>wf_acc, win_rate, trades?}
+
+    STRIKE -->|yes| RETIRE([Auto-retire cell<br/>add to retired_models.json])
+    STRIKE -->|no| ACTIVE([Cell stays active])
+
+    ACTIVE --> SURF[Surface to dashboard<br/>/api/model_comparison]
+    RETIRE --> SURF
+
+    SURF -.->|operator: Run bake-off| BO[run_bake_off metric=wf_sharpe]
+    SURF -.->|operator: Auto-orchestrate| BO
+    BO --> CUT[Cut list<br/>keep / review / retire]
+    CUT --> J1[/data/bake_off_cut_list.json/]
+
+    SURF -.->|operator: Start CIO study| CIO[CIO Agent Optuna TPE]
+    CIO --> TRIALS[N trials, SQLite<br/>data/optuna_orchestrator.db]
+    TRIALS --> APPLY{operator: Apply best}
+    APPLY --> WRITE[Write cio_overrides into<br/>data/training_rules.json]
+    WRITE -.->|next retrain| TRIG
+
+    classDef trigger fill:#3b82f6,color:#fff
+    classDef gate fill:#fbbf24,color:#000
+    classDef pipeline fill:#1e293b,color:#cbd5e1
+    classDef terminal fill:#34d399,color:#000
+    classDef reject fill:#fb7185,color:#000
+    class TRIG trigger
+    class KG1,VAL,STRIKE,APPLY gate
+    class P1,P2,P3,P4,P5,P6,P7,P8,P9 pipeline
+    class ACTIVE,REJ1,REJ2,RETIRE terminal
+```
+
+<details>
+<summary>ASCII fallback</summary>
 
 ```
 TRIGGER (one of three):
@@ -276,9 +465,45 @@ TRIGGER (one of three):
                   ─ Next training run picks up the new hyperparameters
 ```
 
+</details>
+
 ---
 
 ## Part 4 — Operator Flows (common actions)
+
+```mermaid
+flowchart LR
+    OP([Operator])
+
+    OP -->|Start/Stop| C1[POST /api/control/run<br/>writes control.json:running]
+    OP -->|Restart All| C2[restart_all.ps1<br/>early-kill + spawn 11]
+    OP -->|Switch trade mode| C3[POST /api/control/trade_mode<br/>paper/testnet/mainnet]
+    OP -->|Train one cell| C4[POST /api/training/run<br/>model + tf]
+    OP -->|Train all| C5[Submit every applicable cell<br/>from training_rules.json matrix]
+    OP -->|Auto-orchestrate| C6[bake-off + CIO smoke-test]
+    OP -->|Apply best HPs| C7[POST /api/cio/apply_best<br/>writes cio_overrides]
+    OP -->|Restore retired| C8[POST /api/registry/.../restore]
+    OP -->|Kill switch pause| C9[POST /api/risk/kill_switch/pause<br/>requires operator+reason]
+    OP -->|View model status| C10[GET /api/model_comparison<br/>KEEP/REVIEW/RETIRE per cell]
+
+    C1 -.->|bot reads every cycle| BOT[(bot)]
+    C2 -.->|kills + respawns| PROC[(11 processes)]
+    C3 -.->|bot OrderManager routes| EX[(execution)]
+    C4 -.->|cluster_orch schedules| TR[(training pipeline)]
+    C5 -.->|cluster_orch schedules N| TR
+    C6 -.->|writes optuna_orchestrator.db| OPT[(Optuna study)]
+    C7 -.->|writes training_rules.json| CFG[(config)]
+    C8 -.->|writes retired_models.json| REG[(registry)]
+    C9 -.->|writes kill_switch.json| KS[(kill switch)]
+    C10 -.->|reads training_runs/*.parquet| KG[(KPI gate)]
+
+    classDef op fill:#3b82f6,color:#fff
+    classDef action fill:#1e293b,color:#cbd5e1
+    classDef store fill:#0f172a,color:#94a3b8
+    class OP op
+    class C1,C2,C3,C4,C5,C6,C7,C8,C9,C10 action
+    class BOT,PROC,EX,TR,OPT,CFG,REG,KS,KG store
+```
 
 | Operator action | Endpoint / button | What happens |
 |---|---|---|
@@ -300,32 +525,55 @@ TRIGGER (one of three):
 
 ## Part 5 — KPI / Comparison Decision Tree
 
-```
-For each (model, tf) cell in the matrix:
+```mermaid
+flowchart TD
+    CELL([Cell: model x tf])
+    CELL --> Q1{retired_by_kpi_gate?<br/>data/registry/retired_models.json}
+    Q1 -->|yes| R[RETIRE - red badge<br/>3 consec runs below threshold<br/>operator can POST /api/registry/.../restore]
+    Q1 -->|no| Q2{has last_run in<br/>training_runs/&lt;model&gt;__&lt;tf&gt;.parquet?}
 
-  retired_by_kpi_gate?
-    │
-    ├── YES → RETIRE
-    │         (3 consecutive runs below threshold per
-    │          training_rules.json:kpi_threshold)
-    │         Action: operator can manually restore.
-    │
-    └── NO → Has last_run in training_runs/*.parquet?
-             │
-             ├── NO → UNTRAINED
-             │       Action: trigger training.
-             │
-             └── YES → All KPIs pass per-model thresholds?
-                       │
-                       ├── YES (wf_acc≥thr AND wf_win_rate≥thr AND
-                       │       wf_total_trades≥thr) → KEEP
-                       │       Action: use in live trading.
-                       │
-                       └── NO (any threshold missed) → REVIEW
-                               Action: investigate features /
-                               hyperparameters / retrain with CIO
-                               proposals. Two more REVIEWs in a row
-                               and the cell auto-retires.
+    Q2 -->|no| U[UNTRAINED - grey badge<br/>action: trigger training<br/>Strategy tab → Train, or Auto-orchestrate]
+
+    Q2 -->|yes| Q3{Per-model thresholds from<br/>training_rules.json:kpi_threshold}
+    Q3 -.- T1[wf_acc &gt;= 50.0]
+    Q3 -.- T2[wf_win_rate &gt;= 35.0]
+    Q3 -.- T3[wf_total_trades &gt;= 30]
+
+    Q3 -->|all pass| K[KEEP - green badge<br/>use in live trading]
+    Q3 -->|any miss| RV[REVIEW - yellow badge<br/>investigate features / HPs<br/>2 more REVIEW = auto-retire]
+
+    RV -.->|operator: run bake-off| BO((bake-off cut list))
+    RV -.->|operator: start CIO study| CIO((Optuna search))
+    K -.->|monthly retrain| Q2
+    U -.->|after training completes| Q2
+
+    classDef retire fill:#fb7185,color:#000
+    classDef review fill:#fbbf24,color:#000
+    classDef keep fill:#34d399,color:#000
+    classDef untrained fill:#94a3b8,color:#000
+    classDef gate fill:#1e293b,color:#cbd5e1
+    class R retire
+    class RV review
+    class K keep
+    class U untrained
+    class Q1,Q2,Q3 gate
+```
+
+**Strong / Weak ranking** (analytics card on Model Comparison tab):
+
+```mermaid
+flowchart LR
+    MC[GET /api/model_comparison]
+    MC --> FILTER[Filter rows with metric data<br/>wf_sharpe or wf_acc not null]
+    FILTER --> EMPTY{any rows?}
+    EMPTY -->|no| MSG[Empty-state message:<br/>'0/N cells have completed<br/>a walk-forward run']
+    EMPTY -->|yes| GROUP[Group by timeframe]
+    GROUP --> SORT[Sort by wf_sharpe desc<br/>fall back to wf_acc]
+    SORT --> TOP3[Top 3 per TF: STRONG green]
+    SORT --> BOT3[Bottom 3 per TF: WEAK red]
+
+    TOP3 --> INTERP1[Operator interp:<br/>keep in production<br/>candidates for live capital]
+    BOT3 --> INTERP2[Operator interp:<br/>retire if structural<br/>CIO study if HP-recoverable]
 ```
 
 **Strong / Weak ranking** (analytics card):
@@ -396,6 +644,26 @@ These are NOT live features (latency too high) but improve the LABELING quality:
 ---
 
 ## Part 7 — Recommended Path Forward
+
+```mermaid
+flowchart LR
+    NOW([Today]) --> X1
+    X1[Phase X1: Audit + wire existing<br/>1 week<br/>• verify L2 features flow into engineering<br/>• cio_overrides MERGE on all trainers<br/>• process registry claim/release/heartbeat<br/>• smoke-train every cell once]
+    X1 --> X2
+    X2[Phase X2: Tier 2 features<br/>1 week<br/>• open interest<br/>• long/short ratio<br/>• liquidations WS<br/>• cross-exchange spread<br/>• VPIN / Kyle / Amihud]
+    X2 --> X3
+    X3[Phase X3: CV + ensembling<br/>1 week<br/>• CombinatorialPurgedKFold<br/>• bagged MDA feature importance<br/>• Bayesian model averaging]
+    X3 --> X4
+    X4[Phase X4: DEX integration<br/>2 weeks<br/>• Uniswap V3 swap events<br/>• dYdX / GMX / Hyperliquid<br/>• Curve / Aave liquidations<br/>• mempool monitoring]
+    X4 --> X5
+    X5[Phase X5: Online + A/B<br/>2 weeks<br/>• river incremental updates<br/>• shadow-mode A/B<br/>• auto-promote after 7d]
+    X5 --> END([Institutional-grade<br/>~7 weeks total])
+
+    classDef phase fill:#1e293b,color:#cbd5e1
+    classDef endpoint fill:#34d399,color:#000
+    class X1,X2,X3,X4,X5 phase
+    class NOW,END endpoint
+```
 
 ### Phase X1 — Audit & wire existing data (1 week)
 
