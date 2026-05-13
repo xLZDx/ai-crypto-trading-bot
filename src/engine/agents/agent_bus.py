@@ -37,14 +37,27 @@ _MAX_HISTORY = 100
 
 
 def _write_agent_status(name: str, status: str, task: str, interval_sec: float) -> None:
-    """Atomic per-agent heartbeat write.
+    """Atomic per-agent heartbeat write — read+merge+write under one lock.
 
-    Phase C reviewer fix: do not hold `_status_write_lock` across the
-    `safe_json` filelock acquisition. Build the new snapshot under the
-    threading lock (so two agent threads can't race on the in-memory
-    merge), then write OUTSIDE the threading lock so a 5-second filelock
-    timeout on the JSON file does not stall every other agent's heartbeat.
-    Failures log at debug rather than silently swallowing.
+    Previous "Phase C reviewer fix" released `_status_write_lock` BEFORE the
+    write_json call to avoid stalling other agents on the filelock. That
+    optimization introduced a classic read-modify-write race:
+
+      T1: thread A locks → reads disk → merges {A_new} → unlocks → write A
+      T2: thread B locks → reads disk → still sees A_old → merges {B_new}
+          → unlocks → write B  ← OVERWRITES A's new heartbeat
+
+    At boot, 8 agents launched in succession all suffer this race. Fast-
+    interval agents (60-300s) recover on their next cycle within seconds.
+    Slow-interval agents (3600s) stay STALE in the dashboard for a full hour.
+    DataAgent + SpotAgent at 3600s were flagged STALE every restart because
+    of this.
+
+    Fix: hold the lock through the write. Filelock contention is bounded
+    (write_json is ~5ms), and 8 agents serializing on boot adds <100ms
+    total — well within acceptable startup overhead. Heartbeat reliability
+    is more valuable than the marginal parallelism the old code traded
+    correctness for.
     """
     from src.utils.safe_json import read_json, write_json  # atomic JSON I/O
     now = datetime.now(timezone.utc).isoformat()
@@ -71,10 +84,8 @@ def _write_agent_status(name: str, status: str, task: str, interval_sec: float) 
                 'interval_sec': interval_sec,
                 'history': history,
             }
-            snapshot = dict(data)  # cheap; releases _status_write_lock next
-        # Disk write OUTSIDE the threading lock — filelock contention from
-        # another process must not block every agent thread.
-        write_json(str(_STATUS_FILE), snapshot, indent=2)
+            # Write under the lock — closes the race.
+            write_json(str(_STATUS_FILE), data, indent=2)
     except Exception as exc:
         logger.debug("[agent_bus] _write_agent_status(%s) failed: %s", name, exc)
 

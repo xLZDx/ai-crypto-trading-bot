@@ -70,7 +70,10 @@ class InferenceEngine:
             # HMAC-verified bytes in a single open(), closing the
             # TOCTOU window vs. a separate verify_model_or_raise.
             buf = io.BytesIO(verify_and_load_bytes(str(self.oft_model_path)))
-            ckpt = torch.load(buf, map_location="cpu", weights_only=True)
+            # weights_only=True rejects checkpoints saved with a `config` dict
+            # (PyTorch 2.6+). Our HMAC verify above already guarantees the
+            # file is authentic, so loading the full checkpoint object is safe.
+            ckpt = torch.load(buf, map_location="cpu", weights_only=False)
             cfg_dict = ckpt.get("config", {})
             cfg = OFTConfig(**{k: v for k, v in cfg_dict.items()
                               if k in OFTConfig.__dataclass_fields__})
