@@ -279,12 +279,12 @@ class TestObjectiveTrialPruned:
 class TestComputePSR:
     """Edge 4: sr_benchmark=0.0, mean>0 → PSR > 0.5."""
 
-    def test_psr_mean_above_zero_benchmark_returns_above_half(self):
+    def test_psr_sharpe_above_zero_benchmark_returns_above_half(self):
         from src.engine.ml_engineer_agent import MLEngineerAgent
-        # Reuse the same static method from the ML Engineer (both agents share the math)
-        result = MLEngineerAgent._compute_psr(mean_sr=1.0, std_sr=0.2, n_folds=6,
-                                               sr_benchmark=0.0)
-        assert result > 0.5, f"mean=1.0 > benchmark=0.0 must give PSR > 0.5, got {result}"
+        # Post-review: PSR signature is now (observed_sr, n_obs, sr_benchmark, skew, kurtosis)
+        result = MLEngineerAgent._compute_psr(observed_sr=1.0, n_obs=252,
+                                              sr_benchmark=0.0)
+        assert result > 0.5, f"observed_sr=1.0 > 0 must give PSR > 0.5, got {result}"
 
     def test_cio_agent_does_not_expose_compute_psr_but_ml_engineer_does(self):
         """CIO delegate check: CIOAgent relies on MLEngineerAgent for PSR gate."""

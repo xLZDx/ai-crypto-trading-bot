@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
@@ -68,6 +69,9 @@ class CIOAgent:
         → http://localhost:8080
     """
 
+    # Class-level lock — used by _ensure_optuna under n_jobs > 1.
+    _optuna_lock: threading.Lock = threading.Lock()
+
     def __init__(
         self,
         study_name: str = 'macro_parameter_search_v1',
@@ -88,14 +92,19 @@ class CIOAgent:
     # ── Lazy Optuna import ───────────────────────────────────────────────────
 
     def _ensure_optuna(self):
+        # Thread-safe under n_jobs > 1: acquire a class-level lock around the
+        # check + assignment. Avoids the TOCTOU race flagged in review.
         if self._optuna is None:
-            try:
-                import optuna
-                self._optuna = optuna
-            except ImportError as e:
-                raise RuntimeError(
-                    "optuna not installed. Run: pip install --no-cache-dir optuna optuna-dashboard"
-                ) from e
+            with CIOAgent._optuna_lock:
+                if self._optuna is None:  # double-check after lock
+                    try:
+                        import optuna
+                        self._optuna = optuna
+                    except ImportError as e:
+                        raise RuntimeError(
+                            "optuna not installed. Run: "
+                            "pip install --no-cache-dir optuna optuna-dashboard"
+                        ) from e
         return self._optuna
 
     # ── Study lifecycle ──────────────────────────────────────────────────────
@@ -280,10 +289,49 @@ _cio_singleton: CIOAgent | None = None
 
 
 def get_cio_agent(**kwargs) -> CIOAgent:
+    """
+    Lazy singleton accessor.
+
+    NOTE: kwargs are applied ONLY on first call. Subsequent calls return the
+    existing instance and IGNORE kwargs — if the kwargs differ, that's a real
+    misconfiguration and we raise rather than silently return the wrong agent.
+    For runtime reconfiguration use `configure(...)` below.
+    """
     global _cio_singleton
     if _cio_singleton is None:
         _cio_singleton = CIOAgent(**kwargs)
+    elif kwargs:
+        # Detect silent kwargs-ignoring (HIGH issue from code review).
+        # Allow no-op kwargs but loudly reject incompatible ones.
+        mismatched = []
+        for k, v in kwargs.items():
+            existing = getattr(_cio_singleton, k, None)
+            if existing != v:
+                mismatched.append((k, existing, v))
+        if mismatched:
+            raise RuntimeError(
+                f"get_cio_agent() called with different kwargs after singleton "
+                f"already initialized. Mismatched: {mismatched}. "
+                f"Use cio_agent.configure(...) to update an existing instance."
+            )
     return _cio_singleton
+
+
+def configure(agent: CIOAgent | None = None, **kwargs) -> CIOAgent:
+    """
+    Apply runtime configuration (callbacks, study name, gates) to the singleton
+    or a passed agent. Safe to call multiple times.
+    """
+    global _cio_singleton
+    target = agent or _cio_singleton or CIOAgent()
+    if target is _cio_singleton:
+        pass
+    else:
+        _cio_singleton = target
+    for k, v in kwargs.items():
+        if hasattr(target, k):
+            setattr(target, k, v)
+    return target
 
 
 if __name__ == '__main__':

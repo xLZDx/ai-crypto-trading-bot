@@ -218,17 +218,35 @@ class MLEngineerAgent:
             self._check_general_kpi(meta, decision)
 
         # ── PSR (Probabilistic Sharpe Ratio) deflation check ──
-        wf_mean = float(meta.get('walk_forward_mean_acc') or 0.0)
-        wf_std  = float(meta.get('walk_forward_std_acc')  or 0.0)
-        wf_folds = int(meta.get('walk_forward_folds') or 0)
-        if wf_folds > 0 and wf_std > 0:
-            psr = self._compute_psr(wf_mean, wf_std, wf_folds)
+        # Per Bailey & Lopez de Prado: PSR needs the actual observed Sharpe and
+        # the number of return observations. The previous code used WF accuracy
+        # percentage as the Sharpe input, which saturated PSR at 1.0 for every
+        # trained model (dead-code guard). We now pull a real OOS Sharpe from
+        # the meta JSON if available; if the trainer hasn't written one, we
+        # emit an info-level warning that PSR was not evaluated and skip the
+        # gate (rather than silently passing with a fake value).
+        oos_sharpe = meta.get('oos_sharpe') or meta.get('oos_sharpe_ratio')
+        n_obs = meta.get('n_test') or meta.get('n_oos_returns')
+        if oos_sharpe is not None and n_obs and float(n_obs) > 1:
+            psr = self._compute_psr(
+                observed_sr=float(oos_sharpe),
+                n_obs=int(n_obs),
+                sr_benchmark=0.0,
+                skew=float(meta.get('oos_return_skew') or 0.0),
+                kurtosis=float(meta.get('oos_return_kurtosis') or 3.0),
+            )
             decision.metrics['psr'] = round(psr, 4)
             if psr < 0.6:
                 decision.warnings.append(
-                    f'WARN: low PSR ({psr:.2f}) — Sharpe likely inflated by '
-                    f'multiple testing. Consider Deflated Sharpe correction.'
+                    f'WARN: low PSR ({psr:.2f}) — observed Sharpe ({oos_sharpe:.3f}) '
+                    f'on {n_obs} OOS returns is statistically thin. Apply Deflated '
+                    'Sharpe before promoting to live.'
                 )
+        else:
+            decision.warnings.append(
+                'WARN: PSR not evaluated — trainer did not write `oos_sharpe` + '
+                '`n_test`/`n_oos_returns`. Add them to enable multi-test bias guard.'
+            )
 
         # ── Resolve final decision ──
         if any(r.startswith('BLOCK:') for r in decision.reasons):
@@ -285,7 +303,11 @@ class MLEngineerAgent:
     def _check_purged_kfold(self, cfg: dict, decision: MLEngineerDecision) -> None:
         rules = AFML_RULES['purged_kfold']
         pct_embargo = cfg.get('pct_embargo')
-        t1_provided = bool(cfg.get('t1_series') or cfg.get('use_t1_purging', True))
+        # Review fix: previous default `use_t1_purging=True` meant ANY empty
+        # config silently satisfied the gate. The caller now must EXPLICITLY
+        # opt-in (use_t1_purging=True or t1_series present) — empty config
+        # → BLOCK with a clear reason.
+        t1_provided = bool(cfg.get('t1_series') or cfg.get('use_t1_purging'))
 
         if pct_embargo is not None and not (rules['min_pct_embargo'] <= pct_embargo <= rules['max_pct_embargo']):
             decision.warnings.append(
@@ -295,7 +317,8 @@ class MLEngineerAgent:
         if rules['require_t1'] and not t1_provided:
             decision.reasons.append(
                 'BLOCK: t1 series must be provided to PurgedKFold for AFML '
-                'label-span purging. Embargo alone is insufficient.'
+                'label-span purging. Embargo alone is insufficient. '
+                'Pass `use_t1_purging=True` or `t1_series` in the config.'
             )
 
     def _check_meta_features_unified(self, decision: MLEngineerDecision) -> None:
@@ -315,6 +338,14 @@ class MLEngineerAgent:
                     'BLOCK: meta_labeler (inference) META_FEATURES diverged '
                     'from src.utils.meta_config — re-import.'
                 )
+        except ImportError as e:
+            # ImportError = structural breakage (file deleted/renamed/circular),
+            # not a transient runtime issue. BLOCK rather than WARN — this is
+            # exactly the configuration drift the gate exists to catch.
+            decision.reasons.append(
+                f'BLOCK: META_FEATURES import failed ({e}). The training or '
+                'inference module is missing/broken — fix before training.'
+            )
         except Exception as e:
             decision.warnings.append(
                 f'WARN: could not verify META_FEATURES unification: {e}'
@@ -405,17 +436,37 @@ class MLEngineerAgent:
             )
 
     @staticmethod
-    def _compute_psr(mean_sr: float, std_sr: float, n_folds: int,
-                     sr_benchmark: float = 0.0) -> float:
+    def _compute_psr(observed_sr: float, n_obs: int,
+                     sr_benchmark: float = 0.0,
+                     skew: float = 0.0, kurtosis: float = 3.0) -> float:
         """
-        Probabilistic Sharpe Ratio (PSR) — see Bailey & Lopez de Prado (2012).
-        Returns the probability that the true Sharpe exceeds sr_benchmark
-        given the observed mean & std of fold-level Sharpe estimates.
+        Probabilistic Sharpe Ratio (PSR) — Bailey & Lopez de Prado (2012), Eq. 4.
+
+        Returns the probability that the TRUE Sharpe ratio exceeds `sr_benchmark`
+        given an observed Sharpe `observed_sr` from `n_obs` returns.
+
+        The denominator accounts for the skew/kurtosis of returns. Under IID
+        normality (skew=0, kurtosis=3), this reduces to:
+            denom = sqrt(1 - 0 * SR + (3-1)/4 * SR²) = sqrt(1 + SR²/2)
+
+        Args:
+            observed_sr:  Observed Sharpe ratio (e.g. mean/std of OOS returns).
+                          Must be in the same time-unit as n_obs (e.g. daily SR
+                          with n_obs = number of trading days).
+            n_obs:        Number of return observations (NOT number of folds).
+            sr_benchmark: Target Sharpe to test against (default 0).
+            skew:         Sample skew of returns (default 0 = IID normal).
+            kurtosis:     Sample kurtosis of returns (default 3 = IID normal).
         """
-        if std_sr <= 0 or n_folds <= 1:
+        if n_obs <= 1:
             return 0.0
+        # Bailey-LdP denominator under generic moments
+        denom_sq = 1.0 - skew * observed_sr + ((kurtosis - 1.0) / 4.0) * (observed_sr ** 2)
+        if denom_sq <= 0:
+            return 0.0
+        denom = math.sqrt(denom_sq)
         from math import erf
-        z = (mean_sr - sr_benchmark) * math.sqrt(n_folds - 1) / std_sr
+        z = (observed_sr - sr_benchmark) * math.sqrt(n_obs - 1) / denom
         # Standard normal CDF
         return 0.5 * (1.0 + erf(z / math.sqrt(2.0)))
 

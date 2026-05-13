@@ -58,27 +58,36 @@ def _agent(tmp_path: Path):
 class TestPreFlightNoConfig:
     """Edge 1: no config dict passed → WARN about defaults, not BLOCK."""
 
-    def test_approve_with_warn_no_config_meta_model(self, tmp_path):
+    def test_block_with_no_config_meta_model(self, tmp_path):
+        """Post-review fix: empty config now BLOCKs (use_t1_purging no longer
+        defaults to True). Caller must EXPLICITLY opt in to AFML purging."""
         agent = _agent(tmp_path)
         decision = agent.validate_training_request(
             model_type='meta', timeframe='1h', config=None
         )
-        # Must not BLOCK — defaults are valid
-        assert decision.decision in ('WARN', 'APPROVE'), (
-            f"Expected WARN or APPROVE with no config, got {decision.decision}"
+        assert decision.decision == 'BLOCK', (
+            f"Expected BLOCK with no config (missing t1 opt-in), "
+            f"got {decision.decision}. Reasons: {decision.reasons}"
         )
-        # Must emit at least one WARN about defaults
-        all_messages = decision.warnings + decision.reasons
-        assert any('default' in m.lower() for m in all_messages), (
-            "Expected a warning about defaults being used"
-        )
+        assert any('t1' in r.lower() for r in decision.reasons)
 
-    def test_approve_with_warn_no_config_base_model(self, tmp_path):
+    def test_block_with_no_config_base_model(self, tmp_path):
         agent = _agent(tmp_path)
         decision = agent.validate_training_request(
             model_type='base', timeframe='15m', config=None
         )
-        assert decision.decision in ('WARN', 'APPROVE')
+        assert decision.decision == 'BLOCK'
+        assert any('t1' in r.lower() for r in decision.reasons)
+
+    def test_approve_with_explicit_t1_opt_in(self, tmp_path):
+        """When the caller EXPLICITLY opts in, AFML-compliant config → APPROVE."""
+        agent = _agent(tmp_path)
+        decision = agent.validate_training_request(
+            model_type='base', timeframe='1h',
+            config={'pt_multiplier': 2.5, 'sl_multiplier': 1.5,
+                    'max_bars': 12, 'use_t1_purging': True},
+        )
+        assert decision.decision == 'APPROVE'
         assert not any(r.startswith('BLOCK:') for r in decision.reasons)
 
 
@@ -416,51 +425,48 @@ class TestPostTrainingWinRateFlags:
 class TestPSRComputation:
     """Edges 14 & 15: PSR math edge cases."""
 
-    def test_psr_std_zero_returns_zero(self):
+    def test_psr_one_obs_returns_zero(self):
+        """Post-review: Bailey-LdP PSR signature now (observed_sr, n_obs, ...)."""
         from src.engine.ml_engineer_agent import MLEngineerAgent
-        result = MLEngineerAgent._compute_psr(mean_sr=2.0, std_sr=0.0, n_folds=5)
-        assert result == 0.0, f"std=0 must return 0.0, got {result}"
+        result = MLEngineerAgent._compute_psr(observed_sr=2.0, n_obs=1)
+        assert result == 0.0, f"n_obs=1 must return 0.0, got {result}"
 
-    def test_psr_one_fold_returns_zero(self):
+    def test_psr_zero_obs_returns_zero(self):
         from src.engine.ml_engineer_agent import MLEngineerAgent
-        result = MLEngineerAgent._compute_psr(mean_sr=2.0, std_sr=1.0, n_folds=1)
-        assert result == 0.0, f"1 fold (n-1=0) must return 0.0, got {result}"
+        result = MLEngineerAgent._compute_psr(observed_sr=2.0, n_obs=0)
+        assert result == 0.0, f"n_obs=0 must return 0.0, got {result}"
 
-    def test_psr_zero_folds_returns_zero(self):
+    def test_psr_positive_sharpe_above_benchmark_returns_above_half(self):
         from src.engine.ml_engineer_agent import MLEngineerAgent
-        result = MLEngineerAgent._compute_psr(mean_sr=2.0, std_sr=1.0, n_folds=0)
-        assert result == 0.0, f"0 folds must return 0.0, got {result}"
-
-    def test_psr_positive_mean_above_benchmark_returns_above_half(self):
-        from src.engine.ml_engineer_agent import MLEngineerAgent
-        # mean > benchmark → probability > 0.5
-        result = MLEngineerAgent._compute_psr(mean_sr=1.0, std_sr=0.1, n_folds=10, sr_benchmark=0.0)
-        assert result > 0.5, f"Positive mean-benchmark gap must give PSR > 0.5, got {result}"
+        result = MLEngineerAgent._compute_psr(
+            observed_sr=1.0, n_obs=252, sr_benchmark=0.0,
+        )
+        assert result > 0.5, f"Positive SR vs zero benchmark must give PSR > 0.5, got {result}"
 
     def test_psr_result_within_probability_bounds(self):
         from src.engine.ml_engineer_agent import MLEngineerAgent
-        for mean_sr in [-5.0, 0.0, 2.0, 10.0]:
-            result = MLEngineerAgent._compute_psr(mean_sr=mean_sr, std_sr=0.5, n_folds=5)
+        for observed_sr in [-5.0, 0.0, 2.0, 10.0]:
+            result = MLEngineerAgent._compute_psr(observed_sr=observed_sr, n_obs=100)
             assert 0.0 <= result <= 1.0, (
-                f"PSR must be a probability in [0,1], got {result} for mean_sr={mean_sr}"
+                f"PSR must be a probability in [0,1], got {result} for observed_sr={observed_sr}"
             )
 
-    def test_psr_not_computed_in_metrics_when_std_zero(self, tmp_path):
-        """When std=0, the agent should NOT try to compute PSR (would return 0).
-        Verify the post-training gate skips the PSR metric entirely."""
+    def test_psr_not_computed_when_oos_sharpe_missing(self, tmp_path):
+        """Post-review: PSR now requires `oos_sharpe` + `n_test` in meta JSON.
+        Without them, the agent emits a WARN and skips the PSR metric."""
         meta_path = tmp_path / 'meta.json'
         meta_path.write_text(
-            json.dumps(_good_meta({
-                'walk_forward_std_acc': 0.0,
-                'walk_forward_folds': 5,
-            })),
+            json.dumps(_good_meta({})),
             encoding='utf-8',
         )
         agent = _agent(tmp_path)
         decision = agent.evaluate_trained_model('meta', '1h', meta_path)
-        # psr should not be added when std=0 (condition: wf_std > 0 is False)
+        # PSR not in metrics when oos_sharpe is missing
         assert 'psr' not in decision.metrics, (
-            "PSR must not appear in metrics when walk_forward_std_acc=0"
+            "PSR must not appear in metrics when oos_sharpe is missing"
+        )
+        assert any('psr not evaluated' in w.lower() for w in decision.warnings), (
+            "Expected a WARN about PSR not being evaluated"
         )
 
 
@@ -584,13 +590,17 @@ class TestPostTrainingGeneralKPI:
             'walk_forward_folds': 3,
             'n_features': 10,
             'n_train': 800,
+            # Post-review: PSR gate now requires oos_sharpe + n_test, else WARN.
+            'oos_sharpe': 1.2,
+            'n_test': 200,
         }
         meta_path = tmp_path / 'meta.json'
         meta_path.write_text(json.dumps(meta), encoding='utf-8')
         agent = _agent(tmp_path)
         decision = agent.evaluate_trained_model('base', '1h', meta_path)
         assert decision.decision == 'ACCEPT', (
-            f"base model at 55% WF acc should ACCEPT, got {decision.decision}"
+            f"base model at 55% WF acc should ACCEPT, got {decision.decision}, "
+            f"warnings={decision.warnings}"
         )
 
     def test_base_model_warn_when_below_coin_flip(self, tmp_path):

@@ -14,11 +14,14 @@ never read it in `split()` (BUG-2). This file now implements true PurgedKFold.
 """
 from __future__ import annotations
 
+import logging
 from collections.abc import Generator
 from typing import Optional
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 class PurgedKFold:
@@ -88,6 +91,17 @@ class PurgedKFold:
                 # Fold 0 always produces an empty train set; skip it.
                 continue
 
+            # Review-fix: warn when caller passed t1 but X is an ndarray —
+            # we cannot align without X.index. Previously this branch was
+            # silently a no-op; now the operator sees it in logs.
+            if self.t1 is not None and x_index is None:
+                logger.warning(
+                    "PurgedKFold: t1 series supplied but X has no .index "
+                    "(numpy ndarray?) — t1-span purging SKIPPED for fold %d. "
+                    "Convert X to a DataFrame with the same index as t1 to "
+                    "enable AFML purging.", fold,
+                )
+
             # BUG-2 fix: apply AFML t1-span purging.
             # Remove training samples whose label-end time `t1[i]` overlaps
             # the test window starting at position `test_start`.
@@ -107,14 +121,14 @@ class PurgedKFold:
                     # NaT entries: keep=False (be conservative — drop the row)
                     keep = keep & ~pd.isna(t1_vals)
                     train_idx = train_idx[keep.values if hasattr(keep, 'values') else keep]
-                except Exception:
+                except Exception as e:
                     # If purging is impossible (dtype mismatch, missing index),
                     # log and continue without purging — but the AFML guarantee
                     # is then weaker. Embargo still applies.
-                    import logging
-                    logging.getLogger(__name__).warning(
-                        "PurgedKFold: could not apply t1-span purging at fold=%d; "
-                        "embargo-only train set returned.", fold,
+                    logger.warning(
+                        "PurgedKFold: could not apply t1-span purging at fold=%d "
+                        "(%s) — embargo-only train set returned.",
+                        fold, e, exc_info=True,
                     )
 
             if len(train_idx) == 0:

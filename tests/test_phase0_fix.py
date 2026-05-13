@@ -270,13 +270,19 @@ def test_ml_engineer_rejects_low_walk_forward_acc(tmp_path):
 
 
 def test_ml_engineer_psr_in_metrics(tmp_path):
+    """Post-review: PSR uses oos_sharpe + n_test (real Bailey-LdP inputs),
+    not walk_forward_mean_acc (which is accuracy %, not Sharpe)."""
     from src.engine.ml_engineer_agent import MLEngineerAgent
     meta_path = tmp_path / 'meta.json'
     meta_path.write_text(json.dumps({
         'accuracy': 60.0, 'auc_roc': 0.6, 'win_precision': 55.0,
         'win_rate_pct': 48.0, 'walk_forward_mean_acc': 55.0,
         'walk_forward_std_acc': 3.0, 'walk_forward_folds': 5,
-        'optimal_threshold': 0.55, 'n_features': 23, 'n_train': 5000, 'n_test': 1000,
+        'optimal_threshold': 0.55, 'n_features': 23,
+        'n_train': 5000, 'n_test': 1000,
+        # Real Bailey-LdP PSR inputs
+        'oos_sharpe': 1.2,
+        'oos_return_skew': 0.0, 'oos_return_kurtosis': 3.0,
     }))
     agent = MLEngineerAgent(decisions_path=tmp_path / 'decisions.json')
     decision = agent.evaluate_trained_model('meta', '1h', meta_path)

@@ -33,6 +33,18 @@ from typing import Any
 
 logger = logging.getLogger("orchestrator")
 
+# Optional ML Engineer Agent — pre-flight + post-flight AFML gate. Imported at
+# module scope so tests can monkeypatch `_get_ml_engineer`. Failures are
+# non-fatal (the orchestrator runs even without the gate, with a CRITICAL log).
+try:
+    from src.engine.ml_engineer_agent import get_ml_engineer as _get_ml_engineer
+except Exception as _mle_imp_err:  # pragma: no cover — defensive
+    _get_ml_engineer = None
+    logger.critical(
+        "[Orch] ML Engineer agent unavailable at import time: %s — pre/post "
+        "flight AFML gates will not run.", _mle_imp_err,
+    )
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -323,22 +335,39 @@ class Orchestrator:
         # Validates AFML compliance before allocating a task_id. BLOCK = task
         # is refused and a structured error is returned via "blocked-<reason>"
         # task_id sentinel so the caller can surface the reason in the UI.
-        try:
-            from src.engine.ml_engineer_agent import get_ml_engineer
-            ml_decision = get_ml_engineer().validate_training_request(
-                model_type=model_type,
-                timeframe=timeframe,
-                config=task_spec.get("config", {}) | task_spec.get("overrides", {}),
-            )
-            if ml_decision.decision == 'BLOCK':
-                logger.error(
-                    "[Orch] Task BLOCKED by ML Engineer agent: model=%s tf=%s reasons=%s",
-                    model_type, timeframe, ml_decision.reasons,
+        # Module-level _get_ml_engineer is None when the agent module is broken
+        # (logged CRITICAL at import time).
+        if _get_ml_engineer is not None:
+            try:
+                ml_decision = _get_ml_engineer().validate_training_request(
+                    model_type=model_type,
+                    timeframe=timeframe,
+                    config=task_spec.get("config", {}) | task_spec.get("overrides", {}),
                 )
-                return f"blocked-mle-{int(datetime.now(timezone.utc).timestamp())}"
-        except Exception as e:
-            # Never let the gate crash task submission. Log and continue.
-            logger.warning("[Orch] ML Engineer pre-flight gate skipped: %s", e)
+                if ml_decision.decision == 'BLOCK':
+                    logger.error(
+                        "[Orch] Task BLOCKED by ML Engineer agent: model=%s tf=%s reasons=%s",
+                        model_type, timeframe, ml_decision.reasons,
+                    )
+                    # Store a blocked-task record so the caller's get_task() can
+                    # find it (previously the sentinel vanished from get_task).
+                    sentinel = f"blocked-mle-{int(datetime.now(timezone.utc).timestamp())}"
+                    with self._lock:
+                        self._tasks[sentinel] = {
+                            "task_id":     sentinel,
+                            "model_type":  model_type,
+                            "symbol":      symbol,
+                            "timeframe":   timeframe,
+                            "status":      "blocked",
+                            "blocked_by":  "ml_engineer",
+                            "reasons":     list(ml_decision.reasons),
+                            "warnings":    list(ml_decision.warnings),
+                            "created_at":  datetime.now(timezone.utc).isoformat(),
+                        }
+                    return sentinel
+            except Exception as e:
+                # Never let the gate crash task submission. Log and continue.
+                logger.warning("[Orch] ML Engineer pre-flight gate error: %s", e, exc_info=True)
 
         with self._lock:
             # Phase C2 — dedup before allocating a new task_id.
@@ -438,9 +467,8 @@ class Orchestrator:
                 # ── ML Engineer post-training gate ──
                 # On status='done', evaluate the model meta JSON against KPI
                 # floors. REJECT moves the artifact to quarantine.
-                if status == "done":
+                if status == "done" and _get_ml_engineer is not None:
                     try:
-                        from src.engine.ml_engineer_agent import get_ml_engineer
                         from pathlib import Path as _P
                         model_type = task.get("model_type", "")
                         tf         = task.get("timeframe", "")
@@ -453,7 +481,7 @@ class Orchestrator:
                         except Exception:
                             pass
                         if meta_path and _P(meta_path).exists():
-                            post_decision = get_ml_engineer().evaluate_trained_model(
+                            post_decision = _get_ml_engineer().evaluate_trained_model(
                                 model_type=model_type,
                                 timeframe=tf,
                                 meta_json_path=str(meta_path),

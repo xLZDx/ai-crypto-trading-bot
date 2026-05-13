@@ -331,10 +331,14 @@ def train_meta_labeler(timeframe: str = '1h'):
     report = classification_report(y_test, predictions, output_dict=True, zero_division=0)
     precision_win = report.get('1', {}).get('precision', 0.0) * 100
 
-    # High-confidence trades only — use the OPTIMAL threshold found above
+    # High-confidence trades only — use the OPTIMAL threshold found above.
+    # Compare the model's actual predictions on the high-conf subset against
+    # the true labels (was a tautology before — proba[hc] >= thr is always True
+    # by definition, so the old "accuracy" was just the positive-class rate).
     high_conf = proba >= best_threshold
     if high_conf.sum() > 0:
-        hc_acc = accuracy_score(y_test[high_conf], (proba[high_conf] >= best_threshold).astype(int))
+        hc_predictions = predictions[high_conf]  # actual model predictions on hc subset
+        hc_acc = accuracy_score(y_test[high_conf], hc_predictions)
         log.info("Meta-labeler | Accuracy: %.2f%% | AUC: %.3f | Win precision: %.1f%% | "
                  "High-conf trades (thr=%.2f): %d (acc=%.1f%%)",
                  accuracy * 100, auc, precision_win, best_threshold, high_conf.sum(), hc_acc * 100)
