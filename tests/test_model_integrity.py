@@ -340,5 +340,146 @@ class TestManifestRobustness(_BaseIntegrityTest):
                           f"concurrent sign dropped entry m{i}: {sorted(entries)}")
 
 
+class TestEnforcementMode(_BaseIntegrityTest):
+    """Phase 1b (2026-05-14): MODEL_HMAC_ENFORCEMENT knob.
+
+    Default is "enforce" (existing fail-closed behavior — covered above).
+    "warn" lets a mismatch through with a CRITICAL log (diagnostics only).
+    "off" skips the HMAC computation entirely on every verify call.
+    Malformed manifest entries ALWAYS raise regardless of mode.
+    """
+
+    def _set_mode(self, mode: str) -> None:
+        os.environ[mi._ENFORCEMENT_ENV] = mode
+        mi._reset_for_tests()
+
+    def test_default_mode_is_enforce(self) -> None:
+        """No env var set -> mode should be 'enforce'."""
+        os.environ.pop(mi._ENFORCEMENT_ENV, None)
+        mi._reset_for_tests()
+        self.assertEqual(mi._load_enforcement_mode(), mi._MODE_ENFORCE)
+
+    def test_invalid_mode_falls_back_to_enforce_with_warning(self) -> None:
+        with self.assertLogs("src.utils.model_integrity", level="WARNING") as cap:
+            self._set_mode("bogus-value")
+            mode = mi._load_enforcement_mode()
+        self.assertEqual(mode, mi._MODE_ENFORCE)
+        self.assertTrue(any("bogus-value" in m for m in cap.output),
+                        f"expected invalid-mode warning: {cap.output}")
+
+    def test_warn_mode_emits_one_shot_critical_alert(self) -> None:
+        """warn-mode should warn the operator they're in diagnostic mode."""
+        with self.assertLogs("src.utils.model_integrity", level="CRITICAL") as cap:
+            self._set_mode("warn")
+            mi._load_enforcement_mode()
+        self.assertTrue(
+            any("warn" in m and "diagnostics only" in m for m in cap.output),
+            f"expected warn-mode alert, got: {cap.output}",
+        )
+
+    def test_warn_mode_allows_load_on_tampered_file(self) -> None:
+        """Tampered file in warn mode -> bytes returned, CRITICAL logged, no raise."""
+        self._set_key()
+        p = self._make_model("w1.joblib", b"original")
+        mi.sign_model(p)
+        with open(p, "wb") as f:
+            f.write(b"tampered!!!")
+        self._set_mode("warn")
+        self._set_key()  # re-set key after _reset_for_tests
+        with self.assertLogs("src.utils.model_integrity", level="CRITICAL") as cap:
+            out = mi.verify_and_load_bytes(p)
+        self.assertEqual(out, b"tampered!!!", "warn mode must still return the tampered bytes")
+        self.assertTrue(
+            any("HMAC mismatch" in m and "allowing load anyway" in m for m in cap.output),
+            f"expected warn-mode mismatch log: {cap.output}",
+        )
+
+    def test_warn_mode_verify_or_raise_does_not_raise(self) -> None:
+        self._set_key()
+        p = self._make_model("w2.joblib", b"original")
+        mi.sign_model(p)
+        with open(p, "wb") as f:
+            f.write(b"tampered2")
+        self._set_mode("warn")
+        self._set_key()
+        mi.verify_model_or_raise(p)  # must NOT raise
+
+    def test_off_mode_skips_hmac_on_tampered_file(self) -> None:
+        """off-mode -> no HMAC computed, no log, bytes returned regardless."""
+        self._set_key()
+        p = self._make_model("o1.joblib", b"original")
+        mi.sign_model(p)
+        with open(p, "wb") as f:
+            f.write(b"tampered3")
+        self._set_mode("off")
+        self._set_key()
+        out = mi.verify_and_load_bytes(p)
+        self.assertEqual(out, b"tampered3")
+        # verify_model_or_raise also short-circuits
+        mi.verify_model_or_raise(p)
+
+    def test_off_mode_still_allows_sign_model(self) -> None:
+        """off applies only to verify path; sign_model still updates the manifest."""
+        self._set_mode("off")
+        self._set_key()
+        p = self._make_model("o2.joblib", b"payload")
+        self.assertTrue(mi.sign_model(p))
+        with open(os.path.join(self.tmp_root, "models", "manifest.json")) as fp:
+            manifest = json.load(fp)
+        self.assertIn("models/o2.joblib", manifest["entries"])
+
+    def test_malformed_entry_raises_even_in_off_mode(self) -> None:
+        """Corruption signals always raise — `off` does NOT bypass malformed-entry detection.
+        Completes the policy matrix alongside test_malformed_entry_raises_even_in_warn_mode."""
+        self._set_mode("off")
+        self._set_key()
+        p = self._make_model("malformed_off.joblib", b"x")
+        manifest_path = os.path.join(self.tmp_root, "models", "manifest.json")
+        with open(manifest_path, "w") as fp:
+            json.dump({"version": 1, "entries": {
+                "models/malformed_off.joblib": {"hmac_sha256": "abc"}  # short hash
+            }}, fp)
+        # off skips HMAC computation but still validates manifest entry shape,
+        # so a corrupted/tampered manifest entry still raises.
+        with self.assertRaises(mi.ModelIntegrityError):
+            mi.verify_model_or_raise(p)
+        with self.assertRaises(mi.ModelIntegrityError):
+            mi.verify_and_load_bytes(p)
+
+    def test_enforce_mode_still_raises_on_mismatch(self) -> None:
+        """Sanity: explicitly setting enforce keeps the existing fail-closed."""
+        self._set_key()
+        p = self._make_model("e1.joblib", b"original")
+        mi.sign_model(p)
+        with open(p, "wb") as f:
+            f.write(b"tampered_e")
+        self._set_mode("enforce")
+        self._set_key()
+        with self.assertRaises(mi.ModelIntegrityError):
+            mi.verify_and_load_bytes(p)
+
+    def test_malformed_entry_raises_even_in_warn_mode(self) -> None:
+        """Malformed manifest entries are corruption — they always raise."""
+        self._set_mode("warn")
+        self._set_key()
+        p = self._make_model("malformed_warn.joblib", b"x")
+        manifest_path = os.path.join(self.tmp_root, "models", "manifest.json")
+        with open(manifest_path, "w") as fp:
+            json.dump({"version": 1, "entries": {
+                "models/malformed_warn.joblib": {"hmac_sha256": "abc"}  # short hash
+            }}, fp)
+        with self.assertRaises(mi.ModelIntegrityError):
+            mi.verify_model_or_raise(p)
+
+    def test_mode_is_cached_after_first_read(self) -> None:
+        """Mode read once per process; env mutations after first read are ignored."""
+        self._set_mode("warn")
+        first = mi._load_enforcement_mode()
+        self.assertEqual(first, "warn")
+        os.environ[mi._ENFORCEMENT_ENV] = "enforce"
+        second = mi._load_enforcement_mode()
+        self.assertEqual(second, "warn", "mode must be cached; env changes need _reset_for_tests")
+
+
 if __name__ == "__main__":
     unittest.main()

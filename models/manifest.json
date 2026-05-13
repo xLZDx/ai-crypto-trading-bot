@@ -2,14 +2,14 @@
   "version": 1,
   "entries": {
     "models/scalping_1m_model.joblib": {
-      "hmac_sha256": "ff1924da697e300260f0d057f12d686226380054e0e73b4758facd803a723106",
-      "size_bytes": 110080,
-      "signed_at": "2026-05-13T09:17:10Z"
+      "hmac_sha256": "e0ae72cbfa0968d18494b6f2fff7f86c8ce6fef9c8f019e04798c417255bd8f5",
+      "size_bytes": 107232,
+      "signed_at": "2026-05-13T21:26:47Z"
     },
     "models/scalping_model.joblib": {
-      "hmac_sha256": "ff1924da697e300260f0d057f12d686226380054e0e73b4758facd803a723106",
-      "size_bytes": 110080,
-      "signed_at": "2026-05-13T09:17:10Z"
+      "hmac_sha256": "e0ae72cbfa0968d18494b6f2fff7f86c8ce6fef9c8f019e04798c417255bd8f5",
+      "size_bytes": 107232,
+      "signed_at": "2026-05-13T21:26:47Z"
     },
     "models/base_15m_model.joblib": {
       "hmac_sha256": "81e50267b8284c965bc69d305928a70ed041b61d71340a9d8c25355672c62695",

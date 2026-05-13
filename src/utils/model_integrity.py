@@ -51,7 +51,21 @@ _CHUNK_SIZE = 1 << 20  # 1 MiB streaming reads
 _MIN_RECOMMENDED_KEY_LEN = 32
 
 _KEY_ENV = "MODEL_MANIFEST_KEY"
+_ENFORCEMENT_ENV = "MODEL_HMAC_ENFORCEMENT"
 _MANIFEST_REL_PATH = os.path.join("models", "manifest.json")
+
+# Enforcement modes (Phase 1b, 2026-05-14, per security-reviewer rec):
+#   "enforce" (default): mismatch -> ModelIntegrityError, refuses load
+#   "warn"             : mismatch -> log CRITICAL, return without raising
+#                        (for diagnostics; never use in production)
+#   "off"              : skip HMAC verification entirely on this call
+#                        (same effect as MODEL_MANIFEST_KEY unset, but
+#                         keeps the key set so sign_model still updates
+#                         the manifest on training save)
+_MODE_ENFORCE = "enforce"
+_MODE_WARN = "warn"
+_MODE_OFF = "off"
+_VALID_MODES = frozenset({_MODE_ENFORCE, _MODE_WARN, _MODE_OFF})
 
 # Sentinel distinguishing "never read env" from "read env, key absent".
 _UNSET: object = object()
@@ -61,6 +75,10 @@ _state_lock = threading.Lock()
 _cached_key: object = _UNSET
 _key_warning_emitted = False
 _short_key_warning_emitted = False
+# _cached_mode: _UNSET (never read) or one of _VALID_MODES.
+_cached_mode: object = _UNSET
+_mode_warning_emitted = False
+_warn_mode_alert_emitted = False
 
 
 class ModelIntegrityError(RuntimeError):
@@ -108,6 +126,41 @@ def _load_key() -> Optional[bytes]:
             _short_key_warning_emitted = True
         _cached_key = hashlib.sha256(raw.encode("utf-8")).digest()
         return _cached_key  # type: ignore[return-value]
+
+
+def _load_enforcement_mode() -> str:
+    """Read MODEL_HMAC_ENFORCEMENT from env. Cached per-process.
+
+    Returns one of "enforce" / "warn" / "off". Default "enforce".
+    Invalid values fall back to "enforce" with a one-shot WARNING.
+    A "warn" mode emits a one-shot CRITICAL on first call so the operator
+    cannot accidentally leave warn-mode running in production.
+    """
+    global _cached_mode, _mode_warning_emitted, _warn_mode_alert_emitted
+    with _state_lock:
+        if _cached_mode is not _UNSET:
+            return _cached_mode  # type: ignore[return-value]
+        raw = (os.environ.get(_ENFORCEMENT_ENV) or _MODE_ENFORCE).strip().lower()
+        if raw in _VALID_MODES:
+            mode = raw
+        else:
+            if not _mode_warning_emitted:
+                logger.warning(
+                    "%s=%r is not one of %s; defaulting to %r.",
+                    _ENFORCEMENT_ENV, raw, sorted(_VALID_MODES), _MODE_ENFORCE,
+                )
+                _mode_warning_emitted = True
+            mode = _MODE_ENFORCE
+        if mode == _MODE_WARN and not _warn_mode_alert_emitted:
+            logger.critical(
+                "%s=warn — HMAC mismatches will be LOGGED but ALLOWED. "
+                "This mode is for diagnostics only; switch back to %r before "
+                "resuming production loads.",
+                _ENFORCEMENT_ENV, _MODE_ENFORCE,
+            )
+            _warn_mode_alert_emitted = True
+        _cached_mode = mode
+        return mode
 
 
 def _rel_key(path: str) -> str:
@@ -162,9 +215,32 @@ def _save_manifest(manifest: dict) -> None:
     write_json(_manifest_path(), manifest, indent=2)
 
 
+def _check_manifest_entry_shape(rel: str) -> None:
+    """Validate the shape of the manifest entry for `rel`. Raises on
+    malformed entry (corruption / tampering of the manifest itself).
+    Returns silently if the entry is missing (untracked-allow path) or
+    well-formed.
+
+    Runs even in MODEL_HMAC_ENFORCEMENT=off mode so manifest corruption
+    is detected regardless of HMAC enforcement policy."""
+    manifest = _load_manifest()
+    entry = manifest["entries"].get(rel)
+    if entry is None:
+        return  # untracked-allow; not malformed
+    expected = entry.get("hmac_sha256")
+    if not isinstance(expected, str) or len(expected) != _HMAC_LEN_HEX:
+        logger.critical(
+            "Model integrity: malformed manifest entry for %s (missing or "
+            "short hmac). Refusing to load — manifest may be corrupted "
+            "or tampered.", rel,
+        )
+        raise ModelIntegrityError(f"malformed manifest entry for {rel}")
+
+
 def _check_against_manifest(rel: str, actual_hmac: str) -> None:
     """Compare actual HMAC against the manifest entry. Raises on mismatch
-    or malformed entry. Returns silently on missing-entry-allow path."""
+    (subject to MODEL_HMAC_ENFORCEMENT mode) or malformed entry (always).
+    Returns silently on missing-entry-allow path."""
     manifest = _load_manifest()
     entry = manifest["entries"].get(rel)
     if entry is None:
@@ -175,6 +251,8 @@ def _check_against_manifest(rel: str, actual_hmac: str) -> None:
         return
     expected = entry.get("hmac_sha256")
     if not isinstance(expected, str) or len(expected) != _HMAC_LEN_HEX:
+        # Malformed entries always raise regardless of mode — they signal
+        # corruption / tampering of the manifest itself, not a benign sign-skip.
         logger.critical(
             "Model integrity: malformed manifest entry for %s (missing or "
             "short hmac). Refusing to load — manifest may be corrupted "
@@ -182,6 +260,15 @@ def _check_against_manifest(rel: str, actual_hmac: str) -> None:
         )
         raise ModelIntegrityError(f"malformed manifest entry for {rel}")
     if not hmac.compare_digest(expected.lower(), actual_hmac.lower()):
+        mode = _load_enforcement_mode()
+        if mode == _MODE_WARN:
+            logger.critical(
+                "Model integrity FAILURE for %s: HMAC mismatch (expected=%s..., actual=%s...). "
+                "%s=warn — allowing load anyway. Switch %s back to %r before resuming production.",
+                rel, expected[:12], actual_hmac[:12],
+                _ENFORCEMENT_ENV, _ENFORCEMENT_ENV, _MODE_ENFORCE,
+            )
+            return
         logger.critical(
             "Model integrity FAILURE for %s: HMAC mismatch (expected=%s..., actual=%s...). "
             "Refusing to load.", rel, expected[:12], actual_hmac[:12],
@@ -204,8 +291,14 @@ def verify_model_or_raise(path: str) -> None:
         # Defer file-not-found to caller's normal error handling.
         return
     _reject_symlink(path)
+    rel = _rel_key(path)
+    if _load_enforcement_mode() == _MODE_OFF:
+        # off: skip HMAC computation, but still validate manifest entry shape
+        # so corruption / tampering of the manifest is detected.
+        _check_manifest_entry_shape(rel)
+        return
     actual = _hmac_file_streaming(path, key)
-    _check_against_manifest(_rel_key(path), actual)
+    _check_against_manifest(rel, actual)
 
 
 def verify_and_load_bytes(path: str) -> bytes:
@@ -227,8 +320,14 @@ def verify_and_load_bytes(path: str) -> bytes:
     key = _load_key()
     if key is None:
         return data  # fail-open
+    rel = _rel_key(path)
+    if _load_enforcement_mode() == _MODE_OFF:
+        # off: skip HMAC computation, but still validate manifest entry shape
+        # so corruption / tampering of the manifest is detected.
+        _check_manifest_entry_shape(rel)
+        return data
     actual = _hmac_bytes(data, key)
-    _check_against_manifest(_rel_key(path), actual)
+    _check_against_manifest(rel, actual)
     return data
 
 
@@ -265,12 +364,17 @@ def sign_model(path: str) -> bool:
 
 
 def _reset_for_tests() -> None:
-    """Test-only: clear cached key + one-shot warning flags so env changes take effect."""
+    """Test-only: clear cached key + enforcement-mode + one-shot warning flags
+    so env changes take effect."""
     global _cached_key, _key_warning_emitted, _short_key_warning_emitted
+    global _cached_mode, _mode_warning_emitted, _warn_mode_alert_emitted
     with _state_lock:
         _cached_key = _UNSET
         _key_warning_emitted = False
         _short_key_warning_emitted = False
+        _cached_mode = _UNSET
+        _mode_warning_emitted = False
+        _warn_mode_alert_emitted = False
 
 
 __all__ = [
