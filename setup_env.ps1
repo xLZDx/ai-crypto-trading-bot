@@ -1,11 +1,11 @@
-# ── setup_env.ps1 ─────────────────────────────────────────────────────────────
+﻿# ── setup_env.ps1 ─────────────────────────────────────────────────────────────
 # Shared environment bootstrap - dot-source this from every launch script:
 #   . (Join-Path $root 'setup_env.ps1')
 #
 # Sets:
-#   1. All temp/cache dirs → D:\... (keeps C drive free)
-#   2. CPU multithreading  → bounded to $env:CPU_CORES (default 10)
-#   3. GPU policy          → 'single_100' (default) or 'dual_80' for cluster DDP
+#   1. All temp/cache dirs -> D:\... (keeps C drive free)
+#   2. CPU multithreading  -> bounded to $env:CPU_CORES (default 10)
+#   3. GPU policy          -> 'single_100' (default) or 'dual_80' for cluster DDP
 # ─────────────────────────────────────────────────────────────────────────────
 
 if (-not $root) { $root = Split-Path -Parent $MyInvocation.MyCommand.Path }
@@ -16,7 +16,7 @@ $cacheDir = Join-Path $root 'data\cache'
 $env:PYTHONIOENCODING = "utf-8"
 $env:PYTHONUTF8 = "1"
 
-# ── 1. Temp & cache → D drive ─────────────────────────────────────────────────
+# ── 1. Temp & cache -> D drive ─────────────────────────────────────────────────
 New-Item -ItemType Directory -Force -Path (Join-Path $cacheDir 'temp')         | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $cacheDir 'pip')          | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $cacheDir 'torch')        | Out-Null
@@ -81,6 +81,6 @@ $env:TORCH_ALLOW_TF32_CUBLAS_OVERRIDE = '1'
 $env:NVIDIA_TF32_OVERRIDE             = '1'
 $env:CUDNN_BENCHMARK                  = '1'
 
-Write-Host "  [ENV] CUDA cache → $($env:CUDA_CACHE_PATH)" -ForegroundColor Cyan
+Write-Host "  [ENV] CUDA cache -> $($env:CUDA_CACHE_PATH)" -ForegroundColor Cyan
 Write-Host "  [ENV] TF32 + cuDNN benchmark enabled" -ForegroundColor Cyan
-Write-Host "  [ENV] All caches → $cacheDir" -ForegroundColor Cyan
+Write-Host "  [ENV] All caches -> $cacheDir" -ForegroundColor Cyan

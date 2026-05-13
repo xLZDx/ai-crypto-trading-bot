@@ -1,4 +1,4 @@
-Set-Location 'd:\test 2\AI trading assistance'
+﻿Set-Location 'd:\test 2\AI trading assistance'
 $env:PYTHONPATH = 'd:\test 2\AI trading assistance'
 $env:OMP_NUM_THREADS = '1'
 $env:OPENBLAS_NUM_THREADS = '1'

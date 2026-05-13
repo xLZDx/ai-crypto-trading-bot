@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Continue"
+﻿$ErrorActionPreference = "Continue"
 $root = $PSScriptRoot
 if (-not $root) { $root = Split-Path -Parent $MyInvocation.MyCommand.Path }
 if (-not $root) { $root = (Get-Location).Path }
@@ -8,7 +8,7 @@ Write-Host "   AI TRADER: POWERSHELL AUTO-SETUP"
 Write-Host "   Root: $root"
 Write-Host "==========================================" -ForegroundColor Cyan
 
-# Start-Detached — create a fully detached process via WMI Win32_Process.Create.
+# Start-Detached -- create a fully detached process via WMI Win32_Process.Create.
 # Why: Start-Process powershell -WindowStyle Hidden -PassThru spawns a child
 # that shares the parent's console session. When the parent (e.g. the Bash
 # shell that ran this script, or a closed Windows Terminal tab) ends, all
@@ -17,7 +17,7 @@ Write-Host "==========================================" -ForegroundColor Cyan
 # restart_all (logs/dashboard.log just stops mid-stream, no traceback).
 #
 # WMI Win32_Process.Create runs the new process in the context of the WMI
-# service — it has NO parent in our shell tree, so console-group death
+# service -- it has NO parent in our shell tree, so console-group death
 # doesn't reach it. Returns the new PID (or $null on failure).
 function Start-Detached {
     param(
@@ -27,15 +27,15 @@ function Start-Detached {
     if ($LogFile) {
         # Funnel stdout+stderr to the log file at the OS file-handle level
         # (no PowerShell pipeline). cmd /S /C "..." parses the inner string
-        # as the command — /S preserves the outer quote pair so paths with
-        # spaces (D:\test 2\…) survive intact. Without /S, cmd's default
+        # as the command -- /S preserves the outer quote pair so paths with
+        # spaces (D:\test 2\...) survive intact. Without /S, cmd's default
         # rule strips first+last quotes, breaking quoted exe paths.
         $logQuoted = '"' + $LogFile + '"'
         $inner = $CommandLine + ' >> ' + $logQuoted + ' 2>&1'
         $CommandLine = 'cmd /S /C "' + $inner + '"'
     }
     try {
-        # Win32_Process.Create defaults to C:\Windows\System32 — that breaks
+        # Win32_Process.Create defaults to C:\Windows\System32 -- that breaks
         # `python -m <project_module>` since the working directory needs to be
         # the project root for module resolution (and for relative paths like
         # data/, logs/, src/).
@@ -54,10 +54,10 @@ function Start-Detached {
     }
 }
 
-# EARLY KILL — terminate any running bot/dashboard/cluster BEFORE any slow
+# EARLY KILL -- terminate any running bot/dashboard/cluster BEFORE any slow
 # pre-step. Pre-fix: startup_recovery ran first and could take 10+ minutes
-# (archive gap fill iterates every symbol × timeframe). During those 10 min
-# the OLD buggy bot kept running — on 2026-05-13 that meant 600 seconds of
+# (archive gap fill iterates every symbol x timeframe). During those 10 min
+# the OLD buggy bot kept running -- on 2026-05-13 that meant 600 seconds of
 # spammed sell orders + Gemini-quota burn while the operator waited for
 # the restart to advance past [0/6]. Killing first means the bleeding stops
 # as soon as the operator types `restart_all.ps1`.
@@ -80,7 +80,7 @@ if (Test-Path $pidFile) {
         }
     } catch {}
 }
-# Fallback cmdline scan — handles bots/dashboards launched outside the PID
+# Fallback cmdline scan -- handles bots/dashboards launched outside the PID
 # file (e.g. manual Start-Process during a debug session).
 Get-WmiObject Win32_Process -Filter "Name='python.exe'" 2>$null | ForEach-Object {
     $cmd = $_.CommandLine
@@ -94,10 +94,10 @@ Get-WmiObject Win32_Process -Filter "Name='python.exe'" 2>$null | ForEach-Object
 if ($earlyKilled.Count -gt 0) {
     Write-Host ("  Early-killed {0} process(es) before pre-flight: {1}" -f $earlyKilled.Count, ($earlyKilled -join ', ')) -ForegroundColor Green
 } else {
-    Write-Host "  No live bot/dashboard found — clean slate." -ForegroundColor DarkGray
+    Write-Host "  No live bot/dashboard found -- clean slate." -ForegroundColor DarkGray
 }
 
-# Step 0: ParquetClient store — file-based, no daemon. Just verifies the
+# Step 0: ParquetClient store -- file-based, no daemon. Just verifies the
 # data directory + DuckDB import. (Was QuestDB Docker/native-binary launch
 # before the Phase 1-5 migration; see commits 43db156..b64b733.)
 Write-Host ""
@@ -115,7 +115,7 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "  WARNING: Parquet store unavailable. Run: pip install duckdb pyarrow" -ForegroundColor Red
 }
 
-# startup_recovery (archive gap fill) is slow — bounded to 5 minutes so a
+# startup_recovery (archive gap fill) is slow -- bounded to 5 minutes so a
 # stuck recovery (no-op symbol iteration on a network blip) cannot stall
 # the entire restart. Set $env:SKIP_STARTUP_RECOVERY=1 to skip entirely.
 if ($env:SKIP_STARTUP_RECOVERY -eq '1') {
@@ -133,7 +133,7 @@ if ($env:SKIP_STARTUP_RECOVERY -eq '1') {
         Write-Host "  Startup recovery complete." -ForegroundColor Green
     } else {
         Stop-Job $recoveryJob -ErrorAction SilentlyContinue
-        Write-Host "  Startup recovery hit 5-min cap — continuing (the bot's first cycle will pick up any remaining gaps)." -ForegroundColor DarkYellow
+        Write-Host "  Startup recovery hit 5-min cap -- continuing (the bot's first cycle will pick up any remaining gaps)." -ForegroundColor DarkYellow
     }
     Remove-Job $recoveryJob -Force -ErrorAction SilentlyContinue
 }
@@ -166,7 +166,7 @@ if (Test-Path $pidFile) {
         # 2026-05-12 live-validation fix: previously the watchdog PIDs were
         # NOT in the kill list, so each restart_all left the previous
         # watchdog processes alive AND spawned new ones. Live audit caught
-        # 2× debug_supervisor + 2× dashboard_watchdog + 2× training_sweep
+        # 2x debug_supervisor + 2x dashboard_watchdog + 2x training_sweep
         # after a single restart. Add them + cluster_orch to the kill list.
         foreach ($key in @('bot','dash','monitor','training','realtime','orch','orderbook',
                             'debug','watchdog','sweep_watchdog','cluster_orch')) {
@@ -260,7 +260,7 @@ function Start-Window {
     }
     $cmdLine = 'powershell -NoProfile -ExecutionPolicy Bypass -File "' + $ScriptFile + '"'
     # If LogName given, redirect stdout/stderr at cmd level via Start-Detached.
-    # The launcher .ps1 should NOT have its own Out-File pipe — that races
+    # The launcher .ps1 should NOT have its own Out-File pipe -- that races
     # the cmd redirect and locks the file (caused the silent dashboard
     # crashes Apr-May; see launch_dashboard.ps1 / launch_bot.ps1 comments).
     if ($LogName) {
@@ -292,7 +292,7 @@ if ($monRunning) {
 Write-Host "[0/6] Monitor launched." -ForegroundColor Green
 
 # Step 4: ML Training scheduling
-# Phase 100d follow-up (2026-05-11) — DISABLED by default. Pre-fix this
+# Phase 100d follow-up (2026-05-11) -- DISABLED by default. Pre-fix this
 # scheduled launch_training.ps1 to run train_all_models.py directly as a
 # subprocess 10 min after restart. train_all_models.py runs LOCALLY (GPU/CPU
 # direct), completely bypassing the cluster orchestrator (Phase 100a/b/e).
@@ -300,16 +300,16 @@ Write-Host "[0/6] Monitor launched." -ForegroundColor Green
 # this rogue local process was using the GPU outside the cluster's view.
 #
 # All training paths now go through the cluster orchestrator:
-#   - Manual ▶ Train per row → /api/training/run/<key> (Phase 100a)
-#   - Manual ▶ Retrain ALL  → /api/training/run/all   (Phase 100b)
-#   - Auto pipeline         → pipeline_orchestrator   (Phase 100e)
+#   - Manual ▶ Train per row -> /api/training/run/<key> (Phase 100a)
+#   - Manual ▶ Retrain ALL  -> /api/training/run/all   (Phase 100b)
+#   - Auto pipeline         -> pipeline_orchestrator   (Phase 100e)
 #
 # To re-enable the legacy local-subprocess cron (NOT recommended), set
 # $env:AI_TRADER_AUTO_TRAIN = '1' before running restart_all.ps1.
 Write-Host ""
 $procTraining = $null
 if ($env:AI_TRADER_AUTO_TRAIN -eq '1') {
-    Write-Host "[4/6] AI_TRADER_AUTO_TRAIN=1 — scheduling legacy launch_training.ps1 in 10 min" -ForegroundColor Yellow
+    Write-Host "[4/6] AI_TRADER_AUTO_TRAIN=1 -- scheduling legacy launch_training.ps1 in 10 min" -ForegroundColor Yellow
     $trainingScript = Join-Path $root 'launch_training.ps1'
     $trainingDelay  = 600   # seconds
     if (Test-Path $trainingScript) {
@@ -329,7 +329,7 @@ if ($env:AI_TRADER_AUTO_TRAIN -eq '1') {
     Write-Host "      Set AI_TRADER_AUTO_TRAIN=1 to re-enable legacy 10-min local cron." -ForegroundColor DarkGray
 }
 
-# Step 4.9: Cluster training orchestrator (:7700) — REQUIRED by the
+# Step 4.9: Cluster training orchestrator (:7700) -- REQUIRED by the
 # dashboard's /api/cluster/* endpoints, which proxy here. Without this
 # the Cluster tab returns 503 "cluster orchestrator unreachable".
 # Surfaced 2026-05-12 during live E2E validation.
@@ -486,7 +486,7 @@ if ($dsRunning) {
 }
 Write-Host "[5.95/6] Debug Supervisor ready." -ForegroundColor Green
 
-# Step 5.96: Dashboard Watchdog — keeps :5000 up. Polls /api/state every
+# Step 5.96: Dashboard Watchdog -- keeps :5000 up. Polls /api/state every
 # 10s; on FAILURE_THRESHOLD consecutive failures, kills any stale dash
 # process and respawns via the same launch_dashboard.ps1 chain. Circuit
 # breaker (5 restarts in 10 min) prevents an infinite loop on
@@ -510,13 +510,13 @@ if ($wdRunning) {
 }
 Write-Host "[5.96/6] Dashboard Watchdog ready." -ForegroundColor Green
 
-# Step 5.97: Training Sweep Watchdog — keeps the overnight curated sweep
+# Step 5.97: Training Sweep Watchdog -- keeps the overnight curated sweep
 # alive (v3.1). Polls /api/pipeline/status every 60s; respawns the
 # orchestrator only when the payload is unchanged for 10+ min AND no
 # pipeline_orchestrator process is visible (skip-if-fresh resume picks up
 # where the dead attempt died). Never kills in-progress training (per
 # operator memory `feedback_dont_relaunch_inflight_training`). Circuit
-# breaker: 8 respawns in 6h → trips, requires manual state clear.
+# breaker: 8 respawns in 6h -> trips, requires manual state clear.
 Write-Host ""
 Write-Host "[5.97/6] Starting Training Sweep Watchdog (auto-respawn on stall)..." -ForegroundColor Yellow
 $swRunning = Get-WmiObject Win32_Process -Filter "Name='python.exe'" 2>$null |

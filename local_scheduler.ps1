@@ -1,4 +1,4 @@
-# ──────────────────────────────────────────────────────────────────────────────
+﻿# ──────────────────────────────────────────────────────────────────────────────
 # local_scheduler.ps1 - register/list/unregister LOCAL Windows scheduled tasks.
 #
 # All execution stays on this machine. No cloud, no remote agents, no API
@@ -51,12 +51,12 @@ function Action-Register {
 
     # schtasks.exe /TR has a famously broken parser: it re-tokenizes its
     # argument value AFTER PowerShell has already stripped outer quotes, so
-    # any embedded space in the project path ("D:\test 2\AI trading…") is
+    # any embedded space in the project path ("D:\test 2\AI trading...") is
     # mis-split (yields "Invalid argument/option - '2\AI'"). Multiple cmd /c
     # quoting variants don't survive this round-trip reliably.
     #
     # Bullet-proof workaround: write a tiny wrapper .cmd file that contains
-    # the actual command, and point /TR at the wrapper — schtasks then only
+    # the actual command, and point /TR at the wrapper -- schtasks then only
     # has to handle ONE token. Using .NET WriteAllText (not Set-Content) so
     # PowerShell doesn't mangle embedded quotes / line endings.
     $wrapperDir = Join-Path $ProjectRoot 'scripts\scheduled'

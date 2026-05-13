@@ -1,4 +1,4 @@
-$root   = Split-Path -Parent $MyInvocation.MyCommand.Path
+﻿$root   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $python = Join-Path $root 'venv\Scripts\python.exe'
 $pip    = Join-Path $root 'venv\Scripts\pip.exe'
 $logDir = Join-Path $root 'logs'

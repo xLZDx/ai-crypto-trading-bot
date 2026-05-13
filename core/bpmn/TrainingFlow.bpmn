@@ -65,9 +65,11 @@ per (model, tf)">
       <bpmn:outgoing>f3b</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:serviceTask id="Task_Validators" name="Run 5 validators:
-freshness, label_imb,
-nan_density, drift z,
-feature_count">
+• freshness ≤ TF×3
+• label_imbalance ≥ 5%
+• nan_density &lt; 5%
+• drift z-score &lt; 2.0
+• feature_count = 23">
       <bpmn:incoming>f3b</bpmn:incoming>
       <bpmn:outgoing>f4</bpmn:outgoing>
     </bpmn:serviceTask>
@@ -77,16 +79,23 @@ feature_count">
       <bpmn:outgoing>f5b</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:serviceTask id="Task_TrainPipe" name="9-step pipeline:
-Triple Barrier → 60/20/20
-→ PurgedKFold 5-fold
-→ Calibrated → Sortino
-→ HMAC sign → meta.json">
+• Triple Barrier pt=2.5 sl=1.5
+  max_bars=12
+• 60/20/20 split + 12-bar purge
+• PurgedKFold 5-fold
+  embargo = 2×max_bars / N
+• CalibratedClassifierCV isotonic
+• Sortino search [0.40-0.70]
+• HMAC-SHA256 sign
+• write &lt;key&gt;_meta.json">
       <bpmn:incoming>f5b</bpmn:incoming>
       <bpmn:outgoing>f6</bpmn:outgoing>
     </bpmn:serviceTask>
-    <bpmn:serviceTask id="Task_PSR" name="PSR (Bailey-LdP)
-+ WF consistency
-+ baseline compare">
+    <bpmn:serviceTask id="Task_PSR" name="Bailey-LdP PSR:
+z = (SR - bench)√(n-1)
+  / √(1 - skew·SR
+     + (k-1)/4·SR²)
+PSR &lt; 0.95 → REVIEW">
       <bpmn:incoming>f6</bpmn:incoming>
       <bpmn:outgoing>f7</bpmn:outgoing>
     </bpmn:serviceTask>
@@ -96,12 +105,15 @@ training_runs/
       <bpmn:incoming>f7</bpmn:incoming>
       <bpmn:outgoing>f8</bpmn:outgoing>
     </bpmn:serviceTask>
-    <bpmn:exclusiveGateway id="GW_KPIPass" name="all KPIs pass?">
+    <bpmn:exclusiveGateway id="GW_KPIPass" name="wf_acc ≥ 50%
+AND wf_win_rate ≥ 35%
+AND wf_total_trades ≥ 30?">
       <bpmn:incoming>f8</bpmn:incoming>
       <bpmn:outgoing>f9a</bpmn:outgoing>
       <bpmn:outgoing>f9b</bpmn:outgoing>
     </bpmn:exclusiveGateway>
-    <bpmn:exclusiveGateway id="GW_3Strike" name="3 consec fails?">
+    <bpmn:exclusiveGateway id="GW_3Strike" name="last 3 runs all
+below threshold?">
       <bpmn:incoming>f9b</bpmn:incoming>
       <bpmn:outgoing>f10a</bpmn:outgoing>
       <bpmn:outgoing>f10b</bpmn:outgoing>

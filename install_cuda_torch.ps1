@@ -1,4 +1,4 @@
-Set-Location $PSScriptRoot
+﻿Set-Location $PSScriptRoot
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "   INSTALLING CUDA TORCH FOR RTX 3080 Ti   " -ForegroundColor Cyan
 Write-Host "   (requires CUDA 12.x driver)             " -ForegroundColor Cyan

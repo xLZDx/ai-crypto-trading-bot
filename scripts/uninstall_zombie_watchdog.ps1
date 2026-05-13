@@ -1,4 +1,4 @@
-# Remove the AITradingZombieWatchdog scheduled task.
+﻿# Remove the AITradingZombieWatchdog scheduled task.
 
 $ErrorActionPreference = "Stop"
 $taskName = "AITradingZombieWatchdog"

@@ -1,4 +1,4 @@
-# ──────────────────────────────────────────────────────────────────────────────
+﻿# ──────────────────────────────────────────────────────────────────────────────
 # launch_training_cluster.ps1  -  Start the Training Orchestrator (master node)
 #
 # Run this on the MASTER laptop (the one with training data).
@@ -30,7 +30,7 @@ Write-Host ""
 Write-Host " To connect a worker laptop, run on that machine:" -ForegroundColor Yellow
 Write-Host "   python -m src.training.distributed.worker --master http://${LocalIP}:7700" -ForegroundColor White
 Write-Host ""
-Write-Host " Dashboard cluster panel: http://localhost:5000 → Monitor tab" -ForegroundColor Cyan
+Write-Host " Dashboard cluster panel: http://localhost:5000 -> Monitor tab" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
 

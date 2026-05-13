@@ -1,4 +1,4 @@
-# Zombie watchdog for AI Trading Assistance.
+﻿# Zombie watchdog for AI Trading Assistance.
 #
 # Run via the AITradingZombieWatchdog scheduled task every 10 minutes.
 # Strictly project-scoped: only touches python.exe processes whose command
@@ -42,14 +42,14 @@ function Truncate {
 
 $now = Get-Date
 
-# Project scope filter — single source of truth. Matches venv launches and
+# Project scope filter -- single source of truth. Matches venv launches and
 # `-m src.foo` invocations because both reference the project path on the
 # command line. Excludes everything else by construction.
 $projectProcs = Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
     Where-Object { $_.CommandLine -and ($_.CommandLine -like "*$projectRoot*") }
 
 if (-not $projectProcs) {
-    # Don't spam the log — heartbeat once an hour is enough when clean.
+    # Don't spam the log -- heartbeat once an hour is enough when clean.
     if ((Get-Date).Minute -lt 10) {
         Write-Log "scan: 0 project python processes"
     }
@@ -61,9 +61,9 @@ $killed = 0
 # 1) Command-line dedup. Keep newest, kill older.
 #
 # CRITICAL: skip parent↔child pairs. Windows venv python.exe is a thin
-# launcher that exec's the real interpreter — both processes have IDENTICAL
+# launcher that exec's the real interpreter -- both processes have IDENTICAL
 # CommandLine in WMI but ONE IS THE PARENT OF THE OTHER. Killing the parent
-# breaks the child's stdin/stdout pipe → BrokenPipeError → silent death.
+# breaks the child's stdin/stdout pipe -> BrokenPipeError -> silent death.
 # That bug masqueraded as "dashboard keeps crashing silently" all session.
 # Only flag as duplicates when neither member is an ancestor of the other.
 $groups = $projectProcs | Group-Object CommandLine
@@ -72,7 +72,7 @@ foreach ($g in $groups) {
     $sorted     = $g.Group | Sort-Object CreationDate -Descending
 
     # Check parent/child relationships. If any process in the group is a
-    # parent of another in the same group, this is a venv launcher pair —
+    # parent of another in the same group, this is a venv launcher pair --
     # NOT a duplicate restart. Skip the whole group.
     $pids = $sorted | ForEach-Object { $_.ProcessId }
     $isLauncherPair = $false
@@ -105,7 +105,7 @@ foreach ($g in $groups) {
     }
 }
 
-# 2) Orphaned joblib resource_tracker workers — parent dead.
+# 2) Orphaned joblib resource_tracker workers -- parent dead.
 #    Command pattern: ... main(<PARENT_PID>, <verbose>)
 $jobLibs = $projectProcs | Where-Object { $_.CommandLine -like "*resource_tracker*" }
 foreach ($j in $jobLibs) {

@@ -1,4 +1,4 @@
-$root   = Split-Path -Parent $MyInvocation.MyCommand.Path
+﻿$root   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $python = Join-Path $root 'venv\Scripts\python.exe'
 $logDir = Join-Path $root 'logs'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
@@ -14,6 +14,6 @@ Write-Host "[bot] BIND $($env:BOT_BIND_HOST)"
 
 # Logging: when launched via restart_all.ps1's Start-Detached, the cmd-level
 # `>> bot.log 2>&1` redirect captures everything. The previous Out-File
-# pipeline raced the cmd redirect → IOException ("file used by another
-# process") → silent crash within seconds. Just exec python directly.
+# pipeline raced the cmd redirect -> IOException ("file used by another
+# process") -> silent crash within seconds. Just exec python directly.
 & $python (Join-Path $root 'src\main.py')

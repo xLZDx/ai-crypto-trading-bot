@@ -56,69 +56,81 @@ direction != 0?">
       <bpmn:incoming>g2a</bpmn:incoming>
     </bpmn:endEvent>
     <bpmn:exclusiveGateway id="GW_G1" name="G1: data_freshness
-&lt;=300s?">
+last bar ≤ 300s?
+(DATA_STALE_SEC)">
       <bpmn:incoming>g2b</bpmn:incoming>
       <bpmn:outgoing>g3a</bpmn:outgoing>
       <bpmn:outgoing>g3b</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:exclusiveGateway id="GW_G2" name="G2: API latency
-&lt;500ms?">
+p99 &lt; 500ms?
+(API_LATENCY_LIMIT_MS)">
       <bpmn:incoming>g3b</bpmn:incoming>
       <bpmn:outgoing>g4a</bpmn:outgoing>
       <bpmn:outgoing>g4b</bpmn:outgoing>
     </bpmn:exclusiveGateway>
-    <bpmn:exclusiveGateway id="GW_G3" name="G3: circuit
-breaker open?">
+    <bpmn:exclusiveGateway id="GW_G3" name="G3: circuit breaker
+&lt; 3 consec losses?
+(MAX_CONSECUTIVE_LOSSES)">
       <bpmn:incoming>g4b</bpmn:incoming>
       <bpmn:outgoing>g5a</bpmn:outgoing>
       <bpmn:outgoing>g5b</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:exclusiveGateway id="GW_G4" name="G4: cum drawdown
-&lt;10%?">
+&lt; 10%?
+(MAX_DRAWDOWN_PCT)">
       <bpmn:incoming>g5b</bpmn:incoming>
       <bpmn:outgoing>g6a</bpmn:outgoing>
       <bpmn:outgoing>g6b</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:serviceTask id="Task_HardKill" name="_hard_kill()
 publish &quot;risk_kill_switch&quot;
-flatten_all">
+flatten_all
+(STICKY pause)">
       <bpmn:incoming>g6a</bpmn:incoming>
       <bpmn:incoming>g8a</bpmn:incoming>
       <bpmn:outgoing>g7</bpmn:outgoing>
     </bpmn:serviceTask>
     <bpmn:exclusiveGateway id="GW_G5" name="G5: daily loss
-&lt;5%?">
+&lt; 5%?
+(MAX_DAILY_LOSS_PCT)">
       <bpmn:incoming>g6b</bpmn:incoming>
       <bpmn:outgoing>g8a</bpmn:outgoing>
       <bpmn:outgoing>g8b</bpmn:outgoing>
     </bpmn:exclusiveGateway>
-    <bpmn:exclusiveGateway id="GW_G6" name="G6: liquidity
-proximity &lt;0.85?">
+    <bpmn:exclusiveGateway id="GW_G6" name="G6: liq_proximity
+&lt; 0.85?
+(LIQ_PROXIMITY_BLOCK)">
       <bpmn:incoming>g8b</bpmn:incoming>
       <bpmn:outgoing>g9a</bpmn:outgoing>
       <bpmn:outgoing>g9b</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:exclusiveGateway id="GW_G7" name="G7: BetaFilter
-would_breach?">
+would_breach
+|β|_max = 1.0?">
       <bpmn:incoming>g9b</bpmn:incoming>
       <bpmn:outgoing>g10a</bpmn:outgoing>
       <bpmn:outgoing>g10b</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:serviceTask id="Task_LLM" name="AgenticLLM.evaluate_trade
-(60s decision cache,
-11-model fallback)">
+• 60s TTL decision cache
+• threading.Lock + LRU 500
+• 11-model fallback chain">
       <bpmn:incoming>g10b</bpmn:incoming>
       <bpmn:outgoing>g11</bpmn:outgoing>
     </bpmn:serviceTask>
-    <bpmn:exclusiveGateway id="GW_G8" name="G8: LLM
-REJECTED?">
+    <bpmn:exclusiveGateway id="GW_G8" name="G8: LLM REJECTED?
+(fail-OPEN on quota:
+all cooled-down → APPROVED)">
       <bpmn:incoming>g11</bpmn:incoming>
       <bpmn:outgoing>g12a</bpmn:outgoing>
       <bpmn:outgoing>g12b</bpmn:outgoing>
     </bpmn:exclusiveGateway>
     <bpmn:serviceTask id="Task_Kelly" name="G9: kelly.size
-(capital, p_win,
-vol_scale × size_mult)">
+• half_kelly = True
+• window = 50 trades
+• vol_scale × size_mult
+  (regime-conditional)">
       <bpmn:incoming>g12b</bpmn:incoming>
       <bpmn:outgoing>g13</bpmn:outgoing>
     </bpmn:serviceTask>

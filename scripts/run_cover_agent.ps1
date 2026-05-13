@@ -1,4 +1,4 @@
-# Cover-Agent test generation for critical ML pipeline files
+﻿# Cover-Agent test generation for critical ML pipeline files
 # Usage: .\scripts\run_cover_agent.ps1 [-Target <filename>]
 # Requires: pip install cover-agent
 # Run from project root: D:\test 2\AI trading assistance

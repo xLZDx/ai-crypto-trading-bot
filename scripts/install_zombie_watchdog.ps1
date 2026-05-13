@@ -1,5 +1,5 @@
-# Register the AITradingZombieWatchdog scheduled task (every 10 minutes).
-# Idempotent — safe to re-run; recreates the task each time.
+﻿# Register the AITradingZombieWatchdog scheduled task (every 10 minutes).
+# Idempotent -- safe to re-run; recreates the task each time.
 #
 # Requires: PowerShell 5+ with the ScheduledTasks module (built-in on
 # Windows 10/11). Standard user rights are sufficient for a per-user task.
@@ -43,7 +43,7 @@ $settings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 2) `
     -MultipleInstances IgnoreNew
 
-# LogonType Interactive — runs while the user is logged in (which is when
+# LogonType Interactive -- runs while the user is logged in (which is when
 # the bot/dashboard run anyway). Avoids storing credentials.
 $principal = New-ScheduledTaskPrincipal `
     -UserId "$env:USERDOMAIN\$env:USERNAME" `

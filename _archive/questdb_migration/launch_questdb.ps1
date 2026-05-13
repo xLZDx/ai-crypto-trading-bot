@@ -1,4 +1,4 @@
-# ──────────────────────────────────────────────────────────────────────────────
+﻿# ──────────────────────────────────────────────────────────────────────────────
 # launch_questdb.ps1 - Start QuestDB via the bundled-JRE native binary.
 #
 # Why we don't call questdb.exe: that wrapper insists on Administrator (it

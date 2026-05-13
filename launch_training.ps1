@@ -1,4 +1,4 @@
-# 2026-05-10 fix - PowerShell 5.1+ wraps every stderr write from a native
+﻿# 2026-05-10 fix - PowerShell 5.1+ wraps every stderr write from a native
 # command as a NativeCommandError, even harmless Python INFO log lines
 # routed through stderr (logging default). Three layers of defense:
 #   1. ErrorActionPreference=Continue at script scope so a non-terminating

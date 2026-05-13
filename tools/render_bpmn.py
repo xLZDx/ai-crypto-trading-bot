@@ -319,28 +319,32 @@ def training_flow() -> Flow:
         # KPI gate pre
         Node('GW_IsRetired', 'exclusiveGateway', 'is_retired?', 'Lane_KPIGate_Pre', col=2),
 
-        # MLE pre
+        # MLE pre  — enriched with production threshold values
         Node('Task_Validators', 'serviceTask',
-             'Run 5 validators:\nfreshness, label_imb,\nnan_density, drift z,\nfeature_count',
+             'Run 5 validators:\n• freshness ≤ TF×3\n• label_imbalance ≥ 5%\n• nan_density < 5%\n• drift z-score < 2.0\n• feature_count = 23',
              'Lane_MLE_Pre', col=3),
         Node('GW_AllValPass', 'exclusiveGateway', 'all pass?', 'Lane_MLE_Pre', col=4),
 
-        # Trainer
+        # Trainer — enriched with Triple Barrier constants
         Node('Task_TrainPipe', 'serviceTask',
-             '9-step pipeline:\nTriple Barrier → 60/20/20\n→ PurgedKFold 5-fold\n→ Calibrated → Sortino\n→ HMAC sign → meta.json',
+             '9-step pipeline:\n• Triple Barrier pt=2.5 sl=1.5\n  max_bars=12\n• 60/20/20 split + 12-bar purge\n• PurgedKFold 5-fold\n  embargo = 2×max_bars / N\n• CalibratedClassifierCV isotonic\n• Sortino search [0.40-0.70]\n• HMAC-SHA256 sign\n• write <key>_meta.json',
              'Lane_Trainer', col=7),
 
         # MLE post
         Node('Task_PSR', 'serviceTask',
-             'PSR (Bailey-LdP)\n+ WF consistency\n+ baseline compare',
+             'Bailey-LdP PSR:\nz = (SR - bench)√(n-1)\n  / √(1 - skew·SR\n     + (k-1)/4·SR²)\nPSR < 0.95 → REVIEW',
              'Lane_MLE_Post', col=8),
 
-        # KPI gate post
+        # KPI gate post  — explicit thresholds from training_rules.json:kpi_threshold
         Node('Task_AppendRun', 'serviceTask',
              'Append run row to\ntraining_runs/\n<model>__<tf>.parquet',
              'Lane_KPIGate_Post', col=9),
-        Node('GW_KPIPass', 'exclusiveGateway', 'all KPIs pass?', 'Lane_KPIGate_Post', col=10),
-        Node('GW_3Strike', 'exclusiveGateway', '3 consec fails?', 'Lane_KPIGate_Post', col=11),
+        Node('GW_KPIPass', 'exclusiveGateway',
+             'wf_acc ≥ 50%\nAND wf_win_rate ≥ 35%\nAND wf_total_trades ≥ 30?',
+             'Lane_KPIGate_Post', col=10),
+        Node('GW_3Strike', 'exclusiveGateway',
+             'last 3 runs all\nbelow threshold?',
+             'Lane_KPIGate_Post', col=11),
         Node('Task_Retire', 'serviceTask',
              'Add to\nretired_models.json',
              'Lane_KPIGate_Post', col=12),
@@ -774,26 +778,35 @@ def risk_gates_flow() -> Flow:
              'meta_pass=True AND\ndirection != 0?', 'Lane_Bus', col=1),
         Node('End_DropMeta', 'endEvent', 'drop (no log)', 'Lane_Block', col=2),
 
-        Node('GW_G1', 'exclusiveGateway', 'G1: data_freshness\n<=300s?', 'Lane_Pretrade', col=2),
-        Node('GW_G2', 'exclusiveGateway', 'G2: API latency\n<500ms?', 'Lane_Pretrade', col=3),
-        Node('GW_G3', 'exclusiveGateway', 'G3: circuit\nbreaker open?', 'Lane_Pretrade', col=4),
+        Node('GW_G1', 'exclusiveGateway',
+             'G1: data_freshness\nlast bar ≤ 300s?\n(DATA_STALE_SEC)', 'Lane_Pretrade', col=2),
+        Node('GW_G2', 'exclusiveGateway',
+             'G2: API latency\np99 < 500ms?\n(API_LATENCY_LIMIT_MS)', 'Lane_Pretrade', col=3),
+        Node('GW_G3', 'exclusiveGateway',
+             'G3: circuit breaker\n< 3 consec losses?\n(MAX_CONSECUTIVE_LOSSES)', 'Lane_Pretrade', col=4),
 
-        Node('GW_G4', 'exclusiveGateway', 'G4: cum drawdown\n<10%?', 'Lane_DDgates', col=5),
+        Node('GW_G4', 'exclusiveGateway',
+             'G4: cum drawdown\n< 10%?\n(MAX_DRAWDOWN_PCT)', 'Lane_DDgates', col=5),
         Node('Task_HardKill', 'serviceTask',
-             '_hard_kill()\npublish "risk_kill_switch"\nflatten_all',
+             '_hard_kill()\npublish "risk_kill_switch"\nflatten_all\n(STICKY pause)',
              'Lane_Block', col=6),
-        Node('GW_G5', 'exclusiveGateway', 'G5: daily loss\n<5%?', 'Lane_DDgates', col=6),
+        Node('GW_G5', 'exclusiveGateway',
+             'G5: daily loss\n< 5%?\n(MAX_DAILY_LOSS_PCT)', 'Lane_DDgates', col=6),
 
-        Node('GW_G6', 'exclusiveGateway', 'G6: liquidity\nproximity <0.85?', 'Lane_Liquid', col=7),
-        Node('GW_G7', 'exclusiveGateway', 'G7: BetaFilter\nwould_breach?', 'Lane_Liquid', col=8),
+        Node('GW_G6', 'exclusiveGateway',
+             'G6: liq_proximity\n< 0.85?\n(LIQ_PROXIMITY_BLOCK)', 'Lane_Liquid', col=7),
+        Node('GW_G7', 'exclusiveGateway',
+             'G7: BetaFilter\nwould_breach\n|β|_max = 1.0?', 'Lane_Liquid', col=8),
 
         Node('Task_LLM', 'serviceTask',
-             'AgenticLLM.evaluate_trade\n(60s decision cache,\n11-model fallback)',
+             'AgenticLLM.evaluate_trade\n• 60s TTL decision cache\n• threading.Lock + LRU 500\n• 11-model fallback chain',
              'Lane_LLM', col=9),
-        Node('GW_G8', 'exclusiveGateway', 'G8: LLM\nREJECTED?', 'Lane_LLM', col=10),
+        Node('GW_G8', 'exclusiveGateway',
+             'G8: LLM REJECTED?\n(fail-OPEN on quota:\nall cooled-down → APPROVED)',
+             'Lane_LLM', col=10),
 
         Node('Task_Kelly', 'serviceTask',
-             'G9: kelly.size\n(capital, p_win,\nvol_scale × size_mult)',
+             'G9: kelly.size\n• half_kelly = True\n• window = 50 trades\n• vol_scale × size_mult\n  (regime-conditional)',
              'Lane_Kelly', col=11),
 
         Node('Task_PubOrder', 'serviceTask',
