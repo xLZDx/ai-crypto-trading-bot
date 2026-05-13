@@ -125,20 +125,24 @@ nav{padding:10px 8px}
   backdrop-filter:blur(16px);
 }
 /* Collapsed-card behavior — header stays visible, body hides. The toggle
-   is driven by JS (collapseAllCards / clicking a header). Implementation
-   note: we hide direct-child `.card-body` AND any unclassed div that comes
-   after `.card-header` / `.card-h` so cards built without `.card-body`
-   (older sections) still collapse correctly. */
-.card.collapsed > .card-body,
-.card.collapsed > div:not(.card-header):not(.card-h):not(.card-instructions) {
+   is driven by JS (collapseAllCards / clicking a header). The CSS scope is
+   .card.collapsed (NOT .card.collapsible-section.collapsed) because the
+   Strategy tab already uses its own .collapsible-section / .is-collapsed
+   pattern and its body is .st-sec-body, not .card-body. Layering my
+   .collapsed class on top of those would create a "both classes must clear"
+   trap (operator-visible bug 2026-05-13: Strategy cards refused to expand
+   because is-collapsed cleared but .collapsed stayed). The :not selector
+   in the JS wiring keeps these two systems disjoint. */
+.card.collapsed:not(.collapsible-section) > .card-body,
+.card.collapsed:not(.collapsible-section) > div:not(.card-header):not(.card-h):not(.card-instructions) {
   display: none;
 }
-.card.collapsed { padding-bottom: 0; }
-.card-header, .card-h { cursor: pointer; user-select: none; }
-.card-header::after, .card-h::after {
+.card.collapsed:not(.collapsible-section) { padding-bottom: 0; }
+.card-header:not(.collapsible-hdr), .card-h { cursor: pointer; user-select: none; }
+.card-header:not(.collapsible-hdr)::after, .card-h::after {
   content: "▾"; color:#64748b; font-size:.7rem; margin-left:8px; transition:transform .15s;
 }
-.card.collapsed > .card-header::after,
+.card.collapsed > .card-header:not(.collapsible-hdr)::after,
 .card.collapsed > .card-h::after { transform: rotate(-90deg); display:inline-block; }
 /* Per-card instructions line — short help text below the title. */
 .card-instructions {
@@ -474,7 +478,12 @@ select.field option{background:#0d1628;color:#e2e8f0}
     el.innerHTML = '<span style="color:#666">loading ' + url + '</span>';
     var t = setTimeout(function(){ ctrl.abort(); }, 8000);   // 8 s budget
     try {
-      var r = await fetch(url, { signal: ctrl.signal });
+      // hdrs() carries the dashboard session token. Without it every
+      // institutional pane fetches as anonymous and require_api_key returns
+      // 401 — operator saw "HTTP 401 on /api/decision_summary/BTC%2FUSDT".
+      // Phase 6 panes were the last surface the 2026-05-13 bulk hdrs()
+      // patch missed because fillCard takes URL as a parameter.
+      var r = await fetch(url, { signal: ctrl.signal, headers: hdrs() });
       clearTimeout(t);
       if (_p6Ctrls[id] !== ctrl) return; // superseded by newer fetch
       if (!r.ok) {
@@ -4079,9 +4088,14 @@ const _ALWAYS_EXPANDED_CARDS = new Set([
 ]);
 
 function _initCardCollapse() {
-  // 1. Make every header clickable to toggle its own card.
-  document.querySelectorAll('.card-header, .card-h').forEach(hdr => {
+  // 1. Make every header clickable — but ONLY for cards that don't already
+  //    have their own collapse system (.collapsible-section + toggleSection).
+  //    Double-wiring those cards traps them in a "both classes must clear"
+  //    state, leaving Strategy-tab Data Coverage / Pipeline / Stability
+  //    Heatmap / Pure-Rule-vs-ML stuck collapsed.
+  document.querySelectorAll('.card-header:not(.collapsible-hdr), .card-h').forEach(hdr => {
     if (hdr.dataset.collapseWired === '1') return;
+    if (hdr.closest('.collapsible-section')) return;     // belt-and-braces
     hdr.dataset.collapseWired = '1';
     hdr.addEventListener('click', (e) => {
       // Don't toggle when clicking a button / input inside the header.
@@ -4091,16 +4105,20 @@ function _initCardCollapse() {
       _persistCollapseState();
     });
   });
-  // 2. Default state: collapsed unless the card is in the always-expanded
-  //    list OR the operator explicitly expanded it last session.
+  // 2. Default state: EXPANDED. Only collapse a card if the operator
+  //    explicitly hit the collapse-all button or clicked a card's header
+  //    in a previous session (state saved in localStorage). The original
+  //    plan auto-collapsed every card on load, but operator feedback
+  //    2026-05-13: "I asked to add collapse/expand to cards not to the
+  //    whole screen" — auto-collapse hides the dashboard's operational
+  //    panels on every page load, defeating the point.
   const saved = (() => { try { return JSON.parse(localStorage.getItem('cardCollapseState') || '{}'); } catch (_) { return {}; } })();
   document.querySelectorAll('.card').forEach((card, i) => {
     const id = card.id || `card_${i}`;
     if (_ALWAYS_EXPANDED_CARDS.has(card.id)) return;
-    // saved[id] === false means user expanded it; saved[id] === true means
-    // collapsed; missing means use the default (collapsed).
-    if (saved[id] === false) card.classList.remove('collapsed');
-    else                     card.classList.add('collapsed');
+    if (card.classList.contains('collapsible-section')) return;
+    if (saved[id] === true) card.classList.add('collapsed');
+    else                    card.classList.remove('collapsed');
   });
 }
 
@@ -4116,13 +4134,26 @@ function _persistCollapseState() {
 function collapseAllCards() {
   document.querySelectorAll('.card').forEach(c => {
     if (_ALWAYS_EXPANDED_CARDS.has(c.id)) return;
-    c.classList.add('collapsed');
+    if (c.classList.contains('collapsible-section')) {
+      // Use the existing toggleSection state class so persistence under
+      // 'st-sec-open:<id>' stays in one place.
+      c.classList.add('is-collapsed');
+      if (c.id) { try { localStorage.setItem('st-sec-open:' + c.id, '0'); } catch (_) {} }
+    } else {
+      c.classList.add('collapsed');
+    }
   });
   _persistCollapseState();
 }
 
 function expandAllCards() {
-  document.querySelectorAll('.card').forEach(c => c.classList.remove('collapsed'));
+  document.querySelectorAll('.card').forEach(c => {
+    c.classList.remove('collapsed');
+    if (c.classList.contains('collapsible-section')) {
+      c.classList.remove('is-collapsed');
+      if (c.id) { try { localStorage.setItem('st-sec-open:' + c.id, '1'); } catch (_) {} }
+    }
+  });
   _persistCollapseState();
 }
 
@@ -4136,12 +4167,49 @@ window.addEventListener('load', () => setTimeout(_initCardCollapse, 1500));
 // (2) start a CIO Optuna study, (3) report back via the existing endpoints.
 // Wires existing /api/bake_off + /api/cio/start; the operator picks
 // "apply best" manually so we never auto-train on top of a stale baseline.
+// Persistence helpers — restore Model Comparison card outputs on every page
+// load AND on tab switch (the data was rendered into innerHTML, which
+// survives a tab-display toggle but is lost on dashboard refresh). 2026-05-13
+// operator: "nothing is saved on model comparison if move to the new tab".
+const _MC_STATE_KEY = 'mcCardState_v1';
+function _saveMCState(partial) {
+  try {
+    const cur = JSON.parse(localStorage.getItem(_MC_STATE_KEY) || '{}');
+    Object.assign(cur, partial);
+    localStorage.setItem(_MC_STATE_KEY, JSON.stringify(cur));
+  } catch (_) {}
+}
+function _loadMCState() {
+  try { return JSON.parse(localStorage.getItem(_MC_STATE_KEY) || '{}'); } catch (_) { return {}; }
+}
+function _restoreMCCards() {
+  const s = _loadMCState();
+  // Auto-orchestrate output
+  const orch = document.getElementById('auto-orch-output');
+  if (orch && s.autoOrchOutput) orch.textContent = s.autoOrchOutput;
+  // Bake-off rendered HTML
+  const bake = document.getElementById('bake-off-area');
+  if (bake && s.bakeOffHtml) bake.innerHTML = s.bakeOffHtml;
+  // Strong/Weak
+  const sw = document.getElementById('strong-weak-area');
+  if (sw && s.strongWeakHtml) sw.innerHTML = s.strongWeakHtml;
+  // CIO status
+  const cio = document.getElementById('cio-status-area');
+  if (cio && s.cioStatusHtml) cio.innerHTML = s.cioStatusHtml;
+}
+document.addEventListener('DOMContentLoaded', () => setTimeout(_restoreMCCards, 100));
+
 async function runAutoOrchestrate() {
   const btn  = document.getElementById('auto-orch-btn');
   const out  = document.getElementById('auto-orch-output');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Working…'; }
-  const log = msg => { if (out) out.textContent += `\n${new Date().toLocaleTimeString()}  ${msg}`; };
-  if (out) out.textContent = 'Auto-orchestration starting...';
+  const log = msg => {
+    if (out) {
+      out.textContent += `\n${new Date().toLocaleTimeString()}  ${msg}`;
+      _saveMCState({autoOrchOutput: out.textContent});
+    }
+  };
+  if (out) { out.textContent = 'Auto-orchestration starting...'; _saveMCState({autoOrchOutput: out.textContent}); }
   try {
     // Step 1 — bake-off ranks every (model, tf) cell, suggests retire list.
     log('▶ Running bake-off (wf_sharpe metric)...');
