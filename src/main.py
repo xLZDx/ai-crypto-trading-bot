@@ -177,6 +177,12 @@ class MultiAssetTrader:
         self.daily_sma_last_update = 0
         self.funding_rates = {sym: 0.0 for sym in symbols}
         self.funding_last_update = 0
+        # Periodic refresh of data/balance_real.json so the dashboard's
+        # testnet/mainnet balance cards reflect actual exchange state.
+        # Pre-fix: only refreshed once at init, then went stale (operator
+        # complaint 2026-05-13: "testnet balance is not being updated").
+        self.balance_last_refresh = 0
+        self._BALANCE_REFRESH_SEC = 60
         
         self.current_state = {
             "status": "Initializing...",
@@ -355,8 +361,32 @@ class MultiAssetTrader:
                     funding = await asyncio.to_thread(self.futures_exchange.fetch_funding_rate, future_sym)
                     self.funding_rates[sym] = funding['fundingRate']
                 except Exception as e:
-                    pass # Ignore if the coin has no futures
+                    # Silent-failure review: bare `pass` was swallowing every
+                    # exception type including network timeouts, auth failures
+                    # and symbol-not-found. The "coin has no futures" comment
+                    # only justifies ccxt.BadSymbol; everything else needs to
+                    # be visible. ccxt is not always importable in all
+                    # environments so we match by class name string.
+                    cls = e.__class__.__name__
+                    if cls in ("BadSymbol", "ExchangeError"):
+                        logger.debug(
+                            "[main] funding fetch skipped for %s (BadSymbol): %s", sym, e)
+                    else:
+                        logger.warning(
+                            "[main] funding fetch failed for %s (%s): %s", sym, cls, e)
             self.funding_last_update = current_time
+
+        # 3. Balance refresh: keep data/balance_real.json fresh so the dashboard
+        # testnet card updates. Once-per-init was insufficient — the snapshot
+        # went stale within hours, leaving the operator's balance card showing
+        # last-restart values.
+        if current_time - self.balance_last_refresh > self._BALANCE_REFRESH_SEC:
+            try:
+                from src.engine import dual_balance as _db
+                await asyncio.to_thread(_db.refresh_real_from_binance, self.engine)
+            except Exception as e:
+                logger.warning("[main] balance refresh failed: %s", e)
+            self.balance_last_refresh = current_time
 
     def check_volatility_breakout(self, df):
         """Strategy: Volatility squeeze breakout (Bollinger Bands inside Keltner Channels)"""

@@ -161,7 +161,9 @@ class FuturesAgent(BaseAgent):
         logger.info("[FuturesAgent] SIGNAL %s dir=%+d conf=%.2f lev=%.1fx (futures 1h)",
                     sym, direction, confidence, LEVERAGE)
 
-        self.publish("signal", {
+        # Pass to RiskAgent via 'trade_signal' (NOT 'signal'). Same recursion
+        # break as SpotAgent — see agent_bus topic docs.
+        self.publish("trade_signal", {
             **payload,
             "market": "futures",
             "fee_preset": "futures",
@@ -184,7 +186,10 @@ class FuturesAgent(BaseAgent):
                     direction = -1 if last_funding > 0 else 1
                     logger.info("[FuturesAgent] Funding arb opportunity: %s funding=%.4f dir=%+d",
                                 sym, last_funding, direction)
-                    self.publish("signal", {
+                    # Funding-arb is a self-generated signal (no upstream), but
+                    # we still publish on 'trade_signal' so RiskAgent — the only
+                    # consumer that converts a signal to an order — receives it.
+                    self.publish("trade_signal", {
                         "symbol": sym,
                         "direction": direction,
                         "confidence": 0.65,
@@ -198,4 +203,8 @@ class FuturesAgent(BaseAgent):
                         "leverage": LEVERAGE,
                     })
             except Exception as e:
-                logger.debug("[FuturesAgent] Funding check error for %s: %s", sym, e)
+                # Was logger.debug — silent-failure-hunter flagged that a
+                # programming error in the publish() call (bad payload key)
+                # would never surface. logger.warning keeps the loop running
+                # but makes the failure visible to the operator.
+                logger.warning("[FuturesAgent] Funding check error for %s: %s", sym, e)

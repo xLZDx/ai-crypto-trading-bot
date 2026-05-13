@@ -590,12 +590,29 @@ _USER_INITIATED_AGENTS = frozenset({
     "ContinuousTrainerAgent",
 })
 
+# Test-suite agents leave their heartbeat in agent_status.json after the test
+# process exits (test_v002.py's DummyAgent ran ~2s on 2026-05-13 and was still
+# producing 'STALE' banners hours later). The original implementation used
+# prefix-matching ("Dummy", "Test", ...) which python-reviewer flagged as
+# overly broad — a future "TestnetSpotAgent" or "MockExchangeAgent" production
+# agent would be silently silenced. Switch to an exact-name allowlist so the
+# semantics are explicit; expand if more test artifacts surface.
+_TEST_AGENT_NAMES = frozenset({
+    "DummyAgent",       # tests/test_v002.py:345
+})
+
+
+def _is_test_agent(name: str) -> bool:
+    return name in _TEST_AGENT_NAMES
+
 
 def _probe_agents() -> list[tuple[str, str, str]]:
     """Read data/agent_status.json and flag any agent in error state OR
     with a stale heartbeat (> 3× its own interval_sec). User-initiated
-    agents (Simulator/StrategySimulator) are exempt from the staleness
-    check — their heartbeat going quiet just means the user closed the sim."""
+    agents (Simulator/StrategySimulator) and test-suite agents (Dummy/Test/
+    Mock/Fake/Stub prefix) are exempt from the staleness check — their
+    heartbeats going quiet just means the user closed the sim or the test
+    process exited."""
     faults: list[tuple[str, str, str]] = []
     try:
         agent_path = PROJECT_ROOT / "data" / "agent_status.json"
@@ -605,6 +622,10 @@ def _probe_agents() -> list[tuple[str, str, str]]:
         now = time.time()
         for name, entry in (live or {}).items():
             if not isinstance(entry, dict):
+                continue
+            # Test-suite leftovers should never raise a banner — they're
+            # leftovers, not live agents. Skip before any other check.
+            if _is_test_agent(name):
                 continue
             status = str(entry.get("status", "")).lower()
             if status in ("error", "crashed", "failed", "fault"):

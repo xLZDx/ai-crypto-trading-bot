@@ -98,7 +98,11 @@ class ScalpingAgent(BaseAgent):
                 logger.info("[ScalpingAgent] SCALP %s dir=%+d conf=%.2f move_est=%.3f%%",
                             sym, signal, confidence, expected_move_pct * 100)
 
-                self.publish("signal", {
+                # 'trade_signal', not 'signal' — same recursion break as
+                # SpotAgent/FuturesAgent. Scalping doesn't subscribe to 'signal'
+                # so it wasn't part of the loop, but uses the same downstream
+                # contract: RiskAgent only listens to 'trade_signal'.
+                self.publish("trade_signal", {
                     "symbol": sym,
                     "direction": signal,
                     "confidence": confidence,

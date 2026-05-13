@@ -7293,6 +7293,11 @@ def api_control_trade_mode():
         ctrl = {}
     ctrl['trade_mode'] = mode
     write_json('data/control.json', ctrl)
+    # Invalidate the 30s balance snapshot — without this, the next
+    # /api/balance/by_mode GET serves the previous mode's cached values until
+    # the TTL expires, making the toggle look unresponsive. 2026-05-13 bug.
+    with _balance_live_lock:
+        _balance_live_cache.clear()
     logger = __import__('logging').getLogger(__name__)
     logger.warning("[control] trade_mode → %s (operator action)", mode)
     return jsonify({'ok': True, 'trade_mode': mode})

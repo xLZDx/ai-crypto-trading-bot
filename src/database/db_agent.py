@@ -113,6 +113,12 @@ class DatabaseAgent:
             self._bus.subscribe("candle",         self._on_candle)
             self._bus.subscribe("sim_candle",     self._on_candle)
             self._bus.subscribe("signal",         self._on_signal)
+            # Also capture validated/market-augmented signals so win-rate +
+            # signal→order correlation metrics stay accurate after the 2026-
+            # 05-13 topic split. Same handler; the trade_signal payload is a
+            # superset of the raw signal payload (extra 'market', 'fee_preset',
+            # 'leverage' fields).
+            self._bus.subscribe("trade_signal",   self._on_signal)
             self._bus.subscribe("order",          self._on_trade)
             self._bus.subscribe("trade",          self._on_trade)
             self._bus.subscribe("strategy_pnl",   self._on_strategy_pnl)

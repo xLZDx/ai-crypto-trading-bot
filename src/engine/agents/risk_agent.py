@@ -112,11 +112,23 @@ class RiskAgent(BaseAgent):
                 )
             return not blocked
         except Exception as exc:
-            logger.debug("β-neutrality check failed: %s", exc)
+            # INTENTIONALLY fail-open: an internal beta-filter crash should
+            # not stop trading. But surface it at WARNING (was DEBUG) so the
+            # operator can see when the gate is silently transparent —
+            # silent-failure review flagged the original logger.debug as a
+            # latent revenue-loss risk masked by a NaN-input bug in the
+            # filter.
+            logger.warning("[β-Neutrality] check failed (FAIL-OPEN — trade allowed): %s", exc)
             return True
 
     def _setup_subscriptions(self):
-        self.bus.subscribe("signal", self._on_signal)
+        # Subscribe to 'trade_signal' — the validated, market-augmented signal
+        # published by SpotAgent/FuturesAgent/ScalpingAgent. The raw 'signal'
+        # topic (from SignalAgent) is consumed by the market specialists; if
+        # RiskAgent listened to it too, every signal would be converted to an
+        # order twice (once raw, once after market validation). See agent_bus
+        # topic docs for the topology.
+        self.bus.subscribe("trade_signal", self._on_signal)
         self.bus.subscribe("order", self._on_order_filled)
         self.bus.subscribe("bar", self._on_bar)  # track data freshness
 
@@ -130,8 +142,13 @@ class RiskAgent(BaseAgent):
         if ts_raw:
             try:
                 self._last_bar_ts = datetime.fromisoformat(str(ts_raw)).replace(tzinfo=timezone.utc)
-            except Exception:
-                pass
+            except Exception as exc:
+                # Silent-failure review: a bad timestamp here either skips the
+                # staleness gate (if _last_bar_ts is None) or keeps using a
+                # stale value, letting trades through on a dead feed. Surface
+                # it at WARNING so operators see the bad bar source.
+                logger.warning("[RiskAgent] _on_bar timestamp parse failed: %r (%s)",
+                               ts_raw, exc)
 
     def _hard_kill(self, reason: str) -> None:
         """Publish flatten-all event and open the circuit breaker permanently."""

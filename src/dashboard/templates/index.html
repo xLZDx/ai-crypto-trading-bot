@@ -288,6 +288,34 @@ nav{padding:10px 8px}
 .field:focus{border-color:rgba(59,130,246,.5)}
 .field::placeholder{color:#475569}
 
+/* Global form-control theme — covers every <input>/<select>/<textarea> that
+   was created without the .field class (CIO Agent panel, Bake-off panel,
+   inline inputs in cards). Pre-fix the browser default white-on-light made
+   number boxes unreadable on the dark dashboard (operator complaint
+   2026-05-13: "white boxes for data input is not readable"). */
+input:not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]),
+select,
+textarea {
+  background: rgba(13,20,40,.8);
+  color: #e2e8f0;
+  border: 1px solid rgba(148,163,184,.25);
+  border-radius: 5px;
+  font-family: inherit;
+  outline: none;
+  caret-color: #e2e8f0;
+}
+input::placeholder, textarea::placeholder { color: #64748b; }
+input:focus, select:focus, textarea:focus {
+  border-color: rgba(59,130,246,.55);
+}
+select option { background: #0d1628; color: #e2e8f0; }
+/* Webkit autofill (Chrome/Edge) — without this the browser repaints the
+   number input white on autocomplete. */
+input:-webkit-autofill {
+  -webkit-box-shadow: 0 0 0 30px rgba(13,20,40,1) inset !important;
+  -webkit-text-fill-color: #e2e8f0 !important;
+}
+
 /* Pivot timeline */
 .pivot-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:4px 0}
 .pivot-node{
@@ -567,8 +595,8 @@ select.field option{background:#0d1628;color:#e2e8f0}
 
     try {
       var [ovRes, rlRes] = await Promise.all([
-        fetch('/api/risk/overrides').then(r => r.json()).catch(() => ({})),
-        fetch('/api/rate_limiter/stats').then(r => r.json()).catch(() => ({})),
+        fetch('/api/risk/overrides', { headers: hdrs() }).then(r => r.json()).catch(() => ({})),
+        fetch('/api/rate_limiter/stats', { headers: hdrs() }).then(r => r.json()).catch(() => ({})),
       ]);
 
       var ov = ovRes || {};
@@ -581,7 +609,7 @@ select.field option{background:#0d1628;color:#e2e8f0}
       // Fall back to a small list if the API isn't ready yet.
       var watchlist = [];
       try {
-        var wlR = await fetch('/api/watchlist');
+        var wlR = await fetch('/api/watchlist', { headers: hdrs() });
         if (wlR.ok) {
           var wlD = await wlR.json();
           watchlist = (wlD.symbols || []).map(function(s){ return String(s).replace('_','/').toUpperCase(); });
@@ -724,8 +752,8 @@ select.field option{background:#0d1628;color:#e2e8f0}
 
     try {
       var [taskRes, repRes] = await Promise.all([
-        fetch('/api/scheduler/list').then(r => r.json()).catch(e => ({tasks:[],error:String(e)})),
-        fetch('/api/scheduler/report').then(r => r.json()).catch(e => ({present:false,error:String(e)})),
+        fetch('/api/scheduler/list', { headers: hdrs() }).then(r => r.json()).catch(e => ({tasks:[],error:String(e)})),
+        fetch('/api/scheduler/report', { headers: hdrs() }).then(r => r.json()).catch(e => ({present:false,error:String(e)})),
       ]);
       var tasks = (taskRes && taskRes.tasks) || [];
       var rep = repRes || {};
@@ -959,7 +987,7 @@ select.field option{background:#0d1628;color:#e2e8f0}
       if (balEl) balEl.textContent = (mode === 'real' ? '⚡ ' : '🧪 ') + 'Balance: $' + bal;
     } catch(e) {}
     try {
-      var r2 = await fetch('/api/parquet/coverage'); var d2 = await r2.json();
+      var r2 = await fetch('/api/parquet/coverage', { headers: hdrs() }); var d2 = await r2.json();
       if (covEl) covEl.textContent = 'Parquet: ' + (d2.symbols || 0) + ' sym / ' + (d2.size_gb || 0) + ' GB';
     } catch(e) {}
   };
@@ -990,7 +1018,9 @@ let _lastPortfolioPayload = null;
 async function loadPortfolioByMode() {
   try {
     const mode = _ltCurrentMode || 'testnet';
-    const r = await fetch('/api/portfolio?mode=' + encodeURIComponent(mode));
+    const r = await fetch('/api/portfolio?mode=' + encodeURIComponent(mode, { headers: hdrs() }),
+                          { headers: hdrs() });
+    if (r.status === 401) { console.error('loadPortfolioByMode 401'); return; }
     const d = await r.json();
     if (!d || d.error) {
       console.warn('loadPortfolioByMode: backend reported', d && d.error);
@@ -1047,7 +1077,16 @@ let _ltCurrentMode = 'testnet';
 
 async function ltLoadMode() {
   try {
-    const r = await fetch('/api/control/trade_mode');
+    // Auth: every /api/* GET needs hdrs(). Without it require_api_key returns
+    // 401, the catch below swallows it, and the mode dropdown stays stuck
+    // on the default 'testnet' regardless of the real control.json value.
+    // 2026-05-13 incident: control.json showed trade_mode=paper but the UI
+    // displayed TESTNET — that was this missing header.
+    const r = await fetch('/api/control/trade_mode', { headers: hdrs() });
+    if (r.status === 401) {
+      console.error('ltLoadMode 401 — dashboard session token rejected; reload the page');
+      return;
+    }
     const d = await r.json();
     const m = (d.trade_mode || 'testnet').toLowerCase();
     _ltCurrentMode = m;
@@ -1075,7 +1114,9 @@ async function ltLoadBalance() {
   //   mainnet → live    same as testnet
   try {
     const mode = _ltCurrentMode || 'testnet';
-    const r = await fetch('/api/balance/by_mode?mode=' + encodeURIComponent(mode));
+    const r = await fetch('/api/balance/by_mode?mode=' + encodeURIComponent(mode, { headers: hdrs() }),
+                          { headers: hdrs() });
+    if (r.status === 401) { console.error('ltLoadBalance 401'); return; }
     const d = await r.json();
     const fmt = v => v == null ? '—' : '$' + Number(v).toLocaleString(undefined, {maximumFractionDigits: 2, minimumFractionDigits: 2});
     const fmtSign = v => v == null ? '—' : (v >= 0 ? '+' : '') + '$' + Number(v).toLocaleString(undefined, {maximumFractionDigits: 2, minimumFractionDigits: 2});
@@ -3996,7 +4037,7 @@ function sortMC(col) {
 async function restoreCell(key) {
   if (!confirm('Restore (un-retire) ' + key + '?')) return;
   try {
-    const r = await fetch('/api/registry/' + encodeURIComponent(key) + '/restore',
+    const r = await fetch('/api/registry/' + encodeURIComponent(key, { headers: hdrs() }) + '/restore',
       { method: 'POST', headers: hdrs() });
     const j = await r.json();
     if (j.ok) { loadModelComparison(); }
@@ -4063,7 +4104,7 @@ async function loadBakeOff() {
   const area   = document.getElementById('bake-off-area');
   if (area) area.textContent = 'Running bake-off…';
   try {
-    const r = await fetch('/api/bake_off?metric=' + encodeURIComponent(metric) +
+    const r = await fetch('/api/bake_off?metric=' + encodeURIComponent(metric, { headers: hdrs() }) +
                           '&retire_pct=' + encodeURIComponent(rpct) + '&top=50',
                           { headers: hdrs() });
     const j = await r.json();
@@ -5173,7 +5214,7 @@ function _trMarkPending(msg) {
 let _trJobsTimer = null;
 async function pollTrainingJobs() {
   try {
-    const r = await fetch('/api/training/jobs?limit=10');
+    const r = await fetch('/api/training/jobs?limit=10', { headers: hdrs() });
     const d = await r.json();
     const jobs = d.jobs || [];
     const active = jobs.filter(j => j.status === 'queued' || j.status === 'running' || j.status === 'starting');
@@ -5337,7 +5378,7 @@ async function loadDataCoverage() {
   const sent = $('dcov-sentiment');
   if (chip) chip.textContent = 'Loading…';
   try {
-    const r = await fetch('/api/data/coverage');
+    const r = await fetch('/api/data/coverage', { headers: hdrs() });
     const d = await r.json();
     const symbols    = d.symbols || [];
     const timeframes = d.timeframes || [];
@@ -5433,7 +5474,7 @@ function _dcovMarkPending(msg) {
 let _dcovJobsTimer = null;
 async function pollResampleJobs() {
   try {
-    const r = await fetch('/api/data/resample/jobs?limit=5');
+    const r = await fetch('/api/data/resample/jobs?limit=5', { headers: hdrs() });
     const d = await r.json();
     const jobs = d.jobs || [];
     const active = jobs.filter(j => j.status === 'queued' || j.status === 'running');
@@ -5487,7 +5528,7 @@ function _pipeFmt(snap) {
 
 async function pipelineRefresh() {
   try {
-    const r = await fetch('/api/pipeline/status');
+    const r = await fetch('/api/pipeline/status', { headers: hdrs() });
     const snap = await r.json();
     _pipeStatus = snap;
     // If the training table is rendered, re-render so RUNNING pills sync
@@ -5566,7 +5607,7 @@ async function loadStabilityHeatmap() {
   const stat = $('stab-status');
   if (chip) chip.textContent = 'Loading…';
   try {
-    const r = await fetch('/api/strategy/stability');
+    const r = await fetch('/api/strategy/stability', { headers: hdrs() });
     _stabData = await r.json();
     const ts = _stabData.timeframes || [];
     const ss = _stabData.strategies || [];
@@ -6484,7 +6525,7 @@ async function restartAll() {
     const start = Date.now();
     const probe = async () => {
       try {
-        const ok = await fetch('/api/state', {cache:'no-store'});
+        const ok = await fetch('/api/state', { cache:'no-store', headers: hdrs() });
         if (ok.ok) { banner.textContent = '✓ Dashboard back — reloading…'; setTimeout(() => location.reload(), 700); return; }
       } catch(_) {}
       if (Date.now() - start > 90_000) {
@@ -7393,7 +7434,7 @@ async function renderLocalTrainingProgress() {
 
   let rep = null, models = null;
   try {
-    const r1 = await fetch('/api/scheduler/report');
+    const r1 = await fetch('/api/scheduler/report', { headers: hdrs() });
     if (r1.ok) rep = await r1.json();
   } catch {}
   try {
@@ -7544,7 +7585,7 @@ async function loadFleetCard() {
   if (errEl) errEl.style.display = 'none';
   try {
     const [rules, cluster] = await Promise.all([
-      fetch('/api/training/rules').then(r => r.json()).catch(() => null),
+      fetch('/api/training/rules', { headers: hdrs() }).then(r => r.json()).catch(() => null),
       fetch('http://192.168.0.105:7700/api/cluster/status').then(r => r.json()).catch(() => null),
     ]);
     _fleetCardData = { rules, cluster };

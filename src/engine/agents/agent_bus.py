@@ -5,13 +5,23 @@ Thread-safe publish/subscribe message bus that decouples agents.
 Each agent runs at its own frequency and communicates via typed messages.
 
 Topics:
-  'candle'    — new OHLCV candle available (from DataAgent)
-  'signal'    — directional signal (from SignalAgent)
-  'regime'    — market regime change (from SignalAgent)
-  'risk'      — risk event: drawdown alert, circuit breaker (from RiskAgent)
-  'order'     — order placed/filled/cancelled (from ExecutionAgent)
-  'perf'      — performance alert: live/backtest divergence (from QuantAgent)
-  'retrain'   — model retraining requested (from DataAgent)
+  'candle'         — new OHLCV candle available (from DataAgent)
+  'signal'         — RAW directional signal (from SignalAgent). Consumed by
+                     SpotAgent / FuturesAgent / DatabaseAgent. Must NEVER be
+                     re-published by its own subscribers — doing so creates a
+                     synchronous recursion loop (RiskAgent then RetriggerLLM →
+                     order spam). See `trade_signal` for the downstream variant.
+  'trade_signal'   — VALIDATED + market-augmented signal published by
+                     SpotAgent / FuturesAgent / ScalpingAgent. Consumed by
+                     RiskAgent only. Splitting this topic from 'signal' is what
+                     prevents the market specialists from re-entering their own
+                     handlers (bug 2026-05-13: runaway sell orders + 11-model
+                     Gemini 429 cascade per signal).
+  'regime'         — market regime change (from SignalAgent)
+  'risk'           — risk event: drawdown alert, circuit breaker (from RiskAgent)
+  'order'          — order placed/filled/cancelled (from ExecutionAgent)
+  'perf'           — performance alert: live/backtest divergence (from QuantAgent)
+  'retrain'        — model retraining requested (from DataAgent)
 """
 from __future__ import annotations
 

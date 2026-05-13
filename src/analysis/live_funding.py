@@ -26,6 +26,40 @@ _exchange = None  # ccxt.binanceusdm, lazy-initialised
 _cache: dict[str, tuple[float, float]] = {}  # {symbol: (rate, expires_monotonic)}
 
 
+def _to_ccxt_perpetual(symbol: str) -> str:
+    """Normalize the bot's internal '<BASE>_USDT' format to ccxt's
+    '<BASE>/USDT:USDT' perpetual symbol expected by binanceusdm.
+
+    Examples:
+      'DOGE_USDT'     -> 'DOGE/USDT:USDT'   (internal -> ccxt perpetual)
+      'BTC/USDT:USDT' -> 'BTC/USDT:USDT'    (already ccxt format, no change)
+      'BTC/USDT'      -> 'BTC/USDT'         (ccxt spot — pass through; caller
+                                             is responsible for the type)
+
+    Quote-asset support: only '_USDT' is translated. '_BUSD' / '_USDC' / coin-
+    margined ('BTC_BTC') tails pass through unchanged — ccxt will reject them
+    and FuturesAgent's fail-closed funding gate (futures_agent.py:113) will
+    block the trade, which is the correct behavior for an unsupported pair.
+
+    Why this exists: bot agents pass '<BASE>_USDT' (FuturesAgent.symbols comes
+    from main.py as '<BASE>_USDT' strings). ccxt.binanceusdm.fetch_funding_rate
+    expects perpetual notation. Without translation, every futures-funding
+    call raises `binanceusdm does not have market symbol DOGE_USDT` and the
+    funding gate fail-closes — blocking every futures trade indefinitely.
+    Caused the 2026-05-13 `[live_funding] failed × 1989` banner warning.
+    """
+    if not symbol:
+        # Empty / None — defensive guard. Callers should pass strings, but a
+        # malformed signal can produce '' from payload.get('symbol', '').
+        return symbol or ''
+    if '/' in symbol or ':' in symbol:
+        return symbol
+    if symbol.endswith('_USDT'):
+        base = symbol[:-len('_USDT')]
+        return f"{base}/USDT:USDT"
+    return symbol
+
+
 def _get_exchange():
     """Return the shared ccxt binanceusdm instance, creating it if needed.
 
@@ -73,10 +107,12 @@ def fetch_funding_rate(
         # This prevents a second thread from also seeing a miss and stampeding.
         try:
             exchange = _get_exchange()
-            data = exchange.fetch_funding_rate(symbol)
+            ccxt_symbol = _to_ccxt_perpetual(symbol)
+            data = exchange.fetch_funding_rate(ccxt_symbol)
             rate = float(data["fundingRate"])
             _cache[symbol] = (rate, now + ttl_sec)
-            logger.debug("[live_funding] fetched %s rate=%.6f", symbol, rate)
+            logger.debug("[live_funding] fetched %s (ccxt=%s) rate=%.6f",
+                         symbol, ccxt_symbol, rate)
             return rate
         except Exception as exc:
             logger.warning("[live_funding] fetch_funding_rate(%s) failed: %s", symbol, exc)

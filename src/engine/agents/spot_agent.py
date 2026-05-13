@@ -102,8 +102,10 @@ class SpotAgent(BaseAgent):
 
         logger.info("[SpotAgent] SIGNAL %s dir=%+d conf=%.2f (spot 1h, regime=%d)",
                     sym, direction, ml_confidence, regime)
-        # Pass to risk agent via bus with spot fee context
-        self.publish("signal", {
+        # Pass to RiskAgent via 'trade_signal' (NOT 'signal'). Publishing back
+        # on 'signal' would re-enter this very handler synchronously through
+        # the bus dispatcher — the 2026-05-13 runaway-orders bug.
+        self.publish("trade_signal", {
             **payload,
             "market": "spot",
             "fee_preset": "spot",
