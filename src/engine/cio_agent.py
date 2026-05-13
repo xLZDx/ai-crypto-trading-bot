@@ -269,18 +269,90 @@ class CIOAgent:
         except Exception as e:
             logger.error("CIO Agent: could not persist proposal: %s", e)
 
-    def apply_best(self, study_name: str | None = None, operator_approved: bool = False) -> dict:
+    def apply_best(
+        self,
+        study_name: str | None = None,
+        operator_approved: bool = False,
+        target_model: str = 'meta',
+    ) -> dict:
         """
-        Promote the winning HP block into data/training_rules.json. REQUIRES
-        operator_approved=True — never auto-applies.
+        Promote the winning HP block from the latest proposal into
+        `data/training_rules.json` under `models[target_model].cio_overrides`.
+        REQUIRES operator_approved=True — never auto-applies.
+
+        Steps:
+          1. Load proposals; find the matching study (or latest if name omitted).
+          2. Back up training_rules.json to training_rules.json.bak-<timestamp>.
+          3. Merge best_params into the model entry under `cio_overrides`.
+          4. Return the diff so the operator can audit before running the next training.
+
+        The trainer reads `cio_overrides` first if present (caller's
+        responsibility to wire this — trainers don't automatically pick this up
+        yet; see Sprint 1A R1 contract). For now this acts as a stored
+        proposal-record in the canonical config.
         """
         if not operator_approved:
             return {
                 'ok': False,
                 'error': 'operator_approved=True required. Review the proposal first.',
             }
-        # Implementation left for after Optuna study completes — out of Phase 0-FIX scope
-        return {'ok': True, 'note': 'apply_best not yet implemented'}
+        try:
+            from src.utils.safe_json import read_json, write_json
+        except Exception as e:
+            return {'ok': False, 'error': f'safe_json unavailable: {e}'}
+
+        proposals_data = read_json(str(CIO_PROPOSALS_PATH), default={'proposals': []}) or {}
+        proposals = proposals_data.get('proposals') or []
+        if not proposals:
+            return {'ok': False, 'error': 'no proposals to apply — run a CIO study first.'}
+
+        # Pick the matching study (or the latest if name omitted)
+        study = study_name or self.study_name
+        match = [p for p in proposals if (p.get('study_name') == study)]
+        if not match:
+            return {'ok': False,
+                    'error': f'no proposal found for study_name={study!r}'}
+        winning = max(match, key=lambda p: p.get('best_value', float('-inf')))
+
+        # Read current training_rules
+        rules = read_json(str(TRAINING_RULES_PATH), default={}) or {}
+        if not isinstance(rules, dict) or 'models' not in rules:
+            return {'ok': False, 'error': 'training_rules.json has unexpected shape'}
+        if target_model not in rules['models']:
+            return {'ok': False,
+                    'error': f'target_model={target_model!r} not found in training_rules'}
+
+        # Backup
+        backup_path = TRAINING_RULES_PATH.with_suffix(
+            f'.json.bak-{datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")}'
+        )
+        try:
+            backup_path.write_text(json.dumps(rules, indent=2), encoding='utf-8')
+        except Exception as e:
+            return {'ok': False, 'error': f'cannot write backup: {e}'}
+
+        # Merge best_params into cio_overrides
+        before = dict(rules['models'][target_model].get('cio_overrides') or {})
+        after = dict(winning.get('best_params') or {})
+        after['_applied_at'] = datetime.now(timezone.utc).isoformat()
+        after['_study'] = study
+        after['_best_value'] = float(winning.get('best_value', 0.0))
+        rules['models'][target_model]['cio_overrides'] = after
+
+        write_json(str(TRAINING_RULES_PATH), rules)
+        logger.info(
+            "CIO apply_best: %s.cio_overrides updated (study=%s, best_value=%.4f) "
+            "→ backup=%s",
+            target_model, study, after['_best_value'], backup_path.name,
+        )
+        return {
+            'ok': True,
+            'target_model': target_model,
+            'study': study,
+            'before': before,
+            'after': after,
+            'backup': backup_path.name,
+        }
 
 
 # ── HTTP submitters/pollers for live cluster integration ────────────────────

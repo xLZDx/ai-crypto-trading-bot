@@ -1507,6 +1507,42 @@ def cio_proposals():
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
+@app.route('/api/cio/apply_best', methods=['POST'])
+@require_api_key
+def cio_apply_best():
+    """
+    Promote the winning CIO proposal into training_rules.json.
+    Requires operator_approved=true (explicit, never silent).
+
+    Request JSON:
+      {
+        "operator_approved": true,
+        "target_model": "meta",         // which models[*] block to update
+        "study_name": "macro_parameter_search_v1"  // optional; defaults to latest
+      }
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    approved = bool(body.get('operator_approved', False))
+    target   = body.get('target_model') or 'meta'
+    study    = body.get('study_name')
+
+    if not approved:
+        return jsonify({'ok': False, 'error': 'operator_approved=true required (review proposal first)'}), 400
+
+    try:
+        from src.engine import cio_agent as _cio
+        # Stateless one-shot: construct a transient agent just for the apply call.
+        agent = _cio.CIOAgent(study_name=study or 'macro_parameter_search_v1')
+        result = agent.apply_best(
+            study_name=study,
+            operator_approved=True,
+            target_model=target,
+        )
+        return jsonify(result), (200 if result.get('ok') else 400)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 # ── KPI gate registry endpoints (Sprint 1A R2) ──────────────────────────────
 
 @app.route('/api/registry/retired', methods=['GET'])

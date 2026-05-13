@@ -2956,6 +2956,16 @@ document.addEventListener('DOMContentLoaded', function() {
           <button onclick="startCIO()" style="padding:6px 12px;cursor:pointer;background:#1e6">▶ Start study</button>
           <button onclick="loadCIOStatus()" style="padding:6px 12px;cursor:pointer">↻ Refresh status</button>
           <button onclick="loadCIOProposals()" style="padding:6px 12px;cursor:pointer">📋 View proposals</button>
+          <label style="font-size:12px;color:#aaa;margin-left:6px">Apply to:
+            <select id="cio-apply-target" style="padding:4px;margin-left:4px">
+              <option value="meta">meta</option>
+              <option value="base">base</option>
+              <option value="trend">trend</option>
+              <option value="scalping">scalping</option>
+              <option value="futures">futures</option>
+            </select>
+          </label>
+          <button onclick="applyCIOBest()" style="padding:6px 12px;cursor:pointer;background:#69e;color:#000">📤 Apply best</button>
         </div>
         <div id="cio-status-area" style="padding:10px;color:#888;font-size:12px;font-family:monospace">
           Click "Start study" to launch an Optuna search across timeframe × pt × sl × threshold.
@@ -4034,6 +4044,25 @@ async function loadCIOStatus() {
     ].filter(Boolean);
     area.textContent = lines.join('\n');
   } catch (e) { /* swallow — operator can hit Refresh */ }
+}
+
+async function applyCIOBest() {
+  const target = document.getElementById('cio-apply-target').value;
+  if (!confirm('Apply best CIO proposal to "' + target + '" in training_rules.json? A backup will be created.')) return;
+  try {
+    const r = await fetch('/api/cio/apply_best', {
+      method: 'POST', headers: hdrs(),
+      body: JSON.stringify({ operator_approved: true, target_model: target })
+    });
+    const j = await r.json();
+    if (j.ok) {
+      alert('Applied to ' + j.target_model + '\n\nBackup: ' + j.backup +
+            '\n\nBefore: ' + JSON.stringify(j.before) +
+            '\n\nAfter: '  + JSON.stringify(j.after));
+    } else {
+      alert('Apply failed: ' + (j.error || 'unknown'));
+    }
+  } catch (e) { alert('Apply error: ' + e); }
 }
 
 async function loadCIOProposals() {
