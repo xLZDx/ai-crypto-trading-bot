@@ -4409,7 +4409,12 @@ async function loadStrongWeakAnalytics() {
       const list = byTf[tf];
       const strong = list.slice(0, 3);
       const weak   = list.slice(-3).reverse();
-      const cellLine = c => `<div>${c.model} → ${_metricLabel(c)} ${fmt(_metric(c))}` +
+      // esc() is the file's HTML-escape helper. c.model comes from
+      // /api/model_comparison (server-authoritative) but is interpolated
+      // into innerHTML, so escape for consistency with the rest of the
+      // template and to prevent the pattern from being copied into a
+      // higher-risk context. Flagged HIGH by code-reviewer 2026-05-13.
+      const cellLine = c => `<div>${esc(c.model)} → ${_metricLabel(c)} ${fmt(_metric(c))}` +
                             ((c.last_run||{}).wf_win_rate != null ? ` · WinRate ${fmt(c.last_run.wf_win_rate)}` : '') +
                             `</div>`;
       parts.push(`<div style="margin-bottom:10px">
@@ -7558,10 +7563,7 @@ function renderModelStats(models, cuda) {
     // as data/training_rules.json (loaded by _loadKpiThresholds at boot).
     // Model meta JSON publishes `walk_forward_mean_acc` and `win_rate_pct`;
     // map them to the threshold schema (wf_acc / wf_win_rate / wf_total_trades).
-    const _thr = (typeof _kpiThresholds === 'object' && _kpiThresholds[m.key])
-                  ? _kpiThresholds[m.key]
-                  : (typeof _DEFAULT_KPI_THRESHOLDS === 'object' ? _DEFAULT_KPI_THRESHOLDS
-                  : { wf_acc: 50.0, wf_win_rate: 35.0, wf_total_trades: 30 });
+    const _thr = (_kpiThresholds && _kpiThresholds[m.key]) || _DEFAULT_KPI_THRESHOLDS;
     const _wfAcc     = m.walk_forward_mean_acc ?? null;
     const _wfWinRate = m.win_rate_pct ?? null;
     const _wfTrades  = m.n_test ?? m.n_samples ?? null;  // best-available proxy
