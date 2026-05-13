@@ -2,154 +2,154 @@
   "version": 1,
   "entries": {
     "models/scalping_1m_model.joblib": {
-      "hmac_sha256": "67a720c60e3a63becc111cade472ea4d277290384bd55afd1315288916b6ef38",
-      "size_bytes": 112976,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "hmac_sha256": "ff1924da697e300260f0d057f12d686226380054e0e73b4758facd803a723106",
+      "size_bytes": 110080,
+      "signed_at": "2026-05-13T09:17:10Z"
     },
     "models/scalping_model.joblib": {
-      "hmac_sha256": "67a720c60e3a63becc111cade472ea4d277290384bd55afd1315288916b6ef38",
-      "size_bytes": 112976,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "hmac_sha256": "ff1924da697e300260f0d057f12d686226380054e0e73b4758facd803a723106",
+      "size_bytes": 110080,
+      "signed_at": "2026-05-13T09:17:10Z"
     },
     "models/base_15m_model.joblib": {
       "hmac_sha256": "81e50267b8284c965bc69d305928a70ed041b61d71340a9d8c25355672c62695",
       "size_bytes": 422216,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "signed_at": "2026-05-13T09:17:09Z"
     },
     "models/base_1d_model.joblib": {
       "hmac_sha256": "fd80d683c3cfebc351d56f3d2f3339e0ed84a434219e318078bcfd802afa72a3",
       "size_bytes": 421704,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "signed_at": "2026-05-13T09:17:09Z"
     },
     "models/base_1h_model.joblib": {
-      "hmac_sha256": "cccd8aca04b38ce84e6315c8ac1e6f30b3884ba1e0c339c7b155ca71e07daaeb",
-      "size_bytes": 422344,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "hmac_sha256": "28f86d446f59314dc463ff67ab6c56fc66c649f9c358c3ac05500b19a6628a65",
+      "size_bytes": 583040,
+      "signed_at": "2026-05-13T09:17:09Z"
     },
     "models/base_1m_model.joblib": {
       "hmac_sha256": "1dd82afc162c2ed8632ac053639927ce8cc9f98cbbb2ea2707d31e36547d2c9c",
       "size_bytes": 425224,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "signed_at": "2026-05-13T09:17:09Z"
     },
     "models/base_4h_model.joblib": {
       "hmac_sha256": "2e44fb04541935b4c2aaaacbb40b0608808faeb7e14da147c2a9cc9d480b71bd",
       "size_bytes": 421976,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "signed_at": "2026-05-13T09:17:09Z"
     },
     "models/base_5m_model.joblib": {
       "hmac_sha256": "79a2909e38d9bbaecad18b813235ccee0d180bfa331f4ea89f31058530e13574",
       "size_bytes": 422888,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "signed_at": "2026-05-13T09:17:09Z"
     },
     "models/btc_rf_model.joblib": {
-      "hmac_sha256": "cccd8aca04b38ce84e6315c8ac1e6f30b3884ba1e0c339c7b155ca71e07daaeb",
-      "size_bytes": 422344,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "hmac_sha256": "28f86d446f59314dc463ff67ab6c56fc66c649f9c358c3ac05500b19a6628a65",
+      "size_bytes": 583040,
+      "signed_at": "2026-05-13T09:17:09Z"
     },
     "models/futures_15m_model.joblib": {
       "hmac_sha256": "95bc408384a9b84a5f66e165153a6fa38c3e4669b6bb79b19b84ac9b8d2d4f03",
       "size_bytes": 1478321,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "signed_at": "2026-05-13T09:17:09Z"
     },
     "models/futures_1d_model.joblib": {
       "hmac_sha256": "86a0c9699b844d4d0904d0a59a732fdd06b6fe1882b75ad4f025c43a5285b167",
       "size_bytes": 1377169,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "signed_at": "2026-05-13T09:17:09Z"
     },
     "models/futures_1h_model.joblib": {
       "hmac_sha256": "ba0d383174d6631143e79926e50dbe430321e07cb029388badbec03516059092",
       "size_bytes": 1478129,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "signed_at": "2026-05-13T09:17:09Z"
     },
     "models/futures_1m_model.joblib": {
       "hmac_sha256": "3d9158ef39c7641626ffd94d3e2d79401080fd79c6cade176b116db3e500aba3",
       "size_bytes": 1480817,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "signed_at": "2026-05-13T09:17:09Z"
     },
     "models/futures_4h_model.joblib": {
       "hmac_sha256": "6ad239bcaf8e0a387627b45c6e36de5a416255f9bf2747fe30bb9a0b3f684c48",
       "size_bytes": 1477377,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "signed_at": "2026-05-13T09:17:09Z"
     },
     "models/futures_5m_model.joblib": {
       "hmac_sha256": "f01fefea59dce429f12d7ea637c17701ea06b508d616d4ec0f1a0484397a5c9b",
       "size_bytes": 1479089,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "signed_at": "2026-05-13T09:17:09Z"
     },
     "models/futures_short_model.joblib": {
       "hmac_sha256": "ba0d383174d6631143e79926e50dbe430321e07cb029388badbec03516059092",
       "size_bytes": 1478129,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "signed_at": "2026-05-13T09:17:09Z"
     },
     "models/meta_15m_model.joblib": {
       "hmac_sha256": "f0e037cc1570ca74f26f10a930e4df58bad5e0e15bdfae547c301f76bbd8d53e",
       "size_bytes": 581204,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "signed_at": "2026-05-13T09:17:09Z"
     },
     "models/meta_1h_model.joblib": {
-      "hmac_sha256": "1902901540db8086807bae132affa7ab5dc16da430fe39b89fe5d7b87871d636",
-      "size_bytes": 544052,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "hmac_sha256": "0b97a09a12295b6f47ddb50b18aea3ac4b3537c241920c60fb73bfd66c878035",
+      "size_bytes": 521888,
+      "signed_at": "2026-05-13T09:17:09Z"
     },
     "models/meta_labeler.joblib": {
-      "hmac_sha256": "1902901540db8086807bae132affa7ab5dc16da430fe39b89fe5d7b87871d636",
-      "size_bytes": 544052,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "hmac_sha256": "0b97a09a12295b6f47ddb50b18aea3ac4b3537c241920c60fb73bfd66c878035",
+      "size_bytes": 521888,
+      "signed_at": "2026-05-13T09:17:09Z"
     },
     "models/oft_model.pt": {
       "hmac_sha256": "eb509436ab685cd339ae97a7ed295a065cc21a82e88541feeb29ef72925fb046",
       "size_bytes": 634603,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "signed_at": "2026-05-13T09:17:09Z"
     },
     "models/regime_classifier.joblib": {
       "hmac_sha256": "991a98fcd732abd504544c54b26db6aa36d7e5e6dbacb3ad8a45b7e82643e39f",
       "size_bytes": 11556,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "signed_at": "2026-05-13T09:17:09Z"
     },
     "models/tft_model.pt": {
       "hmac_sha256": "ff49ea215067cf305ffd2f8ca823b6ee1bd9e3e913e510ed1e432efb4212f71c",
       "size_bytes": 6812347,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "signed_at": "2026-05-13T09:17:10Z"
     },
     "models/tft_model.pt.ckpt": {
       "hmac_sha256": "3cebddd1a7a62c9571ecaa883f0349ea7bbdc05b9d4fe77381dae911041acf3c",
       "size_bytes": 7810284,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "signed_at": "2026-05-13T09:17:10Z"
     },
     "models/trend_15m_model.joblib": {
       "hmac_sha256": "018fcf7b51ea11b04b1c5f4de3ec88fb5b7fd5519a994cf43c01e42f84e6bfd1",
       "size_bytes": 1821009,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "signed_at": "2026-05-13T09:17:10Z"
     },
     "models/trend_1d_model.joblib": {
       "hmac_sha256": "54cf87cd8806575842719ab8b3fbccca4ffcd2bbd38ab1dd1cc5217fd3fba4f2",
       "size_bytes": 1194289,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "signed_at": "2026-05-13T09:17:10Z"
     },
     "models/trend_1h_model.joblib": {
-      "hmac_sha256": "7bb027e1043d49889185bdeb16f8faa0df5dd6b1d75b184640db1f421634fee9",
-      "size_bytes": 1799665,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "hmac_sha256": "b0376bfc028e0a1becda41374087f36f29eb3c4cd1424dd0e2e810d4ff67f6b2",
+      "size_bytes": 227360,
+      "signed_at": "2026-05-13T09:17:10Z"
     },
     "models/trend_1w_model.joblib": {
       "hmac_sha256": "c9333f619fca81ee698d31d620b1ce39f74463cea9b7a75502bf5b3d9d210197",
       "size_bytes": 94289,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "signed_at": "2026-05-13T09:17:10Z"
     },
     "models/trend_4h_model.joblib": {
       "hmac_sha256": "898e0e9d2c4b3bad18cfb2f2164be11c95a67a57960529a1489480633e9aa3b8",
       "size_bytes": 1732897,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "signed_at": "2026-05-13T09:17:10Z"
     },
     "models/trend_BTC_USDT_worker.joblib": {
       "hmac_sha256": "65e9ddc205827f23ed5f529f4fe0d49edc1a330417e93c26f058d23046fbd23c",
       "size_bytes": 42095833,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "signed_at": "2026-05-13T09:17:10Z"
     },
     "models/trend_model.joblib": {
-      "hmac_sha256": "7bb027e1043d49889185bdeb16f8faa0df5dd6b1d75b184640db1f421634fee9",
-      "size_bytes": 1799665,
-      "signed_at": "2026-05-13T08:51:41Z"
+      "hmac_sha256": "b0376bfc028e0a1becda41374087f36f29eb3c4cd1424dd0e2e810d4ff67f6b2",
+      "size_bytes": 227360,
+      "signed_at": "2026-05-13T09:17:10Z"
     }
   }
 }
