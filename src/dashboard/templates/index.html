@@ -2469,6 +2469,29 @@ document.addEventListener('DOMContentLoaded', function() {
 
     <!-- ══════════ TAB: MONITOR & LOGS ══════════ -->
     <div id="tab-monitor" class="tab-pane">
+
+      <!-- Process Registry (Phase X1.1, 2026-05-13) — singleton-enforced
+           role table. Every long-running process claims a role; the reaper
+           drops zombie entries every 60s. -->
+      <div class="card" id="card-process-registry" style="margin-bottom:14px">
+        <div class="card-header">
+          <span class="card-title">🛡 Process Registry</span>
+          <div style="display:flex;gap:6px">
+            <button onclick="loadProcessRegistry()" style="padding:4px 10px;cursor:pointer;font-size:.62rem;border-radius:5px;background:rgba(59,130,246,.18);color:#93c5fd;border:1px solid rgba(59,130,246,.35)">↻ Refresh</button>
+            <button onclick="reapZombies()" style="padding:4px 10px;cursor:pointer;font-size:.62rem;border-radius:5px;background:rgba(251,113,133,.18);color:#fb7185;border:1px solid rgba(251,113,133,.35)" title="Force a zombie sweep — drops registry entries whose PIDs are dead or whose heartbeats are stale.">🧹 Reap zombies</button>
+          </div>
+        </div>
+        <div class="card-instructions">
+          Every long-running process (bot, dashboard, cluster_orch, etc.) claims a role here. Duplicates are blocked at startup. Dead PIDs / stale heartbeats are reaped every 60s.
+        </div>
+        <div class="card-body">
+          <div id="proc-registry-active" style="font-size:.7rem">Loading…</div>
+          <details style="margin-top:12px">
+            <summary style="cursor:pointer;color:#94a3b8;font-size:.62rem">Audit log (last 50 events)</summary>
+            <div id="proc-registry-audit" style="margin-top:6px;font-family:'JetBrains Mono',monospace;font-size:.58rem;color:#64748b;max-height:240px;overflow-y:auto;background:rgba(5,8,22,.45);padding:8px 11px;border-radius:6px"></div>
+          </details>
+        </div>
+      </div>
       <style>
         .mon-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;margin-bottom:16px}
         .mon-card{background:var(--bg-2);border:1px solid rgba(148,163,184,.12);border-radius:10px;padding:12px 14px}
@@ -4198,6 +4221,79 @@ function _restoreMCCards() {
   if (cio && s.cioStatusHtml) cio.innerHTML = s.cioStatusHtml;
 }
 document.addEventListener('DOMContentLoaded', () => setTimeout(_restoreMCCards, 100));
+
+// ─── Process Registry card (Phase X1.1, 2026-05-13) ────────────────────────
+async function loadProcessRegistry() {
+  const activeEl = document.getElementById('proc-registry-active');
+  const auditEl  = document.getElementById('proc-registry-audit');
+  if (activeEl) activeEl.innerHTML = 'Loading…';
+  try {
+    const r = await fetch('/api/process/registry', { headers: hdrs() });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'unknown');
+    // Active roles table
+    const active = j.active || {};
+    const roles = Object.keys(active).sort();
+    if (!roles.length) {
+      activeEl.innerHTML = '<em style="color:#64748b">No active roles registered. Bot/dashboard processes will appear here on next restart.</em>';
+    } else {
+      let html = '<div style="display:grid;grid-template-columns:auto auto auto 1fr auto;gap:6px 14px;align-items:center;font-size:.66rem">';
+      html += '<div style="font-weight:700;color:#94a3b8;letter-spacing:.05em">ROLE</div>' +
+              '<div style="font-weight:700;color:#94a3b8">PID</div>' +
+              '<div style="font-weight:700;color:#94a3b8">HOST</div>' +
+              '<div style="font-weight:700;color:#94a3b8">CMDLINE</div>' +
+              '<div style="font-weight:700;color:#94a3b8;text-align:right">LAST HB</div>';
+      const now = Date.now() / 1000;
+      for (const role of roles) {
+        const e = active[role];
+        const hbAge = e.last_heartbeat_ts ? (now - Number(e.last_heartbeat_ts)) : null;
+        const hbCol = hbAge == null ? '#64748b' : (hbAge < 90 ? '#34d399' : hbAge < 300 ? '#fbbf24' : '#fb7185');
+        html += `<div style="font-weight:700;color:#cbd5e1">${esc(role)}</div>` +
+                `<div style="font-family:'JetBrains Mono',monospace;color:#94a3b8">${e.pid ?? '?'}</div>` +
+                `<div style="color:#94a3b8;font-size:.6rem">${esc(e.host || '?')}</div>` +
+                `<div style="font-family:'JetBrains Mono',monospace;color:#64748b;font-size:.58rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((e.cmdline || '').slice(0, 80))}</div>` +
+                `<div style="color:${hbCol};text-align:right;font-size:.6rem">${hbAge == null ? '—' : hbAge.toFixed(0) + 's ago'}</div>`;
+      }
+      html += '</div>';
+      activeEl.innerHTML = html;
+    }
+    // Audit log
+    if (auditEl) {
+      const audit = j.audit || [];
+      if (!audit.length) {
+        auditEl.innerHTML = '<em>No audit events yet.</em>';
+      } else {
+        const lines = audit.slice(-50).reverse().map(e => {
+          const evtCol = ({claim:'#34d399', release:'#94a3b8',
+                           claim_blocked:'#fb7185', reap:'#fbbf24'})[e.event] || '#cbd5e1';
+          return `<div>${esc((e.ts || '').slice(0,19))}  <span style="color:${evtCol}">${esc(e.event || '?')}</span>  role=${esc(e.role || '')}  pid=${esc(String(e.pid ?? ''))}  ${e.reason ? '· ' + esc(e.reason) : ''}</div>`;
+        });
+        auditEl.innerHTML = lines.join('');
+      }
+    }
+  } catch (e) {
+    if (activeEl) activeEl.innerHTML = `<span style="color:#fb7185">Error: ${esc(String(e.message || e))}</span>`;
+  }
+}
+
+async function reapZombies() {
+  try {
+    const r = await fetch('/api/process/registry/reap', { method: 'POST', headers: hdrs() });
+    const j = await r.json();
+    if (!j.ok) { alert('Reap failed: ' + (j.error || 'unknown')); return; }
+    if (j.count) {
+      alert(`Reaped ${j.count} zombie role(s): ${(j.reaped || []).join(', ')}`);
+    } else {
+      alert('No zombies found — registry is clean.');
+    }
+    loadProcessRegistry();
+  } catch (e) {
+    alert('Reap error: ' + (e.message || e));
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => setTimeout(loadProcessRegistry, 800));
 
 async function runAutoOrchestrate() {
   const btn  = document.getElementById('auto-orch-btn');

@@ -1574,6 +1574,38 @@ class MultiAssetTrader:
                 logger.warning("Failed to start %s: %s", agent.NAME, exc)
 
 if __name__ == "__main__":
+    # Process registry: claim the 'bot' role BEFORE any heavy init. If another
+    # live bot already owns it, exit cleanly — no duplicate. The previous
+    # 2026-05-13 incident produced a 12.8-hour CPU runaway because
+    # restart_all spawned a fresh bot on top of an old buggy one with no
+    # arbitration. This block closes that mode of failure permanently.
+    try:
+        from src.utils.process_registry import claim_role, release_role, heartbeat
+        import atexit, threading
+        ok, existing = claim_role('bot', by='src.main')
+        if not ok:
+            import sys
+            logger.error(
+                "[startup] Another bot already running: PID=%s cmd=%s hb=%s. "
+                "Exiting to avoid duplicate.",
+                existing.get('pid'),
+                (existing.get('cmdline') or '?')[:80],
+                existing.get('last_heartbeat'),
+            )
+            sys.exit(0)
+        atexit.register(lambda: release_role('bot', reason='atexit'))
+        # Background heartbeat — refreshes the registry entry every 60s so
+        # reap_zombies() doesn't mistake a long-running bot for stale.
+        def _hb_loop():
+            import time as _t
+            while True:
+                _t.sleep(60)
+                try: heartbeat('bot')
+                except Exception: pass
+        threading.Thread(target=_hb_loop, daemon=True, name='registry-hb').start()
+    except Exception as exc:
+        logger.warning("[startup] process_registry unavailable: %s", exc)
+
     try:
         from src.utils.hw_config import configure as _hw_cfg
         _hw_cfg(verbose=True)
@@ -1586,6 +1618,6 @@ if __name__ == "__main__":
             loaded_symbols = json.load(f)
     else:
         loaded_symbols = ['BTC/USDT', 'SOL/USDT', 'ADA/USDT', 'ETH/USDT']
-        
+
     trader = MultiAssetTrader(symbols=loaded_symbols)
     trader.run()

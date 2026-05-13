@@ -44,3 +44,65 @@ def load_cio_overrides(model_key: str) -> dict:
     except Exception as e:
         logger.warning("[CIO overrides] could not read %s overrides: %s", model_key, e)
         return {}
+
+
+def merge_with_defaults(
+    model_key: str,
+    defaults: dict,
+    schema: dict,
+) -> tuple[dict, dict]:
+    """Schema-bounded MERGE of CIO overrides on top of hardcoded defaults.
+
+    Used by trend / futures / scalping trainers (and any future trainer)
+    so the operator's CIO Optuna proposals actually reach the model's
+    hyperparameters. Pre-2026-05-13 the merge was implemented only in
+    train_model.py:_load_model_params (base) — the other three trainers
+    audit-logged the overrides but didn't apply them, defeating the
+    learning loop.
+
+    Args:
+        model_key:  e.g. 'trend', 'futures', 'scalping'
+        defaults:   {hp_name: default_value}
+        schema:     {hp_name: (expected_type, lo, hi)}
+                    lo=hi=None means no range check (e.g. string params).
+
+    Returns:
+        (merged_params, applied_overrides_dict)
+        merged_params      — defaults with valid CIO overrides applied.
+        applied_overrides_dict — subset of CIO overrides that survived
+                                 schema validation; useful for persisting
+                                 to the model meta JSON as
+                                 cio_overrides_applied=... for audit.
+
+    Overrides that fail type or range checks are skipped with a WARN. The
+    fallback chain matches train_model.py:_load_model_params semantics
+    exactly, so trainer behavior is consistent across all 4 model paths.
+    """
+    overrides = load_cio_overrides(model_key)
+    if not overrides:
+        return dict(defaults), {}
+
+    merged = dict(defaults)
+    applied: dict = {}
+    for key, (expected_type, lo, hi) in schema.items():
+        if key not in overrides:
+            continue
+        val = overrides[key]
+        if not isinstance(val, expected_type):
+            logger.warning(
+                "[CIO override %s] '%s' expected %s got %s — skipping",
+                model_key, key, expected_type.__name__, type(val).__name__,
+            )
+            continue
+        if lo is not None and not (lo <= val <= hi):
+            logger.warning(
+                "[CIO override %s] '%s'=%s out of range [%s, %s] — skipping",
+                model_key, key, val, lo, hi,
+            )
+            continue
+        merged[key] = val
+        applied[key] = val
+
+    if applied:
+        logger.info("[CIO override %s] merged into params: %s", model_key, applied)
+    return merged, applied

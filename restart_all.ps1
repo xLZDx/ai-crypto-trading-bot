@@ -439,6 +439,29 @@ if ($env:OB_COLLECTOR_DISABLED -eq '1') {
 }
 Write-Host "[5.9/6] Orderbook Collector ready." -ForegroundColor Green
 
+# Step 5.91: L2 Orderbook Parquet Writer (X1.2, 2026-05-13)
+# Subscribes to the orderflow ZeroMQ channel and persists snapshots to
+# data/parquet/_L2/<SYM>/yyyymm=*/  so training pipelines that call
+# feature_engineering.add_orderbook_features actually have columns to read.
+# Without this, the collector ran but the L2 data was never on disk.
+Write-Host ""
+Write-Host "[5.91/6] Starting L2 Orderbook Parquet Writer..." -ForegroundColor Yellow
+if ($env:OB_WRITER_DISABLED -eq '1') {
+    Write-Host "  Skipped (OB_WRITER_DISABLED=1)." -ForegroundColor DarkCyan
+} else {
+    $obwRunning = Get-WmiObject Win32_Process -Filter "Name='python.exe'" 2>$null |
+        Where-Object { $_.CommandLine -match 'orderbook_parquet_writer' }
+    if ($obwRunning) {
+        Write-Host "  L2 Writer already running (PID $($obwRunning.ProcessId)) - skipping." -ForegroundColor DarkCyan
+    } else {
+        $newPid = Start-Detached -CommandLine "`"$venvPython`" -m src.data_ingestion.orderbook_parquet_writer" -LogFile "$root\logs\orderbook_parquet_writer.log"
+        if ($newPid) {
+            Write-Host "  L2 Writer started (PID $newPid, detached)"
+        }
+    }
+}
+Write-Host "[5.91/6] L2 Writer ready." -ForegroundColor Green
+
 # Step 5.95: Debug Supervisor (fine-grained crash detector)
 # Polls data/process_ids.json every 5s; on death, captures log tail +
 # RSS/CPU snapshot to data/process_deaths.json. Surfaces fresh deaths

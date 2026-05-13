@@ -154,6 +154,22 @@ def train_futures_model(timeframe: str = '1h'):
     log.info("Futures dataset: %d total | features %d | symbols %s | timeframe %s",
              len(combined_df), len(FEATURE_COLUMNS), symbols, timeframe)
 
+    # ── CIO overrides MERGE (X1.3, 2026-05-13) — schema-bounded ────────────
+    from src.utils.cio_overrides import merge_with_defaults as _merge
+    _FUT_HP_DEFAULTS = {
+        'n_estimators': 400, 'max_depth': 6,
+        'learning_rate': 0.03, 'l2_regularization': 0.2,
+        'class_weight': 'balanced',
+    }
+    _FUT_HP_SCHEMA = {
+        'n_estimators':      (int,   1,    10_000),
+        'max_depth':         (int,   1,    50),
+        'learning_rate':     (float, 1e-4, 1.0),
+        'l2_regularization': (float, 0.0,  100.0),
+        'class_weight':      (str,   None, None),
+    }
+    _fut_hp, _fut_applied = _merge('futures', _FUT_HP_DEFAULTS, _FUT_HP_SCHEMA)
+
     t1_series = combined_df['t1_timestamp']
     # Embargo = 2 * horizon (12 bars for futures model)
     pct_embargo = (2.0 * 12) / len(X)
@@ -161,8 +177,13 @@ def train_futures_model(timeframe: str = '1h'):
     fold_accs = []
     for i, (tr, te) in enumerate(cv.split(X)):
         clf = make_classifier(
-            random_state=42, n_estimators=400, max_depth=6,
-            learning_rate=0.03, l2_regularization=0.2, early_stopping=True, class_weight='balanced'
+            random_state=42,
+            n_estimators=_fut_hp['n_estimators'],
+            max_depth=_fut_hp['max_depth'],
+            learning_rate=_fut_hp['learning_rate'],
+            l2_regularization=_fut_hp['l2_regularization'],
+            class_weight=_fut_hp['class_weight'],
+            early_stopping=True,
         )
         weights = compute_sample_weight('balanced', y.iloc[tr])
         clf.fit(X.iloc[tr], y.iloc[tr], sample_weight=weights)
@@ -175,8 +196,13 @@ def train_futures_model(timeframe: str = '1h'):
     n = len(X)
     calib_split = int(n * 0.80)
     base_clf = make_classifier(
-        random_state=42, n_estimators=400, max_depth=6,
-        learning_rate=0.03, l2_regularization=0.2, early_stopping=True, class_weight='balanced'
+        random_state=42,
+        n_estimators=_fut_hp['n_estimators'],
+        max_depth=_fut_hp['max_depth'],
+        learning_rate=_fut_hp['learning_rate'],
+        l2_regularization=_fut_hp['l2_regularization'],
+        class_weight=_fut_hp['class_weight'],
+        early_stopping=True,
     )
     calib_start_time = combined_df.index[calib_split]
     valid_train_mask = combined_df['t1_timestamp'].iloc[:calib_split] < calib_start_time
@@ -223,7 +249,7 @@ def train_futures_model(timeframe: str = '1h'):
         "n_samples": len(combined_df), "n_train": calib_split, "n_test": len(X_test),
         "n_features": len(FEATURE_COLUMNS),
         "features": list(FEATURE_COLUMNS),  # required by MLPredictor._get_model_features
-        "cio_overrides_applied": dict(cio) if cio else None,
+        "cio_overrides_applied": dict(_fut_applied) if _fut_applied else None,  # X1.3
         "n_iterations": n_iter,
         "walk_forward_mean_acc": round(float(np.mean(fold_accs)) * 100, 2),
         "target": "triple_barrier_short_win",

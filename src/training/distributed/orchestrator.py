@@ -1050,4 +1050,28 @@ def _local_ip() -> str:
 
 
 if __name__ == "__main__":
+    # Process registry (Phase X1.1) — same singleton guarantee as bot/dashboard.
+    # The cluster_orchestrator binds to port 7700; a duplicate would just fail
+    # at bind time, but the registry gives the operator a cleaner banner.
+    try:
+        from src.utils.process_registry import claim_role, release_role, heartbeat
+        import atexit as _atexit, threading as _threading, sys as _sys
+        ok, existing = claim_role('cluster_orch', by='src.training.distributed.orchestrator')
+        if not ok:
+            print(
+                f"[cluster_orch] Another orchestrator already running: "
+                f"PID={existing.get('pid')} hb={existing.get('last_heartbeat')}. Exiting.",
+                file=_sys.stderr,
+            )
+            _sys.exit(0)
+        _atexit.register(lambda: release_role('cluster_orch', reason='atexit'))
+        def _hb_loop():
+            import time as _t
+            while True:
+                _t.sleep(60)
+                try: heartbeat('cluster_orch')
+                except Exception: pass
+        _threading.Thread(target=_hb_loop, daemon=True, name='registry-hb').start()
+    except Exception as _exc:
+        print(f"[cluster_orch] process_registry unavailable: {_exc}")
     main()

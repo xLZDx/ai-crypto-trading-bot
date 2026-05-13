@@ -286,6 +286,20 @@ def train_scalping_model(timeframe: str = '1m'):
             log.warning("SMOTE failed (%s) — falling back to sample_weight only", exc)
             return Xtr, ytr, compute_sample_weight('balanced', ytr)
 
+    # ── CIO overrides MERGE (X1.3, 2026-05-13) — schema-bounded ────────────
+    from src.utils.cio_overrides import merge_with_defaults as _merge
+    _SCALP_HP_DEFAULTS = {
+        'n_estimators': 400, 'max_depth': 5,
+        'learning_rate': 0.05, 'class_weight': 'balanced',
+    }
+    _SCALP_HP_SCHEMA = {
+        'n_estimators':  (int,   1,    10_000),
+        'max_depth':     (int,   1,    50),
+        'learning_rate': (float, 1e-4, 1.0),
+        'class_weight':  (str,   None, None),
+    }
+    _scalp_hp, _scalp_applied = _merge('scalping', _SCALP_HP_DEFAULTS, _SCALP_HP_SCHEMA)
+
     t1_series = combined_df['t1_timestamp']
     # Embargo = 2 * horizon (5 bars for scalping model)
     pct_embargo = (2.0 * 5) / len(X)
@@ -293,8 +307,12 @@ def train_scalping_model(timeframe: str = '1m'):
     fold_accs = []
     for i, (tr, te) in enumerate(cv.split(X)):
         clf = make_classifier(
-            random_state=42, n_estimators=400, max_depth=5,
-            learning_rate=0.05, early_stopping=True, class_weight='balanced'
+            random_state=42,
+            n_estimators=_scalp_hp['n_estimators'],
+            max_depth=_scalp_hp['max_depth'],
+            learning_rate=_scalp_hp['learning_rate'],
+            class_weight=_scalp_hp['class_weight'],
+            early_stopping=True,
         )
         X_tr_bal, y_tr_bal, w_tr = _resample(X.iloc[tr], y.iloc[tr])
         if w_tr is None:
@@ -310,8 +328,12 @@ def train_scalping_model(timeframe: str = '1m'):
     n = len(X)
     calib_split = int(n * 0.80)
     base_clf = make_classifier(
-        random_state=42, n_estimators=400, max_depth=5,
-        learning_rate=0.05, early_stopping=True, class_weight='balanced'
+        random_state=42,
+        n_estimators=_scalp_hp['n_estimators'],
+        max_depth=_scalp_hp['max_depth'],
+        learning_rate=_scalp_hp['learning_rate'],
+        class_weight=_scalp_hp['class_weight'],
+        early_stopping=True,
     )
     calib_start_time = combined_df.index[calib_split]
     valid_train_mask = combined_df['t1_timestamp'].iloc[:calib_split] < calib_start_time
@@ -408,7 +430,7 @@ def train_scalping_model(timeframe: str = '1m'):
         "n_samples": len(combined_df), "n_train": calib_split, "n_test": len(X_test),
         "n_features": len(FEATURE_COLUMNS),
         "features": list(FEATURE_COLUMNS),  # required for MLPredictor._get_model_features
-        "cio_overrides_applied": dict(cio) if cio else None,
+        "cio_overrides_applied": dict(_scalp_applied) if _scalp_applied else None,  # X1.3
         "n_iterations": n_iter,
         "walk_forward_mean_acc": round(float(np.mean(fold_accs)) * 100, 2),
         "target": "triple_barrier_long_win_1m",

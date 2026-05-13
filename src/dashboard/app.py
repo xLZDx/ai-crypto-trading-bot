@@ -873,6 +873,45 @@ def _proc_stats(pid) -> dict:
         return {'cpu': 0, 'mem_mb': 0, 'uptime_s': 0}
 
 
+@app.route('/api/process/registry', methods=['GET'])
+@require_api_key
+def api_process_registry():
+    """Return the live process registry: every role with a live PID + recent
+    heartbeat, plus the last 50 audit events. Drives the Process Registry
+    card on the dashboard so the operator can see at a glance what's running.
+
+    Endpoint added 2026-05-13 as part of X1.1 — singleton-enforcement for
+    long-running roles to prevent the zombie/duplicate process accumulation
+    that caused the 12.8h CPU runaway bot incident.
+    """
+    try:
+        from src.utils.process_registry import list_active, get_audit_tail
+        active = list_active()
+        audit = get_audit_tail(50)
+        return jsonify({
+            'ok': True,
+            'active': active,
+            'audit': audit,
+            'active_count': len(active),
+        })
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
+
+
+@app.route('/api/process/registry/reap', methods=['POST'])
+@require_api_key
+def api_process_registry_reap():
+    """Manually force a zombie-sweep. Useful when the operator wants to
+    clean stale entries before waiting for the 60s reaper cycle.
+    """
+    try:
+        from src.utils.process_registry import reap_zombies
+        reaped = reap_zombies(by='operator-manual')
+        return jsonify({'ok': True, 'reaped': reaped, 'count': len(reaped)})
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
+
+
 @app.route('/api/monitor/health')
 @require_api_key
 def monitor_health():
@@ -7695,6 +7734,39 @@ def proxy_arb_api(path: str):
 
 
 if __name__ == '__main__':
+    # Process registry: claim the 'dashboard' role BEFORE binding to the
+    # port. If another dashboard already owns it (typical: dashboard_watchdog
+    # respawned one), exit cleanly rather than fight for the port. The 2026-
+    # 05-13 audit showed 2 dashboards running in parallel after watchdog +
+    # restart_all both spawned one.
+    try:
+        from src.utils.process_registry import claim_role, release_role, heartbeat, reap_zombies
+        import atexit, threading
+        ok, existing = claim_role('dashboard', by='src.dashboard.app')
+        if not ok:
+            import sys
+            print(
+                f"[dashboard] Another dashboard already running: PID={existing.get('pid')} "
+                f"cmd={(existing.get('cmdline') or '?')[:80]} "
+                f"hb={existing.get('last_heartbeat')}. Exiting.",
+                file=sys.stderr,
+            )
+            sys.exit(0)
+        atexit.register(lambda: release_role('dashboard', reason='atexit'))
+        # Background heartbeat + zombie reaper — the dashboard is the
+        # natural home for the reaper since it's always up while operating.
+        def _registry_loop():
+            import time as _t
+            while True:
+                _t.sleep(60)
+                try: heartbeat('dashboard')
+                except Exception: pass
+                try: reap_zombies(by='dashboard-reaper')
+                except Exception: pass
+        threading.Thread(target=_registry_loop, daemon=True, name='registry-hb-reaper').start()
+    except Exception as exc:
+        print(f"[dashboard] process_registry unavailable: {exc}")
+
     # Phase 21 — start log retention + error monitor as daemon threads inside
     # the dashboard process. Both are idempotent and silent if logs/ is empty.
     try:
