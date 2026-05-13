@@ -2939,6 +2939,31 @@ document.addEventListener('DOMContentLoaded', function() {
     <!-- ════════════════ ARBITRAGE (CEX-DEX statistical) ════════════════ -->
     <!-- Sprint 1A R3 — Model Comparison: sortable KPI grid across (model, tf) -->
     <div id="tab-model_comparison" class="tab-pane">
+      <!-- CIO Agent (Optuna orchestrator) control panel -->
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-h" style="display:flex;justify-content:space-between;align-items:center">
+          <span>🤖 CIO Agent (Optuna Hyperparameter Study)</span>
+          <span id="cio-state-badge" style="padding:3px 8px;border-radius:3px;background:#444;font-size:11px">idle</span>
+        </div>
+        <div style="padding:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <label style="font-size:12px;color:#aaa">Trials:
+            <input id="cio-n-trials" type="number" min="1" max="500" value="20"
+                   style="width:60px;padding:4px;margin-left:4px">
+          </label>
+          <label style="font-size:12px;color:#aaa">
+            <input id="cio-live" type="checkbox"> Live cluster (off = smoke-test)
+          </label>
+          <button onclick="startCIO()" style="padding:6px 12px;cursor:pointer;background:#1e6">▶ Start study</button>
+          <button onclick="loadCIOStatus()" style="padding:6px 12px;cursor:pointer">↻ Refresh status</button>
+          <button onclick="loadCIOProposals()" style="padding:6px 12px;cursor:pointer">📋 View proposals</button>
+        </div>
+        <div id="cio-status-area" style="padding:10px;color:#888;font-size:12px;font-family:monospace">
+          Click "Start study" to launch an Optuna search across timeframe × pt × sl × threshold.
+          Visit <code>http://localhost:8080</code> after `optuna-dashboard sqlite:///data/optuna_orchestrator.db`.
+        </div>
+        <div id="cio-proposals-area" style="padding:0 10px 10px;display:none"></div>
+      </div>
+
       <div class="card" style="margin-bottom:12px">
         <div class="card-h" style="display:flex;justify-content:space-between;align-items:center">
           <span>📐 Model × Timeframe KPI Comparison</span>
@@ -3963,6 +3988,92 @@ async function loadModelComparison() {
   } catch (e) {
     if (tbody) tbody.innerHTML = '<tr><td colspan="10" style="padding:20px;text-align:center;color:#f55">Fetch error: ' + e + '</td></tr>';
   }
+  // Also refresh CIO state
+  loadCIOStatus();
+}
+
+// ─── CIO Agent panel handlers ─────────────────────────────────────────────
+async function startCIO() {
+  const n = parseInt(document.getElementById('cio-n-trials').value, 10) || 20;
+  const live = document.getElementById('cio-live').checked;
+  if (!confirm('Start CIO study with ' + n + ' trials' + (live ? ' (LIVE cluster)' : ' (smoke-test)') + '?')) return;
+  try {
+    const r = await fetch('/api/cio/start', {
+      method: 'POST', headers: hdrs(),
+      body: JSON.stringify({ n_trials: n, live: live })
+    });
+    const j = await r.json();
+    if (j.ok) {
+      const area = document.getElementById('cio-status-area');
+      if (area) area.textContent = 'Study launched: ' + j.study_name + ' (' + j.n_trials + ' trials)';
+      loadCIOStatus();
+    } else {
+      alert('Start failed: ' + (j.error || 'unknown'));
+    }
+  } catch (e) { alert('Start error: ' + e); }
+}
+
+async function loadCIOStatus() {
+  try {
+    const r = await fetch('/api/cio/status', { headers: hdrs() });
+    const j = await r.json();
+    const badge = document.getElementById('cio-state-badge');
+    const area  = document.getElementById('cio-status-area');
+    if (!j.ok || !badge || !area) return;
+    const colors = { idle:'#444', running:'#1e6', completed:'#369', error:'#a33' };
+    badge.style.background = colors[j.status] || '#444';
+    badge.textContent = j.status;
+    const lines = [
+      'status: ' + j.status,
+      j.study_name ? 'study: ' + j.study_name : '',
+      j.started_at ? 'started: ' + j.started_at : '',
+      j.completed_at ? 'completed: ' + j.completed_at : '',
+      j.n_trials_done ? 'trials done: ' + j.n_trials_done + '/' + (j.n_trials_target || '?') : '',
+      j.last_value !== null && j.last_value !== undefined ? 'best Sortino: ' + Number(j.last_value).toFixed(4) : '',
+      j.last_error ? 'error: ' + j.last_error : '',
+    ].filter(Boolean);
+    area.textContent = lines.join('\n');
+  } catch (e) { /* swallow — operator can hit Refresh */ }
+}
+
+async function loadCIOProposals() {
+  try {
+    const r = await fetch('/api/cio/proposals', { headers: hdrs() });
+    const j = await r.json();
+    const area = document.getElementById('cio-proposals-area');
+    if (!area) return;
+    if (!j.ok) {
+      area.style.display = 'block';
+      area.innerHTML = '<span style="color:#f55">Error: ' + (j.error || 'unknown') + '</span>';
+      return;
+    }
+    const ps = j.proposals || [];
+    if (!ps.length) {
+      area.style.display = 'block';
+      area.innerHTML = '<span style="color:#888">No proposals yet — run a CIO study first.</span>';
+      return;
+    }
+    let html = '<table style="width:100%;border-collapse:collapse;font-size:12px;font-family:monospace">';
+    html += '<thead style="background:#222"><tr>';
+    html += '<th style="padding:6px;text-align:left">Completed</th>';
+    html += '<th style="padding:6px;text-align:left">Study</th>';
+    html += '<th style="padding:6px;text-align:right">Trials</th>';
+    html += '<th style="padding:6px;text-align:right">Best Sortino</th>';
+    html += '<th style="padding:6px;text-align:left">Best Params</th>';
+    html += '</tr></thead><tbody>';
+    ps.slice().reverse().forEach(p => {
+      html += '<tr style="border-bottom:1px solid #222">';
+      html += '<td style="padding:6px">' + (p.completed_at || '').slice(0, 19) + '</td>';
+      html += '<td style="padding:6px">' + (p.study_name || '') + '</td>';
+      html += '<td style="padding:6px;text-align:right">' + (p.n_trials || 0) + '</td>';
+      html += '<td style="padding:6px;text-align:right">' + (typeof p.best_value === 'number' ? p.best_value.toFixed(4) : '—') + '</td>';
+      html += '<td style="padding:6px;color:#9cf">' + JSON.stringify(p.best_params || {}) + '</td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    area.style.display = 'block';
+    area.innerHTML = html;
+  } catch (e) { alert('Proposals error: ' + e); }
 }
 
 async function loadStrategyFull() {

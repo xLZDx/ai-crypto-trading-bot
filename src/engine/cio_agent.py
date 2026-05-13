@@ -283,6 +283,65 @@ class CIOAgent:
         return {'ok': True, 'note': 'apply_best not yet implemented'}
 
 
+# ── HTTP submitters/pollers for live cluster integration ────────────────────
+
+def make_cluster_callbacks(
+    cluster_url: str = 'http://127.0.0.1:7700',
+    api_key: str | None = None,
+) -> tuple[Callable[[dict], str], Callable[[str], dict]]:
+    """
+    Build (task_submitter, task_status_poller) callables that talk to the
+    standalone orchestrator's REST API. Used by `live_mode` to wire CIO
+    trials as real cluster tasks.
+
+    Returns two callables:
+      submitter(spec) -> task_id
+      poller(task_id) -> {status: ..., result: ...}
+    """
+    import os as _os
+    import requests as _requests
+    headers = {'X-API-Key': api_key or _os.getenv('CLUSTER_API_KEY')
+                            or _os.getenv('DASHBOARD_API_KEY') or ''}
+
+    def submitter(spec: dict) -> str:
+        r = _requests.post(f"{cluster_url}/api/cluster/submit",
+                           json=spec, headers=headers, timeout=10)
+        r.raise_for_status()
+        body = r.json()
+        return body.get('task_id', '')
+
+    def poller(task_id: str) -> dict:
+        # Cluster orchestrator exposes /api/cluster/tasks (list); filter by id.
+        # In a future iteration, add a /api/cluster/task/<id> GET to avoid
+        # the full list. For now, this works for studies up to a few hundred
+        # concurrent tasks.
+        r = _requests.get(f"{cluster_url}/api/cluster/tasks",
+                          headers=headers, timeout=10)
+        r.raise_for_status()
+        for t in (r.json() or []):
+            if t.get('task_id') == task_id:
+                return {
+                    'status': t.get('status', 'unknown'),
+                    'state':  t.get('status', 'unknown'),
+                    'result': t.get('result') or {},
+                    'error':  t.get('error', ''),
+                }
+        return {'status': 'unknown', 'state': 'unknown', 'result': {}}
+
+    return submitter, poller
+
+
+def live_mode(study_name: str = 'macro_parameter_search_v1',
+              cluster_url: str = 'http://127.0.0.1:7700') -> CIOAgent:
+    """Convenience constructor: returns a CIOAgent wired to the live cluster."""
+    submitter, poller = make_cluster_callbacks(cluster_url=cluster_url)
+    return CIOAgent(
+        study_name=study_name,
+        task_submitter=submitter,
+        task_status_poller=poller,
+    )
+
+
 # ── Module-level singleton ───────────────────────────────────────────────────
 
 _cio_singleton: CIOAgent | None = None

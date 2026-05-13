@@ -196,7 +196,10 @@
       },
       "resource_kind": "neural",
       "est_minutes_per_run": 80,
-      "depends_on": []
+      "depends_on": [],
+      "kpi_threshold": {
+        "wf_acc": 48.0
+      }
     },
     "regime": {
       "type": "bayesian_gmm_classifier",
@@ -221,7 +224,10 @@
       },
       "resource_kind": "cpu",
       "est_minutes_per_run": 30,
-      "depends_on": []
+      "depends_on": [],
+      "kpi_threshold": {
+        "wf_acc": 45.0
+      }
     },
     "oft": {
       "type": "neural_oft_microstructure",
@@ -248,7 +254,10 @@
       },
       "resource_kind": "exclusive",
       "est_minutes_per_run": 140,
-      "depends_on": []
+      "depends_on": [],
+      "kpi_threshold": {
+        "wf_acc": 50.0
+      }
     }
   },
   "global": {

@@ -1404,6 +1404,109 @@ def monitor_model_stats():
     return jsonify({'models': result, 'cuda': cuda})
 
 
+# ── CIO Agent (Optuna orchestrator) endpoints ────────────────────────────────
+
+# Tracks the in-process CIO study so /api/cio/status can report progress.
+# CIO runs in a background thread so the dashboard request returns immediately.
+_cio_study_state: dict = {
+    'status': 'idle',  # idle | running | completed | error
+    'started_at': None,
+    'completed_at': None,
+    'study_name': None,
+    'n_trials_target': 0,
+    'n_trials_done': 0,
+    'last_value': None,
+    'last_error': None,
+    'thread': None,
+}
+_cio_state_lock = __import__('threading').Lock()
+
+
+@app.route('/api/cio/start', methods=['POST'])
+@require_api_key
+def cio_start():
+    """
+    Kick off a CIO Agent study in the background.
+
+    Request JSON:
+      {
+        "study_name": "macro_parameter_search_v1",
+        "n_trials":   20,
+        "live":       false  // false = smoke-test stub, true = real cluster
+      }
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    study_name = body.get('study_name') or 'macro_parameter_search_v1'
+    n_trials   = int(body.get('n_trials', 20))
+    live       = bool(body.get('live', False))
+
+    with _cio_state_lock:
+        if _cio_study_state['status'] == 'running':
+            return jsonify({'ok': False, 'error': 'a CIO study is already running'}), 409
+        _cio_study_state.update({
+            'status': 'running',
+            'started_at': __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(),
+            'completed_at': None,
+            'study_name': study_name,
+            'n_trials_target': n_trials,
+            'n_trials_done': 0,
+            'last_value': None,
+            'last_error': None,
+        })
+
+    def _run():
+        try:
+            from src.engine import cio_agent as _cio
+            if live:
+                agent = _cio.live_mode(study_name=study_name)
+            else:
+                agent = _cio.CIOAgent(study_name=study_name)
+            summary = agent.run(n_trials=n_trials, n_jobs=1)
+            with _cio_state_lock:
+                _cio_study_state['status'] = 'completed'
+                _cio_study_state['completed_at'] = __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat()
+                _cio_study_state['last_value'] = summary.get('best_value')
+                _cio_study_state['n_trials_done'] = summary.get('n_trials', 0)
+        except Exception as exc:
+            with _cio_state_lock:
+                _cio_study_state['status'] = 'error'
+                _cio_study_state['last_error'] = str(exc)
+                _cio_study_state['completed_at'] = __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat()
+
+    import threading as _t
+    t = _t.Thread(target=_run, name=f'cio-study-{study_name}', daemon=True)
+    t.start()
+    _cio_study_state['thread'] = t
+    return jsonify({'ok': True, 'study_name': study_name, 'n_trials': n_trials, 'live': live})
+
+
+@app.route('/api/cio/status', methods=['GET'])
+@require_api_key
+def cio_status():
+    """Current CIO study state. Polled by the dashboard panel."""
+    with _cio_state_lock:
+        snapshot = {k: v for k, v in _cio_study_state.items() if k != 'thread'}
+    return jsonify({'ok': True, **snapshot})
+
+
+@app.route('/api/cio/proposals', methods=['GET'])
+@require_api_key
+def cio_proposals():
+    """List of completed study proposals (data/cio_proposals.json)."""
+    try:
+        from src.utils.safe_json import read_json
+        import os as _os
+        path = _os.path.join(
+            _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))),
+            'data', 'cio_proposals.json',
+        )
+        data = read_json(path, default={'proposals': []}) or {'proposals': []}
+        proposals = data.get('proposals') or []
+        return jsonify({'ok': True, 'proposals': proposals})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 # ── KPI gate registry endpoints (Sprint 1A R2) ──────────────────────────────
 
 @app.route('/api/registry/retired', methods=['GET'])
