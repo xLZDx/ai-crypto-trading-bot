@@ -196,13 +196,22 @@ class MLPredictor:
         return self._hardcoded_features()
 
     def _hardcoded_features(self) -> list[str]:
-        """Type-specific fallback feature lists matching each training script."""
+        """Type-specific fallback feature lists matching each training script.
+
+        IMPORTANT: keep in sync with the trainer's FEATURE_COLUMNS / FEATURES
+        lists. Previous list lost track of 4 features
+        (trend_strength, vol_regime, is_trending, is_volatile) when
+        train_scalping_model.py grew them — runtime then built 17-column
+        DataFrames against 21-feature models → "expected 21, got 17" loops.
+        """
         if self.model_type == "scalping":
+            # Mirrors src/engine/train_scalping_model.py:FEATURE_COLUMNS (21 entries).
             return [
                 "frac_diff_d40", "rsi_7", "macd_fast", "volume_surge",
                 "dist_to_micro_supp", "taker_buy_ratio", "avg_trade_size",
                 "hour", "roc_3", "roc_5", "roc_10", "bb_pb",
                 "ofi_z", "vwap_dist", "kc_pos", "signal_rsi", "signal_bb",
+                "trend_strength", "vol_regime", "is_trending", "is_volatile",
             ]
         if self.model_type == "futures":
             return [
@@ -212,24 +221,25 @@ class MLPredictor:
                 "liq_proximity", "frac_diff_d40",
             ]
         if self.model_type == "trend":
+            # Mirrors src/engine/train_trend_model.py:FEATURE_COLUMNS (20 entries).
             return [
-                "return", "macd", "macd_signal", "macd_hist",
+                "frac_diff_d40", "macd", "macd_signal", "macd_hist",
                 "trend_alignment", "volume_surge", "atr_14", "adx_14",
-                "don_pos_20", "kc_pos", "kc_width", "frac_diff_d40",
+                "don_pos_20", "kc_pos", "kc_width",
+                "vwap_dist", "ofi_z", "funding_z",
+                "signal_macd", "signal_don",
+                "trend_strength", "vol_regime", "is_trending", "is_volatile",
             ]
-        # base
-        # NOTE: This list now includes the new regime features.
-        # If a model was trained without them, it will gracefully ignore them
-        # due to the `_get_model_features` logic which reads `feature_names_in_`.
+        # base — mirrors src/engine/train_model.py:FEATURE_COLUMNS (33 entries).
         return [
-            "return", "volatility", "dist_sma_7", "dist_sma_30",
+            "frac_diff_d40", "volatility", "dist_sma_7", "dist_sma_30",
             "rsi_14", "macd", "macd_hist", "volume_momentum", "stoch_k",
             "return_lag1", "return_lag2", "return_lag3", "return_lag5",
             "atr_pct", "taker_buy_ratio", "avg_trade_size",
             "hour", "day_of_week", "roc_14", "roc_3", "roc_7",
-            "bb_pb", "news_sentiment", "ofi_z", "signal_bb", "signal_macd",
-            "frac_diff_d40", "liq_proximity", "trend_strength", "vol_regime",
-            "is_trending", "is_volatile",
+            "bb_pb", "news_sentiment", "ofi_z", "vwap_dist", "liq_proximity",
+            "trend_strength", "vol_regime", "is_trending", "is_volatile",
+            "signal_rsi", "signal_macd", "signal_bb",
         ]
 
     def _build_all_features(self, df: pd.DataFrame) -> pd.DataFrame:

@@ -398,7 +398,9 @@ def train_scalping_model(timeframe: str = '1m'):
         "accuracy": accuracy * 100,
         "long_accuracy": long_acc, "short_accuracy": short_acc,
         "n_samples": len(combined_df), "n_train": calib_split, "n_test": len(X_test),
-        "n_features": len(FEATURE_COLUMNS), "n_iterations": n_iter,
+        "n_features": len(FEATURE_COLUMNS),
+        "features": list(FEATURE_COLUMNS),  # required for MLPredictor._get_model_features
+        "n_iterations": n_iter,
         "walk_forward_mean_acc": round(float(np.mean(fold_accs)) * 100, 2),
         "target": "triple_barrier_long_win_1m",
         "symbols": symbols, "timeframe": timeframe,
