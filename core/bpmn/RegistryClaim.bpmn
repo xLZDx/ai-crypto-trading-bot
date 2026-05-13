@@ -1,0 +1,319 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  id="Definitions_RegistryClaim"
+                  targetNamespace="http://aitrader.local/bpmn">
+  <bpmn:process id="RegistryClaim" name="process_registry.claim_role — atomic decision tree" isExecutable="false">
+    <bpmn:laneSet id="LaneSet_RegistryClaim">
+      <bpmn:lane id="Lane_Caller" name="Caller (bot / dashboard / cluster_orch)">
+        <bpmn:flowNodeRef>Start_Call</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_OK</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_Blocked</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Lock" name="safe_json.transaction (FileLock)">
+        <bpmn:flowNodeRef>Task_Lock</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Atomic</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Checks" name="Liveness checks">
+        <bpmn:flowNodeRef>GW_Existing</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_SamePid</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Alive</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_AliveFresh</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Decision" name="Claim decision">
+        <bpmn:flowNodeRef>Task_Reap</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_WriteEntry</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_BlockedAudit</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Audit" name="Audit log + side-effects">
+        <bpmn:flowNodeRef>Task_Sideeffects</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="Start_Call" name="claim_role(role)">
+      <bpmn:outgoing>r1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="Task_Lock" name="FileLock
+(5s timeout)
++ json.load">
+      <bpmn:incoming>r1</bpmn:incoming>
+      <bpmn:outgoing>r2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="GW_Existing" name="existing entry?">
+      <bpmn:incoming>r2</bpmn:incoming>
+      <bpmn:outgoing>r3a</bpmn:outgoing>
+      <bpmn:outgoing>r3b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:exclusiveGateway id="GW_SamePid" name="same PID
+(re-entrant)?">
+      <bpmn:incoming>r3b</bpmn:incoming>
+      <bpmn:outgoing>r4a</bpmn:outgoing>
+      <bpmn:outgoing>r4b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="Task_Alive" name="_pid_alive(pid)
+via psutil
+(zombie filter)">
+      <bpmn:incoming>r4b</bpmn:incoming>
+      <bpmn:outgoing>r5</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="GW_AliveFresh" name="alive AND
+fresh&lt;300s?">
+      <bpmn:incoming>r5</bpmn:incoming>
+      <bpmn:outgoing>r6a</bpmn:outgoing>
+      <bpmn:outgoing>r6b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="Task_Reap" name="audit reap
+(stale entry)">
+      <bpmn:incoming>r6b</bpmn:incoming>
+      <bpmn:outgoing>r7</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_WriteEntry" name="write {pid, cmdline,
+host, heartbeat_ts}
++ audit claim">
+      <bpmn:incoming>r3a</bpmn:incoming>
+      <bpmn:incoming>r7</bpmn:incoming>
+      <bpmn:outgoing>r8</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_BlockedAudit" name="audit claim_blocked">
+      <bpmn:incoming>r6a</bpmn:incoming>
+      <bpmn:outgoing>r9</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_Atomic" name="tempfile + os.replace
+→ release FileLock">
+      <bpmn:incoming>r8</bpmn:incoming>
+      <bpmn:incoming>r9</bpmn:incoming>
+      <bpmn:outgoing>r10</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_Sideeffects" name="logger.warning/info
++ _append_audit_log
+(after lock release)">
+      <bpmn:incoming>r10</bpmn:incoming>
+      <bpmn:outgoing>r11a</bpmn:outgoing>
+      <bpmn:outgoing>r11b</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="End_OK" name="(True, entry)">
+      <bpmn:incoming>r4a</bpmn:incoming>
+      <bpmn:incoming>r11a</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="End_Blocked" name="(False, existing)
+→ caller os._exit(0)">
+      <bpmn:incoming>r11b</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="r1" sourceRef="Start_Call" targetRef="Task_Lock" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="r2" sourceRef="Task_Lock" targetRef="GW_Existing" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="r3a" sourceRef="GW_Existing" targetRef="Task_WriteEntry" name="no">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="r3b" sourceRef="GW_Existing" targetRef="GW_SamePid" name="yes">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="r4a" sourceRef="GW_SamePid" targetRef="End_OK" name="yes (no-op)">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="r4b" sourceRef="GW_SamePid" targetRef="Task_Alive" name="no">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="r5" sourceRef="Task_Alive" targetRef="GW_AliveFresh" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="r6a" sourceRef="GW_AliveFresh" targetRef="Task_BlockedAudit" name="live + fresh">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="r6b" sourceRef="GW_AliveFresh" targetRef="Task_Reap" name="stale">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="r7" sourceRef="Task_Reap" targetRef="Task_WriteEntry" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="r8" sourceRef="Task_WriteEntry" targetRef="Task_Atomic" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="r9" sourceRef="Task_BlockedAudit" targetRef="Task_Atomic" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="r10" sourceRef="Task_Atomic" targetRef="Task_Sideeffects" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="r11a" sourceRef="Task_Sideeffects" targetRef="End_OK" name="claimed">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="r11b" sourceRef="Task_Sideeffects" targetRef="End_Blocked" name="blocked">
+    </bpmn:sequenceFlow>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Diagram_RegistryClaim">
+    <bpmndi:BPMNPlane id="Plane_RegistryClaim" bpmnElement="RegistryClaim">
+    <bpmndi:BPMNShape id="Shape_Lane_Caller" bpmnElement="Lane_Caller" isHorizontal="true">
+      <dc:Bounds x="0" y="0" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Lock" bpmnElement="Lane_Lock" isHorizontal="true">
+      <dc:Bounds x="0" y="130" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Checks" bpmnElement="Lane_Checks" isHorizontal="true">
+      <dc:Bounds x="0" y="260" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Decision" bpmnElement="Lane_Decision" isHorizontal="true">
+      <dc:Bounds x="0" y="390" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Audit" bpmnElement="Lane_Audit" isHorizontal="true">
+      <dc:Bounds x="0" y="520" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Start_Call" bpmnElement="Start_Call">
+      <dc:Bounds x="60" y="47" width="36" height="36"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="40" y="87" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Lock" bpmnElement="Task_Lock">
+      <dc:Bounds x="220" y="155" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_Existing" bpmnElement="GW_Existing">
+      <dc:Bounds x="380" y="300" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="360" y="354" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_SamePid" bpmnElement="GW_SamePid">
+      <dc:Bounds x="480" y="300" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="460" y="354" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Alive" bpmnElement="Task_Alive">
+      <dc:Bounds x="580" y="285" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_AliveFresh" bpmnElement="GW_AliveFresh">
+      <dc:Bounds x="740" y="300" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="720" y="354" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Reap" bpmnElement="Task_Reap">
+      <dc:Bounds x="1020" y="415" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_WriteEntry" bpmnElement="Task_WriteEntry">
+      <dc:Bounds x="1180" y="415" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_BlockedAudit" bpmnElement="Task_BlockedAudit">
+      <dc:Bounds x="1340" y="415" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Atomic" bpmnElement="Task_Atomic">
+      <dc:Bounds x="1500" y="155" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Sideeffects" bpmnElement="Task_Sideeffects">
+      <dc:Bounds x="1660" y="545" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_End_OK" bpmnElement="End_OK">
+      <dc:Bounds x="1746" y="47" width="36" height="36"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1726" y="87" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_End_Blocked" bpmnElement="End_Blocked">
+      <dc:Bounds x="1832" y="47" width="36" height="36"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1812" y="87" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNEdge id="Edge_r1" bpmnElement="r1">
+      <di:waypoint x="96" y="65"/>
+      <di:waypoint x="158" y="65"/>
+      <di:waypoint x="158" y="195"/>
+      <di:waypoint x="220" y="195"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_r2" bpmnElement="r2">
+      <di:waypoint x="330" y="195"/>
+      <di:waypoint x="355" y="195"/>
+      <di:waypoint x="355" y="325"/>
+      <di:waypoint x="380" y="325"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_r3a" bpmnElement="r3a">
+      <di:waypoint x="430" y="325"/>
+      <di:waypoint x="805" y="325"/>
+      <di:waypoint x="805" y="455"/>
+      <di:waypoint x="1180" y="455"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="775" y="437" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_r3b" bpmnElement="r3b">
+      <di:waypoint x="430" y="325"/>
+      <di:waypoint x="480" y="325"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="450" y="307" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_r4a" bpmnElement="r4a">
+      <di:waypoint x="530" y="325"/>
+      <di:waypoint x="1138" y="325"/>
+      <di:waypoint x="1138" y="65"/>
+      <di:waypoint x="1746" y="65"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1108" y="47" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_r4b" bpmnElement="r4b">
+      <di:waypoint x="530" y="325"/>
+      <di:waypoint x="580" y="325"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="550" y="307" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_r5" bpmnElement="r5">
+      <di:waypoint x="690" y="325"/>
+      <di:waypoint x="740" y="325"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_r6a" bpmnElement="r6a">
+      <di:waypoint x="790" y="325"/>
+      <di:waypoint x="1065" y="325"/>
+      <di:waypoint x="1065" y="455"/>
+      <di:waypoint x="1340" y="455"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1035" y="437" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_r6b" bpmnElement="r6b">
+      <di:waypoint x="790" y="325"/>
+      <di:waypoint x="905" y="325"/>
+      <di:waypoint x="905" y="455"/>
+      <di:waypoint x="1020" y="455"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="875" y="437" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_r7" bpmnElement="r7">
+      <di:waypoint x="1130" y="455"/>
+      <di:waypoint x="1180" y="455"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_r8" bpmnElement="r8">
+      <di:waypoint x="1290" y="455"/>
+      <di:waypoint x="1395" y="455"/>
+      <di:waypoint x="1395" y="195"/>
+      <di:waypoint x="1500" y="195"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_r9" bpmnElement="r9">
+      <di:waypoint x="1450" y="455"/>
+      <di:waypoint x="1475" y="455"/>
+      <di:waypoint x="1475" y="195"/>
+      <di:waypoint x="1500" y="195"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_r10" bpmnElement="r10">
+      <di:waypoint x="1610" y="195"/>
+      <di:waypoint x="1635" y="195"/>
+      <di:waypoint x="1635" y="585"/>
+      <di:waypoint x="1660" y="585"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_r11a" bpmnElement="r11a">
+      <di:waypoint x="1770" y="585"/>
+      <di:waypoint x="1795" y="585"/>
+      <di:waypoint x="1795" y="645"/>
+      <di:waypoint x="1721" y="645"/>
+      <di:waypoint x="1721" y="65"/>
+      <di:waypoint x="1746" y="65"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1691" y="627" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_r11b" bpmnElement="r11b">
+      <di:waypoint x="1770" y="585"/>
+      <di:waypoint x="1801" y="585"/>
+      <di:waypoint x="1801" y="65"/>
+      <di:waypoint x="1832" y="65"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1771" y="47" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

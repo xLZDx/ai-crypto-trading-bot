@@ -1,0 +1,349 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  id="Definitions_TrainingFlow"
+                  targetNamespace="http://aitrader.local/bpmn">
+  <bpmn:process id="TrainingFlow" name="Training pipeline — operator click to KEEP/REVIEW/RETIRE" isExecutable="false">
+    <bpmn:laneSet id="LaneSet_TrainingFlow">
+      <bpmn:lane id="Lane_Operator" name="Operator">
+        <bpmn:flowNodeRef>Start_Click</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_Reject</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_Keep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_Review</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_Retire</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Dashboard" name="Dashboard + Orchestrator">
+        <bpmn:flowNodeRef>Task_Submit</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_KPIGate_Pre" name="KPI Gate (pre-flight)">
+        <bpmn:flowNodeRef>GW_IsRetired</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_MLE_Pre" name="ML Engineer Agent (pre)">
+        <bpmn:flowNodeRef>Task_Validators</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_AllValPass</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Trainer" name="Trainer Agent (lane worker)">
+        <bpmn:flowNodeRef>Task_TrainPipe</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_MLE_Post" name="ML Engineer Agent (post)">
+        <bpmn:flowNodeRef>Task_PSR</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_KPIGate_Post" name="KPI Gate (3-strike)">
+        <bpmn:flowNodeRef>Task_AppendRun</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_KPIPass</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_3Strike</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Retire</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="Start_Click" name="Click Train all">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:endEvent id="End_Reject" name="Rejected">
+      <bpmn:incoming>f3a</bpmn:incoming>
+      <bpmn:incoming>f5a</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="End_Keep" name="KEEP">
+      <bpmn:incoming>f9a</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="End_Review" name="REVIEW">
+      <bpmn:incoming>f10a</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="End_Retire" name="RETIRE">
+      <bpmn:incoming>f11</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="Task_Submit" name="POST /api/training/run
+per (model, tf)">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="GW_IsRetired" name="is_retired?">
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>f3a</bpmn:outgoing>
+      <bpmn:outgoing>f3b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="Task_Validators" name="Run 5 validators:
+freshness, label_imb,
+nan_density, drift z,
+feature_count">
+      <bpmn:incoming>f3b</bpmn:incoming>
+      <bpmn:outgoing>f4</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="GW_AllValPass" name="all pass?">
+      <bpmn:incoming>f4</bpmn:incoming>
+      <bpmn:outgoing>f5a</bpmn:outgoing>
+      <bpmn:outgoing>f5b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="Task_TrainPipe" name="9-step pipeline:
+Triple Barrier → 60/20/20
+→ PurgedKFold 5-fold
+→ Calibrated → Sortino
+→ HMAC sign → meta.json">
+      <bpmn:incoming>f5b</bpmn:incoming>
+      <bpmn:outgoing>f6</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_PSR" name="PSR (Bailey-LdP)
++ WF consistency
++ baseline compare">
+      <bpmn:incoming>f6</bpmn:incoming>
+      <bpmn:outgoing>f7</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_AppendRun" name="Append run row to
+training_runs/
+&lt;model&gt;__&lt;tf&gt;.parquet">
+      <bpmn:incoming>f7</bpmn:incoming>
+      <bpmn:outgoing>f8</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="GW_KPIPass" name="all KPIs pass?">
+      <bpmn:incoming>f8</bpmn:incoming>
+      <bpmn:outgoing>f9a</bpmn:outgoing>
+      <bpmn:outgoing>f9b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:exclusiveGateway id="GW_3Strike" name="3 consec fails?">
+      <bpmn:incoming>f9b</bpmn:incoming>
+      <bpmn:outgoing>f10a</bpmn:outgoing>
+      <bpmn:outgoing>f10b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="Task_Retire" name="Add to
+retired_models.json">
+      <bpmn:incoming>f10b</bpmn:incoming>
+      <bpmn:outgoing>f11</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f1" sourceRef="Start_Click" targetRef="Task_Submit" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f2" sourceRef="Task_Submit" targetRef="GW_IsRetired" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f3a" sourceRef="GW_IsRetired" targetRef="End_Reject" name="retired">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">retired=true</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f3b" sourceRef="GW_IsRetired" targetRef="Task_Validators" name="active">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f4" sourceRef="Task_Validators" targetRef="GW_AllValPass" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f5a" sourceRef="GW_AllValPass" targetRef="End_Reject" name="any fail">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f5b" sourceRef="GW_AllValPass" targetRef="Task_TrainPipe" name="all pass">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f6" sourceRef="Task_TrainPipe" targetRef="Task_PSR" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f7" sourceRef="Task_PSR" targetRef="Task_AppendRun" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f8" sourceRef="Task_AppendRun" targetRef="GW_KPIPass" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f9a" sourceRef="GW_KPIPass" targetRef="End_Keep" name="all pass">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f9b" sourceRef="GW_KPIPass" targetRef="GW_3Strike" name="any miss">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f10a" sourceRef="GW_3Strike" targetRef="End_Review" name="no">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f10b" sourceRef="GW_3Strike" targetRef="Task_Retire" name="yes">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="f11" sourceRef="Task_Retire" targetRef="End_Retire" name="">
+    </bpmn:sequenceFlow>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Diagram_TrainingFlow">
+    <bpmndi:BPMNPlane id="Plane_TrainingFlow" bpmnElement="TrainingFlow">
+    <bpmndi:BPMNShape id="Shape_Lane_Operator" bpmnElement="Lane_Operator" isHorizontal="true">
+      <dc:Bounds x="0" y="0" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Dashboard" bpmnElement="Lane_Dashboard" isHorizontal="true">
+      <dc:Bounds x="0" y="130" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_KPIGate_Pre" bpmnElement="Lane_KPIGate_Pre" isHorizontal="true">
+      <dc:Bounds x="0" y="260" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_MLE_Pre" bpmnElement="Lane_MLE_Pre" isHorizontal="true">
+      <dc:Bounds x="0" y="390" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Trainer" bpmnElement="Lane_Trainer" isHorizontal="true">
+      <dc:Bounds x="0" y="520" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_MLE_Post" bpmnElement="Lane_MLE_Post" isHorizontal="true">
+      <dc:Bounds x="0" y="650" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_KPIGate_Post" bpmnElement="Lane_KPIGate_Post" isHorizontal="true">
+      <dc:Bounds x="0" y="780" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Start_Click" bpmnElement="Start_Click">
+      <dc:Bounds x="60" y="47" width="36" height="36"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="40" y="87" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_End_Reject" bpmnElement="End_Reject">
+      <dc:Bounds x="946" y="47" width="36" height="36"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="926" y="87" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_End_Keep" bpmnElement="End_Keep">
+      <dc:Bounds x="1832" y="47" width="36" height="36"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1812" y="87" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_End_Review" bpmnElement="End_Review">
+      <dc:Bounds x="1918" y="47" width="36" height="36"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1898" y="87" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_End_Retire" bpmnElement="End_Retire">
+      <dc:Bounds x="2004" y="47" width="36" height="36"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1984" y="87" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Submit" bpmnElement="Task_Submit">
+      <dc:Bounds x="220" y="155" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_IsRetired" bpmnElement="GW_IsRetired">
+      <dc:Bounds x="380" y="300" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="360" y="354" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Validators" bpmnElement="Task_Validators">
+      <dc:Bounds x="540" y="415" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_AllValPass" bpmnElement="GW_AllValPass">
+      <dc:Bounds x="700" y="430" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="680" y="484" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_TrainPipe" bpmnElement="Task_TrainPipe">
+      <dc:Bounds x="1180" y="545" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_PSR" bpmnElement="Task_PSR">
+      <dc:Bounds x="1340" y="675" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_AppendRun" bpmnElement="Task_AppendRun">
+      <dc:Bounds x="1500" y="805" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_KPIPass" bpmnElement="GW_KPIPass">
+      <dc:Bounds x="1660" y="820" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1640" y="874" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_3Strike" bpmnElement="GW_3Strike">
+      <dc:Bounds x="1760" y="820" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1740" y="874" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Retire" bpmnElement="Task_Retire">
+      <dc:Bounds x="1860" y="805" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNEdge id="Edge_f1" bpmnElement="f1">
+      <di:waypoint x="96" y="65"/>
+      <di:waypoint x="158" y="65"/>
+      <di:waypoint x="158" y="195"/>
+      <di:waypoint x="220" y="195"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_f2" bpmnElement="f2">
+      <di:waypoint x="330" y="195"/>
+      <di:waypoint x="355" y="195"/>
+      <di:waypoint x="355" y="325"/>
+      <di:waypoint x="380" y="325"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_f3a" bpmnElement="f3a">
+      <di:waypoint x="430" y="325"/>
+      <di:waypoint x="688" y="325"/>
+      <di:waypoint x="688" y="65"/>
+      <di:waypoint x="946" y="65"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="658" y="47" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_f3b" bpmnElement="f3b">
+      <di:waypoint x="430" y="325"/>
+      <di:waypoint x="485" y="325"/>
+      <di:waypoint x="485" y="455"/>
+      <di:waypoint x="540" y="455"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="455" y="437" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_f4" bpmnElement="f4">
+      <di:waypoint x="650" y="455"/>
+      <di:waypoint x="700" y="455"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_f5a" bpmnElement="f5a">
+      <di:waypoint x="750" y="455"/>
+      <di:waypoint x="848" y="455"/>
+      <di:waypoint x="848" y="65"/>
+      <di:waypoint x="946" y="65"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="818" y="47" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_f5b" bpmnElement="f5b">
+      <di:waypoint x="750" y="455"/>
+      <di:waypoint x="965" y="455"/>
+      <di:waypoint x="965" y="585"/>
+      <di:waypoint x="1180" y="585"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="935" y="567" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_f6" bpmnElement="f6">
+      <di:waypoint x="1290" y="585"/>
+      <di:waypoint x="1315" y="585"/>
+      <di:waypoint x="1315" y="715"/>
+      <di:waypoint x="1340" y="715"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_f7" bpmnElement="f7">
+      <di:waypoint x="1450" y="715"/>
+      <di:waypoint x="1475" y="715"/>
+      <di:waypoint x="1475" y="845"/>
+      <di:waypoint x="1500" y="845"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_f8" bpmnElement="f8">
+      <di:waypoint x="1610" y="845"/>
+      <di:waypoint x="1660" y="845"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_f9a" bpmnElement="f9a">
+      <di:waypoint x="1710" y="845"/>
+      <di:waypoint x="1771" y="845"/>
+      <di:waypoint x="1771" y="65"/>
+      <di:waypoint x="1832" y="65"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1741" y="47" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_f9b" bpmnElement="f9b">
+      <di:waypoint x="1710" y="845"/>
+      <di:waypoint x="1760" y="845"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1730" y="827" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_f10a" bpmnElement="f10a">
+      <di:waypoint x="1810" y="845"/>
+      <di:waypoint x="1864" y="845"/>
+      <di:waypoint x="1864" y="65"/>
+      <di:waypoint x="1918" y="65"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1834" y="47" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_f10b" bpmnElement="f10b">
+      <di:waypoint x="1810" y="845"/>
+      <di:waypoint x="1860" y="845"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1830" y="827" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_f11" bpmnElement="f11">
+      <di:waypoint x="1970" y="845"/>
+      <di:waypoint x="1987" y="845"/>
+      <di:waypoint x="1987" y="65"/>
+      <di:waypoint x="2004" y="65"/>
+    </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
