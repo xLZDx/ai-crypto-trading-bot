@@ -227,7 +227,19 @@ def train_model(timeframe: str = '1h'):
     (per src.utils.model_paths). Default 1h matches the canonical (legacy)
     behaviour — when called at 1h the trainer ALSO writes the legacy
     btc_rf_model.joblib so the bot's inference path stays unchanged.
+
+    CIO overrides: any operator-approved values in
+    `models.base.cio_overrides` (set via CIOAgent.apply_best) are logged
+    here and recorded in the meta JSON for audit. Per-HP merging is
+    deferred until Sprint 1A R1 per-model trainer agents.
     """
+    # CIO overrides: log + record. Per-HP merge is deferred to Sprint 1A R1.
+    from src.utils.cio_overrides import load_cio_overrides
+    cio = load_cio_overrides('base')
+    if cio:
+        log.info("[CIO overrides] base/%s: %s (NOT auto-merged into params yet)",
+                 timeframe, cio)
+
     wl_path = os.path.join(base_dir, 'data', 'watchlist.json')
     if os.path.exists(wl_path):
         with open(wl_path, 'r') as f:
@@ -371,6 +383,7 @@ def train_model(timeframe: str = '1h'):
         "n_samples": len(combined_df), "n_train": train_end, "n_test": len(X_test),
         "n_features": len(FEATURE_COLUMNS),
         "features": list(FEATURE_COLUMNS),  # required by MLPredictor._get_model_features
+        "cio_overrides_applied": dict(cio) if cio else None,
         "n_iterations": n_iter,
         "walk_forward_mean_acc": round(float(np.mean(fold_accuracies)) * 100, 2),
         "walk_forward_std_acc": round(float(np.std(fold_accuracies)) * 100, 2),

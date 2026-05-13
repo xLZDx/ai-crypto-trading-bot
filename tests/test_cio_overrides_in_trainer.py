@@ -24,11 +24,19 @@ if str(PROJECT_ROOT) not in sys.path:
 
 @pytest.fixture
 def isolated_rules(tmp_path, monkeypatch):
-    """Repoint train_meta_labeler.PROJECT_ROOT so it reads from tmp."""
+    """Repoint the shared cio_overrides helper to read from tmp.
+
+    Post-refactor (db5504b → 44b8a4f), train_meta_labeler._load_cio_overrides
+    delegates to src.utils.cio_overrides.load_cio_overrides which uses its
+    own TRAINING_RULES_PATH constant. Patch THAT, not the trainer's path.
+    """
     from src.engine import train_meta_labeler as tm
-    # The module computes paths from PROJECT_ROOT; patch the attribute.
-    monkeypatch.setattr(tm, 'PROJECT_ROOT', str(tmp_path))
+    from src.utils import cio_overrides as co
     (tmp_path / 'data').mkdir(parents=True, exist_ok=True)
+    rules_path = tmp_path / 'data' / 'training_rules.json'
+    monkeypatch.setattr(co, 'TRAINING_RULES_PATH', rules_path)
+    # Some tests reference tmp_path / 'data' / 'training_rules.json' — keep
+    # the same layout so they can write the rules file there.
     return tm, tmp_path
 
 

@@ -147,6 +147,27 @@ class MLEngineerAgent:
         # ── Training pipeline rules ──
         self._check_pipeline_config(cfg, decision)
 
+        # ── Sprint 0 §S0-1 Validation rigor (data freshness + label balance) ──
+        # Runs when `validate_data=True` in config (default off — opt-in until
+        # the trainer wires it consistently). Stale-data BLOCKs propagate.
+        if cfg.get('validate_data'):
+            try:
+                from src.risk.validators import get_validation_gate
+                vreport = get_validation_gate().run(
+                    model_type=model_type,
+                    timeframe=timeframe,
+                )
+                if vreport.decision == 'BLOCK':
+                    decision.reasons.extend(vreport.reasons)
+                elif vreport.decision == 'WARN':
+                    decision.warnings.extend(vreport.warnings)
+                decision.metrics.setdefault('validation', {})
+                decision.metrics['validation'] = vreport.metrics
+            except Exception as e:
+                decision.warnings.append(
+                    f'WARN: ValidationGate unavailable ({e}); proceeding without data checks'
+                )
+
         # Resolve final decision
         if any(r.startswith('BLOCK:') for r in decision.reasons):
             decision.decision = 'BLOCK'

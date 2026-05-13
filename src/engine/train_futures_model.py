@@ -101,7 +101,17 @@ def prepare_futures_data(filepath):
 
 
 def train_futures_model(timeframe: str = '1h'):
-    """Train the futures-short classifier at a given timeframe."""
+    """Train the futures-short classifier at a given timeframe.
+
+    CIO overrides from `models.futures.cio_overrides` are logged + recorded
+    in meta JSON. Per-HP merging is deferred (see Sprint 1A R1).
+    """
+    from src.utils.cio_overrides import load_cio_overrides
+    cio = load_cio_overrides('futures')
+    if cio:
+        log.info("[CIO overrides] futures/%s: %s (NOT auto-merged into params yet)",
+                 timeframe, cio)
+
     wl_path = os.path.join(base_dir, 'data', 'watchlist.json')
     if os.path.exists(wl_path):
         with open(wl_path, 'r') as f:
@@ -211,7 +221,10 @@ def train_futures_model(timeframe: str = '1h'):
         "accuracy": accuracy * 100,
         "long_accuracy": long_acc, "short_accuracy": short_acc,
         "n_samples": len(combined_df), "n_train": calib_split, "n_test": len(X_test),
-        "n_features": len(FEATURE_COLUMNS), "n_iterations": n_iter,
+        "n_features": len(FEATURE_COLUMNS),
+        "features": list(FEATURE_COLUMNS),  # required by MLPredictor._get_model_features
+        "cio_overrides_applied": dict(cio) if cio else None,
+        "n_iterations": n_iter,
         "walk_forward_mean_acc": round(float(np.mean(fold_accs)) * 100, 2),
         "target": "triple_barrier_short_win",
         "symbols": symbols, "timeframe": timeframe,

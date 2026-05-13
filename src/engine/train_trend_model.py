@@ -106,7 +106,16 @@ def train_trend_model(timeframe: str = '1h'):
     timeframe — drives both the input file and the output artifact name
     (per src.utils.model_paths). Default 1h matches legacy behaviour;
     other TFs (4h, 1d) are well suited for trend regimes.
+
+    CIO overrides from `models.trend.cio_overrides` are logged + recorded
+    in meta JSON. Per-HP merging is deferred (see Sprint 1A R1).
     """
+    from src.utils.cio_overrides import load_cio_overrides
+    cio = load_cio_overrides('trend')
+    if cio:
+        log.info("[CIO overrides] trend/%s: %s (NOT auto-merged into params yet)",
+                 timeframe, cio)
+
     wl_path = os.path.join(base_dir, 'data', 'watchlist.json')
     if os.path.exists(wl_path):
         with open(wl_path, 'r') as f:
@@ -218,6 +227,7 @@ def train_trend_model(timeframe: str = '1h'):
         "n_samples": len(combined_df), "n_train": calib_split, "n_test": len(X_test),
         "n_features": len(FEATURE_COLUMNS),
         "features": list(FEATURE_COLUMNS),  # required by MLPredictor._get_model_features
+        "cio_overrides_applied": dict(cio) if cio else None,
         "n_iterations": n_iter,
         "walk_forward_mean_acc": round(float(np.mean(fold_accs)) * 100, 2),
         "target": "triple_barrier_long_win",

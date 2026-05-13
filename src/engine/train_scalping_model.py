@@ -192,7 +192,15 @@ def train_scalping_model(timeframe: str = '1m'):
     is the high-frequency edge). The 1s→1m resample is internal and
     handled by _process_single_symbol; widening to 5m would require
     refactoring resample_1s_to_1m into a parameterised helper.
+
+    CIO overrides from `models.scalping.cio_overrides` are logged +
+    recorded in meta JSON. Per-HP merging is deferred (Sprint 1A R1).
     """
+    from src.utils.cio_overrides import load_cio_overrides
+    cio = load_cio_overrides('scalping')
+    if cio:
+        log.info("[CIO overrides] scalping/%s: %s (NOT auto-merged into params yet)",
+                 timeframe, cio)
     if timeframe != '1m':
         log.warning("Scalping requested at %s — coercing to 1m (multi-TF "
                     "scalping not yet supported).", timeframe)
@@ -400,6 +408,7 @@ def train_scalping_model(timeframe: str = '1m'):
         "n_samples": len(combined_df), "n_train": calib_split, "n_test": len(X_test),
         "n_features": len(FEATURE_COLUMNS),
         "features": list(FEATURE_COLUMNS),  # required for MLPredictor._get_model_features
+        "cio_overrides_applied": dict(cio) if cio else None,
         "n_iterations": n_iter,
         "walk_forward_mean_acc": round(float(np.mean(fold_accs)) * 100, 2),
         "target": "triple_barrier_long_win_1m",

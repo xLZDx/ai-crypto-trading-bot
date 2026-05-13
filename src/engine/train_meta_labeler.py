@@ -207,24 +207,9 @@ def _build_signal_dataset(
 
 
 def _load_cio_overrides(model_key: str = 'meta') -> dict:
-    """
-    Read operator-approved overrides from data/training_rules.json
-    `models[<key>].cio_overrides` — set by CIOAgent.apply_best when the
-    operator promotes a winning Optuna proposal.
-
-    Returns empty dict if no overrides are present. Strips internal
-    metadata fields (`_applied_at`, `_study`, `_best_value`) before use.
-    """
-    try:
-        rules_path = os.path.join(PROJECT_ROOT, 'data', 'training_rules.json')
-        with open(rules_path, 'r', encoding='utf-8') as fh:
-            rules = json.load(fh)
-        overrides = (rules.get('models') or {}).get(model_key, {}).get('cio_overrides') or {}
-        # Strip metadata fields — they're for audit, not actual HP values
-        return {k: v for k, v in overrides.items() if not str(k).startswith('_')}
-    except Exception as e:
-        log.warning("[CIO overrides] could not read %s overrides: %s", model_key, e)
-        return {}
+    """Thin wrapper around the shared helper for backwards compatibility."""
+    from src.utils.cio_overrides import load_cio_overrides as _shared
+    return _shared(model_key)
 
 
 def train_meta_labeler(
