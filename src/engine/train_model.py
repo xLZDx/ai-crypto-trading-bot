@@ -99,6 +99,34 @@ def _load_model_params(model_key: str) -> tuple:
 
         validated[key] = val
 
+    # ── CIO overrides MERGE (post-validation, schema-bounded) ──
+    # If the operator promoted a CIO Agent proposal, `cio_overrides` lives at
+    # rules.models.<key>.cio_overrides. Merge into validated HPs ONLY for
+    # keys that pass the schema check — drops anything that wouldn't survive
+    # the standard validation loop. Audit-only keys (`_applied_at` etc.) are
+    # already stripped by load_cio_overrides.
+    cio_block = entry.get('cio_overrides') or {}
+    cio_merged: dict = {}
+    if cio_block:
+        from src.utils.cio_overrides import load_cio_overrides as _load_cio
+        clean = _load_cio(model_key)
+        for key, (expected_type, lo, hi) in _HP_SCHEMA.items():
+            if key not in clean:
+                continue
+            val = clean[key]
+            if not isinstance(val, expected_type):
+                log.warning("[CIO override] '%s' expected %s got %s — skipping",
+                            key, expected_type.__name__, type(val).__name__)
+                continue
+            if lo is not None and not (lo <= val <= hi):
+                log.warning("[CIO override] '%s'=%s out of range [%s, %s] — skipping",
+                            key, val, lo, hi)
+                continue
+            cio_merged[key] = val
+            validated[key] = val
+        if cio_merged:
+            log.info("[CIO override] merged into %s params: %s", model_key, cio_merged)
+
     params_hash = hashlib.sha256(
         json.dumps(validated, sort_keys=True).encode()
     ).hexdigest()[:16]
@@ -229,16 +257,14 @@ def train_model(timeframe: str = '1h'):
     btc_rf_model.joblib so the bot's inference path stays unchanged.
 
     CIO overrides: any operator-approved values in
-    `models.base.cio_overrides` (set via CIOAgent.apply_best) are logged
-    here and recorded in the meta JSON for audit. Per-HP merging is
-    deferred until Sprint 1A R1 per-model trainer agents.
+    `models.base.cio_overrides` (set via CIOAgent.apply_best) are merged
+    into the HP block by _load_model_params() (schema-bounded), and also
+    recorded in the meta JSON for audit.
     """
-    # CIO overrides: log + record. Per-HP merge is deferred to Sprint 1A R1.
     from src.utils.cio_overrides import load_cio_overrides
     cio = load_cio_overrides('base')
     if cio:
-        log.info("[CIO overrides] base/%s: %s (NOT auto-merged into params yet)",
-                 timeframe, cio)
+        log.info("[CIO overrides] base/%s read: %s", timeframe, cio)
 
     wl_path = os.path.join(base_dir, 'data', 'watchlist.json')
     if os.path.exists(wl_path):

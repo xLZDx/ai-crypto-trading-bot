@@ -3001,6 +3001,33 @@ document.addEventListener('DOMContentLoaded', function() {
         <div id="cio-proposals-area" style="padding:0 10px 10px;display:none"></div>
       </div>
 
+      <!-- Sprint 0 §S0-2 Bake-off cut list -->
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-h" style="display:flex;justify-content:space-between;align-items:center">
+          <span>🔪 Bake-off Cut List (§S0-2)</span>
+          <button onclick="loadBakeOff()" style="padding:6px 12px;cursor:pointer">⚙ Run bake-off</button>
+        </div>
+        <div style="padding:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12px">
+          <label>Metric:
+            <select id="bake-metric" style="padding:4px;margin-left:4px">
+              <option value="wf_sharpe">wf_sharpe</option>
+              <option value="wf_calmar">wf_calmar</option>
+              <option value="wf_acc">wf_acc</option>
+              <option value="wf_win_rate">wf_win_rate</option>
+              <option value="wf_max_dd">wf_max_dd (smaller=better)</option>
+              <option value="auc_roc">auc_roc</option>
+            </select>
+          </label>
+          <label>Retire bottom %:
+            <input id="bake-retire-pct" type="number" min="0" max="0.5" step="0.05" value="0.20"
+                   style="width:60px;padding:4px;margin-left:4px">
+          </label>
+        </div>
+        <div id="bake-off-area" style="padding:0 10px 10px;color:#888;font-size:12px;font-family:monospace">
+          Click "Run bake-off" to generate the ranked cut list.
+        </div>
+      </div>
+
       <div class="card" style="margin-bottom:12px">
         <div class="card-h" style="display:flex;justify-content:space-between;align-items:center">
           <span>📐 Model × Timeframe KPI Comparison</span>
@@ -4027,6 +4054,67 @@ async function loadModelComparison() {
   }
   // Also refresh CIO state
   loadCIOStatus();
+}
+
+// ─── Bake-off (Sprint 0 §S0-2) ────────────────────────────────────────────
+async function loadBakeOff() {
+  const metric = document.getElementById('bake-metric').value;
+  const rpct   = document.getElementById('bake-retire-pct').value || '0.20';
+  const area   = document.getElementById('bake-off-area');
+  if (area) area.textContent = 'Running bake-off…';
+  try {
+    const r = await fetch('/api/bake_off?metric=' + encodeURIComponent(metric) +
+                          '&retire_pct=' + encodeURIComponent(rpct) + '&top=50',
+                          { headers: hdrs() });
+    const j = await r.json();
+    if (!j.ok) {
+      area.innerHTML = '<span style="color:#f55">Error: ' + (j.error || 'unknown') + '</span>';
+      return;
+    }
+    const cuts = j.cut_list || {keep:[], review:[], retire:[]};
+    let html = '<div style="margin-bottom:8px;color:#aaa">Metric: <b>' + j.metric +
+               '</b> &middot; retire bottom <b>' + (j.retire_below_pct * 100).toFixed(0) +
+               '%</b> &middot; rows: <b>' + (j.rows||[]).length + '</b></div>';
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">';
+    html += '  <div style="background:#1a3a1a;padding:8px;border-radius:4px"><b style="color:#5f5">✓ KEEP (' + cuts.keep.length + ')</b><br>' +
+              (cuts.keep.slice(0,15).join('<br>') || '<i>none</i>') + '</div>';
+    html += '  <div style="background:#3a3a1a;padding:8px;border-radius:4px"><b style="color:#dd5">? REVIEW (' + cuts.review.length + ')</b><br>' +
+              (cuts.review.slice(0,15).join('<br>') || '<i>none</i>') + '</div>';
+    html += '  <div style="background:#3a1a1a;padding:8px;border-radius:4px"><b style="color:#f55">✗ RETIRE (' + cuts.retire.length + ')</b><br>' +
+              (cuts.retire.slice(0,15).join('<br>') || '<i>none</i>') + '</div>';
+    html += '</div>';
+    // Ranked rows table
+    html += '<table style="width:100%;border-collapse:collapse;font-size:11px">';
+    html += '<thead style="background:#222"><tr>' +
+            '<th style="padding:4px;text-align:left">Rank</th>' +
+            '<th style="padding:4px;text-align:left">Model__TF</th>' +
+            '<th style="padding:4px;text-align:right">' + j.metric + '</th>' +
+            '<th style="padding:4px;text-align:right">N runs</th>' +
+            '<th style="padding:4px;text-align:left">Action</th>' +
+            '<th style="padding:4px;text-align:left">Reason</th>' +
+            '</tr></thead><tbody>';
+    (j.rows || []).forEach(row => {
+      const bg = row.recommendation === 'retire' ? '#3a1a1a' :
+                 row.recommendation === 'review' ? '#3a3a1a' : 'transparent';
+      const valStr = (row.metric_value === null || row.metric_value === undefined)
+        ? '<span style="color:#555">—</span>'
+        : Number(row.metric_value).toFixed(3);
+      html += '<tr style="background:' + bg + ';border-bottom:1px solid #222">';
+      html += '<td style="padding:4px">' + row.rank + '</td>';
+      html += '<td style="padding:4px">' + row.model + '__' + row.tf + '</td>';
+      html += '<td style="padding:4px;text-align:right">' + valStr + '</td>';
+      html += '<td style="padding:4px;text-align:right">' + row.n_runs + '</td>';
+      html += '<td style="padding:4px;color:' +
+              (row.recommendation === 'retire' ? '#f55' : row.recommendation === 'review' ? '#dd5' : '#5f5') +
+              '">' + row.recommendation + '</td>';
+      html += '<td style="padding:4px;color:#888">' + (row.reasons || []).join('; ') + '</td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    area.innerHTML = html;
+  } catch (e) {
+    area.innerHTML = '<span style="color:#f55">Fetch error: ' + e + '</span>';
+  }
 }
 
 // ─── Kill Switch tile + modal handlers (Sprint 0 §S0-3) ──────────────────

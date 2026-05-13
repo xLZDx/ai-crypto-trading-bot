@@ -181,17 +181,101 @@ class BaseTrainerAgent:
 
 # ── Reference implementations — minimal wrappers around existing trainers ──
 
+def _resolve_meta_path(model_key: str, timeframe: str) -> Path | str | None:
+    """Common helper — derive the meta JSON path via model_paths.artifact_paths."""
+    try:
+        from src.utils.model_paths import artifact_paths
+        paths = artifact_paths(model_key, timeframe)
+        return paths.get('meta')
+    except Exception:
+        return None
+
+
 class TrainerMetaAgent(BaseTrainerAgent):
-    """Reference concrete agent for the meta-labeler. Other models follow."""
+    """Concrete agent for the meta-labeler. Supports CIO override kwargs."""
 
     MODEL_KEY = 'meta'
 
     def _do_train(self, timeframe: str, **kwargs) -> Path | str | None:
         from src.engine.train_meta_labeler import train_meta_labeler
         train_meta_labeler(timeframe=timeframe, **kwargs)
-        try:
-            from src.utils.model_paths import artifact_paths
-            paths = artifact_paths(self.MODEL_KEY, timeframe)
-            return paths.get('meta')
-        except Exception:
-            return None
+        return _resolve_meta_path(self.MODEL_KEY, timeframe)
+
+
+class TrainerBaseAgent(BaseTrainerAgent):
+    """Concrete agent for the base directional model. Reads HP from
+    training_rules.json (incl. cio_overrides merge)."""
+
+    MODEL_KEY = 'base'
+
+    def _do_train(self, timeframe: str, **kwargs) -> Path | str | None:
+        from src.engine.train_model import train_model
+        # train_model has no kwargs beyond timeframe; cio_overrides flow
+        # through _load_model_params automatically.
+        train_model(timeframe=timeframe)
+        return _resolve_meta_path(self.MODEL_KEY, timeframe)
+
+
+class TrainerTrendAgent(BaseTrainerAgent):
+    """Concrete agent for the trend-follower."""
+
+    MODEL_KEY = 'trend'
+
+    def _do_train(self, timeframe: str, **kwargs) -> Path | str | None:
+        from src.engine.train_trend_model import train_trend_model
+        train_trend_model(timeframe=timeframe)
+        return _resolve_meta_path(self.MODEL_KEY, timeframe)
+
+
+class TrainerFuturesAgent(BaseTrainerAgent):
+    """Concrete agent for the futures short classifier."""
+
+    MODEL_KEY = 'futures'
+
+    def _do_train(self, timeframe: str, **kwargs) -> Path | str | None:
+        from src.engine.train_futures_model import train_futures_model
+        train_futures_model(timeframe=timeframe)
+        return _resolve_meta_path(self.MODEL_KEY, timeframe)
+
+
+class TrainerScalpingAgent(BaseTrainerAgent):
+    """Concrete agent for the scalping (1m) model.
+
+    NOTE: scalping is fixed at 1m (train_scalping_model docstring is
+    explicit about this). The timeframe arg is accepted but ignored by
+    the underlying trainer.
+    """
+
+    MODEL_KEY = 'scalping'
+
+    def _do_train(self, timeframe: str = '1m', **kwargs) -> Path | str | None:
+        from src.engine.train_scalping_model import train_scalping_model
+        train_scalping_model(timeframe='1m')
+        return _resolve_meta_path(self.MODEL_KEY, '1m')
+
+
+# ── Registry — used by the orchestrator to dispatch by model_key ────────────
+
+TRAINER_AGENT_REGISTRY: dict[str, type[BaseTrainerAgent]] = {
+    'meta':     TrainerMetaAgent,
+    'base':     TrainerBaseAgent,
+    'trend':    TrainerTrendAgent,
+    'futures':  TrainerFuturesAgent,
+    'scalping': TrainerScalpingAgent,
+}
+
+
+def get_trainer_agent(model_key: str) -> BaseTrainerAgent:
+    """Factory — returns a fresh agent instance for `model_key`.
+
+    Raises KeyError if the model_key has no registered agent class yet
+    (e.g., 'tft', 'oft', 'regime' — those are queued for future R1 sub-tasks
+    since their trainers have different interfaces and resource constraints).
+    """
+    cls = TRAINER_AGENT_REGISTRY.get(model_key)
+    if cls is None:
+        raise KeyError(
+            f"No trainer agent registered for model_key={model_key!r}. "
+            f"Registered: {sorted(TRAINER_AGENT_REGISTRY.keys())}"
+        )
+    return cls()

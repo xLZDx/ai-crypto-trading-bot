@@ -1404,6 +1404,30 @@ def monitor_model_stats():
     return jsonify({'models': result, 'cuda': cuda})
 
 
+# ── Bake-off endpoint (Sprint 0 §S0-2) ────────────────────────────────────────
+
+@app.route('/api/bake_off', methods=['GET'])
+@require_api_key
+def bake_off():
+    """
+    Run the model bake-off harness and return a ranked cut list.
+
+    Query params:
+      metric=wf_sharpe|wf_calmar|wf_acc|wf_win_rate|wf_max_dd|auc_roc (default wf_sharpe)
+      top=N (default 50)
+      retire_pct=0.20 (bottom fraction to recommend for retirement)
+    """
+    try:
+        from src.engine.bake_off import run_bake_off
+        metric = request.args.get('metric', 'wf_sharpe')
+        top    = int(request.args.get('top', 50))
+        rpct   = float(request.args.get('retire_pct', 0.20))
+        result = run_bake_off(metric=metric, top_n=top, retire_below_pct=rpct)
+        return jsonify({'ok': True, **result})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 # ── CIO Agent (Optuna orchestrator) endpoints ────────────────────────────────
 
 # Tracks the in-process CIO study so /api/cio/status can report progress.

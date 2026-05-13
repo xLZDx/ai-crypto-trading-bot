@@ -156,14 +156,25 @@ class ValidationGate:
                 return report
 
         # ── 4. Distribution drift (WARN only) ──
-        if feature_df is not None and last_known_good_dist:
-            drifted = self._check_drift(feature_df, last_known_good_dist)
-            if drifted:
-                report.warnings.append(
-                    f'WARN: distribution drift detected on {len(drifted)} features: {drifted[:5]}'
-                )
-                report.metrics['drifted_features'] = drifted
-                report.decision = 'WARN'
+        # Caller can pass last_known_good_dist explicitly; otherwise we try
+        # to load it from data/risk/drift_baselines/<model>__<tf>.json.
+        if feature_df is not None:
+            baseline = last_known_good_dist
+            if baseline is None:
+                try:
+                    from src.risk.drift_baseline import load_baseline
+                    baseline = load_baseline(model_type, timeframe)
+                except Exception:
+                    baseline = None
+            if baseline:
+                drifted = self._check_drift(feature_df, baseline)
+                if drifted:
+                    report.warnings.append(
+                        f'WARN: distribution drift detected on {len(drifted)} features: {drifted[:5]}'
+                    )
+                    report.metrics['drifted_features'] = drifted
+                    if report.decision == 'APPROVE':
+                        report.decision = 'WARN'
 
         if report.decision == 'APPROVE':
             pass  # already APPROVE
