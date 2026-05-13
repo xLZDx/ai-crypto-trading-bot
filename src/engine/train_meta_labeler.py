@@ -90,10 +90,19 @@ def _compute_sortino_for_threshold(
     return float(mean_r / downside_vol * np.sqrt(252))
 
 
-def _build_signal_dataset(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
+def _build_signal_dataset(
+    df: pd.DataFrame,
+    symbol: str,
+    pt_multiplier: float = 2.5,
+    sl_multiplier: float = 1.5,
+    max_bars: int = 12,
+) -> pd.DataFrame:
     """
     Run primary models over df to generate probabilities, then label each
     potential trade as won (1) or lost (0) for meta-model training.
+
+    Triple Barrier params can be overridden by the caller (typically via
+    CIO operator-approved overrides flowing through train_meta_labeler()).
     """
     df = df.copy().reset_index(drop=True)
     models_dir = os.path.join(PROJECT_ROOT, 'models')
@@ -164,7 +173,7 @@ def _build_signal_dataset(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
 
     # --- 5. AFML Triple Barrier (fixed: pt=2.5, sl=1.5, max_bars=12 — BUG-4 fix) ---
     tb_labels, t1_times = triple_barrier_labels_vectorized(
-        df, pt_multiplier=2.5, sl_multiplier=1.5, max_bars=12,
+        df, pt_multiplier=pt_multiplier, sl_multiplier=sl_multiplier, max_bars=max_bars,
     )
     df_feat['tb_label'] = tb_labels
     df_feat['t1_timestamp'] = t1_times
@@ -197,8 +206,56 @@ def _build_signal_dataset(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
     return df_feat
 
 
-def train_meta_labeler(timeframe: str = '1h'):
-    """Train the meta-labeler classifier at a given timeframe."""
+def _load_cio_overrides(model_key: str = 'meta') -> dict:
+    """
+    Read operator-approved overrides from data/training_rules.json
+    `models[<key>].cio_overrides` — set by CIOAgent.apply_best when the
+    operator promotes a winning Optuna proposal.
+
+    Returns empty dict if no overrides are present. Strips internal
+    metadata fields (`_applied_at`, `_study`, `_best_value`) before use.
+    """
+    try:
+        rules_path = os.path.join(PROJECT_ROOT, 'data', 'training_rules.json')
+        with open(rules_path, 'r', encoding='utf-8') as fh:
+            rules = json.load(fh)
+        overrides = (rules.get('models') or {}).get(model_key, {}).get('cio_overrides') or {}
+        # Strip metadata fields — they're for audit, not actual HP values
+        return {k: v for k, v in overrides.items() if not str(k).startswith('_')}
+    except Exception as e:
+        log.warning("[CIO overrides] could not read %s overrides: %s", model_key, e)
+        return {}
+
+
+def train_meta_labeler(
+    timeframe: str = '1h',
+    pt_multiplier: float | None = None,
+    sl_multiplier: float | None = None,
+    max_bars: int | None = None,
+    confidence_threshold: float | None = None,
+):
+    """Train the meta-labeler classifier at a given timeframe.
+
+    Any HP arg left as None is filled from `data/training_rules.json`
+    `models.meta.cio_overrides` (if present) — this is how operator-approved
+    CIO Agent proposals reach the trainer. If neither caller nor cio_overrides
+    set a value, the AFML defaults baked into the function bodies are used.
+    """
+    # ── CIO overrides resolution ──────────────────────────────────────────
+    cio = _load_cio_overrides('meta')
+    pt = pt_multiplier if pt_multiplier is not None else cio.get('pt_multiplier', 2.5)
+    sl = sl_multiplier if sl_multiplier is not None else cio.get('sl_multiplier', 1.5)
+    mb = max_bars      if max_bars      is not None else cio.get('max_bars',      12)
+    thr_hint = (confidence_threshold
+                if confidence_threshold is not None
+                else cio.get('confidence_threshold'))
+    # `timeframe` is honored from the CLI/cluster spec only — overriding it from
+    # cio_overrides would silently swap which (model, tf) cell we're training.
+    if cio:
+        log.info("[CIO overrides] applied to meta: pt=%.2f sl=%.2f max_bars=%d "
+                 "confidence_hint=%s (study=%s, best_value=%s)",
+                 pt, sl, mb, thr_hint, cio.get('_study') or '?', cio.get('_best_value') or '?')
+
     raw_dir = os.path.join(PROJECT_ROOT, 'data', 'raw')
     models_dir = os.path.join(PROJECT_ROOT, 'models')
     os.makedirs(models_dir, exist_ok=True)
@@ -221,7 +278,10 @@ def train_meta_labeler(timeframe: str = '1h'):
                 df = pd.read_csv(fpath)
                 df['timestamp'] = pd.to_datetime(df['timestamp'])
                 df = df.sort_values('timestamp').reset_index(drop=True)
-                signals_df = _build_signal_dataset(df, sym)
+                signals_df = _build_signal_dataset(
+                    df, sym,
+                    pt_multiplier=pt, sl_multiplier=sl, max_bars=mb,
+                )
                 signals_df = signals_df.dropna(subset=META_FEATURES + ['meta_label'])
                 if len(signals_df) > 50:
                     all_frames.append(signals_df)
@@ -378,7 +438,8 @@ def train_meta_labeler(timeframe: str = '1h'):
         "walk_forward_mean_acc": round(_wf_mean_acc, 2),
         "walk_forward_std_acc":  round(_wf_std_acc,  2),
         "walk_forward_folds":    len(_wf_fold_accs),
-        "afml_params": {"pt": 2.5, "sl": 1.5, "max_bars": 12},
+        "afml_params": {"pt": float(pt), "sl": float(sl), "max_bars": int(mb)},
+        "cio_overrides_applied": dict(cio) if cio else None,
         "last_trained": datetime.now(timezone.utc).isoformat(),
     }
     write_json(str(paths['meta']), meta)

@@ -1297,7 +1297,34 @@ document.addEventListener('DOMContentLoaded', function() {
       <button id="btn-start" class="btn btn-green" title="Set control.running=true so the bot starts trading">▶ Start</button>
       <button id="btn-stop"  class="btn btn-red"   title="Set control.running=false so the bot pauses trading (no new orders)">■ Stop</button>
       <button id="btn-restart-all" class="btn" style="background:rgba(168,85,247,.25);color:#c4b5fd;border:1px solid rgba(168,85,247,.45)" title="Run restart_all.ps1 — kills + respawns bot, dashboard, monitor, training cluster, etc. Dashboard will go offline ~30s.">↻ Restart All</button>
+      <!-- Sprint 0 §S0-3 kill switch tile — always visible -->
+      <span id="ks-tile" class="chip" style="cursor:pointer;background:#1a3a1a;color:#5f5;border:1px solid #2a5a2a"
+            title="Kill switch state. Click to view / reset / pause."
+            onclick="openKillSwitchModal()">
+        🛑 KS: <span id="ks-state">--</span>
+      </span>
       <span class="chip">Control Sync: <span id="ctrl-state">--</span></span>
+    </div>
+  </div>
+
+  <!-- Kill switch modal (hidden by default) -->
+  <div id="ks-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:1000;align-items:center;justify-content:center">
+    <div style="background:#1a1a1a;border:1px solid #444;border-radius:8px;padding:24px;min-width:480px;max-width:640px;font-family:'JetBrains Mono',monospace;font-size:13px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h3 style="margin:0;color:#fff">🛑 Kill Switch</h3>
+        <button onclick="closeKillSwitchModal()" style="background:#333;color:#fff;border:none;padding:4px 10px;cursor:pointer">✕ Close</button>
+      </div>
+      <pre id="ks-modal-state" style="background:#0a0a0a;color:#eee;padding:10px;border-radius:4px;overflow-x:auto;max-height:300px;font-size:11px">Loading…</pre>
+      <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input id="ks-modal-operator" placeholder="Operator name" value="dashboard"
+               style="padding:6px;background:#0a0a0a;color:#fff;border:1px solid #444;border-radius:3px;flex:1;min-width:120px">
+        <input id="ks-modal-reason" placeholder="Reason (audit trail)"
+               style="padding:6px;background:#0a0a0a;color:#fff;border:1px solid #444;border-radius:3px;flex:2;min-width:200px">
+      </div>
+      <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+        <button onclick="manualPauseKS()" style="background:#a33;color:#fff;border:none;padding:6px 14px;cursor:pointer;border-radius:3px">⏸ Manual pause</button>
+        <button onclick="resetKS()" style="background:#3a3;color:#fff;border:none;padding:6px 14px;cursor:pointer;border-radius:3px">▶ Reset (clear pause)</button>
+      </div>
     </div>
   </div>
 
@@ -4000,6 +4027,74 @@ async function loadModelComparison() {
   }
   // Also refresh CIO state
   loadCIOStatus();
+}
+
+// ─── Kill Switch tile + modal handlers (Sprint 0 §S0-3) ──────────────────
+async function pollKillSwitch() {
+  try {
+    const r = await fetch('/api/risk/kill_switch/status', { headers: hdrs() });
+    const j = await r.json();
+    if (!j.ok) return;
+    const tile  = document.getElementById('ks-tile');
+    const state = document.getElementById('ks-state');
+    if (!tile || !state) return;
+    if (j.paused) {
+      tile.style.background = '#3a1a1a';
+      tile.style.color = '#f55';
+      tile.style.border = '1px solid #5a2a2a';
+      state.textContent = 'PAUSED (' + (j.last_trigger || '?') + ')';
+    } else {
+      tile.style.background = '#1a3a1a';
+      tile.style.color = '#5f5';
+      tile.style.border = '1px solid #2a5a2a';
+      state.textContent = 'RUNNING';
+    }
+  } catch (e) { /* swallow — silent retry */ }
+}
+setInterval(pollKillSwitch, 10000);   // 10s poll
+setTimeout(pollKillSwitch, 1000);     // initial fast-poll after load
+
+async function openKillSwitchModal() {
+  document.getElementById('ks-modal').style.display = 'flex';
+  try {
+    const r = await fetch('/api/risk/kill_switch/status', { headers: hdrs() });
+    const j = await r.json();
+    const pre = document.getElementById('ks-modal-state');
+    if (pre) pre.textContent = JSON.stringify(j, null, 2);
+  } catch (e) {
+    const pre = document.getElementById('ks-modal-state');
+    if (pre) pre.textContent = 'Error loading state: ' + e;
+  }
+}
+function closeKillSwitchModal() {
+  document.getElementById('ks-modal').style.display = 'none';
+}
+async function resetKS() {
+  const op = (document.getElementById('ks-modal-operator').value || '').trim() || 'dashboard';
+  const reason = (document.getElementById('ks-modal-reason').value || '').trim();
+  if (!confirm('Reset kill switch as operator="' + op + '"?')) return;
+  try {
+    const r = await fetch('/api/risk/kill_switch/reset', {
+      method: 'POST', headers: hdrs(),
+      body: JSON.stringify({ confirm: true, operator: op, reason: reason })
+    });
+    const j = await r.json();
+    if (j.ok) { pollKillSwitch(); openKillSwitchModal(); }
+    else { alert('Reset failed: ' + (j.error || 'unknown')); }
+  } catch (e) { alert('Reset error: ' + e); }
+}
+async function manualPauseKS() {
+  const reason = (document.getElementById('ks-modal-reason').value || '').trim() || 'manual operator pause';
+  if (!confirm('Manually pause kill switch (reason="' + reason + '")? This will BLOCK all new orders until reset.')) return;
+  try {
+    const r = await fetch('/api/risk/kill_switch/pause', {
+      method: 'POST', headers: hdrs(),
+      body: JSON.stringify({ confirm: true, reason: reason })
+    });
+    const j = await r.json();
+    if (j.ok) { pollKillSwitch(); openKillSwitchModal(); }
+    else { alert('Pause failed: ' + (j.error || 'unknown')); }
+  } catch (e) { alert('Pause error: ' + e); }
 }
 
 // ─── CIO Agent panel handlers ─────────────────────────────────────────────
