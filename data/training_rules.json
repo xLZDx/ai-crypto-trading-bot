@@ -29,7 +29,12 @@
       },
       "resource_kind": "cpu",
       "est_minutes_per_run": 30,
-      "depends_on": []
+      "depends_on": [],
+      "kpi_threshold": {
+        "wf_acc": 50.0,
+        "wf_win_rate": 35.0,
+        "wf_total_trades": 30
+      }
     },
     "trend": {
       "type": "tabular_histgbt",
@@ -56,7 +61,12 @@
       },
       "resource_kind": "cpu",
       "est_minutes_per_run": 27,
-      "depends_on": []
+      "depends_on": [],
+      "kpi_threshold": {
+        "wf_acc": 50.0,
+        "wf_win_rate": 35.0,
+        "wf_total_trades": 25
+      }
     },
     "futures": {
       "type": "tabular_histgbt",
@@ -84,7 +94,12 @@
       },
       "resource_kind": "cpu",
       "est_minutes_per_run": 25,
-      "depends_on": []
+      "depends_on": [],
+      "kpi_threshold": {
+        "wf_acc": 50.0,
+        "wf_win_rate": 35.0,
+        "wf_total_trades": 20
+      }
     },
     "scalping": {
       "type": "tabular_histgbt_smote",
@@ -111,7 +126,11 @@
       },
       "resource_kind": "cpu",
       "est_minutes_per_run": 30,
-      "depends_on": []
+      "depends_on": [],
+      "kpi_threshold": {
+        "wf_acc": 50.0,
+        "wf_total_trades": 50
+      }
     },
     "meta": {
       "type": "tabular_histgbt_meta_labeler",
@@ -141,7 +160,12 @@
         "base",
         "trend",
         "futures"
-      ]
+      ],
+      "kpi_threshold": {
+        "wf_acc": 55.0,
+        "auc_roc": 0.55,
+        "wf_win_rate": 40.0
+      }
     },
     "tft": {
       "type": "neural_darts",

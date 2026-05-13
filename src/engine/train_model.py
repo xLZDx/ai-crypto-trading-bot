@@ -369,7 +369,9 @@ def train_model(timeframe: str = '1h'):
         "accuracy": accuracy * 100,
         "long_accuracy": long_acc, "short_accuracy": short_acc,
         "n_samples": len(combined_df), "n_train": train_end, "n_test": len(X_test),
-        "n_features": len(FEATURE_COLUMNS), "n_iterations": n_iter,
+        "n_features": len(FEATURE_COLUMNS),
+        "features": list(FEATURE_COLUMNS),  # required by MLPredictor._get_model_features
+        "n_iterations": n_iter,
         "walk_forward_mean_acc": round(float(np.mean(fold_accuracies)) * 100, 2),
         "walk_forward_std_acc": round(float(np.std(fold_accuracies)) * 100, 2),
         "target": "triple_barrier_long_win",

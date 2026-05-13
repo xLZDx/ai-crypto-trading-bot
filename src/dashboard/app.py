@@ -1404,6 +1404,140 @@ def monitor_model_stats():
     return jsonify({'models': result, 'cuda': cuda})
 
 
+# ── KPI gate registry endpoints (Sprint 1A R2) ──────────────────────────────
+
+@app.route('/api/registry/retired', methods=['GET'])
+@require_api_key
+def registry_retired():
+    """List all auto-retired (model, tf) cells from the KPI gate."""
+    try:
+        from src.engine import kpi_gate as _kg
+        data = _kg._load_retired()
+        return jsonify({
+            'ok': True,
+            'retired': data.get('retired', {}),
+            'last_updated': data.get('last_updated'),
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/registry/<key>/restore', methods=['POST'])
+@require_api_key
+def registry_restore(key: str):
+    """
+    Clear the KPI-retired flag for a model__tf cell.
+    `key` format: "<model>__<tf>" e.g. "trend__1h".
+    """
+    try:
+        from src.engine import kpi_gate as _kg
+        if '__' not in key:
+            return jsonify({'ok': False, 'error': 'key must be "<model>__<tf>"'}), 400
+        model, tf = key.split('__', 1)
+        result = _kg.restore(model, tf)
+        return jsonify(result), (200 if result.get('ok') else 404)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/registry/runs/<model>/<tf>', methods=['GET'])
+@require_api_key
+def registry_runs(model: str, tf: str):
+    """Return the last N TrainingResults for (model, tf) — used by Model Comparison tab."""
+    try:
+        from src.engine import kpi_gate as _kg
+        n = int(request.args.get('n', 10))
+        runs = _kg.last_n_successful(model, tf, n=n)
+        return jsonify({
+            'ok': True,
+            'model': model, 'tf': tf,
+            'runs': [
+                {
+                    'finished_at':  r.finished_at,
+                    'started_at':   r.started_at,
+                    'n_samples':    r.n_samples,
+                    'n_features':   r.n_features,
+                    'wf_sharpe':    r.wf_sharpe,
+                    'wf_calmar':    r.wf_calmar,
+                    'wf_max_dd':    r.wf_max_dd,
+                    'wf_win_rate':  r.wf_win_rate,
+                    'wf_expectancy': r.wf_expectancy,
+                    'wf_total_trades': r.wf_total_trades,
+                    'wf_acc':       r.wf_acc,
+                    'auc_roc':      r.auc_roc,
+                }
+                for r in runs
+            ],
+            'retired': _kg.is_retired(model, tf),
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+# ── Model Comparison endpoint (Sprint 1A R3) ─────────────────────────────────
+
+@app.route('/api/model_comparison', methods=['GET'])
+@require_api_key
+def model_comparison():
+    """
+    KPI grid for the Model Comparison dashboard tab.
+
+    Returns one row per (model, tf) cell with the LATEST successful run's KPIs
+    plus retirement status. Sorted by model then tf.
+    """
+    try:
+        from src.engine import kpi_gate as _kg
+        from src.utils.safe_json import read_json
+        from pathlib import Path as _P
+        import os as _os
+        # Source the model × TF matrix from training_rules.json
+        rules = read_json(str(_P(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))) / 'data' / 'training_rules.json'),
+                          default={}) or {}
+        models_block = (rules.get('models') or {})
+        retired_map = _kg._load_retired().get('retired', {})
+
+        rows = []
+        for model_key, cfg in models_block.items():
+            applicable = list(cfg.get('applicable_tfs') or [])
+            experimental = list(cfg.get('experimental_tfs') or [])
+            for tf in applicable + experimental:
+                runs = _kg.last_n_successful(model_key, tf, n=1)
+                latest = runs[0] if runs else None
+                row = {
+                    'model':      model_key,
+                    'tf':         tf,
+                    'tf_kind':    'experimental' if tf in experimental else 'applicable',
+                    'retired':    _kg.is_retired(model_key, tf),
+                    'retired_at': retired_map.get(f'{model_key}__{tf}', {}).get('retired_at'),
+                    'last_run':   None,
+                }
+                if latest is not None:
+                    row['last_run'] = {
+                        'finished_at':     latest.finished_at,
+                        'n_samples':       latest.n_samples,
+                        'n_features':      latest.n_features,
+                        'wf_acc':          latest.wf_acc,
+                        'wf_sharpe':       latest.wf_sharpe,
+                        'wf_calmar':       latest.wf_calmar,
+                        'wf_max_dd':       latest.wf_max_dd,
+                        'wf_win_rate':     latest.wf_win_rate,
+                        'wf_expectancy':   latest.wf_expectancy,
+                        'wf_total_trades': latest.wf_total_trades,
+                        'auc_roc':         latest.auc_roc,
+                    }
+                rows.append(row)
+        return jsonify({
+            'ok': True,
+            'rows': rows,
+            'thresholds_by_model': {
+                m: (cfg.get('kpi_threshold') or {})
+                for m, cfg in models_block.items()
+            },
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 @app.route('/api/strategy/full')
 @require_api_key
 def strategy_full():

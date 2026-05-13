@@ -1221,6 +1221,9 @@ document.addEventListener('DOMContentLoaded', function() {
     <button class="nav-item" data-tab="strategy">
       <span class="nav-icon">🧠</span> Strategy &amp; ML
     </button>
+    <button class="nav-item" data-tab="model_comparison">
+      <span class="nav-icon">📐</span> Model Comparison
+    </button>
     <button class="nav-item" data-tab="watchlist">
       <span class="nav-icon">👁</span> Watchlist
     </button>
@@ -2934,6 +2937,43 @@ document.addEventListener('DOMContentLoaded', function() {
     </div><!-- /institutional -->
 
     <!-- ════════════════ ARBITRAGE (CEX-DEX statistical) ════════════════ -->
+    <!-- Sprint 1A R3 — Model Comparison: sortable KPI grid across (model, tf) -->
+    <div id="tab-model_comparison" class="tab-pane">
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-h" style="display:flex;justify-content:space-between;align-items:center">
+          <span>📐 Model × Timeframe KPI Comparison</span>
+          <button onclick="loadModelComparison()" style="padding:6px 12px;cursor:pointer">↻ Refresh</button>
+        </div>
+        <div style="padding:10px;color:#888;font-size:12px">
+          One row per (model, tf) cell. KPI = latest successful run from
+          <code>data/training_runs/&lt;model&gt;__&lt;tf&gt;.parquet</code>.
+          Red row = auto-retired by KPI gate (3 consecutive threshold misses).
+          Yellow row = experimental TF (still applicable but lower priority).
+        </div>
+      </div>
+      <div class="card">
+        <table id="model-comparison-table" style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead style="background:#222;color:#eee">
+            <tr>
+              <th style="padding:8px;text-align:left;cursor:pointer" onclick="sortMC(0)">Model</th>
+              <th style="padding:8px;text-align:left;cursor:pointer" onclick="sortMC(1)">TF</th>
+              <th style="padding:8px;text-align:right;cursor:pointer" onclick="sortMC(2)">WF Acc %</th>
+              <th style="padding:8px;text-align:right;cursor:pointer" onclick="sortMC(3)">WF Win %</th>
+              <th style="padding:8px;text-align:right;cursor:pointer" onclick="sortMC(4)">WF Sharpe</th>
+              <th style="padding:8px;text-align:right;cursor:pointer" onclick="sortMC(5)">WF MaxDD</th>
+              <th style="padding:8px;text-align:right;cursor:pointer" onclick="sortMC(6)">Trades</th>
+              <th style="padding:8px;text-align:right;cursor:pointer" onclick="sortMC(7)">AUC</th>
+              <th style="padding:8px;text-align:center">Status</th>
+              <th style="padding:8px;text-align:center">Action</th>
+            </tr>
+          </thead>
+          <tbody id="model-comparison-tbody">
+            <tr><td colspan="10" style="padding:20px;text-align:center;color:#888">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div><!-- /model_comparison -->
+
     <!-- Reverse-proxied from arbitrage_strategy dashboard at port 5002.
          Displayed via iframe so the embedded HTML/JS keeps its own polling
          loops without polluting the trading-bot Flask process. -->
@@ -3008,6 +3048,7 @@ async function apiFetch(path, opts={}) {
 const TAB_TITLES = {
   overview:     ['Overall Bot Performance', 'Spot, futures, and scalping context in one place with live state, strategy analytics, and execution controls.'],
   strategy:     ['Strategy & ML',           'Historical performance, model accuracy, and regime analytics'],
+  model_comparison: ['Model Comparison',    'KPI grid per (model × tf) — auto-retired cells flagged'],
   watchlist:    ['Watchlist',               'Real-time quotes, holdings, and PnL — add symbols to trigger archive history download'],
   trades:       ['Trades',                  'Open positions and closed ledger across all markets'],
   logs:         ['Terminal Log',            'Live tail of the trading bot log for diagnostics'],
@@ -3029,6 +3070,9 @@ function switchTab(name) {
   if (name === 'overview' && !chartInitialized) { initTVChart(currentChartSym); chartInitialized = true; }
   if (name === 'logs') pollLogs();
   if (name === 'watchlist') renderWatchlist();
+  if (name === 'model_comparison') {
+    loadModelComparison();
+  }
   if (name === 'strategy') {
     renderStrategyTab(botState);
     if (!_btRows.length) loadBtComparison();
@@ -3828,6 +3872,98 @@ let _stratFull = null;
 let _stratLoadInFlight = false;
 let _stratLoadAttempts = 0;
 let _stratLoadFailed   = false;
+
+// ─── Model Comparison (Sprint 1A R3) ───────────────────────────────────────
+let _mcRows = [];
+let _mcSortCol = 0;
+let _mcSortAsc = true;
+
+const _mcCellGet = (row, col) => {
+  const r = row.last_run || {};
+  switch (col) {
+    case 0: return row.model || '';
+    case 1: return row.tf || '';
+    case 2: return r.wf_acc ?? -1;
+    case 3: return r.wf_win_rate ?? -1;
+    case 4: return r.wf_sharpe ?? -1;
+    case 5: return r.wf_max_dd ?? 1;
+    case 6: return r.wf_total_trades ?? -1;
+    case 7: return r.auc_roc ?? -1;
+    default: return '';
+  }
+};
+
+function sortMC(col) {
+  if (_mcSortCol === col) _mcSortAsc = !_mcSortAsc;
+  else { _mcSortCol = col; _mcSortAsc = true; }
+  _mcRows.sort((a, b) => {
+    const va = _mcCellGet(a, col), vb = _mcCellGet(b, col);
+    if (typeof va === 'string') return _mcSortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+    return _mcSortAsc ? va - vb : vb - va;
+  });
+  renderModelComparison();
+}
+
+async function restoreCell(key) {
+  if (!confirm('Restore (un-retire) ' + key + '?')) return;
+  try {
+    const r = await fetch('/api/registry/' + encodeURIComponent(key) + '/restore',
+      { method: 'POST', headers: hdrs() });
+    const j = await r.json();
+    if (j.ok) { loadModelComparison(); }
+    else { alert('Restore failed: ' + (j.error || j.reason)); }
+  } catch (e) { alert('Restore error: ' + e); }
+}
+
+function renderModelComparison() {
+  const tbody = document.getElementById('model-comparison-tbody');
+  if (!tbody) return;
+  if (!_mcRows.length) {
+    tbody.innerHTML = '<tr><td colspan="10" style="padding:20px;text-align:center;color:#888">No data — train a model to populate.</td></tr>';
+    return;
+  }
+  const fmt = (v, d=2) => (v === null || v === undefined) ? '<span style="color:#555">—</span>' : Number(v).toFixed(d);
+  const html = _mcRows.map(row => {
+    const r = row.last_run || {};
+    const bgColor = row.retired ? '#3a1a1a' : (row.tf_kind === 'experimental' ? '#3a3a1a' : 'transparent');
+    const statusBadge = row.retired
+      ? '<span style="color:#f55;font-weight:bold">⛔ RETIRED</span>'
+      : (row.last_run ? '<span style="color:#5f5">ACTIVE</span>' : '<span style="color:#888">UNTRAINED</span>');
+    const action = row.retired
+      ? '<button onclick="restoreCell(\'' + row.model + '__' + row.tf + '\')" style="padding:4px 8px;cursor:pointer;background:#a33;color:#fff;border:none;border-radius:3px">Restore</button>'
+      : '<span style="color:#555">—</span>';
+    return '<tr style="background:' + bgColor + ';border-bottom:1px solid #222">' +
+      '<td style="padding:6px"><b>' + row.model + '</b></td>' +
+      '<td style="padding:6px">' + row.tf + '</td>' +
+      '<td style="padding:6px;text-align:right">' + fmt(r.wf_acc, 2) + '</td>' +
+      '<td style="padding:6px;text-align:right">' + fmt(r.wf_win_rate, 1) + '</td>' +
+      '<td style="padding:6px;text-align:right">' + fmt(r.wf_sharpe, 3) + '</td>' +
+      '<td style="padding:6px;text-align:right">' + fmt(r.wf_max_dd, 3) + '</td>' +
+      '<td style="padding:6px;text-align:right">' + (r.wf_total_trades ?? '<span style="color:#555">—</span>') + '</td>' +
+      '<td style="padding:6px;text-align:right">' + fmt(r.auc_roc, 3) + '</td>' +
+      '<td style="padding:6px;text-align:center">' + statusBadge + '</td>' +
+      '<td style="padding:6px;text-align:center">' + action + '</td>' +
+      '</tr>';
+  }).join('');
+  tbody.innerHTML = html;
+}
+
+async function loadModelComparison() {
+  const tbody = document.getElementById('model-comparison-tbody');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="10" style="padding:20px;text-align:center;color:#888">Loading…</td></tr>';
+  try {
+    const r = await fetch('/api/model_comparison', { headers: hdrs() });
+    const j = await r.json();
+    if (j.ok) {
+      _mcRows = j.rows || [];
+      sortMC(_mcSortCol);
+    } else {
+      if (tbody) tbody.innerHTML = '<tr><td colspan="10" style="padding:20px;text-align:center;color:#f55">Error: ' + (j.error || 'unknown') + '</td></tr>';
+    }
+  } catch (e) {
+    if (tbody) tbody.innerHTML = '<tr><td colspan="10" style="padding:20px;text-align:center;color:#f55">Fetch error: ' + e + '</td></tr>';
+  }
+}
 
 async function loadStrategyFull() {
   if (_stratLoadInFlight) return;

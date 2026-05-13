@@ -45,6 +45,18 @@ except Exception as _mle_imp_err:  # pragma: no cover — defensive
         "flight AFML gates will not run.", _mle_imp_err,
     )
 
+# Optional KPI Gate (Sprint 1A R2) — auto-retire after 3 consecutive threshold
+# misses. Importable at module scope for monkeypatch in tests. Non-fatal on
+# import failure.
+try:
+    from src.engine import kpi_gate as _kpi_gate
+except Exception as _kpi_imp_err:  # pragma: no cover
+    _kpi_gate = None
+    logger.warning(
+        "[Orch] KPI gate unavailable at import time: %s — auto-retire disabled.",
+        _kpi_imp_err,
+    )
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -331,6 +343,36 @@ class Orchestrator:
         symbol     = task_spec.get("symbol",     "BTC/USDT")
         timeframe  = task_spec.get("timeframe",  "1m")
 
+        # ── KPI gate retirement check ──
+        # If (model_type, timeframe) was auto-retired by Sprint 1A R2 KPI gate
+        # (3 consecutive runs failed thresholds), refuse the task with a
+        # sentinel and let the operator restore via /api/registry/<key>/restore.
+        # `force=True` in task_spec overrides the retirement check (allows
+        # operator-initiated retraining of a retired cell to attempt recovery).
+        if _kpi_gate is not None and not task_spec.get("force", False):
+            try:
+                if _kpi_gate.is_retired(model_type, timeframe):
+                    logger.error(
+                        "[Orch] Task REFUSED — %s/%s is KPI-retired. "
+                        "Restore via POST /api/registry/%s__%s/restore.",
+                        model_type, timeframe, model_type, timeframe,
+                    )
+                    sentinel = f"retired-kpi-{int(datetime.now(timezone.utc).timestamp())}"
+                    with self._lock:
+                        self._tasks[sentinel] = {
+                            "task_id":     sentinel,
+                            "model_type":  model_type,
+                            "symbol":      symbol,
+                            "timeframe":   timeframe,
+                            "status":      "retired",
+                            "blocked_by":  "kpi_gate",
+                            "reasons":     [f"{model_type}/{timeframe} auto-retired by KPI gate"],
+                            "created_at":  datetime.now(timezone.utc).isoformat(),
+                        }
+                    return sentinel
+            except Exception as e:
+                logger.warning("[Orch] KPI is_retired check error: %s", e)
+
         # ── ML Engineer pre-flight gate ──
         # Validates AFML compliance before allocating a task_id. BLOCK = task
         # is refused and a structured error is returned via "blocked-<reason>"
@@ -502,6 +544,38 @@ class Orchestrator:
                                 # operator can quarantine the artifact.
                     except Exception as e:
                         logger.warning("[Orch] ML Engineer post-flight gate skipped: %s", e)
+
+                # ── KPI Gate post-flight (Sprint 1A R2) ──
+                # Persists a TrainingResult row, checks last-3 strikes, and
+                # auto-retires the (model, tf) cell on 3 consecutive misses.
+                if status == "done" and _kpi_gate is not None:
+                    try:
+                        model_type = task.get("model_type", "")
+                        tf         = task.get("timeframe", "")
+                        meta_path  = None
+                        try:
+                            from src.utils.model_paths import artifact_paths
+                            paths = artifact_paths(model_type, tf)
+                            meta_path = paths.get('meta')
+                        except Exception:
+                            pass
+                        if meta_path and Path(meta_path).exists():
+                            kpi_outcome = _kpi_gate.evaluate_from_meta_json(
+                                model_key=model_type,
+                                tf=tf,
+                                meta_json_path=str(meta_path),
+                            )
+                            task["kpi_gate"] = kpi_outcome
+                            if kpi_outcome.get("retired_now"):
+                                logger.error(
+                                    "[Orch] KPI gate AUTO-RETIRED %s/%s after 3 strikes — "
+                                    "subsequent submissions will be blocked until restore. "
+                                    "Missed fields: %s",
+                                    model_type, tf, kpi_outcome.get("missed_fields"),
+                                )
+                    except Exception as e:
+                        logger.warning("[Orch] KPI gate post-flight skipped: %s", e)
+
                 # Retry on failure
                 if status == "failed" and task.get("retries", 0) < MAX_TASK_RETRIES:
                     task["retries"] = task.get("retries", 0) + 1
