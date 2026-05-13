@@ -1,0 +1,11 @@
+model: claude-sonnet-4-6
+weak-model: claude-sonnet-4-6
+edit-format: diff
+auto-commits: false
+dirty-commits: false
+show-diffs: true
+yes-always: false
+analytics: false
+gitignore: false
+# Do not let Aider touch data/, models/, or reference repos
+# See .aiderignore for full exclusion list

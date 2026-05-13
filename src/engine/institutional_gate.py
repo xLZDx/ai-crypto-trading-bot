@@ -119,7 +119,11 @@ class InstitutionalGate:
             if not cb["ok"]:
                 reasons.append(f"circuit_breaker:{cb['trigger']}:{cb['reason']}")
         except Exception as exc:
-            logger.debug("[gate] circuit_breaker_check unavailable: %s", exc)
+            logger.error(
+                "[gate] circuit_breaker_check FAILED — blocking trade conservatively: %s",
+                exc, exc_info=True,
+            )
+            reasons.append(f"circuit_breaker:check_failed:{type(exc).__name__}")
 
         # §17 beta neutrality
         if self._beta_filter is not None:
@@ -128,7 +132,11 @@ class InstitutionalGate:
                     snap = self._beta_filter.snapshot()
                     reasons.append(f"beta_neutrality:would_push_to_{snap.aggregate_beta:+.2f}")
             except Exception as exc:
-                logger.debug("[gate] beta check failed: %s", exc)
+                logger.error(
+                    "[gate] beta_neutrality check FAILED — blocking trade conservatively: %s",
+                    exc, exc_info=True,
+                )
+                reasons.append(f"beta_neutrality:check_failed:{type(exc).__name__}")
 
         return {"ok": not reasons, "reasons": reasons}
 

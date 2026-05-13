@@ -198,7 +198,9 @@ def require_api_key(f):
         # Phase A9: accept either the raw master key OR a session
         # token. Master key is for scripts / curl / cluster polling;
         # the dashboard JS uses session tokens issued by index().
-        if token == DASHBOARD_API_KEY:
+        # SEC-1 fix: hmac.compare_digest closes the timing-attack side-channel.
+        import hmac as _hmac
+        if DASHBOARD_API_KEY and token and _hmac.compare_digest(token, DASHBOARD_API_KEY):
             return f(*args, **kwargs)
         if _is_session_token_valid(token):
             return f(*args, **kwargs)
@@ -1491,8 +1493,12 @@ def strategy_full():
             # Trainer wraps it as {'model': {'gmm': GaussianMixture, 'scaler': ...}, 'label_map': ...}
             if n_feat is None and model_path.exists():
                 try:
+                    # SEC-3 fix: route through HMAC integrity check instead of
+                    # bare joblib.load (which deserializes pickle → RCE if tampered).
                     import joblib as _jl
-                    blob = _jl.load(model_path)
+                    import io as _io
+                    from src.utils.model_integrity import verify_and_load_bytes
+                    blob = _jl.load(_io.BytesIO(verify_and_load_bytes(str(model_path))))
                     gmm = None
                     if hasattr(blob, 'means_'):
                         gmm = blob
@@ -7348,10 +7354,10 @@ if __name__ == '__main__':
     except Exception as _e:
         print(f"[dashboard] error_monitor init failed: {_e}")
 
-    # Phase 11 — bind to a dedicated IP via env var. Defaults to 0.0.0.0
-    # so the dashboard remains reachable on every interface unless the
-    # operator explicitly binds it to e.g. 192.168.0.99.
-    _host = os.getenv('DASHBOARD_BIND_HOST', '0.0.0.0')
+    # Phase 11 — bind via env var. SEC-2 fix: default to 127.0.0.1 (loopback).
+    # To expose on the LAN, operator must explicitly set DASHBOARD_BIND_HOST
+    # to the desired interface IP AND set DASHBOARD_API_KEY.
+    _host = os.getenv('DASHBOARD_BIND_HOST', '127.0.0.1')
     _port = int(os.getenv('DASHBOARD_BIND_PORT', '5000'))
     print(f"[dashboard] binding {_host}:{_port}")
     app.run(host=_host, port=_port, debug=False)

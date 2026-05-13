@@ -169,7 +169,9 @@ def _spawn_dashboard() -> int:
     # Pass UTF-8 io and the bind config that launch_dashboard.ps1 sets.
     env = os.environ.copy()
     env.setdefault('PYTHONIOENCODING',     'utf-8')
-    env.setdefault('DASHBOARD_BIND_HOST',  '0.0.0.0')
+    # SEC-2 fix: loopback by default. Operator must explicitly set
+    # DASHBOARD_BIND_HOST in the environment to expose on LAN.
+    env.setdefault('DASHBOARD_BIND_HOST',  '127.0.0.1')
     env.setdefault('DASHBOARD_BIND_PORT',  '5000')
     kw['env'] = env
     if sys.platform == 'win32':

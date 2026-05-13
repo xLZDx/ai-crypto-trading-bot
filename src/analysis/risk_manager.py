@@ -128,7 +128,13 @@ class HullRiskManager:
         According to Hull, volatility is the standard deviation of logarithmic returns.
         """
         if len(data) < periods + 1:
-            return 0.01 # Default value
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "[risk_manager] insufficient data for vol calc: have %d bars, need %d. "
+                "Returning sentinel vol=0.0 to disable Kelly sizing.",
+                len(data), periods + 1,
+            )
+            return 0.0  # was 0.01 — caller must treat 0 as "no signal" not "min vol"
 
         recent_data = data[-(periods+1):]
         log_returns = []
@@ -141,7 +147,12 @@ class HullRiskManager:
                 log_returns.append(log_return)
 
         if not log_returns:
-            return 0.01
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "[risk_manager] no valid log returns (all prev_close <= 0). "
+                "Returning sentinel vol=0.0 to disable Kelly sizing.",
+            )
+            return 0.0  # was 0.01 — sentinel for "no signal"
 
         mean_return = sum(log_returns) / len(log_returns)
 

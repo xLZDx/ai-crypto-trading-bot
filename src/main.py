@@ -139,7 +139,12 @@ class MultiAssetTrader:
         try:
             from src.analysis.regime_classifier import RegimeClassifier
             self.regime_clf = RegimeClassifier()
-        except Exception:
+        except Exception as e:
+            logger.error(
+                "[init] RegimeClassifier load FAILED — regime will default to TRENDING "
+                "for all signals; size_mult will be unscaled. Reason: %s",
+                e, exc_info=True,
+            )
             self.regime_clf = None
         self._regime_cache: dict = {}  # symbol → {regime, regime_name, size_mult}
 
@@ -147,7 +152,12 @@ class MultiAssetTrader:
         try:
             from src.analysis.meta_labeler import MetaLabeler
             self.meta_labeler = MetaLabeler()
-        except Exception:
+        except Exception as e:
+            logger.error(
+                "[init] MetaLabeler load FAILED — second-layer filter is DISABLED. "
+                "Trades will pass without meta-labeler confidence check. Reason: %s",
+                e, exc_info=True,
+            )
             self.meta_labeler = None
 
         # --- Advanced Quant Modules ---
@@ -199,13 +209,27 @@ class MultiAssetTrader:
             logger.info("[gate] InstitutionalGate ready (§11-18 wired).")
         except Exception as e:
             self.gate = None
-            logger.warning("[gate] could not initialise InstitutionalGate: %s", e)
+            logger.critical(
+                "[gate] InstitutionalGate init FAILED — §11-18 risk controls "
+                "(beta-neutrality, circuit breakers, CVaR sizing, alpha-decay) "
+                "are ALL DISABLED. Reason: %s",
+                e, exc_info=True,
+            )
+            try:
+                from src.utils.error_state import push_error
+                push_error(
+                    component='institutional_gate',
+                    severity='critical',
+                    message=f'InstitutionalGate init failed — all §11-18 risk controls disabled: {e}',
+                )
+            except Exception:
+                pass  # never let error-state writer block init
 
         # Phase 9 — keep dual-balance state files fresh.
         try:
             dual_balance.refresh_real_from_binance(self.engine)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("[init] dual_balance refresh_real_from_binance failed: %s", e)
 
         # Phase 10E — attach β-history so §17 beta-neutrality is actually live.
         try:

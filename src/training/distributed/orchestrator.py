@@ -319,6 +319,27 @@ class Orchestrator:
         symbol     = task_spec.get("symbol",     "BTC/USDT")
         timeframe  = task_spec.get("timeframe",  "1m")
 
+        # ── ML Engineer pre-flight gate ──
+        # Validates AFML compliance before allocating a task_id. BLOCK = task
+        # is refused and a structured error is returned via "blocked-<reason>"
+        # task_id sentinel so the caller can surface the reason in the UI.
+        try:
+            from src.engine.ml_engineer_agent import get_ml_engineer
+            ml_decision = get_ml_engineer().validate_training_request(
+                model_type=model_type,
+                timeframe=timeframe,
+                config=task_spec.get("config", {}) | task_spec.get("overrides", {}),
+            )
+            if ml_decision.decision == 'BLOCK':
+                logger.error(
+                    "[Orch] Task BLOCKED by ML Engineer agent: model=%s tf=%s reasons=%s",
+                    model_type, timeframe, ml_decision.reasons,
+                )
+                return f"blocked-mle-{int(datetime.now(timezone.utc).timestamp())}"
+        except Exception as e:
+            # Never let the gate crash task submission. Log and continue.
+            logger.warning("[Orch] ML Engineer pre-flight gate skipped: %s", e)
+
         with self._lock:
             # Phase C2 — dedup before allocating a new task_id.
             for existing_id, existing in self._tasks.items():
@@ -413,6 +434,46 @@ class Orchestrator:
                         self._workers[node_id]["tasks_done"] = self._workers[node_id].get("tasks_done", 0) + 1
                     else:
                         self._workers[node_id]["tasks_failed"] = self._workers[node_id].get("tasks_failed", 0) + 1
+
+                # ── ML Engineer post-training gate ──
+                # On status='done', evaluate the model meta JSON against KPI
+                # floors. REJECT moves the artifact to quarantine.
+                if status == "done":
+                    try:
+                        from src.engine.ml_engineer_agent import get_ml_engineer
+                        from pathlib import Path as _P
+                        model_type = task.get("model_type", "")
+                        tf         = task.get("timeframe", "")
+                        # Derive meta JSON path from model_paths helper
+                        meta_path = None
+                        try:
+                            from src.utils.model_paths import artifact_paths
+                            paths = artifact_paths(model_type, tf)
+                            meta_path = paths.get('meta')
+                        except Exception:
+                            pass
+                        if meta_path and _P(meta_path).exists():
+                            post_decision = get_ml_engineer().evaluate_trained_model(
+                                model_type=model_type,
+                                timeframe=tf,
+                                meta_json_path=str(meta_path),
+                            )
+                            task["ml_engineer_decision"] = {
+                                "decision": post_decision.decision,
+                                "reasons":  post_decision.reasons,
+                                "warnings": post_decision.warnings,
+                                "metrics":  post_decision.metrics,
+                            }
+                            if post_decision.decision == 'REJECT':
+                                logger.error(
+                                    "[Orch] Model REJECTED by ML Engineer: %s/%s reasons=%s",
+                                    model_type, tf, post_decision.reasons,
+                                )
+                                # Task remains 'done' (it ran) but KPI gate failed.
+                                # The dashboard surfaces ml_engineer_decision so the
+                                # operator can quarantine the artifact.
+                    except Exception as e:
+                        logger.warning("[Orch] ML Engineer post-flight gate skipped: %s", e)
                 # Retry on failure
                 if status == "failed" and task.get("retries", 0) < MAX_TASK_RETRIES:
                     task["retries"] = task.get("retries", 0) + 1
@@ -709,8 +770,33 @@ def get_orchestrator() -> Orchestrator:
 # ─── Standalone HTTP server ───────────────────────────────────────────────────
 
 def _build_standalone_app(orch: Orchestrator):
-    from flask import Flask, jsonify, request as freq
+    from flask import Flask, jsonify, request as freq, abort
+    import hmac as _hmac
+    import os as _os
     app = Flask("orchestrator")
+
+    # SEC-4 fix: shared-secret auth on mutation endpoints. Reads CLUSTER_API_KEY
+    # or DASHBOARD_API_KEY (same key the dashboard uses). When unset, the
+    # auth check fails open — matching the dashboard's existing policy — but
+    # the operator gets a CRITICAL log line so they cannot miss it.
+    _CLUSTER_KEY = (_os.getenv("CLUSTER_API_KEY")
+                    or _os.getenv("API_KEY")
+                    or _os.getenv("DASHBOARD_API_KEY")
+                    or "").strip()
+    if not _CLUSTER_KEY:
+        logger.critical(
+            "[Orch] No CLUSTER_API_KEY / DASHBOARD_API_KEY set — mutation "
+            "endpoints (/submit, /register, /task_update, /cancel) are "
+            "UNPROTECTED. Set the env var to enable auth."
+        )
+
+    def _require_cluster_auth():
+        """Apply at the start of each mutation route handler."""
+        if not _CLUSTER_KEY:
+            return  # fail-open when key unset (logged at startup)
+        provided = freq.headers.get("X-API-Key", "") or ""
+        if not provided or not _hmac.compare_digest(provided, _CLUSTER_KEY):
+            abort(401)
 
     @app.route("/api/cluster/status")
     def status():
@@ -743,12 +829,14 @@ def _build_standalone_app(orch: Orchestrator):
 
     @app.route("/api/cluster/submit", methods=["POST"])
     def submit():
+        _require_cluster_auth()
         spec = freq.get_json(force=True) or {}
         tid  = orch.submit_task(spec)
         return jsonify({"ok": True, "task_id": tid})
 
     @app.route("/api/cluster/submit_all", methods=["POST"])
     def submit_all():
+        _require_cluster_auth()
         body    = freq.get_json(force=True) or {}
         symbols = body.get("symbols")
         ids     = orch.submit_full_training_run(symbols)
@@ -756,11 +844,18 @@ def _build_standalone_app(orch: Orchestrator):
 
     @app.route("/api/cluster/register", methods=["POST"])
     def register():
-        orch.register_worker(freq.get_json(force=True) or {})
+        _require_cluster_auth()
+        body = freq.get_json(force=True) or {}
+        # SEC-7 fix: validate IP at runtime — was only checked at state-load.
+        if hasattr(orch, '_is_safe_worker_entry') and not orch._is_safe_worker_entry(body):
+            logger.warning("[Orch] register_worker: rejected unsafe entry ip=%r", body.get("ip"))
+            abort(400, description="unsafe worker entry")
+        orch.register_worker(body)
         return jsonify({"ok": True})
 
     @app.route("/api/cluster/task_update", methods=["POST"])
     def task_update():
+        _require_cluster_auth()
         body = freq.get_json(force=True) or {}
         orch.update_task(
             body.get("task_id", ""),
@@ -773,6 +868,7 @@ def _build_standalone_app(orch: Orchestrator):
 
     @app.route("/api/cluster/task/<task_id>", methods=["DELETE"])
     def cancel(task_id):
+        _require_cluster_auth()
         ok = orch.cancel_task(task_id)
         return jsonify({"ok": ok})
 

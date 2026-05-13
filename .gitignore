@@ -27,7 +27,13 @@ data/orchestrator_state.json
 data/train_all_models.lock
 data/training_current.json
 data/*.tmp
+data/*.lock
+data/ml_engineer_decisions.json
+data/cio_proposals.json
 tft_train.bat
+
+# External reference repos (cloned for documentation only)
+data/references/
 
 # Generated parquet / DuckDB stores (runtime data, multi-GB)
 data/parquet/

@@ -768,9 +768,35 @@ class TrainingWorker:
         self._app       = self._build_app()
 
     def _build_app(self):
-        from flask import Flask, jsonify, request as freq
+        from flask import Flask, jsonify, request as freq, abort
+        import hmac as _hmac
+        import os as _os
         app = Flask(f"worker-{self.node_id}")
         app.logger.setLevel(logging.WARNING)
+
+        # SEC-5 fix: shared-secret auth on /task, /cancel, /restart.
+        _WORKER_KEY = (_os.getenv("WORKER_AUTH_KEY")
+                       or _os.getenv("CLUSTER_API_KEY")
+                       or _os.getenv("DASHBOARD_API_KEY")
+                       or "").strip()
+        if not _WORKER_KEY:
+            logger.critical(
+                "[Worker] No WORKER_AUTH_KEY / CLUSTER_API_KEY / DASHBOARD_API_KEY "
+                "set — /task, /cancel, /restart are UNPROTECTED. Set the env var "
+                "to enable auth."
+            )
+
+        def _require_worker_auth():
+            if not _WORKER_KEY:
+                return  # fail-open when key unset
+            provided = freq.headers.get("X-API-Key", "") or ""
+            if not provided:
+                # Accept "Authorization: Bearer <key>" as alternative
+                auth = freq.headers.get("Authorization", "") or ""
+                if auth.startswith("Bearer "):
+                    provided = auth[len("Bearer "):]
+            if not provided or not _hmac.compare_digest(provided, _WORKER_KEY):
+                abort(401)
 
         @app.route("/health")
         def health():
@@ -788,6 +814,7 @@ class TrainingWorker:
 
         @app.route("/task", methods=["POST"])
         def run_task():
+            _require_worker_auth()
             task = freq.get_json(force=True) or {}
             if self._current_task:
                 return jsonify({"error": "busy"}), 409
@@ -796,6 +823,7 @@ class TrainingWorker:
 
         @app.route("/cancel", methods=["POST"])
         def cancel():
+            _require_worker_auth()
             self._current_task = None
             return jsonify({"ok": True})
 
@@ -820,6 +848,7 @@ class TrainingWorker:
         # restarting us — same recovery path as crash-on-startup.
         @app.route("/restart", methods=["POST"])
         def restart():
+            _require_worker_auth()
             body = freq.get_json(force=True, silent=True) or {}
             if body.get("confirm") is not True:
                 return jsonify({
