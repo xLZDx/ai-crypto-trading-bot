@@ -1543,6 +1543,59 @@ def cio_apply_best():
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 
+# ── Kill Switch endpoints (Sprint 0 §S0-3) ───────────────────────────────────
+
+@app.route('/api/risk/kill_switch/status', methods=['GET'])
+@require_api_key
+def kill_switch_status():
+    """Current kill-switch state for the dashboard tile."""
+    try:
+        from src.risk.kill_switch import get_kill_switch
+        return jsonify({'ok': True, **get_kill_switch().state()})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/risk/kill_switch/reset', methods=['POST'])
+@require_api_key
+def kill_switch_reset():
+    """
+    Operator clears the pause. Requires `confirm: true` per the §S0-3 spec
+    (mirrors the /restart confirm flag on the worker).
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    if body.get('confirm') is not True:
+        return jsonify({'error': 'confirm flag required',
+                        'hint': 'POST body must include {"confirm": true}'}), 400
+    try:
+        from src.risk.kill_switch import get_kill_switch
+        operator = body.get('operator') or 'dashboard'
+        reason = body.get('reason') or ''
+        state = get_kill_switch().reset(operator=operator, reason=reason)
+        return jsonify({'ok': True, 'state': state})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/risk/kill_switch/pause', methods=['POST'])
+@require_api_key
+def kill_switch_pause():
+    """
+    Manual operator pause (panic button). Useful for maintenance windows
+    or when the operator sees a problem before the auto-triggers fire.
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    if body.get('confirm') is not True:
+        return jsonify({'error': 'confirm flag required'}), 400
+    try:
+        from src.risk.kill_switch import get_kill_switch
+        reason = body.get('reason') or 'operator pause'
+        get_kill_switch().pause(reason=reason)
+        return jsonify({'ok': True, 'state': get_kill_switch().state()})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 # ── KPI gate registry endpoints (Sprint 1A R2) ──────────────────────────────
 
 @app.route('/api/registry/retired', methods=['GET'])

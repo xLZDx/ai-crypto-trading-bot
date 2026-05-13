@@ -120,11 +120,31 @@ class OrderManager:
         except Exception:
             return 'testnet'
 
+    def _kill_switch_blocks(self, op: str, symbol: str) -> bool:
+        """Sprint 0 §S0-3.2: refuse to submit any order while paused.
+        Returns True if the kill switch is engaged (caller must skip the order)."""
+        try:
+            from src.risk.kill_switch import get_kill_switch
+            ks = get_kill_switch()
+            paused, reason = ks.evaluate()
+            if paused:
+                logging.warning(
+                    "[order_manager] BLOCKED %s %s by kill switch (reason=%s)",
+                    op, symbol, reason,
+                )
+                return True
+        except Exception as exc:
+            # Never let the kill switch crash the trade loop — defensive log only.
+            logging.warning("[order_manager] kill switch check error: %s", exc)
+        return False
+
     def execute_spot_order(self, symbol, side, amount_coin):
         """Sends a market order to the Spot account.
         In `paper` mode we skip the exchange call entirely and book
         internally via src.engine.paper_book — same return shape so
         callers don't need to branch."""
+        if self._kill_switch_blocks('SPOT', symbol):
+            return None
         if self._trade_mode() == 'paper':
             try:
                 from src.engine.paper_book import book_market_order
@@ -200,6 +220,10 @@ class OrderManager:
     def execute_futures_order(self, symbol, side, amount_coin, reduce_only=False):
         """Sends a real market order to the Futures account (LONG / SHORT).
 
+        Kill switch (Sprint 0 §S0-3): reduce_only=True is the ONE exception —
+        closing an existing position when the switch fires is correct (we want
+        out, not in). Opening orders (reduce_only=False) are blocked.
+
         This method is execution-only. Position sizing (amount_coin) must be
         computed by the caller using HullRiskManager.size_from_stop_distance()
         or HullRiskManager.get_kelly_position_size() before this call. The
@@ -217,6 +241,8 @@ class OrderManager:
         instead of hitting the exchange. The dashboard's Live Trading
         switch toggles this via data/control.json's trade_mode field.
         """
+        if not reduce_only and self._kill_switch_blocks('FUTURES_OPEN', symbol):
+            return None
         if self._trade_mode() == 'paper':
             try:
                 from src.engine.paper_book import book_market_order
@@ -263,6 +289,8 @@ class OrderManager:
             return None
 
     def execute_limit_futures_order(self, symbol, side, amount_coin, price, reduce_only=False):
+        if not reduce_only and self._kill_switch_blocks('FUTURES_LIMIT', symbol):
+            return None
         """Sends a LIMIT order to the Futures account (Used for Market Making)"""
         self._sync_clocks()
         try:
