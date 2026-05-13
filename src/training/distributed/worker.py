@@ -771,6 +771,16 @@ class TrainingWorker:
         from flask import Flask, jsonify, request as freq, abort
         import hmac as _hmac
         import os as _os
+        # Load .env so WORKER_AUTH_KEY / DASHBOARD_API_KEY are picked up when
+        # the worker is launched via Win32_Process.Create on Windows.
+        try:
+            from dotenv import load_dotenv as _load_dotenv
+            from pathlib import Path as _Path
+            _env_path = _Path(__file__).resolve().parents[3] / ".env"
+            if _env_path.exists():
+                _load_dotenv(_env_path)
+        except Exception:
+            pass
         app = Flask(f"worker-{self.node_id}")
         app.logger.setLevel(logging.WARNING)
 

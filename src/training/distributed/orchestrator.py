@@ -801,6 +801,17 @@ def _build_standalone_app(orch: Orchestrator):
     from flask import Flask, jsonify, request as freq, abort
     import hmac as _hmac
     import os as _os
+    # Load .env so CLUSTER_API_KEY / DASHBOARD_API_KEY are picked up when the
+    # orchestrator process is launched via Win32_Process.Create (which does
+    # NOT inherit the parent shell's exported env vars).
+    try:
+        from dotenv import load_dotenv as _load_dotenv
+        from pathlib import Path as _Path
+        _env_path = _Path(__file__).resolve().parents[3] / ".env"
+        if _env_path.exists():
+            _load_dotenv(_env_path)
+    except Exception:
+        pass  # dotenv is optional; env vars may already be set
     app = Flask("orchestrator")
 
     # SEC-4 fix: shared-secret auth on mutation endpoints. Reads CLUSTER_API_KEY
@@ -933,7 +944,8 @@ def main() -> None:
     logger.info("Training Orchestrator — bind=%s port=%d", args.host, args.port)
     logger.info("Master LAN IP (for workers to connect): %s", local_ip)
     if args.host == "127.0.0.1":
-        logger.info("⚠ LOCALHOST-ONLY MODE — remote workers cannot connect.")
+        # ASCII-safe — cp1252 console can't encode ⚠ on Windows default stream.
+        logger.info("[!] LOCALHOST-ONLY MODE - remote workers cannot connect.")
         logger.info("  For cluster mode: set ORCHESTRATOR_BIND_HOST=0.0.0.0 in .env")
         logger.info("  or restart with --host 0.0.0.0")
     else:
