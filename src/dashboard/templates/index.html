@@ -124,6 +124,38 @@ nav{padding:10px 8px}
   box-shadow:0 12px 36px rgba(2,6,23,.3),inset 0 1px 0 rgba(255,255,255,.04);
   backdrop-filter:blur(16px);
 }
+/* Collapsed-card behavior — header stays visible, body hides. The toggle
+   is driven by JS (collapseAllCards / clicking a header). Implementation
+   note: we hide direct-child `.card-body` AND any unclassed div that comes
+   after `.card-header` / `.card-h` so cards built without `.card-body`
+   (older sections) still collapse correctly. */
+.card.collapsed > .card-body,
+.card.collapsed > div:not(.card-header):not(.card-h):not(.card-instructions) {
+  display: none;
+}
+.card.collapsed { padding-bottom: 0; }
+.card-header, .card-h { cursor: pointer; user-select: none; }
+.card-header::after, .card-h::after {
+  content: "▾"; color:#64748b; font-size:.7rem; margin-left:8px; transition:transform .15s;
+}
+.card.collapsed > .card-header::after,
+.card.collapsed > .card-h::after { transform: rotate(-90deg); display:inline-block; }
+/* Per-card instructions line — short help text below the title. */
+.card-instructions {
+  padding: 6px 16px 0; font-size:.68rem; color:#94a3b8;
+  border-bottom: 1px dashed rgba(148,163,184,.08);
+  margin-bottom: 4px;
+}
+/* Status badges — KEEP / REVIEW / RETIRE drawn from kpi_gate */
+.status-badge {
+  display:inline-block; padding:2px 7px; border-radius:6px;
+  font-size:.55rem; font-weight:800; letter-spacing:.08em;
+  text-transform:uppercase; vertical-align:middle; margin-left:6px;
+}
+.status-badge.keep   { background:rgba(34,197,94,.18);  color:#34d399; border:1px solid rgba(34,197,94,.4);}
+.status-badge.review { background:rgba(251,191,36,.18); color:#fbbf24; border:1px solid rgba(251,191,36,.4);}
+.status-badge.retire { background:rgba(244,63,94,.18);  color:#fb7185; border:1px solid rgba(244,63,94,.4);}
+.status-badge.untrained { background:rgba(148,163,184,.15); color:#94a3b8; border:1px solid rgba(148,163,184,.25);}
 .card-sm{background:rgba(13,20,40,.7);border:1px solid rgba(148,163,184,.11);border-radius:11px;padding:11px}
 .card-header{
   padding:12px 16px 10px;border-bottom:1px solid rgba(148,163,184,.08);
@@ -1338,6 +1370,17 @@ document.addEventListener('DOMContentLoaded', function() {
       <button id="btn-start" class="btn btn-green" title="Set control.running=true so the bot starts trading">▶ Start</button>
       <button id="btn-stop"  class="btn btn-red"   title="Set control.running=false so the bot pauses trading (no new orders)">■ Stop</button>
       <button id="btn-restart-all" class="btn" style="background:rgba(168,85,247,.25);color:#c4b5fd;border:1px solid rgba(168,85,247,.45)" title="Run restart_all.ps1 — kills + respawns bot, dashboard, monitor, training cluster, etc. Dashboard will go offline ~30s.">↻ Restart All</button>
+      <!-- Auto-orchestrate (Phase 3 / 2026-05-13): single button that
+           chains bake-off ranking + CIO Optuna study. Output streams into
+           #auto-orch-output below the topbar. -->
+      <button id="auto-orch-btn" class="btn"
+              style="background:rgba(59,130,246,.25);color:#93c5fd;border:1px solid rgba(59,130,246,.5)"
+              title="Run AI-agent orchestration based on previous KPI results: bake-off cut list + CIO Optuna study."
+              onclick="runAutoOrchestrate()">🤖 Auto-orchestrate</button>
+      <button id="collapse-all-btn" class="btn"
+              style="background:rgba(100,116,139,.2);color:#94a3b8;border:1px solid rgba(100,116,139,.4)"
+              title="Collapse / expand every card. Click on any card header to toggle individual cards."
+              onclick="(window._allCollapsed = !window._allCollapsed) ? collapseAllCards() : expandAllCards()">📁 Collapse all</button>
       <!-- Sprint 0 §S0-3 kill switch tile — always visible -->
       <span id="ks-tile" class="chip" style="cursor:pointer;background:#1a3a1a;color:#5f5;border:1px solid #2a5a2a"
             title="Kill switch state. Click to view / reset / pause."
@@ -3007,6 +3050,40 @@ document.addEventListener('DOMContentLoaded', function() {
     <!-- ════════════════ ARBITRAGE (CEX-DEX statistical) ════════════════ -->
     <!-- Sprint 1A R3 — Model Comparison: sortable KPI grid across (model, tf) -->
     <div id="tab-model_comparison" class="tab-pane">
+      <!-- AI Pipeline Builder — Phase 3 (2026-05-13). Single click that runs
+           bake-off → CIO study, then displays the proposed retire list, the
+           cells that need a longer study, and a one-click "apply best" for
+           each model. Output streams into #auto-orch-output. -->
+      <div class="card" id="card-ai-pipeline-builder" style="margin-bottom:12px">
+        <div class="card-h" style="display:flex;justify-content:space-between;align-items:center">
+          <span>🚀 AI Pipeline Builder</span>
+          <button onclick="runAutoOrchestrate()" style="padding:6px 12px;cursor:pointer;background:rgba(59,130,246,.3);color:#93c5fd;border:1px solid rgba(59,130,246,.5)">▶ Run orchestration</button>
+        </div>
+        <div class="card-instructions">
+          What it does: runs the bake-off ranking against your latest training
+          runs, then kicks off an Optuna study on the meta model. Output below
+          shows what was kept / reviewed / retired and links to the existing
+          CIO + Bake-off panels for follow-up actions.
+        </div>
+        <pre id="auto-orch-output" style="padding:10px 16px;color:#cbd5e1;font-size:12px;font-family:monospace;white-space:pre-wrap;max-height:240px;overflow-y:auto;background:rgba(13,20,40,.6);border-radius:8px;margin:0 16px 14px">Click "Run orchestration" to start.</pre>
+      </div>
+
+      <!-- Strong/Weak analytics card — ranked view of model_comparison data. -->
+      <div class="card" id="card-strong-weak-analytics" style="margin-bottom:12px">
+        <div class="card-h" style="display:flex;justify-content:space-between;align-items:center">
+          <span>📊 Strong / Weak Models (per timeframe)</span>
+          <button onclick="loadStrongWeakAnalytics()" style="padding:6px 12px;cursor:pointer">↻ Refresh</button>
+        </div>
+        <div class="card-instructions">
+          For each timeframe, top-3 cells ranked by WF Sharpe (strong, green)
+          and bottom-3 (weak, red). Untrained cells excluded. Helps decide
+          which (model × TF) combos to keep training and which to retire.
+        </div>
+        <div id="strong-weak-area" style="padding:10px 16px;color:#94a3b8;font-size:12px">
+          Click "Refresh" to build the ranking from the latest training runs.
+        </div>
+      </div>
+
       <!-- CIO Agent (Optuna orchestrator) control panel -->
       <div class="card" style="margin-bottom:12px">
         <div class="card-h" style="display:flex;justify-content:space-between;align-items:center">
@@ -3992,6 +4069,107 @@ document.addEventListener('DOMContentLoaded', () => {
   } catch (_) {}
 });
 
+// ─── Collapse-all + per-card click toggle (2026-05-13) ────────────────────
+// Cards listed here stay expanded by default — they're the "always-visible"
+// operational cards the operator needs to see at a glance.
+const _ALWAYS_EXPANDED_CARDS = new Set([
+  'card-live-trading',     // Trade Mode + balance switcher
+  'card-performance',      // Performance Overview
+  'card-banner-alerts',    // Critical error banner
+]);
+
+function _initCardCollapse() {
+  // 1. Make every header clickable to toggle its own card.
+  document.querySelectorAll('.card-header, .card-h').forEach(hdr => {
+    if (hdr.dataset.collapseWired === '1') return;
+    hdr.dataset.collapseWired = '1';
+    hdr.addEventListener('click', (e) => {
+      // Don't toggle when clicking a button / input inside the header.
+      const t = e.target;
+      if (t.closest('button, input, select, a, label')) return;
+      hdr.parentElement.classList.toggle('collapsed');
+      _persistCollapseState();
+    });
+  });
+  // 2. Default state: collapsed unless the card is in the always-expanded
+  //    list OR the operator explicitly expanded it last session.
+  const saved = (() => { try { return JSON.parse(localStorage.getItem('cardCollapseState') || '{}'); } catch (_) { return {}; } })();
+  document.querySelectorAll('.card').forEach((card, i) => {
+    const id = card.id || `card_${i}`;
+    if (_ALWAYS_EXPANDED_CARDS.has(card.id)) return;
+    // saved[id] === false means user expanded it; saved[id] === true means
+    // collapsed; missing means use the default (collapsed).
+    if (saved[id] === false) card.classList.remove('collapsed');
+    else                     card.classList.add('collapsed');
+  });
+}
+
+function _persistCollapseState() {
+  const state = {};
+  document.querySelectorAll('.card').forEach((card, i) => {
+    const id = card.id || `card_${i}`;
+    state[id] = card.classList.contains('collapsed');
+  });
+  try { localStorage.setItem('cardCollapseState', JSON.stringify(state)); } catch (_) {}
+}
+
+function collapseAllCards() {
+  document.querySelectorAll('.card').forEach(c => {
+    if (_ALWAYS_EXPANDED_CARDS.has(c.id)) return;
+    c.classList.add('collapsed');
+  });
+  _persistCollapseState();
+}
+
+function expandAllCards() {
+  document.querySelectorAll('.card').forEach(c => c.classList.remove('collapsed'));
+  _persistCollapseState();
+}
+
+document.addEventListener('DOMContentLoaded', _initCardCollapse);
+// Some cards are rendered dynamically after load — re-run wiring when the
+// active tab changes or when known late-render endpoints finish.
+window.addEventListener('load', () => setTimeout(_initCardCollapse, 1500));
+
+// ─── Auto-orchestrate (2026-05-13) ────────────────────────────────────────
+// Single button that asks the AI agents to (1) run the bake-off cut list,
+// (2) start a CIO Optuna study, (3) report back via the existing endpoints.
+// Wires existing /api/bake_off + /api/cio/start; the operator picks
+// "apply best" manually so we never auto-train on top of a stale baseline.
+async function runAutoOrchestrate() {
+  const btn  = document.getElementById('auto-orch-btn');
+  const out  = document.getElementById('auto-orch-output');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Working…'; }
+  const log = msg => { if (out) out.textContent += `\n${new Date().toLocaleTimeString()}  ${msg}`; };
+  if (out) out.textContent = 'Auto-orchestration starting...';
+  try {
+    // Step 1 — bake-off ranks every (model, tf) cell, suggests retire list.
+    log('▶ Running bake-off (wf_sharpe metric)...');
+    const bake = await fetch('/api/bake_off?metric=wf_sharpe&retire_pct=0.20',
+                             { headers: hdrs() });
+    if (!bake.ok) throw new Error(`bake-off HTTP ${bake.status}`);
+    const bj = await bake.json();
+    log(`✓ Bake-off ranked ${bj.ranked?.length || 0} cells; ` +
+        `KEEP=${bj.cut_list?.keep?.length || 0} ` +
+        `REVIEW=${bj.cut_list?.review?.length || 0} ` +
+        `RETIRE=${bj.cut_list?.retire?.length || 0}`);
+
+    // Step 2 — start a CIO study for the meta model (cheap baseline).
+    log('▶ Starting CIO Optuna study (meta, 20 trials, smoke-test)...');
+    const cio = await fetch('/api/cio/start',
+      {method:'POST', headers: hdrs(),
+       body: JSON.stringify({model_key:'meta', n_trials:20, live_mode:false})});
+    if (!cio.ok) throw new Error(`cio/start HTTP ${cio.status}`);
+    log('✓ CIO study launched — track in CIO Agent panel below');
+    log('▶ Next: review proposals + click "Apply best" in CIO panel');
+    log('—— auto-orchestration complete ——');
+  } catch (e) {
+    log(`✗ Auto-orchestrate failed: ${e.message || e}`);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🤖 Auto-orchestrate'; }
+  }
+}
+
 // ─── STRATEGY TAB DATA LOAD ───────────────────────────────────────────────────
 let _stratFull = null;
 
@@ -4045,6 +4223,22 @@ async function restoreCell(key) {
   } catch (e) { alert('Restore error: ' + e); }
 }
 
+// Map a row to the KEEP / REVIEW / RETIRE classification.
+//   RETIRE: marked retired by kpi_gate (3-strike rule) OR the row has retired=true.
+//   REVIEW: trained but wf_sharpe < 0.5 OR wf_max_dd > 0.15 — borderline cell
+//           that needs operator attention but isn't auto-retired yet.
+//   KEEP:   trained, wf_sharpe >= 0.5 AND wf_max_dd <= 0.15 — passing all KPI floors.
+//   UNTRAINED: row.last_run is null.
+function _classifyCell(row) {
+  if (row.retired) return 'retire';
+  const r = row.last_run;
+  if (!r) return 'untrained';
+  const sharpe = r.wf_sharpe ?? 0;
+  const maxdd  = Math.abs(r.wf_max_dd ?? 1);
+  if (sharpe < 0.5 || maxdd > 0.15) return 'review';
+  return 'keep';
+}
+
 function renderModelComparison() {
   const tbody = document.getElementById('model-comparison-tbody');
   if (!tbody) return;
@@ -4056,9 +4250,14 @@ function renderModelComparison() {
   const html = _mcRows.map(row => {
     const r = row.last_run || {};
     const bgColor = row.retired ? '#3a1a1a' : (row.tf_kind === 'experimental' ? '#3a3a1a' : 'transparent');
-    const statusBadge = row.retired
-      ? '<span style="color:#f55;font-weight:bold">⛔ RETIRED</span>'
-      : (row.last_run ? '<span style="color:#5f5">ACTIVE</span>' : '<span style="color:#888">UNTRAINED</span>');
+    const cls = _classifyCell(row);
+    const statusBadge = cls === 'retire'
+      ? '<span class="status-badge retire">⛔ Retire</span>'
+      : cls === 'review'
+      ? '<span class="status-badge review">⚠ Review</span>'
+      : cls === 'keep'
+      ? '<span class="status-badge keep">✓ Keep</span>'
+      : '<span class="status-badge untrained">— Untrained</span>';
     const action = row.retired
       ? '<button onclick="restoreCell(\'' + row.model + '__' + row.tf + '\')" style="padding:4px 8px;cursor:pointer;background:#a33;color:#fff;border:none;border-radius:3px">Restore</button>'
       : '<span style="color:#555">—</span>';
@@ -4076,6 +4275,54 @@ function renderModelComparison() {
       '</tr>';
   }).join('');
   tbody.innerHTML = html;
+}
+
+// ─── Phase 3.6 — Strong / Weak analytics card ──────────────────────────────
+// For each timeframe, surface the top-3 strongest and bottom-3 weakest
+// (model × TF) cells by wf_sharpe. Drives the "AI Pipeline Builder" page's
+// at-a-glance ranked view so the operator can spot retire candidates fast.
+async function loadStrongWeakAnalytics() {
+  const out = document.getElementById('strong-weak-area');
+  if (!out) return;
+  out.innerHTML = 'Loading…';
+  try {
+    const r = await fetch('/api/model_comparison', { headers: hdrs() });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    const rows = (j.rows || j.cells || []).filter(x => x.last_run && (x.last_run.wf_sharpe != null));
+    if (!rows.length) {
+      out.innerHTML = '<em>No trained cells yet — run training first.</em>';
+      return;
+    }
+    // Group by tf, sort by wf_sharpe desc.
+    const byTf = {};
+    for (const x of rows) (byTf[x.tf || '?'] ||= []).push(x);
+    for (const tf of Object.keys(byTf)) {
+      byTf[tf].sort((a, b) => (b.last_run.wf_sharpe ?? 0) - (a.last_run.wf_sharpe ?? 0));
+    }
+    const fmt = v => v == null ? '—' : Number(v).toFixed(3);
+    const parts = [];
+    for (const tf of Object.keys(byTf).sort()) {
+      const list = byTf[tf];
+      const strong = list.slice(0, 3);
+      const weak   = list.slice(-3).reverse();
+      parts.push(`<div style="margin-bottom:10px">
+        <div style="color:#cbd5e1;font-weight:700;margin-bottom:4px">TF ${tf} <span style="color:#475569">(${list.length} cells)</span></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:.7rem">
+          <div>
+            <div style="color:#34d399;margin-bottom:3px">STRONG (top 3)</div>
+            ${strong.map(c => `<div>${c.model} → Sharpe ${fmt(c.last_run.wf_sharpe)} · MaxDD ${fmt(c.last_run.wf_max_dd)}</div>`).join('') || '<em style="color:#475569">—</em>'}
+          </div>
+          <div>
+            <div style="color:#fb7185;margin-bottom:3px">WEAK (bottom 3)</div>
+            ${weak.map(c => `<div>${c.model} → Sharpe ${fmt(c.last_run.wf_sharpe)} · MaxDD ${fmt(c.last_run.wf_max_dd)}</div>`).join('') || '<em style="color:#475569">—</em>'}
+          </div>
+        </div></div>`);
+    }
+    out.innerHTML = parts.join('');
+  } catch (e) {
+    out.innerHTML = `<span style="color:#fb7185">Error: ${e.message || e}</span>`;
+  }
 }
 
 async function loadModelComparison() {
@@ -7200,9 +7447,45 @@ function renderModelStats(models, cuda) {
     const accLabel = isUnsupervised ? (m.model_type || 'N/A') : `${(acc||0).toFixed(1)}%`;
     const syms = (m.symbols||[]).map(s => `<span class="ms-tag">${esc(s)}</span>`).join('');
     const trainedAt = m.last_trained ? new Date(m.last_trained).toLocaleString() : 'Never';
+    // Phase 3.3 — KEEP / REVIEW / RETIRE badge based on KPI values.
+    // Mirrors _classifyCell logic from Model Comparison tab. wf_mean_sharpe
+    // comes from the model meta JSON's walk-forward results; if missing,
+    // classify untrained.
+    const _wfSharpe = m.wf_mean_sharpe ?? m.wf_sharpe ?? null;
+    const _wfMaxDd  = Math.abs(m.wf_max_dd ?? m.wf_mean_max_dd ?? 1);
+    let _cls;
+    if (m.retired)                       _cls = 'retire';
+    else if (!m.model_exists)            _cls = 'untrained';
+    else if (_wfSharpe == null)          _cls = 'review'; // trained but no WF stats
+    else if (_wfSharpe < 0.5 || _wfMaxDd > 0.15) _cls = 'review';
+    else                                 _cls = 'keep';
+    const clsBadge = ({
+      keep:     '<span class="status-badge keep">Keep</span>',
+      review:   '<span class="status-badge review">Review</span>',
+      retire:   '<span class="status-badge retire">Retire</span>',
+      untrained:'<span class="status-badge untrained">Untrained</span>',
+    })[_cls];
     const status = m.model_exists
       ? `<span style="color:#34d399;font-weight:700;font-size:.62rem">Trained</span>`
       : `<span style="color:#f87171;font-weight:700;font-size:.62rem">Not trained</span>`;
+    // Phase 3.7 — "What ran" message: data window + sample count + verdict.
+    // m.training_start / m.training_end carry the date range if the trainer
+    // persisted them; falls back to "(date range unknown)" otherwise.
+    const _verdict = ({
+      keep:     'Strong — keep using.',
+      review:   'Borderline — investigate WF metrics or retrain with different params.',
+      retire:   'Failed KPI gate — retire and replace.',
+      untrained:'Not yet trained.',
+    })[_cls];
+    const _trainSpan = (m.training_start && m.training_end)
+      ? `${m.training_start.slice(0,10)} → ${m.training_end.slice(0,10)}`
+      : (m.training_window_days ? `last ${m.training_window_days}d`
+                                : '(date range not recorded)');
+    const _whatRanMsg = `<div style="margin-top:6px;padding:6px 8px;background:rgba(13,20,40,.45);border-radius:6px;font-size:.58rem;color:#94a3b8;line-height:1.4">
+      <div><span style="color:#475569">Data window:</span> ${esc(_trainSpan)}</div>
+      <div><span style="color:#475569">Signals trained:</span> ${m.n_samples ? m.n_samples.toLocaleString() : '--'}</div>
+      <div style="margin-top:3px;color:${_cls==='keep'?'#34d399':_cls==='review'?'#fbbf24':_cls==='retire'?'#fb7185':'#94a3b8'}">${esc(_verdict)}</div>
+    </div>`;
     const ls = liveStats[m.key] || null;
     const liveRow = ls
       ? (() => {
@@ -7222,11 +7505,12 @@ function renderModelStats(models, cuda) {
     return `<div class="ms-card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
         <div>
-          <div style="font-size:.72rem;font-weight:700;color:#e2e8f0">${esc(m.label)}</div>
+          <div style="font-size:.72rem;font-weight:700;color:#e2e8f0">${esc(m.label)} ${clsBadge}</div>
           <div style="font-size:.59rem;color:#475569;margin-top:1px">Timeframe: ${esc(m.timeframe||'--')}</div>
         </div>
         <div style="text-align:right">${status}<br><span style="font-size:.88rem;font-weight:800;color:#e2e8f0">${accLabel}</span></div>
       </div>
+      ${_whatRanMsg}
       ${isUnsupervised
         ? `<div style="font-size:.58rem;color:#64748b;font-style:italic;margin-bottom:6px">${esc(m.accuracy_note||'Unsupervised — no labelled accuracy')}</div>`
         : (isDirectionless
