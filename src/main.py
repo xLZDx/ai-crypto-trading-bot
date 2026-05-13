@@ -1598,10 +1598,32 @@ if __name__ == "__main__":
         # reap_zombies() doesn't mistake a long-running bot for stale.
         def _hb_loop():
             import time as _t
+            consec_failures = 0
             while True:
                 _t.sleep(60)
-                try: heartbeat('bot')
-                except Exception: pass
+                try:
+                    if not heartbeat('bot'):
+                        # heartbeat() already logs WARNING on ownership loss.
+                        # Bump a consecutive counter; after 3 misses, the
+                        # bot has been evicted from the registry — best to
+                        # exit so a clean restart can claim.
+                        consec_failures += 1
+                        if consec_failures >= 3:
+                            logger.critical(
+                                "[registry-hb] lost role ownership for 3 consecutive "
+                                "heartbeats — exiting to let a clean restart take over"
+                            )
+                            os._exit(0)
+                    else:
+                        consec_failures = 0
+                except Exception as exc:
+                    consec_failures += 1
+                    logger.warning("[registry-hb] heartbeat exception: %s", exc)
+                    if consec_failures >= 5:
+                        logger.error(
+                            "[registry-hb] 5 consecutive heartbeat failures — "
+                            "registry file likely unreachable"
+                        )
         threading.Thread(target=_hb_loop, daemon=True, name='registry-hb').start()
     except Exception as exc:
         logger.warning("[startup] process_registry unavailable: %s", exc)

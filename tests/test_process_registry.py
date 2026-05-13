@@ -227,26 +227,37 @@ def test_audit_log_file_written(isolated_registry):
     assert 'bot' in log_text
 
 
-def test_concurrent_claim_via_subprocess(isolated_registry, tmp_path):
-    """Two processes racing for the same role — filelock must serialize.
-    Exactly ONE should win; the other must report ok=False."""
+def test_concurrent_claim_blocked_by_live_owner(isolated_registry, tmp_path):
+    """Two subprocesses race for a role that is ALREADY OWNED by the test
+    process (live PID, fresh heartbeat). Both children must see it as
+    claimed and BOTH must report ok=False.
+
+    Previous version of this test (renamed) allowed both children to
+    succeed sequentially — the first claimed, exited, and the second
+    reaped its dead PID and re-claimed. The python-reviewer flagged that
+    a no-filelock implementation would have passed that assertion too,
+    so the test couldn't catch a regression.
+
+    This variant directly exercises the singleton-enforcement path:
+    seed the registry with a fresh claim by the live test process; assert
+    every child sees the role as occupied.
+    """
     pr, _ = isolated_registry
-    # Write a tiny helper script that tries to claim and prints result.
+    # Seed: the test process itself claims the role.
+    ok, _ = pr.claim_role('bot', by='test-fixture')
+    assert ok is True
+
     helper = tmp_path / 'claim_helper.py'
     helper.write_text(f'''
-import sys, os, json
+import sys, os, json, pathlib
 sys.path.insert(0, {str(PROJECT_ROOT)!r})
 from src.utils import process_registry as pr
-pr.REGISTRY_PATH = {str(pr.REGISTRY_PATH)!r}
-pr.AUDIT_LOG_PATH = {str(pr.AUDIT_LOG_PATH)!r}
-import pathlib
 pr.REGISTRY_PATH = pathlib.Path({str(pr.REGISTRY_PATH)!r})
 pr.AUDIT_LOG_PATH = pathlib.Path({str(pr.AUDIT_LOG_PATH)!r})
 ok, info = pr.claim_role('bot', by='subproc-' + str(os.getpid()))
-print(json.dumps({{'ok': ok, 'pid': info.get('pid')}}))
+print(json.dumps({{'ok': ok, 'owner_pid': info.get('pid')}}))
 ''', encoding='utf-8')
 
-    # Launch two children in parallel. Filelock should serialize them.
     p1 = subprocess.Popen([sys.executable, str(helper)],
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     p2 = subprocess.Popen([sys.executable, str(helper)],
@@ -257,19 +268,69 @@ print(json.dumps({{'ok': ok, 'pid': info.get('pid')}}))
     r1 = json.loads(out1.decode().strip().splitlines()[-1])
     r2 = json.loads(out2.decode().strip().splitlines()[-1])
 
-    # Subprocesses may race in either order; both children check liveness of
-    # the OTHER's PID via psutil. After the first child claims and exits, its
-    # PID is dead → second child reaps and re-claims. So both can succeed in
-    # sequence (legitimate behavior). What MUST NOT happen: both observing
-    # the registry as empty at the same time and BOTH writing without seeing
-    # the other's write. The filelock prevents that.
-    # Assertion: exactly one entry in the file at end, and its PID is one of
-    # the two children's PIDs.
+    # Both children must be blocked because the test process holds the role.
+    assert r1['ok'] is False, f"child 1 should have been blocked, got {r1}"
+    assert r2['ok'] is False, f"child 2 should have been blocked, got {r2}"
+    # Both children should agree on who the owner is (the test process).
+    assert r1['owner_pid'] == os.getpid()
+    assert r2['owner_pid'] == os.getpid()
+
+    # Registry still shows test process as owner.
+    final = json.loads(pr.REGISTRY_PATH.read_text(encoding='utf-8'))
+    assert final['roles']['bot']['pid'] == os.getpid()
+
+
+def test_concurrent_claim_on_dead_role_only_one_wins(isolated_registry, tmp_path):
+    """When the role's previous owner is DEAD, two subprocesses racing to
+    reclaim it should both attempt — but only ONE can be in the registry
+    after both finish. The filelock + transaction must serialize the
+    read-check-write so race-conflated double-writes can't happen.
+    """
+    pr, _ = isolated_registry
+    # Seed with a dead PID (PID 99999 is essentially never alive on a typical box).
+    data = pr._read_registry()
+    data['roles']['bot'] = {
+        'pid': 99999, 'cmdline': 'dead', 'host': 'x',
+        'last_heartbeat_ts': 0.0,   # very stale
+    }
+    pr._write_registry(data)
+
+    helper = tmp_path / 'claim_helper.py'
+    helper.write_text(f'''
+import sys, os, json, pathlib, time
+sys.path.insert(0, {str(PROJECT_ROOT)!r})
+from src.utils import process_registry as pr
+pr.REGISTRY_PATH = pathlib.Path({str(pr.REGISTRY_PATH)!r})
+pr.AUDIT_LOG_PATH = pathlib.Path({str(pr.AUDIT_LOG_PATH)!r})
+# Brief sleep so both children reach claim_role at roughly the same time.
+time.sleep(0.1)
+ok, info = pr.claim_role('bot', by='subproc-' + str(os.getpid()))
+print(json.dumps({{'ok': ok, 'pid': os.getpid(), 'owner_pid': info.get('pid')}}))
+''', encoding='utf-8')
+
+    p1 = subprocess.Popen([sys.executable, str(helper)],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    p2 = subprocess.Popen([sys.executable, str(helper)],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    out1, _ = p1.communicate(timeout=15)
+    out2, _ = p2.communicate(timeout=15)
+
+    r1 = json.loads(out1.decode().strip().splitlines()[-1])
+    r2 = json.loads(out2.decode().strip().splitlines()[-1])
+
+    # After both subprocesses exit, the second-to-reach-claim sees the
+    # first's PID either as live (if process ordering happened to overlap
+    # exactly) or dead (more likely — both children exit before the second
+    # check). What MUST hold:
+    #   • the registry has exactly one entry for 'bot'
+    #   • that entry's PID matches ONE of the two children
     final = json.loads(pr.REGISTRY_PATH.read_text(encoding='utf-8'))
     assert 'bot' in final['roles']
-    assert final['roles']['bot']['pid'] in (r1['pid'], r2['pid'])
-    # At least one of them succeeded
-    assert r1['ok'] or r2['ok']
+    final_pid = final['roles']['bot']['pid']
+    assert final_pid in (r1['pid'], r2['pid']), (
+        f"registry pid {final_pid} does not match either child "
+        f"(r1.pid={r1['pid']}, r2.pid={r2['pid']})"
+    )
 
 
 if __name__ == '__main__':

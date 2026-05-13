@@ -86,10 +86,15 @@ def _now_iso() -> str:
 
 
 def _pid_alive(pid: int | None) -> bool:
-    """Return True if a process with this PID exists right now.
+    """Return True if a process with this PID exists AND is in a running
+    state (not zombie / not dead). False otherwise.
 
-    Uses psutil when available (most accurate, also catches zombie state),
-    falls back to os.kill(pid, 0) for environments without psutil.
+    Uses psutil — the existing fallback to `os.kill(pid, 0)` returned True
+    for zombie PIDs on POSIX (a zombie still holds its PID slot and signals
+    succeed against it), which defeats the purpose of the registry. psutil
+    is in requirements.txt; if it ever goes missing the import-error path
+    treats every PID as DEAD so the registry fails-safe (operator can
+    always reclaim a stale role).
     """
     if not pid or pid <= 0:
         return False
@@ -97,19 +102,24 @@ def _pid_alive(pid: int | None) -> bool:
         import psutil
         if not psutil.pid_exists(pid):
             return False
-        # Distinguish zombie/stopped from running. A zombie is a dead process
-        # whose PID hasn't been reaped — we treat that as "not running".
         try:
             p = psutil.Process(pid)
             return p.status() not in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD)
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             return False
     except ImportError:
-        try:
-            os.kill(pid, 0)
-            return True
-        except (OSError, ProcessLookupError):
-            return False
+        # Fail-safe: without psutil we cannot distinguish zombies from live
+        # processes, so report ALL PIDs as dead. This means a fresh claim
+        # always succeeds and a previous run's leftover entry gets reaped.
+        # The trade-off: two processes started simultaneously on a host
+        # without psutil could BOTH succeed, vs. one falsely blocking forever.
+        # Operators are warned to install psutil in this module's docstring.
+        logger.critical(
+            "[registry] psutil unavailable — every PID will be reported as "
+            "DEAD. Install psutil to get correct singleton-enforcement; "
+            "without it, duplicate processes are possible."
+        )
+        return False
 
 
 def _read_registry() -> dict:
@@ -132,8 +142,17 @@ def _write_registry(data: dict) -> None:
     write_json(str(REGISTRY_PATH), data, indent=2)
 
 
+_AUDIT_LOG_WARN_ONCE = False  # module-level so we only warn once per process
+
+
 def _append_audit_log(entry: dict) -> None:
-    """Append one event to logs/process_registry.log (best-effort)."""
+    """Append one event to logs/process_registry.log (best-effort).
+
+    Reviewer note: the FIRST failure now logs at WARNING so the operator
+    sees that the audit-log path isn't writable. Subsequent failures stay
+    quiet to avoid log spam.
+    """
+    global _AUDIT_LOG_WARN_ONCE
     try:
         AUDIT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         line = (
@@ -144,7 +163,15 @@ def _append_audit_log(entry: dict) -> None:
         with open(AUDIT_LOG_PATH, 'a', encoding='utf-8') as f:
             f.write(line)
     except Exception as exc:
-        logger.debug("[registry] audit log append failed: %s", exc)
+        if not _AUDIT_LOG_WARN_ONCE:
+            logger.warning(
+                "[registry] audit log append failed: %s — "
+                "logs/process_registry.log will not be written this run. "
+                "(Suppressing subsequent failures to avoid spam.)", exc,
+            )
+            _AUDIT_LOG_WARN_ONCE = True
+        else:
+            logger.debug("[registry] audit log append failed: %s", exc)
 
 
 def _record_event(data: dict, event: str, role: str, pid: int | None,
@@ -174,7 +201,7 @@ def _current_cmdline() -> str:
 
 
 def claim_role(role: str, by: str = '') -> tuple[bool, dict]:
-    """Try to claim *role* for the current process.
+    """Try to claim *role* for the current process — ATOMIC.
 
     Returns:
         (True, my_entry)    — claim succeeded; caller now owns the role.
@@ -182,62 +209,103 @@ def claim_role(role: str, by: str = '') -> tuple[bool, dict]:
         (False, other_entry) — another live PID already owns it; caller
                                should log and exit cleanly to avoid duplicate.
 
-    The check is "live PID with a recent heartbeat" — a stale entry whose PID
-    no longer exists (or whose heartbeat is older than ZOMBIE_AGE_S) is
-    treated as released and the new caller takes over.
-
     Re-entrant: if the current process already owns the role, this returns
-    (True, my_entry) without modifying the registry. Lets components call
-    claim_role() defensively at multiple init points.
+    (True, my_entry) without modifying the registry.
+
+    Atomicity (X1 reviewer fix, 2026-05-13): the read-check-write sequence
+    is held under a SINGLE filelock via `safe_json.transaction`. The previous
+    pattern (read_registry → check → write_registry) acquired the lock
+    twice, leaving a TOCTOU window where two concurrent claims for the same
+    role could BOTH succeed.
     """
     if not role or not isinstance(role, str):
         raise ValueError(f"claim_role: role must be a non-empty string, got {role!r}")
 
-    data = _read_registry()
-    existing = data['roles'].get(role)
-    now = time.time()
+    from src.utils.safe_json import transaction
     my_pid = os.getpid()
+    now = time.time()
+    audit_logs: list[dict] = []      # written to file log AFTER the lock releases
+    info_log: str | None = None
+    warn_log: str | None = None
+    result: tuple[bool, dict] = (False, {})
 
-    if existing:
-        ex_pid = existing.get('pid')
-        ex_hb = existing.get('last_heartbeat_ts') or 0.0
-        ex_alive = _pid_alive(ex_pid)
-        ex_fresh = (now - float(ex_hb)) < ZOMBIE_AGE_S
+    with transaction(str(REGISTRY_PATH), default={'roles': {}, 'audit': []}) as data:
+        data.setdefault('roles', {})
+        data.setdefault('audit', [])
+        existing = data['roles'].get(role)
 
-        # Re-entrant: same process re-claiming → silent success.
-        if ex_pid == my_pid:
-            return True, existing
+        if existing:
+            ex_pid = existing.get('pid')
+            ex_hb = existing.get('last_heartbeat_ts') or 0.0
+            ex_alive = _pid_alive(ex_pid)
+            ex_fresh = (now - float(ex_hb)) < ZOMBIE_AGE_S
 
-        if ex_alive and ex_fresh:
-            logger.warning(
-                "[registry] role %r already claimed by PID %s (cmd=%s, hb_age=%.0fs); "
-                "this process should exit to avoid duplicate.",
-                role, ex_pid, existing.get('cmdline', '?')[:60], now - float(ex_hb),
-            )
-            _record_event(data, 'claim_blocked', role, my_pid,
-                          reason=f'live owner PID {ex_pid}', by=by)
-            _write_registry(data)
-            return False, existing
+            # Re-entrant: same process re-claiming → silent success.
+            if ex_pid == my_pid:
+                # No state change; transaction will write back identical state.
+                return True, existing
 
-        # Otherwise the existing entry is stale (dead PID or no heartbeat).
-        # Reap it and proceed with the new claim.
-        _record_event(data, 'reap', role, ex_pid,
-                      reason=f"alive={ex_alive} fresh={ex_fresh}", by=by)
+            if ex_alive and ex_fresh:
+                warn_log = (
+                    f"[registry] role {role!r} already claimed by PID {ex_pid} "
+                    f"(cmd={(existing.get('cmdline', '?') or '')[:60]}, "
+                    f"hb_age={now - float(ex_hb):.0f}s); this process should "
+                    "exit to avoid duplicate."
+                )
+                entry_blocked = {
+                    'ts': _now_iso(), 'event': 'claim_blocked', 'role': role,
+                    'pid': my_pid, 'reason': f'live owner PID {ex_pid}', 'by': by,
+                }
+                data['audit'].append(entry_blocked)
+                audit_logs.append(entry_blocked)
+                # Cap audit
+                if len(data['audit']) > AUDIT_RING_SIZE:
+                    data['audit'] = data['audit'][-AUDIT_RING_SIZE:]
+                result = (False, existing)
+                # Fall through to write the audit entry, then return below.
 
-    entry = {
-        'pid': my_pid,
-        'cmdline': _current_cmdline(),
-        'host': socket.gethostname(),
-        'started_at': _now_iso(),
-        'last_heartbeat': _now_iso(),
-        'last_heartbeat_ts': now,
-        'by': by,
-    }
-    data['roles'][role] = entry
-    _record_event(data, 'claim', role, my_pid, by=by)
-    _write_registry(data)
-    logger.info("[registry] claimed role %r (PID %s, by=%s)", role, my_pid, by)
-    return True, entry
+            else:
+                # Stale entry: reap and proceed with the new claim.
+                reap_entry = {
+                    'ts': _now_iso(), 'event': 'reap', 'role': role,
+                    'pid': ex_pid, 'reason': f'alive={ex_alive} fresh={ex_fresh}',
+                    'by': by,
+                }
+                data['audit'].append(reap_entry)
+                audit_logs.append(reap_entry)
+                existing = None  # treat as no-existing for the next branch
+
+        if existing is None and result == (False, {}):
+            # New claim path.
+            entry = {
+                'pid': my_pid,
+                'cmdline': _current_cmdline(),
+                'host': socket.gethostname(),
+                'started_at': _now_iso(),
+                'last_heartbeat': _now_iso(),
+                'last_heartbeat_ts': now,
+                'by': by,
+            }
+            data['roles'][role] = entry
+            claim_entry = {
+                'ts': _now_iso(), 'event': 'claim', 'role': role,
+                'pid': my_pid, 'reason': '', 'by': by,
+            }
+            data['audit'].append(claim_entry)
+            audit_logs.append(claim_entry)
+            if len(data['audit']) > AUDIT_RING_SIZE:
+                data['audit'] = data['audit'][-AUDIT_RING_SIZE:]
+            info_log = f"[registry] claimed role {role!r} (PID {my_pid}, by={by})"
+            result = (True, entry)
+
+    # Lock released — now do best-effort side-effects (logger + file audit).
+    if warn_log:
+        logger.warning(warn_log)
+    if info_log:
+        logger.info(info_log)
+    for entry in audit_logs:
+        _append_audit_log(entry)
+    return result
 
 
 def release_role(role: str, reason: str = 'graceful') -> bool:
@@ -245,41 +313,77 @@ def release_role(role: str, reason: str = 'graceful') -> bool:
     released (or no entry existed); False if the entry belonged to someone
     else and we didn't touch it (safety: never release another process's
     claim).
+
+    Reviewer fix 2026-05-13: wrong-owner refusal now logs at WARNING (was
+    DEBUG, off by default). The refusal is an anomalous event — if a
+    process's atexit fires in a subprocess context or the lifecycle wiring
+    is broken, the operator needs to see it.
     """
-    data = _read_registry()
-    existing = data['roles'].get(role)
-    if not existing:
-        return True
-    if existing.get('pid') != os.getpid():
-        logger.debug(
-            "[registry] refusing to release role %r — owned by PID %s, we are PID %s",
-            role, existing.get('pid'), os.getpid(),
-        )
-        return False
-    data['roles'].pop(role, None)
-    _record_event(data, 'release', role, os.getpid(), reason=reason)
-    _write_registry(data)
-    logger.info("[registry] released role %r (reason=%s)", role, reason)
-    return True
+    from src.utils.safe_json import transaction
+    my_pid = os.getpid()
+    audit: dict | None = None
+    info: str | None = None
+    warn: str | None = None
+    result = True
+
+    with transaction(str(REGISTRY_PATH), default={'roles': {}, 'audit': []}) as data:
+        data.setdefault('roles', {})
+        data.setdefault('audit', [])
+        existing = data['roles'].get(role)
+        if not existing:
+            return True
+        if existing.get('pid') != my_pid:
+            warn = (
+                f"[registry] refusing to release role {role!r} — owned by "
+                f"PID {existing.get('pid')}, we are PID {my_pid}"
+            )
+            result = False
+        else:
+            data['roles'].pop(role, None)
+            audit = {
+                'ts': _now_iso(), 'event': 'release', 'role': role,
+                'pid': my_pid, 'reason': reason, 'by': '',
+            }
+            data['audit'].append(audit)
+            if len(data['audit']) > AUDIT_RING_SIZE:
+                data['audit'] = data['audit'][-AUDIT_RING_SIZE:]
+            info = f"[registry] released role {role!r} (reason={reason})"
+
+    if warn: logger.warning(warn)
+    if info: logger.info(info)
+    if audit: _append_audit_log(audit)
+    return result
 
 
 def heartbeat(role: str) -> bool:
-    """Update last_heartbeat for *role* IF we own it. Silently no-op otherwise.
-    Returns True on success.
+    """Update last_heartbeat for *role* IF we own it.
 
-    Cheap (~5ms with the filelock). Designed to be called from the existing
-    agent_bus heartbeat loop or any periodic timer in the owning process.
+    Returns True on success, False if we no longer own the role.
+
+    Reviewer fix 2026-05-13: returning False used to be a silent no-op,
+    which masked the case where the reaper had evicted this process while
+    it was still running (the runaway scenario). Now logs at WARNING when
+    ownership has been lost so callers can react (e.g. exit the bot to
+    let the watchdog claim cleanly).
     """
-    data = _read_registry()
-    existing = data['roles'].get(role)
-    if not existing or existing.get('pid') != os.getpid():
-        return False
-    now_iso = _now_iso()
-    existing['last_heartbeat'] = now_iso
-    existing['last_heartbeat_ts'] = time.time()
-    data['roles'][role] = existing
-    _write_registry(data)
-    return True
+    from src.utils.safe_json import transaction
+    my_pid = os.getpid()
+    ok = False
+    with transaction(str(REGISTRY_PATH), default={'roles': {}, 'audit': []}) as data:
+        data.setdefault('roles', {})
+        existing = data['roles'].get(role)
+        if existing and existing.get('pid') == my_pid:
+            existing['last_heartbeat'] = _now_iso()
+            existing['last_heartbeat_ts'] = time.time()
+            data['roles'][role] = existing
+            ok = True
+    if not ok:
+        logger.warning(
+            "[registry] heartbeat(%r) ignored — current process (PID %s) "
+            "no longer owns this role. Another process may have reclaimed it.",
+            role, my_pid,
+        )
+    return ok
 
 
 def list_active() -> dict[str, dict]:

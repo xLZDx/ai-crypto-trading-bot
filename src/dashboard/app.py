@@ -7757,12 +7757,26 @@ if __name__ == '__main__':
         # natural home for the reaper since it's always up while operating.
         def _registry_loop():
             import time as _t
+            import logging as _logging
+            _log = _logging.getLogger(__name__)
+            consec_failures = 0
             while True:
                 _t.sleep(60)
-                try: heartbeat('dashboard')
-                except Exception: pass
+                try:
+                    if not heartbeat('dashboard'):
+                        consec_failures += 1
+                        if consec_failures >= 3:
+                            _log.critical(
+                                "[registry-hb] dashboard lost role ownership for 3 "
+                                "consecutive heartbeats — request immediate restart"
+                            )
+                    else:
+                        consec_failures = 0
+                except Exception as exc:
+                    _log.warning("[registry-hb] dashboard heartbeat failed: %s", exc)
                 try: reap_zombies(by='dashboard-reaper')
-                except Exception: pass
+                except Exception as exc:
+                    _log.warning("[registry-reaper] sweep failed: %s", exc)
         threading.Thread(target=_registry_loop, daemon=True, name='registry-hb-reaper').start()
     except Exception as exc:
         print(f"[dashboard] process_registry unavailable: {exc}")

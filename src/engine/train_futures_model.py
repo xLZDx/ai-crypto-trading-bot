@@ -165,7 +165,7 @@ def train_futures_model(timeframe: str = '1h'):
         'n_estimators':      (int,   1,    10_000),
         'max_depth':         (int,   1,    50),
         'learning_rate':     (float, 1e-4, 1.0),
-        'l2_regularization': (float, 0.0,  100.0),
+        'l2_regularization': (float, 0.0,  10.0),    # reviewer-tightened from 100
         'class_weight':      (str,   None, None),
     }
     _fut_hp, _fut_applied = _merge('futures', _FUT_HP_DEFAULTS, _FUT_HP_SCHEMA)

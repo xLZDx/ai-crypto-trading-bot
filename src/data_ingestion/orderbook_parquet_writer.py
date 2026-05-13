@@ -63,6 +63,14 @@ def _partition_path(symbol: str, ts_ms: int) -> Path:
     return L2_PARQUET_DIR / symbol / f'yyyymm={yyyymm}'
 
 
+# Reviewer fix 2026-05-13: bound the in-memory buffer so a persistent flush
+# failure (disk full / permissions) cannot OOM the process. When the cap is
+# hit we drop OLDEST rows and emit a CRITICAL log — sustained disk-full is
+# now a visible operator alert, not a silent crash.
+_MAX_BUF_ROWS = 100_000
+_SNAP_FAILURE_ALERT_AT = 100   # escalate to ERROR after N consecutive parse fails
+
+
 class OrderbookParquetWriter:
     """Batches L2 snapshots and writes them as Parquet partitions."""
 
@@ -74,15 +82,32 @@ class OrderbookParquetWriter:
         self._buf_lock = threading.Lock()
         self._last_flush = time.monotonic()
         self._stop = False
+        # Reviewer-fix counter: consecutive _snap_to_row failures. A bus
+        # schema change would silently null-drop every snapshot; this counter
+        # escalates the first 100 to a single ERROR with the raw payload so
+        # the operator can diagnose. Resets on the next successful parse.
+        self._consec_snap_failures = 0
         L2_PARQUET_DIR.mkdir(parents=True, exist_ok=True)
 
     def on_snapshot(self, snap: dict) -> None:
         """Bus callback — append to in-memory buffer; trigger flush if full."""
-        row = self._snap_to_row(snap)
+        row = self._snap_to_row(snap, writer=self)
         if row is None:
             return
+        self._consec_snap_failures = 0
         with self._buf_lock:
             self._buf.append(row)
+            # Cap the buffer — drop oldest if a flush failure has left the
+            # buffer growing unbounded. Reviewer fix 2026-05-13.
+            if len(self._buf) > _MAX_BUF_ROWS:
+                dropped = len(self._buf) - _MAX_BUF_ROWS
+                self._buf = self._buf[-_MAX_BUF_ROWS:]
+                logger.critical(
+                    "[L2 writer] buffer overflow: dropped %d oldest rows "
+                    "(buffer capped at %d). Underlying flush is failing — "
+                    "check logs/orderbook_parquet_writer.log and disk space.",
+                    dropped, _MAX_BUF_ROWS,
+                )
             should_flush = (
                 len(self._buf) >= self.batch_size
                 or (time.monotonic() - self._last_flush) >= self.flush_sec
@@ -91,16 +116,22 @@ class OrderbookParquetWriter:
             self.flush()
 
     @staticmethod
-    def _snap_to_row(snap: dict) -> dict | None:
-        """Convert one DataBus snapshot to a flat row."""
+    def _snap_to_row(snap: dict, writer=None) -> dict | None:
+        """Convert one DataBus snapshot to a flat row.
+
+        Reviewer fix 2026-05-13: silent-debug drops escalated. Counts
+        consecutive failures via the writer instance; first 100 are
+        DEBUG (matches the old behavior for noisy bus moments), then a
+        single ERROR with the raw payload so a schema change becomes
+        operator-visible.
+        """
         try:
             symbol = _normalize_symbol(snap.get('symbol', ''))
             if not symbol:
-                return None
+                raise ValueError('missing symbol')
             ts_ms = int(snap.get('timestamp') or 0)
             if ts_ms <= 0:
-                return None
-            # aggregate_levels emits keys p_bid/p_ask/v_bid/v_ask; defensive cast.
+                raise ValueError(f'bad timestamp {ts_ms}')
             return {
                 'ts':     ts_ms,
                 'symbol': symbol,
@@ -111,7 +142,18 @@ class OrderbookParquetWriter:
                 'depth':  int(snap.get('depth') or 0),
             }
         except Exception as exc:
-            logger.debug("[L2 writer] bad snapshot dropped: %s", exc)
+            if writer is not None:
+                writer._consec_snap_failures += 1
+                n = writer._consec_snap_failures
+                if n == _SNAP_FAILURE_ALERT_AT:
+                    logger.error(
+                        "[L2 writer] %d consecutive snapshot parse failures — "
+                        "bus payload may have changed shape. Last error: %s. "
+                        "Sample payload (first 200 chars): %s",
+                        n, exc, str(snap)[:200],
+                    )
+                else:
+                    logger.debug("[L2 writer] bad snapshot dropped: %s", exc)
             return None
 
     def flush(self) -> int:
@@ -129,21 +171,11 @@ class OrderbookParquetWriter:
         try:
             import pandas as pd
             df = pd.DataFrame(rows)
-            # Group by partition path so a 30-second batch spanning a month
-            # boundary writes into TWO files instead of conflating them.
-            for (sym, part_path), grp in df.groupby(
-                    [df['symbol'], df['ts'].map(
-                        lambda t: _partition_path(_normalize_symbol(rows[0]['symbol']), t)
-                    )],
-            ):
-                # The groupby key for the path lambda re-derives by row; this
-                # is correct but verbose — replaced below by a direct path.
-                pass
+            # Per-symbol per-yyyymm partitioning. A 30-second batch that spans
+            # a month boundary (rare) lands in TWO files, never conflated.
             written = 0
             for sym in df['symbol'].unique():
                 sub = df[df['symbol'] == sym]
-                # Within one symbol, split by yyyymm in case the batch spans
-                # a month boundary (rare but possible).
                 sub = sub.assign(_yyyymm=sub['ts'].map(
                     lambda t: datetime.fromtimestamp(t/1000.0, tz=timezone.utc).strftime('%Y%m')
                 ))
@@ -156,11 +188,20 @@ class OrderbookParquetWriter:
             logger.info("[L2 writer] flushed %d rows", written)
             return written
         except Exception as exc:
-            # On flush failure put the rows back so we don't lose them.
             logger.error("[L2 writer] flush failed: %s — re-buffering %d rows",
                          exc, len(rows))
             with self._buf_lock:
-                self._buf = rows + self._buf
+                # Cap-aware re-buffer: drop oldest if we'd exceed the limit.
+                merged = rows + self._buf
+                if len(merged) > _MAX_BUF_ROWS:
+                    dropped = len(merged) - _MAX_BUF_ROWS
+                    merged = merged[-_MAX_BUF_ROWS:]
+                    logger.critical(
+                        "[L2 writer] re-buffer would exceed cap %d; dropping "
+                        "%d oldest rows. Sustained disk failure likely.",
+                        _MAX_BUF_ROWS, dropped,
+                    )
+                self._buf = merged
             return 0
 
     def stop(self) -> None:
@@ -193,10 +234,23 @@ def main() -> None:
             sys.exit(0)
         atexit.register(lambda: release_role('orderbook_writer', reason='atexit'))
         def _hb_loop():
+            consec = 0
             while True:
                 time.sleep(60)
-                try: heartbeat('orderbook_writer')
-                except Exception: pass
+                try:
+                    if not heartbeat('orderbook_writer'):
+                        consec += 1
+                        if consec >= 3:
+                            logger.critical(
+                                "[registry-hb] orderbook_writer lost role ownership 3x — "
+                                "exiting so a clean restart can claim"
+                            )
+                            import os as _os
+                            _os._exit(0)
+                    else:
+                        consec = 0
+                except Exception as exc:
+                    logger.warning("[registry-hb] heartbeat failed: %s", exc)
         threading.Thread(target=_hb_loop, daemon=True, name='registry-hb').start()
     except Exception as exc:
         logger.warning("[startup] process_registry unavailable: %s", exc)

@@ -1067,10 +1067,23 @@ if __name__ == "__main__":
         _atexit.register(lambda: release_role('cluster_orch', reason='atexit'))
         def _hb_loop():
             import time as _t
+            import logging as _logging
+            _log = _logging.getLogger(__name__)
+            consec = 0
             while True:
                 _t.sleep(60)
-                try: heartbeat('cluster_orch')
-                except Exception: pass
+                try:
+                    if not heartbeat('cluster_orch'):
+                        consec += 1
+                        if consec >= 3:
+                            _log.critical(
+                                "[registry-hb] cluster_orch lost role ownership 3x — "
+                                "watchdog should respawn cleanly"
+                            )
+                    else:
+                        consec = 0
+                except Exception as exc:
+                    _log.warning("[registry-hb] cluster_orch heartbeat failed: %s", exc)
         _threading.Thread(target=_hb_loop, daemon=True, name='registry-hb').start()
     except Exception as _exc:
         print(f"[cluster_orch] process_registry unavailable: {_exc}")

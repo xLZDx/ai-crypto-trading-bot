@@ -46,6 +46,9 @@ def load_cio_overrides(model_key: str) -> dict:
         return {}
 
 
+_CLASS_WEIGHT_ALLOWLIST = {'balanced', 'balanced_subsample', None}
+
+
 def merge_with_defaults(
     model_key: str,
     defaults: dict,
@@ -78,6 +81,18 @@ def merge_with_defaults(
     fallback chain matches train_model.py:_load_model_params semantics
     exactly, so trainer behavior is consistent across all 4 model paths.
     """
+    # Reviewer fix 2026-05-13: assert schema/defaults keys match so a caller
+    # bug (e.g. adding a new HP to `defaults` but forgetting `schema`)
+    # surfaces immediately instead of silently passing the new HP through
+    # without validation.
+    unschema_keys = set(defaults.keys()) - set(schema.keys())
+    if unschema_keys:
+        logger.warning(
+            "[CIO override %s] defaults keys not in schema (no validation will "
+            "apply): %s. Fix the trainer's _HP_SCHEMA dict.",
+            model_key, sorted(unschema_keys),
+        )
+
     overrides = load_cio_overrides(model_key)
     if not overrides:
         return dict(defaults), {}
@@ -98,6 +113,15 @@ def merge_with_defaults(
             logger.warning(
                 "[CIO override %s] '%s'=%s out of range [%s, %s] — skipping",
                 model_key, key, val, lo, hi,
+            )
+            continue
+        # Reviewer fix: class_weight schema can't express a string allowlist
+        # via (lo, hi), so do it inline. sklearn classifiers only accept
+        # 'balanced', 'balanced_subsample', or None.
+        if key == 'class_weight' and val not in _CLASS_WEIGHT_ALLOWLIST:
+            logger.warning(
+                "[CIO override %s] class_weight=%r not in allowlist %s — skipping",
+                model_key, val, sorted(_CLASS_WEIGHT_ALLOWLIST, key=str),
             )
             continue
         merged[key] = val
