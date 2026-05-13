@@ -1,0 +1,503 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  id="Definitions_InfraStartup"
+                  targetNamespace="http://aitrader.local/bpmn">
+  <bpmn:process id="InfraStartup" name="Infrastructure startup — restart_all.ps1 to 11 roles claimed" isExecutable="false">
+    <bpmn:laneSet id="LaneSet_InfraStartup">
+      <bpmn:lane id="Lane_Op" name="Operator">
+        <bpmn:flowNodeRef>Start_Boot</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Script" name="restart_all.ps1">
+        <bpmn:flowNodeRef>GW_FanOut1</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_FanIn1</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_FanOut2</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_FanIn2</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Preflight" name="Pre-flight (early-kill + recovery)">
+        <bpmn:flowNodeRef>Task_EarlyKill</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Parquet</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Recovery</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Tier1" name="Tier-1 processes (operational)">
+        <bpmn:flowNodeRef>Task_Monitor</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Cluster</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Dash</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Bot</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_RT</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_OB</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Tier2" name="Tier-2 processes (ancillary)">
+        <bpmn:flowNodeRef>Task_OBW</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_WLD</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_DOR</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_DEB</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_DW</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_SW</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Done" name="System ready">
+        <bpmn:flowNodeRef>End_Ready</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="Start_Boot" name="operator runs
+restart_all.ps1">
+      <bpmn:outgoing>s1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="Task_EarlyKill" name="Early-kill pre-step:
+Stop-Process bot/dash/
+orderbook_collector/...">
+      <bpmn:incoming>s1</bpmn:incoming>
+      <bpmn:outgoing>s2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_Parquet" name="Parquet store check
+(DuckDB import + dir)">
+      <bpmn:incoming>s2</bpmn:incoming>
+      <bpmn:outgoing>s3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_Recovery" name="startup_recovery
+--archive-only
+(5-min cap)">
+      <bpmn:incoming>s3</bpmn:incoming>
+      <bpmn:outgoing>s4</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:parallelGateway id="GW_FanOut1" name="spawn Tier-1">
+      <bpmn:incoming>s4</bpmn:incoming>
+      <bpmn:outgoing>s5a</bpmn:outgoing>
+      <bpmn:outgoing>s5b</bpmn:outgoing>
+      <bpmn:outgoing>s5c</bpmn:outgoing>
+      <bpmn:outgoing>s5d</bpmn:outgoing>
+      <bpmn:outgoing>s5e</bpmn:outgoing>
+      <bpmn:outgoing>s5f</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:serviceTask id="Task_Monitor" name="monitor :5001">
+      <bpmn:incoming>s5a</bpmn:incoming>
+      <bpmn:outgoing>s6a</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_Cluster" name="cluster_orch :7700">
+      <bpmn:incoming>s5b</bpmn:incoming>
+      <bpmn:outgoing>s6b</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_Dash" name="dashboard :5000">
+      <bpmn:incoming>s5c</bpmn:incoming>
+      <bpmn:outgoing>s6c</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_Bot" name="bot (src.main)">
+      <bpmn:incoming>s5d</bpmn:incoming>
+      <bpmn:outgoing>s6d</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_RT" name="realtime_db_writer">
+      <bpmn:incoming>s5e</bpmn:incoming>
+      <bpmn:outgoing>s6e</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_OB" name="orderbook_collector">
+      <bpmn:incoming>s5f</bpmn:incoming>
+      <bpmn:outgoing>s6f</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:parallelGateway id="GW_FanIn1" name="tier-1 ready">
+      <bpmn:incoming>s6a</bpmn:incoming>
+      <bpmn:incoming>s6b</bpmn:incoming>
+      <bpmn:incoming>s6c</bpmn:incoming>
+      <bpmn:incoming>s6d</bpmn:incoming>
+      <bpmn:incoming>s6e</bpmn:incoming>
+      <bpmn:incoming>s6f</bpmn:incoming>
+      <bpmn:outgoing>s7</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:parallelGateway id="GW_FanOut2" name="spawn Tier-2">
+      <bpmn:incoming>s7</bpmn:incoming>
+      <bpmn:outgoing>s8a</bpmn:outgoing>
+      <bpmn:outgoing>s8b</bpmn:outgoing>
+      <bpmn:outgoing>s8c</bpmn:outgoing>
+      <bpmn:outgoing>s8d</bpmn:outgoing>
+      <bpmn:outgoing>s8e</bpmn:outgoing>
+      <bpmn:outgoing>s8f</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:serviceTask id="Task_OBW" name="orderbook_writer
+(X1.2)">
+      <bpmn:incoming>s8a</bpmn:incoming>
+      <bpmn:outgoing>s9a</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_WLD" name="watchlist_downloader">
+      <bpmn:incoming>s8b</bpmn:incoming>
+      <bpmn:outgoing>s9b</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_DOR" name="data_orchestrator">
+      <bpmn:incoming>s8c</bpmn:incoming>
+      <bpmn:outgoing>s9c</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_DEB" name="debug_supervisor">
+      <bpmn:incoming>s8d</bpmn:incoming>
+      <bpmn:outgoing>s9d</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_DW" name="dashboard_watchdog">
+      <bpmn:incoming>s8e</bpmn:incoming>
+      <bpmn:outgoing>s9e</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_SW" name="sweep_watchdog">
+      <bpmn:incoming>s8f</bpmn:incoming>
+      <bpmn:outgoing>s9f</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:parallelGateway id="GW_FanIn2" name="all 11 spawned">
+      <bpmn:incoming>s9a</bpmn:incoming>
+      <bpmn:incoming>s9b</bpmn:incoming>
+      <bpmn:incoming>s9c</bpmn:incoming>
+      <bpmn:incoming>s9d</bpmn:incoming>
+      <bpmn:incoming>s9e</bpmn:incoming>
+      <bpmn:incoming>s9f</bpmn:incoming>
+      <bpmn:outgoing>s10</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:endEvent id="End_Ready" name="11 roles claimed
+in process_registry">
+      <bpmn:incoming>s10</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="s1" sourceRef="Start_Boot" targetRef="Task_EarlyKill" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s2" sourceRef="Task_EarlyKill" targetRef="Task_Parquet" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s3" sourceRef="Task_Parquet" targetRef="Task_Recovery" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s4" sourceRef="Task_Recovery" targetRef="GW_FanOut1" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s5a" sourceRef="GW_FanOut1" targetRef="Task_Monitor" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s5b" sourceRef="GW_FanOut1" targetRef="Task_Cluster" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s5c" sourceRef="GW_FanOut1" targetRef="Task_Dash" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s5d" sourceRef="GW_FanOut1" targetRef="Task_Bot" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s5e" sourceRef="GW_FanOut1" targetRef="Task_RT" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s5f" sourceRef="GW_FanOut1" targetRef="Task_OB" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s6a" sourceRef="Task_Monitor" targetRef="GW_FanIn1" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s6b" sourceRef="Task_Cluster" targetRef="GW_FanIn1" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s6c" sourceRef="Task_Dash" targetRef="GW_FanIn1" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s6d" sourceRef="Task_Bot" targetRef="GW_FanIn1" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s6e" sourceRef="Task_RT" targetRef="GW_FanIn1" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s6f" sourceRef="Task_OB" targetRef="GW_FanIn1" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s7" sourceRef="GW_FanIn1" targetRef="GW_FanOut2" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s8a" sourceRef="GW_FanOut2" targetRef="Task_OBW" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s8b" sourceRef="GW_FanOut2" targetRef="Task_WLD" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s8c" sourceRef="GW_FanOut2" targetRef="Task_DOR" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s8d" sourceRef="GW_FanOut2" targetRef="Task_DEB" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s8e" sourceRef="GW_FanOut2" targetRef="Task_DW" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s8f" sourceRef="GW_FanOut2" targetRef="Task_SW" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s9a" sourceRef="Task_OBW" targetRef="GW_FanIn2" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s9b" sourceRef="Task_WLD" targetRef="GW_FanIn2" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s9c" sourceRef="Task_DOR" targetRef="GW_FanIn2" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s9d" sourceRef="Task_DEB" targetRef="GW_FanIn2" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s9e" sourceRef="Task_DW" targetRef="GW_FanIn2" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s9f" sourceRef="Task_SW" targetRef="GW_FanIn2" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="s10" sourceRef="GW_FanIn2" targetRef="End_Ready" name="">
+    </bpmn:sequenceFlow>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Diagram_InfraStartup">
+    <bpmndi:BPMNPlane id="Plane_InfraStartup" bpmnElement="InfraStartup">
+    <bpmndi:BPMNShape id="Shape_Lane_Op" bpmnElement="Lane_Op" isHorizontal="true">
+      <dc:Bounds x="0" y="0" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Script" bpmnElement="Lane_Script" isHorizontal="true">
+      <dc:Bounds x="0" y="130" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Preflight" bpmnElement="Lane_Preflight" isHorizontal="true">
+      <dc:Bounds x="0" y="260" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Tier1" bpmnElement="Lane_Tier1" isHorizontal="true">
+      <dc:Bounds x="0" y="390" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Tier2" bpmnElement="Lane_Tier2" isHorizontal="true">
+      <dc:Bounds x="0" y="520" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Done" bpmnElement="Lane_Done" isHorizontal="true">
+      <dc:Bounds x="0" y="650" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Start_Boot" bpmnElement="Start_Boot">
+      <dc:Bounds x="60" y="47" width="36" height="36"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="40" y="87" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_EarlyKill" bpmnElement="Task_EarlyKill">
+      <dc:Bounds x="220" y="285" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Parquet" bpmnElement="Task_Parquet">
+      <dc:Bounds x="380" y="285" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Recovery" bpmnElement="Task_Recovery">
+      <dc:Bounds x="540" y="285" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_FanOut1" bpmnElement="GW_FanOut1">
+      <dc:Bounds x="700" y="170" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="680" y="224" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Monitor" bpmnElement="Task_Monitor">
+      <dc:Bounds x="860" y="415" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Cluster" bpmnElement="Task_Cluster">
+      <dc:Bounds x="1020" y="415" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Dash" bpmnElement="Task_Dash">
+      <dc:Bounds x="1180" y="415" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Bot" bpmnElement="Task_Bot">
+      <dc:Bounds x="1340" y="415" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_RT" bpmnElement="Task_RT">
+      <dc:Bounds x="1500" y="415" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_OB" bpmnElement="Task_OB">
+      <dc:Bounds x="1660" y="415" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_FanIn1" bpmnElement="GW_FanIn1">
+      <dc:Bounds x="1760" y="170" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1740" y="224" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_FanOut2" bpmnElement="GW_FanOut2">
+      <dc:Bounds x="1860" y="170" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1840" y="224" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_OBW" bpmnElement="Task_OBW">
+      <dc:Bounds x="2140" y="545" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_WLD" bpmnElement="Task_WLD">
+      <dc:Bounds x="2460" y="545" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_DOR" bpmnElement="Task_DOR">
+      <dc:Bounds x="2780" y="545" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_DEB" bpmnElement="Task_DEB">
+      <dc:Bounds x="2300" y="545" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_DW" bpmnElement="Task_DW">
+      <dc:Bounds x="2620" y="545" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_SW" bpmnElement="Task_SW">
+      <dc:Bounds x="2940" y="545" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_FanIn2" bpmnElement="GW_FanIn2">
+      <dc:Bounds x="2440" y="170" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="2420" y="224" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_End_Ready" bpmnElement="End_Ready">
+      <dc:Bounds x="2780" y="697" width="36" height="36"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="2760" y="737" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNEdge id="Edge_s1" bpmnElement="s1">
+      <di:waypoint x="96" y="65"/>
+      <di:waypoint x="158" y="65"/>
+      <di:waypoint x="158" y="325"/>
+      <di:waypoint x="220" y="325"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s2" bpmnElement="s2">
+      <di:waypoint x="330" y="325"/>
+      <di:waypoint x="380" y="325"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s3" bpmnElement="s3">
+      <di:waypoint x="490" y="325"/>
+      <di:waypoint x="540" y="325"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s4" bpmnElement="s4">
+      <di:waypoint x="650" y="325"/>
+      <di:waypoint x="675" y="325"/>
+      <di:waypoint x="675" y="195"/>
+      <di:waypoint x="700" y="195"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s5a" bpmnElement="s5a">
+      <di:waypoint x="750" y="195"/>
+      <di:waypoint x="805" y="195"/>
+      <di:waypoint x="805" y="455"/>
+      <di:waypoint x="860" y="455"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s5b" bpmnElement="s5b">
+      <di:waypoint x="750" y="195"/>
+      <di:waypoint x="885" y="195"/>
+      <di:waypoint x="885" y="455"/>
+      <di:waypoint x="1020" y="455"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s5c" bpmnElement="s5c">
+      <di:waypoint x="750" y="195"/>
+      <di:waypoint x="965" y="195"/>
+      <di:waypoint x="965" y="455"/>
+      <di:waypoint x="1180" y="455"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s5d" bpmnElement="s5d">
+      <di:waypoint x="750" y="195"/>
+      <di:waypoint x="1045" y="195"/>
+      <di:waypoint x="1045" y="455"/>
+      <di:waypoint x="1340" y="455"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s5e" bpmnElement="s5e">
+      <di:waypoint x="750" y="195"/>
+      <di:waypoint x="1125" y="195"/>
+      <di:waypoint x="1125" y="455"/>
+      <di:waypoint x="1500" y="455"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s5f" bpmnElement="s5f">
+      <di:waypoint x="750" y="195"/>
+      <di:waypoint x="1205" y="195"/>
+      <di:waypoint x="1205" y="455"/>
+      <di:waypoint x="1660" y="455"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s6a" bpmnElement="s6a">
+      <di:waypoint x="970" y="455"/>
+      <di:waypoint x="1365" y="455"/>
+      <di:waypoint x="1365" y="195"/>
+      <di:waypoint x="1760" y="195"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s6b" bpmnElement="s6b">
+      <di:waypoint x="1130" y="455"/>
+      <di:waypoint x="1445" y="455"/>
+      <di:waypoint x="1445" y="195"/>
+      <di:waypoint x="1760" y="195"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s6c" bpmnElement="s6c">
+      <di:waypoint x="1290" y="455"/>
+      <di:waypoint x="1525" y="455"/>
+      <di:waypoint x="1525" y="195"/>
+      <di:waypoint x="1760" y="195"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s6d" bpmnElement="s6d">
+      <di:waypoint x="1450" y="455"/>
+      <di:waypoint x="1605" y="455"/>
+      <di:waypoint x="1605" y="195"/>
+      <di:waypoint x="1760" y="195"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s6e" bpmnElement="s6e">
+      <di:waypoint x="1610" y="455"/>
+      <di:waypoint x="1685" y="455"/>
+      <di:waypoint x="1685" y="195"/>
+      <di:waypoint x="1760" y="195"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s6f" bpmnElement="s6f">
+      <di:waypoint x="1770" y="455"/>
+      <di:waypoint x="1795" y="455"/>
+      <di:waypoint x="1795" y="515"/>
+      <di:waypoint x="1735" y="515"/>
+      <di:waypoint x="1735" y="195"/>
+      <di:waypoint x="1760" y="195"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s7" bpmnElement="s7">
+      <di:waypoint x="1810" y="195"/>
+      <di:waypoint x="1860" y="195"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s8a" bpmnElement="s8a">
+      <di:waypoint x="1910" y="195"/>
+      <di:waypoint x="2025" y="195"/>
+      <di:waypoint x="2025" y="585"/>
+      <di:waypoint x="2140" y="585"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s8b" bpmnElement="s8b">
+      <di:waypoint x="1910" y="195"/>
+      <di:waypoint x="2185" y="195"/>
+      <di:waypoint x="2185" y="585"/>
+      <di:waypoint x="2460" y="585"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s8c" bpmnElement="s8c">
+      <di:waypoint x="1910" y="195"/>
+      <di:waypoint x="2345" y="195"/>
+      <di:waypoint x="2345" y="585"/>
+      <di:waypoint x="2780" y="585"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s8d" bpmnElement="s8d">
+      <di:waypoint x="1910" y="195"/>
+      <di:waypoint x="2105" y="195"/>
+      <di:waypoint x="2105" y="585"/>
+      <di:waypoint x="2300" y="585"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s8e" bpmnElement="s8e">
+      <di:waypoint x="1910" y="195"/>
+      <di:waypoint x="2265" y="195"/>
+      <di:waypoint x="2265" y="585"/>
+      <di:waypoint x="2620" y="585"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s8f" bpmnElement="s8f">
+      <di:waypoint x="1910" y="195"/>
+      <di:waypoint x="2425" y="195"/>
+      <di:waypoint x="2425" y="585"/>
+      <di:waypoint x="2940" y="585"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s9a" bpmnElement="s9a">
+      <di:waypoint x="2250" y="585"/>
+      <di:waypoint x="2345" y="585"/>
+      <di:waypoint x="2345" y="195"/>
+      <di:waypoint x="2440" y="195"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s9b" bpmnElement="s9b">
+      <di:waypoint x="2570" y="585"/>
+      <di:waypoint x="2595" y="585"/>
+      <di:waypoint x="2595" y="645"/>
+      <di:waypoint x="2415" y="645"/>
+      <di:waypoint x="2415" y="195"/>
+      <di:waypoint x="2440" y="195"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s9c" bpmnElement="s9c">
+      <di:waypoint x="2890" y="585"/>
+      <di:waypoint x="2915" y="585"/>
+      <di:waypoint x="2915" y="645"/>
+      <di:waypoint x="2415" y="645"/>
+      <di:waypoint x="2415" y="195"/>
+      <di:waypoint x="2440" y="195"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s9d" bpmnElement="s9d">
+      <di:waypoint x="2410" y="585"/>
+      <di:waypoint x="2425" y="585"/>
+      <di:waypoint x="2425" y="195"/>
+      <di:waypoint x="2440" y="195"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s9e" bpmnElement="s9e">
+      <di:waypoint x="2730" y="585"/>
+      <di:waypoint x="2755" y="585"/>
+      <di:waypoint x="2755" y="645"/>
+      <di:waypoint x="2415" y="645"/>
+      <di:waypoint x="2415" y="195"/>
+      <di:waypoint x="2440" y="195"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s9f" bpmnElement="s9f">
+      <di:waypoint x="3050" y="585"/>
+      <di:waypoint x="3075" y="585"/>
+      <di:waypoint x="3075" y="645"/>
+      <di:waypoint x="2415" y="645"/>
+      <di:waypoint x="2415" y="195"/>
+      <di:waypoint x="2440" y="195"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_s10" bpmnElement="s10">
+      <di:waypoint x="2490" y="195"/>
+      <di:waypoint x="2635" y="195"/>
+      <di:waypoint x="2635" y="715"/>
+      <di:waypoint x="2780" y="715"/>
+    </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

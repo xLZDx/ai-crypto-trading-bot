@@ -49,9 +49,20 @@
   <header>
     <h1>📊 AI Trader — Business Flows (BPMN 2.0)</h1>
     <select id="flow-select">
-      <option value="TrainingFlow.bpmn">Training pipeline — operator → KEEP/REVIEW/RETIRE</option>
-      <option value="TradingFlow.bpmn">Live trading — WS tick → filled order</option>
-      <option value="RegistryClaim.bpmn">process_registry.claim_role — atomic decision tree</option>
+      <optgroup label="— Business processes (decision-heavy) —">
+        <option value="TrainingFlow.bpmn">Training pipeline — operator → KEEP/REVIEW/RETIRE</option>
+        <option value="TradingFlow.bpmn">Live trading — WS tick → filled order</option>
+        <option value="RiskGates.bpmn">Risk gates — RiskAgent 9-gate stack</option>
+      </optgroup>
+      <optgroup label="— Lifecycles (load / claim / loop) —">
+        <option value="ModelsLifecycle.bpmn">Models lifecycle — load + HMAC verify + predict</option>
+        <option value="RegistryClaim.bpmn">process_registry.claim_role — atomic decision tree</option>
+        <option value="AgentLifecycle.bpmn">BaseAgent lifecycle — init → loop → stop</option>
+      </optgroup>
+      <optgroup label="— Dispatch (orchestration) —">
+        <option value="TrainerDispatch.bpmn">Trainer dispatch — factory → train → sign → meta JSON</option>
+        <option value="InfraStartup.bpmn">Infrastructure startup — restart_all.ps1 → 11 roles</option>
+      </optgroup>
     </select>
     <div class="controls">
       <button onclick="zoomFit()">🗂 Fit</button>

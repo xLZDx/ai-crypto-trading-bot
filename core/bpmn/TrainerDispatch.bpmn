@@ -1,0 +1,367 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  id="Definitions_TrainerDispatch"
+                  targetNamespace="http://aitrader.local/bpmn">
+  <bpmn:process id="TrainerDispatch" name="Trainer dispatch — factory → train → sign → meta JSON" isExecutable="false">
+    <bpmn:laneSet id="LaneSet_TrainerDispatch">
+      <bpmn:lane id="Lane_CO" name="cluster_orch :7700">
+        <bpmn:flowNodeRef>Start_Dispatch</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_UpdateTask</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Factory" name="get_trainer_agent factory">
+        <bpmn:flowNodeRef>Task_Lookup</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Instantiate</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Reg" name="TRAINER_AGENT_REGISTRY">
+        <bpmn:flowNodeRef>Task_RegRead</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_KnownKey</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_TA" name="TrainerXAgent (concrete)">
+        <bpmn:flowNodeRef>Task_TrainCall</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_LastResultFail</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Pipe" name="Train function pipeline">
+        <bpmn:flowNodeRef>Task_ReadRules</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_RunPipe</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_Raised</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_CIO" name="cio_overrides.merge_with_defaults">
+        <bpmn:flowNodeRef>Task_Merge</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Sign" name="model_integrity + meta JSON">
+        <bpmn:flowNodeRef>Task_Sign</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_WriteMeta</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Result" name="Result">
+        <bpmn:flowNodeRef>End_KeyErr</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_Fail</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_OK</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="Start_Dispatch" name="cluster_orch
+dispatch (model_key, tf)">
+      <bpmn:outgoing>d1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="Task_Lookup" name="get_trainer_agent(key)">
+      <bpmn:incoming>d1</bpmn:incoming>
+      <bpmn:outgoing>d2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_RegRead" name="REGISTRY[key]">
+      <bpmn:incoming>d2</bpmn:incoming>
+      <bpmn:outgoing>d3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="GW_KnownKey" name="known key?">
+      <bpmn:incoming>d3</bpmn:incoming>
+      <bpmn:outgoing>d4a</bpmn:outgoing>
+      <bpmn:outgoing>d4b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="End_KeyErr" name="KeyError
+&quot;No trainer agent for ...&quot;">
+      <bpmn:incoming>d4a</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="Task_Instantiate" name="instantiate fresh
+(NOT singleton)">
+      <bpmn:incoming>d4b</bpmn:incoming>
+      <bpmn:outgoing>d5</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_TrainCall" name="train(rules_version,
+n_samples_min)">
+      <bpmn:incoming>d5</bpmn:incoming>
+      <bpmn:outgoing>d6</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_ReadRules" name="read params +
+cio_overrides
+from training_rules.json">
+      <bpmn:incoming>d6</bpmn:incoming>
+      <bpmn:outgoing>d7</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_Merge" name="merge_with_defaults
+schema-bounded:
+- drop wrong-type
+- drop out-of-range
+- drop non-allowlist">
+      <bpmn:incoming>d7</bpmn:incoming>
+      <bpmn:outgoing>d8</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_RunPipe" name="subclass train function
+(9-step pipeline)">
+      <bpmn:incoming>d8</bpmn:incoming>
+      <bpmn:outgoing>d9</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="GW_Raised" name="train raised?">
+      <bpmn:incoming>d9</bpmn:incoming>
+      <bpmn:outgoing>d10a</bpmn:outgoing>
+      <bpmn:outgoing>d10b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="Task_LastResultFail" name="last_result =
+{ok: False, error: str(e)}">
+      <bpmn:incoming>d10a</bpmn:incoming>
+      <bpmn:outgoing>d11</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="End_Fail" name="(False, {error})">
+      <bpmn:incoming>d11</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="Task_Sign" name="sign_model(joblib_path)
+HMAC-SHA256">
+      <bpmn:incoming>d10b</bpmn:incoming>
+      <bpmn:outgoing>d12</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_WriteMeta" name="write &lt;key&gt;_meta.json
+{wf_acc, threshold,
+cio_overrides_applied,
+signature_hex}">
+      <bpmn:incoming>d12</bpmn:incoming>
+      <bpmn:outgoing>d13</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_UpdateTask" name="cluster_orch.
+update_task(&quot;done&quot;,
+meta_path)">
+      <bpmn:incoming>d13</bpmn:incoming>
+      <bpmn:outgoing>d14</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="End_OK" name="(True, info, meta_path)">
+      <bpmn:incoming>d14</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="d1" sourceRef="Start_Dispatch" targetRef="Task_Lookup" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="d2" sourceRef="Task_Lookup" targetRef="Task_RegRead" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="d3" sourceRef="Task_RegRead" targetRef="GW_KnownKey" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="d4a" sourceRef="GW_KnownKey" targetRef="End_KeyErr" name="no">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="d4b" sourceRef="GW_KnownKey" targetRef="Task_Instantiate" name="yes">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="d5" sourceRef="Task_Instantiate" targetRef="Task_TrainCall" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="d6" sourceRef="Task_TrainCall" targetRef="Task_ReadRules" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="d7" sourceRef="Task_ReadRules" targetRef="Task_Merge" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="d8" sourceRef="Task_Merge" targetRef="Task_RunPipe" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="d9" sourceRef="Task_RunPipe" targetRef="GW_Raised" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="d10a" sourceRef="GW_Raised" targetRef="Task_LastResultFail" name="yes">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="d10b" sourceRef="GW_Raised" targetRef="Task_Sign" name="no">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="d11" sourceRef="Task_LastResultFail" targetRef="End_Fail" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="d12" sourceRef="Task_Sign" targetRef="Task_WriteMeta" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="d13" sourceRef="Task_WriteMeta" targetRef="Task_UpdateTask" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="d14" sourceRef="Task_UpdateTask" targetRef="End_OK" name="">
+    </bpmn:sequenceFlow>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Diagram_TrainerDispatch">
+    <bpmndi:BPMNPlane id="Plane_TrainerDispatch" bpmnElement="TrainerDispatch">
+    <bpmndi:BPMNShape id="Shape_Lane_CO" bpmnElement="Lane_CO" isHorizontal="true">
+      <dc:Bounds x="0" y="0" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Factory" bpmnElement="Lane_Factory" isHorizontal="true">
+      <dc:Bounds x="0" y="130" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Reg" bpmnElement="Lane_Reg" isHorizontal="true">
+      <dc:Bounds x="0" y="260" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_TA" bpmnElement="Lane_TA" isHorizontal="true">
+      <dc:Bounds x="0" y="390" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Pipe" bpmnElement="Lane_Pipe" isHorizontal="true">
+      <dc:Bounds x="0" y="520" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_CIO" bpmnElement="Lane_CIO" isHorizontal="true">
+      <dc:Bounds x="0" y="650" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Sign" bpmnElement="Lane_Sign" isHorizontal="true">
+      <dc:Bounds x="0" y="780" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Result" bpmnElement="Lane_Result" isHorizontal="true">
+      <dc:Bounds x="0" y="910" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Start_Dispatch" bpmnElement="Start_Dispatch">
+      <dc:Bounds x="60" y="47" width="36" height="36"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="40" y="87" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Lookup" bpmnElement="Task_Lookup">
+      <dc:Bounds x="220" y="155" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_RegRead" bpmnElement="Task_RegRead">
+      <dc:Bounds x="380" y="285" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_KnownKey" bpmnElement="GW_KnownKey">
+      <dc:Bounds x="540" y="300" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="520" y="354" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_End_KeyErr" bpmnElement="End_KeyErr">
+      <dc:Bounds x="700" y="957" width="36" height="36"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="680" y="997" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Instantiate" bpmnElement="Task_Instantiate">
+      <dc:Bounds x="860" y="155" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_TrainCall" bpmnElement="Task_TrainCall">
+      <dc:Bounds x="1020" y="415" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_ReadRules" bpmnElement="Task_ReadRules">
+      <dc:Bounds x="1180" y="545" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Merge" bpmnElement="Task_Merge">
+      <dc:Bounds x="1340" y="675" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_RunPipe" bpmnElement="Task_RunPipe">
+      <dc:Bounds x="1500" y="545" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_Raised" bpmnElement="GW_Raised">
+      <dc:Bounds x="1660" y="560" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1640" y="614" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_LastResultFail" bpmnElement="Task_LastResultFail">
+      <dc:Bounds x="1820" y="415" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_End_Fail" bpmnElement="End_Fail">
+      <dc:Bounds x="1906" y="957" width="36" height="36"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1886" y="997" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Sign" bpmnElement="Task_Sign">
+      <dc:Bounds x="1820" y="805" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_WriteMeta" bpmnElement="Task_WriteMeta">
+      <dc:Bounds x="1980" y="805" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_UpdateTask" bpmnElement="Task_UpdateTask">
+      <dc:Bounds x="2066" y="25" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_End_OK" bpmnElement="End_OK">
+      <dc:Bounds x="2152" y="957" width="36" height="36"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="2132" y="997" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNEdge id="Edge_d1" bpmnElement="d1">
+      <di:waypoint x="96" y="65"/>
+      <di:waypoint x="158" y="65"/>
+      <di:waypoint x="158" y="195"/>
+      <di:waypoint x="220" y="195"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_d2" bpmnElement="d2">
+      <di:waypoint x="330" y="195"/>
+      <di:waypoint x="355" y="195"/>
+      <di:waypoint x="355" y="325"/>
+      <di:waypoint x="380" y="325"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_d3" bpmnElement="d3">
+      <di:waypoint x="490" y="325"/>
+      <di:waypoint x="540" y="325"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_d4a" bpmnElement="d4a">
+      <di:waypoint x="590" y="325"/>
+      <di:waypoint x="645" y="325"/>
+      <di:waypoint x="645" y="975"/>
+      <di:waypoint x="700" y="975"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="615" y="957" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_d4b" bpmnElement="d4b">
+      <di:waypoint x="590" y="325"/>
+      <di:waypoint x="725" y="325"/>
+      <di:waypoint x="725" y="195"/>
+      <di:waypoint x="860" y="195"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="695" y="177" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_d5" bpmnElement="d5">
+      <di:waypoint x="970" y="195"/>
+      <di:waypoint x="995" y="195"/>
+      <di:waypoint x="995" y="455"/>
+      <di:waypoint x="1020" y="455"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_d6" bpmnElement="d6">
+      <di:waypoint x="1130" y="455"/>
+      <di:waypoint x="1155" y="455"/>
+      <di:waypoint x="1155" y="585"/>
+      <di:waypoint x="1180" y="585"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_d7" bpmnElement="d7">
+      <di:waypoint x="1290" y="585"/>
+      <di:waypoint x="1315" y="585"/>
+      <di:waypoint x="1315" y="715"/>
+      <di:waypoint x="1340" y="715"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_d8" bpmnElement="d8">
+      <di:waypoint x="1450" y="715"/>
+      <di:waypoint x="1475" y="715"/>
+      <di:waypoint x="1475" y="585"/>
+      <di:waypoint x="1500" y="585"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_d9" bpmnElement="d9">
+      <di:waypoint x="1610" y="585"/>
+      <di:waypoint x="1660" y="585"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_d10a" bpmnElement="d10a">
+      <di:waypoint x="1710" y="585"/>
+      <di:waypoint x="1765" y="585"/>
+      <di:waypoint x="1765" y="455"/>
+      <di:waypoint x="1820" y="455"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1735" y="437" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_d10b" bpmnElement="d10b">
+      <di:waypoint x="1710" y="585"/>
+      <di:waypoint x="1765" y="585"/>
+      <di:waypoint x="1765" y="845"/>
+      <di:waypoint x="1820" y="845"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1735" y="827" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_d11" bpmnElement="d11">
+      <di:waypoint x="1930" y="455"/>
+      <di:waypoint x="1955" y="455"/>
+      <di:waypoint x="1955" y="1035"/>
+      <di:waypoint x="1881" y="1035"/>
+      <di:waypoint x="1881" y="975"/>
+      <di:waypoint x="1906" y="975"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_d12" bpmnElement="d12">
+      <di:waypoint x="1930" y="845"/>
+      <di:waypoint x="1980" y="845"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_d13" bpmnElement="d13">
+      <di:waypoint x="2090" y="845"/>
+      <di:waypoint x="2115" y="845"/>
+      <di:waypoint x="2115" y="905"/>
+      <di:waypoint x="2041" y="905"/>
+      <di:waypoint x="2041" y="65"/>
+      <di:waypoint x="2066" y="65"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_d14" bpmnElement="d14">
+      <di:waypoint x="2176" y="65"/>
+      <di:waypoint x="2201" y="65"/>
+      <di:waypoint x="2201" y="1035"/>
+      <di:waypoint x="2127" y="1035"/>
+      <di:waypoint x="2127" y="975"/>
+      <di:waypoint x="2152" y="975"/>
+    </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

@@ -1,13 +1,22 @@
 # BPMN 2.0 business-process diagrams
 
-Three diagrams, valid BPMN 2.0 XML, renderable by any BPMN tool
-(bpmn-js / Camunda Modeler / Draw.io / Signavio / Bizagi):
+Eight diagrams, one per PNG category in [../diagrams/](../diagrams/). All
+valid BPMN 2.0 XML, renderable by bpmn-js / Camunda Modeler / Draw.io /
+Signavio / Bizagi:
 
-| File | Process | Swimlanes | Gateways |
-|---|---|---|---|
-| [TrainingFlow.bpmn](TrainingFlow.bpmn) | Training pipeline — operator click → KEEP/REVIEW/RETIRE | 7 (Operator, Dashboard, KPI Gate pre, MLE pre, Trainer, MLE post, KPI Gate 3-strike) | 4 XOR |
-| [TradingFlow.bpmn](TradingFlow.bpmn) | Live trading — one WS tick to filled order | 6 (Market, Signal, Specialists, Risk, Exec, Outcome) | 3 XOR + 2 parallel (fan-out / fan-in) |
-| [RegistryClaim.bpmn](RegistryClaim.bpmn) | `process_registry.claim_role` atomic decision tree | 5 (Caller, FileLock, Liveness, Decision, Audit) | 3 XOR |
+| File | Process | Swimlanes | Gateways | Matches PNG |
+|---|---|---|---|---|
+| [TrainingFlow.bpmn](TrainingFlow.bpmn) | Training pipeline — operator → KEEP/REVIEW/RETIRE | 7 | 4 XOR | training_business_flow.png |
+| [TradingFlow.bpmn](TradingFlow.bpmn) | Live trading — WS tick → filled order | 6 | 3 XOR + 2 parallel (fan-out/fan-in) | trading_business_flow.png |
+| [RegistryClaim.bpmn](RegistryClaim.bpmn) | `process_registry.claim_role` atomic decision tree | 5 | 3 XOR | process_registry.png |
+| [ModelsLifecycle.bpmn](ModelsLifecycle.bpmn) | MLPredictor: load → HMAC verify → predict_proba | 6 | 2 XOR | models_hierarchy.png |
+| [InfraStartup.bpmn](InfraStartup.bpmn) | `restart_all.ps1` → 11 process roles claimed | 6 | 4 parallel (2 fan-out + 2 fan-in) | infrastructure_topology.png |
+| [AgentLifecycle.bpmn](AgentLifecycle.bpmn) | BaseAgent: init → subscribe → loop → stop | 6 | 2 XOR (exception, still running) | agents_class_hierarchy.png |
+| [TrainerDispatch.bpmn](TrainerDispatch.bpmn) | get_trainer_agent factory → train → HMAC sign → meta JSON | 8 | 2 XOR (known key, train raised) | trainer_agents_class_hierarchy.png |
+| [RiskGates.bpmn](RiskGates.bpmn) | RiskAgent — 9-gate stack traversal (fail-closed) | 8 | **9 XOR (one per gate)** | risk_subsystem.png |
+
+**Total: 68 tasks, 25 XOR gateways, 6 parallel gateways, 145 sequence flows
+across 52 swimlanes.**
 
 ## View in browser
 

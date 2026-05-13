@@ -1,0 +1,281 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  id="Definitions_ModelsLifecycle"
+                  targetNamespace="http://aitrader.local/bpmn">
+  <bpmn:process id="ModelsLifecycle" name="Models lifecycle — MLPredictor: load → HMAC verify → predict_proba" isExecutable="false">
+    <bpmn:laneSet id="LaneSet_ModelsLifecycle">
+      <bpmn:lane id="Lane_Agent" name="Caller agent (Spot / Futures / Signal)">
+        <bpmn:flowNodeRef>Start_Predict</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_MP" name="MLPredictor">
+        <bpmn:flowNodeRef>Task_OpenMeta</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_FileExists</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_ReadMeta</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_JoblibLoad</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_BuildX</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_FS" name="Filesystem (D:/models)">
+        <bpmn:flowNodeRef>Task_OpenJoblib</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_MI" name="model_integrity (HMAC-SHA256)">
+        <bpmn:flowNodeRef>Task_VerifyHMAC</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_SigValid</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Model" name="Trained model artefact">
+        <bpmn:flowNodeRef>Task_Predict</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Result" name="Return path">
+        <bpmn:flowNodeRef>End_NoFile</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_SigFail</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_Return</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="Start_Predict" name="predict_proba(features)">
+      <bpmn:outgoing>m1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="Task_OpenMeta" name="open
+&lt;key&gt;_meta.json">
+      <bpmn:incoming>m1</bpmn:incoming>
+      <bpmn:outgoing>m2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="GW_FileExists" name="file exists?">
+      <bpmn:incoming>m2</bpmn:incoming>
+      <bpmn:outgoing>m3a</bpmn:outgoing>
+      <bpmn:outgoing>m3b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="End_NoFile" name="is_loaded=False
+(model missing)">
+      <bpmn:incoming>m3a</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="Task_ReadMeta" name="parse meta:
+features, threshold,
+signature_hex">
+      <bpmn:incoming>m3b</bpmn:incoming>
+      <bpmn:outgoing>m4</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_OpenJoblib" name="open joblib
+binary blob">
+      <bpmn:incoming>m4</bpmn:incoming>
+      <bpmn:outgoing>m5</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_VerifyHMAC" name="verify_and_load_bytes
+HMAC-SHA256
+vs MODEL_SIGNING_KEY">
+      <bpmn:incoming>m5</bpmn:incoming>
+      <bpmn:outgoing>m6</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="GW_SigValid" name="signature valid?
+(compare_digest)">
+      <bpmn:incoming>m6</bpmn:incoming>
+      <bpmn:outgoing>m7a</bpmn:outgoing>
+      <bpmn:outgoing>m7b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="End_SigFail" name="SignatureError
+REFUSE to load">
+      <bpmn:incoming>m7a</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="Task_JoblibLoad" name="joblib.load
+(BytesIO bytes)">
+      <bpmn:incoming>m7b</bpmn:incoming>
+      <bpmn:outgoing>m8</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_BuildX" name="build DataFrame
+[meta.features]
+NaN-fill 0">
+      <bpmn:incoming>m8</bpmn:incoming>
+      <bpmn:outgoing>m9</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_Predict" name="model.predict_proba(X)">
+      <bpmn:incoming>m9</bpmn:incoming>
+      <bpmn:outgoing>m10</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="End_Return" name="return float p_win">
+      <bpmn:incoming>m10</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="m1" sourceRef="Start_Predict" targetRef="Task_OpenMeta" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="m2" sourceRef="Task_OpenMeta" targetRef="GW_FileExists" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="m3a" sourceRef="GW_FileExists" targetRef="End_NoFile" name="no">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="m3b" sourceRef="GW_FileExists" targetRef="Task_ReadMeta" name="yes">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="m4" sourceRef="Task_ReadMeta" targetRef="Task_OpenJoblib" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="m5" sourceRef="Task_OpenJoblib" targetRef="Task_VerifyHMAC" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="m6" sourceRef="Task_VerifyHMAC" targetRef="GW_SigValid" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="m7a" sourceRef="GW_SigValid" targetRef="End_SigFail" name="mismatch">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="m7b" sourceRef="GW_SigValid" targetRef="Task_JoblibLoad" name="valid">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="m8" sourceRef="Task_JoblibLoad" targetRef="Task_BuildX" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="m9" sourceRef="Task_BuildX" targetRef="Task_Predict" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="m10" sourceRef="Task_Predict" targetRef="End_Return" name="">
+    </bpmn:sequenceFlow>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Diagram_ModelsLifecycle">
+    <bpmndi:BPMNPlane id="Plane_ModelsLifecycle" bpmnElement="ModelsLifecycle">
+    <bpmndi:BPMNShape id="Shape_Lane_Agent" bpmnElement="Lane_Agent" isHorizontal="true">
+      <dc:Bounds x="0" y="0" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_MP" bpmnElement="Lane_MP" isHorizontal="true">
+      <dc:Bounds x="0" y="130" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_FS" bpmnElement="Lane_FS" isHorizontal="true">
+      <dc:Bounds x="0" y="260" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_MI" bpmnElement="Lane_MI" isHorizontal="true">
+      <dc:Bounds x="0" y="390" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Model" bpmnElement="Lane_Model" isHorizontal="true">
+      <dc:Bounds x="0" y="520" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Result" bpmnElement="Lane_Result" isHorizontal="true">
+      <dc:Bounds x="0" y="650" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Start_Predict" bpmnElement="Start_Predict">
+      <dc:Bounds x="60" y="47" width="36" height="36"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="40" y="87" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_OpenMeta" bpmnElement="Task_OpenMeta">
+      <dc:Bounds x="220" y="155" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_FileExists" bpmnElement="GW_FileExists">
+      <dc:Bounds x="380" y="170" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="360" y="224" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_End_NoFile" bpmnElement="End_NoFile">
+      <dc:Bounds x="540" y="697" width="36" height="36"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="520" y="737" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_ReadMeta" bpmnElement="Task_ReadMeta">
+      <dc:Bounds x="480" y="155" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_OpenJoblib" bpmnElement="Task_OpenJoblib">
+      <dc:Bounds x="700" y="285" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_VerifyHMAC" bpmnElement="Task_VerifyHMAC">
+      <dc:Bounds x="860" y="415" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_SigValid" bpmnElement="GW_SigValid">
+      <dc:Bounds x="1020" y="430" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1000" y="484" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_End_SigFail" bpmnElement="End_SigFail">
+      <dc:Bounds x="1106" y="697" width="36" height="36"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1086" y="737" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_JoblibLoad" bpmnElement="Task_JoblibLoad">
+      <dc:Bounds x="1120" y="155" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_BuildX" bpmnElement="Task_BuildX">
+      <dc:Bounds x="1280" y="155" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Predict" bpmnElement="Task_Predict">
+      <dc:Bounds x="1500" y="545" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_End_Return" bpmnElement="End_Return">
+      <dc:Bounds x="1512" y="697" width="36" height="36"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1492" y="737" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNEdge id="Edge_m1" bpmnElement="m1">
+      <di:waypoint x="96" y="65"/>
+      <di:waypoint x="158" y="65"/>
+      <di:waypoint x="158" y="195"/>
+      <di:waypoint x="220" y="195"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_m2" bpmnElement="m2">
+      <di:waypoint x="330" y="195"/>
+      <di:waypoint x="380" y="195"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_m3a" bpmnElement="m3a">
+      <di:waypoint x="430" y="195"/>
+      <di:waypoint x="485" y="195"/>
+      <di:waypoint x="485" y="715"/>
+      <di:waypoint x="540" y="715"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="455" y="697" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_m3b" bpmnElement="m3b">
+      <di:waypoint x="430" y="195"/>
+      <di:waypoint x="480" y="195"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="450" y="177" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_m4" bpmnElement="m4">
+      <di:waypoint x="590" y="195"/>
+      <di:waypoint x="645" y="195"/>
+      <di:waypoint x="645" y="325"/>
+      <di:waypoint x="700" y="325"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_m5" bpmnElement="m5">
+      <di:waypoint x="810" y="325"/>
+      <di:waypoint x="835" y="325"/>
+      <di:waypoint x="835" y="455"/>
+      <di:waypoint x="860" y="455"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_m6" bpmnElement="m6">
+      <di:waypoint x="970" y="455"/>
+      <di:waypoint x="1020" y="455"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_m7a" bpmnElement="m7a">
+      <di:waypoint x="1070" y="455"/>
+      <di:waypoint x="1088" y="455"/>
+      <di:waypoint x="1088" y="715"/>
+      <di:waypoint x="1106" y="715"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1058" y="697" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_m7b" bpmnElement="m7b">
+      <di:waypoint x="1070" y="455"/>
+      <di:waypoint x="1095" y="455"/>
+      <di:waypoint x="1095" y="195"/>
+      <di:waypoint x="1120" y="195"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1065" y="177" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_m8" bpmnElement="m8">
+      <di:waypoint x="1230" y="195"/>
+      <di:waypoint x="1280" y="195"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_m9" bpmnElement="m9">
+      <di:waypoint x="1390" y="195"/>
+      <di:waypoint x="1445" y="195"/>
+      <di:waypoint x="1445" y="585"/>
+      <di:waypoint x="1500" y="585"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_m10" bpmnElement="m10">
+      <di:waypoint x="1610" y="585"/>
+      <di:waypoint x="1635" y="585"/>
+      <di:waypoint x="1635" y="775"/>
+      <di:waypoint x="1487" y="775"/>
+      <di:waypoint x="1487" y="715"/>
+      <di:waypoint x="1512" y="715"/>
+    </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

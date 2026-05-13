@@ -1,0 +1,490 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  id="Definitions_RiskGates"
+                  targetNamespace="http://aitrader.local/bpmn">
+  <bpmn:process id="RiskGates" name="RiskAgent — 9-gate stack traversal (fail-closed defaults)" isExecutable="false">
+    <bpmn:laneSet id="LaneSet_RiskGates">
+      <bpmn:lane id="Lane_Bus" name="AgentBus (input)">
+        <bpmn:flowNodeRef>Start_Sig</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_MetaDir</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Pretrade" name="Pre-trade gates (1-3)">
+        <bpmn:flowNodeRef>GW_G1</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_G2</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_G3</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_DDgates" name="Drawdown gates (4-5)">
+        <bpmn:flowNodeRef>GW_G4</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_G5</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Liquid" name="Liquidity + β gates (6-7)">
+        <bpmn:flowNodeRef>GW_G6</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_G7</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_LLM" name="AgenticLLM macro veto (8)">
+        <bpmn:flowNodeRef>Task_LLM</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_G8</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Kelly" name="Kelly sizing (9)">
+        <bpmn:flowNodeRef>Task_Kelly</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Order" name="Order publish">
+        <bpmn:flowNodeRef>Task_PubOrder</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_Order</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Block" name="Block / kill paths">
+        <bpmn:flowNodeRef>End_DropMeta</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_HardKill</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_Block</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="Start_Sig" name="receive
+&quot;trade_signal&quot;">
+      <bpmn:outgoing>g1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:exclusiveGateway id="GW_MetaDir" name="meta_pass=True AND
+direction != 0?">
+      <bpmn:incoming>g1</bpmn:incoming>
+      <bpmn:outgoing>g2a</bpmn:outgoing>
+      <bpmn:outgoing>g2b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="End_DropMeta" name="drop (no log)">
+      <bpmn:incoming>g2a</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:exclusiveGateway id="GW_G1" name="G1: data_freshness
+&lt;=300s?">
+      <bpmn:incoming>g2b</bpmn:incoming>
+      <bpmn:outgoing>g3a</bpmn:outgoing>
+      <bpmn:outgoing>g3b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:exclusiveGateway id="GW_G2" name="G2: API latency
+&lt;500ms?">
+      <bpmn:incoming>g3b</bpmn:incoming>
+      <bpmn:outgoing>g4a</bpmn:outgoing>
+      <bpmn:outgoing>g4b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:exclusiveGateway id="GW_G3" name="G3: circuit
+breaker open?">
+      <bpmn:incoming>g4b</bpmn:incoming>
+      <bpmn:outgoing>g5a</bpmn:outgoing>
+      <bpmn:outgoing>g5b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:exclusiveGateway id="GW_G4" name="G4: cum drawdown
+&lt;10%?">
+      <bpmn:incoming>g5b</bpmn:incoming>
+      <bpmn:outgoing>g6a</bpmn:outgoing>
+      <bpmn:outgoing>g6b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="Task_HardKill" name="_hard_kill()
+publish &quot;risk_kill_switch&quot;
+flatten_all">
+      <bpmn:incoming>g6a</bpmn:incoming>
+      <bpmn:incoming>g8a</bpmn:incoming>
+      <bpmn:outgoing>g7</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="GW_G5" name="G5: daily loss
+&lt;5%?">
+      <bpmn:incoming>g6b</bpmn:incoming>
+      <bpmn:outgoing>g8a</bpmn:outgoing>
+      <bpmn:outgoing>g8b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:exclusiveGateway id="GW_G6" name="G6: liquidity
+proximity &lt;0.85?">
+      <bpmn:incoming>g8b</bpmn:incoming>
+      <bpmn:outgoing>g9a</bpmn:outgoing>
+      <bpmn:outgoing>g9b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:exclusiveGateway id="GW_G7" name="G7: BetaFilter
+would_breach?">
+      <bpmn:incoming>g9b</bpmn:incoming>
+      <bpmn:outgoing>g10a</bpmn:outgoing>
+      <bpmn:outgoing>g10b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="Task_LLM" name="AgenticLLM.evaluate_trade
+(60s decision cache,
+11-model fallback)">
+      <bpmn:incoming>g10b</bpmn:incoming>
+      <bpmn:outgoing>g11</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="GW_G8" name="G8: LLM
+REJECTED?">
+      <bpmn:incoming>g11</bpmn:incoming>
+      <bpmn:outgoing>g12a</bpmn:outgoing>
+      <bpmn:outgoing>g12b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="Task_Kelly" name="G9: kelly.size
+(capital, p_win,
+vol_scale × size_mult)">
+      <bpmn:incoming>g12b</bpmn:incoming>
+      <bpmn:outgoing>g13</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_PubOrder" name="publish &quot;order&quot;
+{pending, size_usdt}">
+      <bpmn:incoming>g13</bpmn:incoming>
+      <bpmn:outgoing>g14</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="End_Order" name="order dispatched to
+ExecutionAgent">
+      <bpmn:incoming>g14</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="End_Block" name="BLOCKED">
+      <bpmn:incoming>g3a</bpmn:incoming>
+      <bpmn:incoming>g4a</bpmn:incoming>
+      <bpmn:incoming>g5a</bpmn:incoming>
+      <bpmn:incoming>g7</bpmn:incoming>
+      <bpmn:incoming>g9a</bpmn:incoming>
+      <bpmn:incoming>g10a</bpmn:incoming>
+      <bpmn:incoming>g12a</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="g1" sourceRef="Start_Sig" targetRef="GW_MetaDir" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="g2a" sourceRef="GW_MetaDir" targetRef="End_DropMeta" name="no">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="g2b" sourceRef="GW_MetaDir" targetRef="GW_G1" name="yes">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="g3a" sourceRef="GW_G1" targetRef="End_Block" name="stale">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="g3b" sourceRef="GW_G1" targetRef="GW_G2" name="fresh">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="g4a" sourceRef="GW_G2" targetRef="End_Block" name="slow">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="g4b" sourceRef="GW_G2" targetRef="GW_G3" name="fast">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="g5a" sourceRef="GW_G3" targetRef="End_Block" name="open">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="g5b" sourceRef="GW_G3" targetRef="GW_G4" name="closed">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="g6a" sourceRef="GW_G4" targetRef="Task_HardKill" name="breach">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="g6b" sourceRef="GW_G4" targetRef="GW_G5" name="ok">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="g7" sourceRef="Task_HardKill" targetRef="End_Block" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="g8a" sourceRef="GW_G5" targetRef="Task_HardKill" name="breach">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="g8b" sourceRef="GW_G5" targetRef="GW_G6" name="ok">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="g9a" sourceRef="GW_G6" targetRef="End_Block" name="close to liq">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="g9b" sourceRef="GW_G6" targetRef="GW_G7" name="clear">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="g10a" sourceRef="GW_G7" targetRef="End_Block" name="|β| breach">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="g10b" sourceRef="GW_G7" targetRef="Task_LLM" name="ok">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="g11" sourceRef="Task_LLM" targetRef="GW_G8" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="g12a" sourceRef="GW_G8" targetRef="End_Block" name="REJECTED">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="g12b" sourceRef="GW_G8" targetRef="Task_Kelly" name="APPROVED">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="g13" sourceRef="Task_Kelly" targetRef="Task_PubOrder" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="g14" sourceRef="Task_PubOrder" targetRef="End_Order" name="">
+    </bpmn:sequenceFlow>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Diagram_RiskGates">
+    <bpmndi:BPMNPlane id="Plane_RiskGates" bpmnElement="RiskGates">
+    <bpmndi:BPMNShape id="Shape_Lane_Bus" bpmnElement="Lane_Bus" isHorizontal="true">
+      <dc:Bounds x="0" y="0" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Pretrade" bpmnElement="Lane_Pretrade" isHorizontal="true">
+      <dc:Bounds x="0" y="130" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_DDgates" bpmnElement="Lane_DDgates" isHorizontal="true">
+      <dc:Bounds x="0" y="260" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Liquid" bpmnElement="Lane_Liquid" isHorizontal="true">
+      <dc:Bounds x="0" y="390" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_LLM" bpmnElement="Lane_LLM" isHorizontal="true">
+      <dc:Bounds x="0" y="520" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Kelly" bpmnElement="Lane_Kelly" isHorizontal="true">
+      <dc:Bounds x="0" y="650" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Order" bpmnElement="Lane_Order" isHorizontal="true">
+      <dc:Bounds x="0" y="780" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Block" bpmnElement="Lane_Block" isHorizontal="true">
+      <dc:Bounds x="0" y="910" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Start_Sig" bpmnElement="Start_Sig">
+      <dc:Bounds x="60" y="47" width="36" height="36"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="40" y="87" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_MetaDir" bpmnElement="GW_MetaDir">
+      <dc:Bounds x="146" y="40" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="126" y="94" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_End_DropMeta" bpmnElement="End_DropMeta">
+      <dc:Bounds x="380" y="957" width="36" height="36"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="360" y="997" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_G1" bpmnElement="GW_G1">
+      <dc:Bounds x="380" y="170" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="360" y="224" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_G2" bpmnElement="GW_G2">
+      <dc:Bounds x="480" y="170" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="460" y="224" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_G3" bpmnElement="GW_G3">
+      <dc:Bounds x="580" y="170" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="560" y="224" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_G4" bpmnElement="GW_G4">
+      <dc:Bounds x="860" y="300" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="840" y="354" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_HardKill" bpmnElement="Task_HardKill">
+      <dc:Bounds x="946" y="935" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_G5" bpmnElement="GW_G5">
+      <dc:Bounds x="960" y="300" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="940" y="354" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_G6" bpmnElement="GW_G6">
+      <dc:Bounds x="1180" y="430" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1160" y="484" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_G7" bpmnElement="GW_G7">
+      <dc:Bounds x="1280" y="430" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1260" y="484" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_LLM" bpmnElement="Task_LLM">
+      <dc:Bounds x="1500" y="545" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_G8" bpmnElement="GW_G8">
+      <dc:Bounds x="1660" y="560" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1640" y="614" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Kelly" bpmnElement="Task_Kelly">
+      <dc:Bounds x="1820" y="675" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_PubOrder" bpmnElement="Task_PubOrder">
+      <dc:Bounds x="1980" y="805" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_End_Order" bpmnElement="End_Order">
+      <dc:Bounds x="2140" y="827" width="36" height="36"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="2120" y="867" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_End_Block" bpmnElement="End_Block">
+      <dc:Bounds x="1266" y="957" width="36" height="36"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1246" y="997" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNEdge id="Edge_g1" bpmnElement="g1">
+      <di:waypoint x="96" y="65"/>
+      <di:waypoint x="146" y="65"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_g2a" bpmnElement="g2a">
+      <di:waypoint x="196" y="65"/>
+      <di:waypoint x="288" y="65"/>
+      <di:waypoint x="288" y="975"/>
+      <di:waypoint x="380" y="975"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="258" y="957" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_g2b" bpmnElement="g2b">
+      <di:waypoint x="196" y="65"/>
+      <di:waypoint x="288" y="65"/>
+      <di:waypoint x="288" y="195"/>
+      <di:waypoint x="380" y="195"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="258" y="177" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_g3a" bpmnElement="g3a">
+      <di:waypoint x="430" y="195"/>
+      <di:waypoint x="848" y="195"/>
+      <di:waypoint x="848" y="975"/>
+      <di:waypoint x="1266" y="975"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="818" y="957" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_g3b" bpmnElement="g3b">
+      <di:waypoint x="430" y="195"/>
+      <di:waypoint x="480" y="195"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="450" y="177" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_g4a" bpmnElement="g4a">
+      <di:waypoint x="530" y="195"/>
+      <di:waypoint x="898" y="195"/>
+      <di:waypoint x="898" y="975"/>
+      <di:waypoint x="1266" y="975"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="868" y="957" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_g4b" bpmnElement="g4b">
+      <di:waypoint x="530" y="195"/>
+      <di:waypoint x="580" y="195"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="550" y="177" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_g5a" bpmnElement="g5a">
+      <di:waypoint x="630" y="195"/>
+      <di:waypoint x="948" y="195"/>
+      <di:waypoint x="948" y="975"/>
+      <di:waypoint x="1266" y="975"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="918" y="957" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_g5b" bpmnElement="g5b">
+      <di:waypoint x="630" y="195"/>
+      <di:waypoint x="745" y="195"/>
+      <di:waypoint x="745" y="325"/>
+      <di:waypoint x="860" y="325"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="715" y="307" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_g6a" bpmnElement="g6a">
+      <di:waypoint x="910" y="325"/>
+      <di:waypoint x="928" y="325"/>
+      <di:waypoint x="928" y="975"/>
+      <di:waypoint x="946" y="975"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="898" y="957" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_g6b" bpmnElement="g6b">
+      <di:waypoint x="910" y="325"/>
+      <di:waypoint x="960" y="325"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="930" y="307" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_g7" bpmnElement="g7">
+      <di:waypoint x="1056" y="975"/>
+      <di:waypoint x="1266" y="975"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_g8a" bpmnElement="g8a">
+      <di:waypoint x="1010" y="325"/>
+      <di:waypoint x="1035" y="325"/>
+      <di:waypoint x="1035" y="1035"/>
+      <di:waypoint x="921" y="1035"/>
+      <di:waypoint x="921" y="975"/>
+      <di:waypoint x="946" y="975"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="891" y="1017" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_g8b" bpmnElement="g8b">
+      <di:waypoint x="1010" y="325"/>
+      <di:waypoint x="1095" y="325"/>
+      <di:waypoint x="1095" y="455"/>
+      <di:waypoint x="1180" y="455"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1065" y="437" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_g9a" bpmnElement="g9a">
+      <di:waypoint x="1230" y="455"/>
+      <di:waypoint x="1248" y="455"/>
+      <di:waypoint x="1248" y="975"/>
+      <di:waypoint x="1266" y="975"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1218" y="957" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_g9b" bpmnElement="g9b">
+      <di:waypoint x="1230" y="455"/>
+      <di:waypoint x="1280" y="455"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1250" y="437" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_g10a" bpmnElement="g10a">
+      <di:waypoint x="1330" y="455"/>
+      <di:waypoint x="1355" y="455"/>
+      <di:waypoint x="1355" y="1035"/>
+      <di:waypoint x="1241" y="1035"/>
+      <di:waypoint x="1241" y="975"/>
+      <di:waypoint x="1266" y="975"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1211" y="1017" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_g10b" bpmnElement="g10b">
+      <di:waypoint x="1330" y="455"/>
+      <di:waypoint x="1415" y="455"/>
+      <di:waypoint x="1415" y="585"/>
+      <di:waypoint x="1500" y="585"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1385" y="567" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_g11" bpmnElement="g11">
+      <di:waypoint x="1610" y="585"/>
+      <di:waypoint x="1660" y="585"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_g12a" bpmnElement="g12a">
+      <di:waypoint x="1710" y="585"/>
+      <di:waypoint x="1735" y="585"/>
+      <di:waypoint x="1735" y="1035"/>
+      <di:waypoint x="1241" y="1035"/>
+      <di:waypoint x="1241" y="975"/>
+      <di:waypoint x="1266" y="975"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1211" y="1017" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_g12b" bpmnElement="g12b">
+      <di:waypoint x="1710" y="585"/>
+      <di:waypoint x="1765" y="585"/>
+      <di:waypoint x="1765" y="715"/>
+      <di:waypoint x="1820" y="715"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1735" y="697" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_g13" bpmnElement="g13">
+      <di:waypoint x="1930" y="715"/>
+      <di:waypoint x="1955" y="715"/>
+      <di:waypoint x="1955" y="845"/>
+      <di:waypoint x="1980" y="845"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_g14" bpmnElement="g14">
+      <di:waypoint x="2090" y="845"/>
+      <di:waypoint x="2140" y="845"/>
+    </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

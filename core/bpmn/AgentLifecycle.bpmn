@@ -1,0 +1,320 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  id="Definitions_AgentLifecycle"
+                  targetNamespace="http://aitrader.local/bpmn">
+  <bpmn:process id="AgentLifecycle" name="BaseAgent lifecycle — init → loop → stop" isExecutable="false">
+    <bpmn:laneSet id="LaneSet_AgentLifecycle">
+      <bpmn:lane id="Lane_Main" name="Caller (src/main.py)">
+        <bpmn:flowNodeRef>Start_New</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Start</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Stop</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Init" name="BaseAgent.__init__">
+        <bpmn:flowNodeRef>Task_Init</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Subs" name="AgentBus subscriptions">
+        <bpmn:flowNodeRef>Task_Subs</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Thread" name="Background thread (daemon)">
+        <bpmn:flowNodeRef>Task_Spawn</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_RunCycle</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_CycleEx</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_Sleep</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_StillRun</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Status" name="agent_status.json + heartbeat">
+        <bpmn:flowNodeRef>Task_WriteRunning</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_LogErr</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_WriteIdle</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_End" name="Shutdown">
+        <bpmn:flowNodeRef>End_Exit</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="Start_New" name="SpotAgent(...)
+or similar">
+      <bpmn:outgoing>a1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="Task_Init" name="self.bus, interval_sec,
+_running=False">
+      <bpmn:incoming>a1</bpmn:incoming>
+      <bpmn:outgoing>a2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_Subs" name="bus.subscribe(&quot;signal&quot;, _on_signal)
+bus.subscribe(&quot;regime&quot;, _on_regime)">
+      <bpmn:incoming>a2</bpmn:incoming>
+      <bpmn:outgoing>a3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_Start" name="agent.start()
+→ _running=True">
+      <bpmn:incoming>a3</bpmn:incoming>
+      <bpmn:outgoing>a4</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_Spawn" name="Thread(target=_loop,
+daemon=True).start()">
+      <bpmn:incoming>a4</bpmn:incoming>
+      <bpmn:outgoing>a5</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_WriteRunning" name="_write_agent_status
+(&quot;running&quot;, interval_sec)
+(holds _status_write_lock)">
+      <bpmn:incoming>a5</bpmn:incoming>
+      <bpmn:incoming>a12a</bpmn:incoming>
+      <bpmn:outgoing>a6</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_RunCycle" name="_run_cycle()
+(subclass-specific)">
+      <bpmn:incoming>a6</bpmn:incoming>
+      <bpmn:outgoing>a7</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="GW_CycleEx" name="exception?">
+      <bpmn:incoming>a7</bpmn:incoming>
+      <bpmn:outgoing>a8a</bpmn:outgoing>
+      <bpmn:outgoing>a8b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="Task_LogErr" name="logger.error
+_write_agent_status
+(&quot;error&quot;)">
+      <bpmn:incoming>a8a</bpmn:incoming>
+      <bpmn:outgoing>a9</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_WriteIdle" name="_write_agent_status
+(&quot;idle&quot;)">
+      <bpmn:incoming>a8b</bpmn:incoming>
+      <bpmn:outgoing>a10</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="Task_Sleep" name="time.sleep(interval_sec)">
+      <bpmn:incoming>a9</bpmn:incoming>
+      <bpmn:incoming>a10</bpmn:incoming>
+      <bpmn:outgoing>a11</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="GW_StillRun" name="self._running?">
+      <bpmn:incoming>a11</bpmn:incoming>
+      <bpmn:outgoing>a12a</bpmn:outgoing>
+      <bpmn:outgoing>a12b</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="Task_Stop" name="agent.stop()
+→ _running=False">
+      <bpmn:incoming>a12b</bpmn:incoming>
+      <bpmn:outgoing>a13</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="End_Exit" name="thread exits cleanly
+(daemon)">
+      <bpmn:incoming>a13</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="a1" sourceRef="Start_New" targetRef="Task_Init" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="a2" sourceRef="Task_Init" targetRef="Task_Subs" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="a3" sourceRef="Task_Subs" targetRef="Task_Start" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="a4" sourceRef="Task_Start" targetRef="Task_Spawn" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="a5" sourceRef="Task_Spawn" targetRef="Task_WriteRunning" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="a6" sourceRef="Task_WriteRunning" targetRef="Task_RunCycle" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="a7" sourceRef="Task_RunCycle" targetRef="GW_CycleEx" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="a8a" sourceRef="GW_CycleEx" targetRef="Task_LogErr" name="yes">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="a8b" sourceRef="GW_CycleEx" targetRef="Task_WriteIdle" name="no">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="a9" sourceRef="Task_LogErr" targetRef="Task_Sleep" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="a10" sourceRef="Task_WriteIdle" targetRef="Task_Sleep" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="a11" sourceRef="Task_Sleep" targetRef="GW_StillRun" name="">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="a12a" sourceRef="GW_StillRun" targetRef="Task_WriteRunning" name="yes (loop)">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="a12b" sourceRef="GW_StillRun" targetRef="Task_Stop" name="no (stop called)">
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="a13" sourceRef="Task_Stop" targetRef="End_Exit" name="">
+    </bpmn:sequenceFlow>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Diagram_AgentLifecycle">
+    <bpmndi:BPMNPlane id="Plane_AgentLifecycle" bpmnElement="AgentLifecycle">
+    <bpmndi:BPMNShape id="Shape_Lane_Main" bpmnElement="Lane_Main" isHorizontal="true">
+      <dc:Bounds x="0" y="0" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Init" bpmnElement="Lane_Init" isHorizontal="true">
+      <dc:Bounds x="0" y="130" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Subs" bpmnElement="Lane_Subs" isHorizontal="true">
+      <dc:Bounds x="0" y="260" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Thread" bpmnElement="Lane_Thread" isHorizontal="true">
+      <dc:Bounds x="0" y="390" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_Status" bpmnElement="Lane_Status" isHorizontal="true">
+      <dc:Bounds x="0" y="520" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Lane_End" bpmnElement="Lane_End" isHorizontal="true">
+      <dc:Bounds x="0" y="650" width="1730" height="130"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Start_New" bpmnElement="Start_New">
+      <dc:Bounds x="60" y="47" width="36" height="36"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="40" y="87" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Init" bpmnElement="Task_Init">
+      <dc:Bounds x="220" y="155" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Subs" bpmnElement="Task_Subs">
+      <dc:Bounds x="380" y="285" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Start" bpmnElement="Task_Start">
+      <dc:Bounds x="466" y="25" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Spawn" bpmnElement="Task_Spawn">
+      <dc:Bounds x="700" y="415" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_WriteRunning" bpmnElement="Task_WriteRunning">
+      <dc:Bounds x="860" y="545" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_RunCycle" bpmnElement="Task_RunCycle">
+      <dc:Bounds x="1020" y="415" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_CycleEx" bpmnElement="GW_CycleEx">
+      <dc:Bounds x="1180" y="430" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1160" y="484" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_LogErr" bpmnElement="Task_LogErr">
+      <dc:Bounds x="1340" y="545" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_WriteIdle" bpmnElement="Task_WriteIdle">
+      <dc:Bounds x="1500" y="545" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Sleep" bpmnElement="Task_Sleep">
+      <dc:Bounds x="1600" y="415" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_GW_StillRun" bpmnElement="GW_StillRun">
+      <dc:Bounds x="1760" y="430" width="50" height="50"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1740" y="484" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_Task_Stop" bpmnElement="Task_Stop">
+      <dc:Bounds x="1906" y="25" width="110" height="80"/>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_End_Exit" bpmnElement="End_Exit">
+      <dc:Bounds x="2140" y="697" width="36" height="36"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="2120" y="737" width="110" height="22"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNShape>
+    <bpmndi:BPMNEdge id="Edge_a1" bpmnElement="a1">
+      <di:waypoint x="96" y="65"/>
+      <di:waypoint x="158" y="65"/>
+      <di:waypoint x="158" y="195"/>
+      <di:waypoint x="220" y="195"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_a2" bpmnElement="a2">
+      <di:waypoint x="330" y="195"/>
+      <di:waypoint x="355" y="195"/>
+      <di:waypoint x="355" y="325"/>
+      <di:waypoint x="380" y="325"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_a3" bpmnElement="a3">
+      <di:waypoint x="490" y="325"/>
+      <di:waypoint x="515" y="325"/>
+      <di:waypoint x="515" y="385"/>
+      <di:waypoint x="441" y="385"/>
+      <di:waypoint x="441" y="65"/>
+      <di:waypoint x="466" y="65"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_a4" bpmnElement="a4">
+      <di:waypoint x="576" y="65"/>
+      <di:waypoint x="638" y="65"/>
+      <di:waypoint x="638" y="455"/>
+      <di:waypoint x="700" y="455"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_a5" bpmnElement="a5">
+      <di:waypoint x="810" y="455"/>
+      <di:waypoint x="835" y="455"/>
+      <di:waypoint x="835" y="585"/>
+      <di:waypoint x="860" y="585"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_a6" bpmnElement="a6">
+      <di:waypoint x="970" y="585"/>
+      <di:waypoint x="995" y="585"/>
+      <di:waypoint x="995" y="455"/>
+      <di:waypoint x="1020" y="455"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_a7" bpmnElement="a7">
+      <di:waypoint x="1130" y="455"/>
+      <di:waypoint x="1180" y="455"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_a8a" bpmnElement="a8a">
+      <di:waypoint x="1230" y="455"/>
+      <di:waypoint x="1285" y="455"/>
+      <di:waypoint x="1285" y="585"/>
+      <di:waypoint x="1340" y="585"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1255" y="567" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_a8b" bpmnElement="a8b">
+      <di:waypoint x="1230" y="455"/>
+      <di:waypoint x="1365" y="455"/>
+      <di:waypoint x="1365" y="585"/>
+      <di:waypoint x="1500" y="585"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1335" y="567" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_a9" bpmnElement="a9">
+      <di:waypoint x="1450" y="585"/>
+      <di:waypoint x="1525" y="585"/>
+      <di:waypoint x="1525" y="455"/>
+      <di:waypoint x="1600" y="455"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_a10" bpmnElement="a10">
+      <di:waypoint x="1610" y="585"/>
+      <di:waypoint x="1635" y="585"/>
+      <di:waypoint x="1635" y="645"/>
+      <di:waypoint x="1575" y="645"/>
+      <di:waypoint x="1575" y="455"/>
+      <di:waypoint x="1600" y="455"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_a11" bpmnElement="a11">
+      <di:waypoint x="1710" y="455"/>
+      <di:waypoint x="1760" y="455"/>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_a12a" bpmnElement="a12a">
+      <di:waypoint x="1810" y="455"/>
+      <di:waypoint x="1835" y="455"/>
+      <di:waypoint x="1835" y="645"/>
+      <di:waypoint x="835" y="645"/>
+      <di:waypoint x="835" y="585"/>
+      <di:waypoint x="860" y="585"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="805" y="627" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_a12b" bpmnElement="a12b">
+      <di:waypoint x="1810" y="455"/>
+      <di:waypoint x="1858" y="455"/>
+      <di:waypoint x="1858" y="65"/>
+      <di:waypoint x="1906" y="65"/>
+      <bpmndi:BPMNLabel>
+        <dc:Bounds x="1828" y="47" width="80" height="14"/>
+      </bpmndi:BPMNLabel>
+    </bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="Edge_a13" bpmnElement="a13">
+      <di:waypoint x="2016" y="65"/>
+      <di:waypoint x="2078" y="65"/>
+      <di:waypoint x="2078" y="715"/>
+      <di:waypoint x="2140" y="715"/>
+    </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

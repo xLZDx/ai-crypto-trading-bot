@@ -492,11 +492,357 @@ def registry_claim_flow() -> Flow:
                 lanes, n, e)
 
 
+# ─── Flow 4: Models lifecycle — load + HMAC verify + predict ────────────────
+def models_lifecycle_flow() -> Flow:
+    lanes = [
+        Lane('Lane_Agent',  'Caller agent (Spot / Futures / Signal)'),
+        Lane('Lane_MP',     'MLPredictor'),
+        Lane('Lane_FS',     'Filesystem (D:/models)'),
+        Lane('Lane_MI',     'model_integrity (HMAC-SHA256)'),
+        Lane('Lane_Model',  'Trained model artefact'),
+        Lane('Lane_Result', 'Return path'),
+    ]
+    n = [
+        Node('Start_Predict', 'startEvent', 'predict_proba(features)', 'Lane_Agent', col=0),
+        Node('Task_OpenMeta', 'serviceTask', 'open\n<key>_meta.json', 'Lane_MP', col=1),
+        Node('GW_FileExists', 'exclusiveGateway', 'file exists?', 'Lane_MP', col=2),
+        Node('End_NoFile',    'endEvent', 'is_loaded=False\n(model missing)', 'Lane_Result', col=3),
+        Node('Task_ReadMeta', 'serviceTask', 'parse meta:\nfeatures, threshold,\nsignature_hex', 'Lane_MP', col=3),
+        Node('Task_OpenJoblib','serviceTask', 'open joblib\nbinary blob', 'Lane_FS', col=4),
+        Node('Task_VerifyHMAC','serviceTask', 'verify_and_load_bytes\nHMAC-SHA256\nvs MODEL_SIGNING_KEY', 'Lane_MI', col=5),
+        Node('GW_SigValid',   'exclusiveGateway', 'signature valid?\n(compare_digest)', 'Lane_MI', col=6),
+        Node('End_SigFail',   'endEvent', 'SignatureError\nREFUSE to load', 'Lane_Result', col=7),
+        Node('Task_JoblibLoad','serviceTask', 'joblib.load\n(BytesIO bytes)', 'Lane_MP', col=7),
+        Node('Task_BuildX',   'serviceTask', 'build DataFrame\n[meta.features]\nNaN-fill 0', 'Lane_MP', col=8),
+        Node('Task_Predict',  'serviceTask', 'model.predict_proba(X)', 'Lane_Model', col=9),
+        Node('End_Return',    'endEvent', 'return float p_win', 'Lane_Result', col=10),
+    ]
+    e = [
+        Edge('m1',  'Start_Predict',   'Task_OpenMeta'),
+        Edge('m2',  'Task_OpenMeta',   'GW_FileExists'),
+        Edge('m3a', 'GW_FileExists',   'End_NoFile',     label='no'),
+        Edge('m3b', 'GW_FileExists',   'Task_ReadMeta',  label='yes'),
+        Edge('m4',  'Task_ReadMeta',   'Task_OpenJoblib'),
+        Edge('m5',  'Task_OpenJoblib', 'Task_VerifyHMAC'),
+        Edge('m6',  'Task_VerifyHMAC', 'GW_SigValid'),
+        Edge('m7a', 'GW_SigValid',     'End_SigFail',    label='mismatch'),
+        Edge('m7b', 'GW_SigValid',     'Task_JoblibLoad',label='valid'),
+        Edge('m8',  'Task_JoblibLoad', 'Task_BuildX'),
+        Edge('m9',  'Task_BuildX',     'Task_Predict'),
+        Edge('m10', 'Task_Predict',    'End_Return'),
+    ]
+    return Flow('ModelsLifecycle',
+                'Models lifecycle — MLPredictor: load → HMAC verify → predict_proba',
+                lanes, n, e)
+
+
+# ─── Flow 5: Infrastructure startup — restart_all.ps1 ───────────────────────
+def infra_startup_flow() -> Flow:
+    lanes = [
+        Lane('Lane_Op',      'Operator'),
+        Lane('Lane_Script',  'restart_all.ps1'),
+        Lane('Lane_Preflight','Pre-flight (early-kill + recovery)'),
+        Lane('Lane_Tier1',   'Tier-1 processes (operational)'),
+        Lane('Lane_Tier2',   'Tier-2 processes (ancillary)'),
+        Lane('Lane_Done',    'System ready'),
+    ]
+    n = [
+        Node('Start_Boot', 'startEvent', 'operator runs\nrestart_all.ps1',
+             'Lane_Op', col=0),
+        Node('Task_EarlyKill', 'serviceTask',
+             'Early-kill pre-step:\nStop-Process bot/dash/\norderbook_collector/...',
+             'Lane_Preflight', col=1),
+        Node('Task_Parquet', 'serviceTask',
+             'Parquet store check\n(DuckDB import + dir)',
+             'Lane_Preflight', col=2),
+        Node('Task_Recovery', 'serviceTask',
+             'startup_recovery\n--archive-only\n(5-min cap)',
+             'Lane_Preflight', col=3),
+        Node('GW_FanOut1', 'parallelGateway', 'spawn Tier-1', 'Lane_Script', col=4),
+        Node('Task_Monitor',  'serviceTask', 'monitor :5001',     'Lane_Tier1', col=5),
+        Node('Task_Cluster',  'serviceTask', 'cluster_orch :7700','Lane_Tier1', col=6),
+        Node('Task_Dash',     'serviceTask', 'dashboard :5000',   'Lane_Tier1', col=7),
+        Node('Task_Bot',      'serviceTask', 'bot (src.main)',    'Lane_Tier1', col=8),
+        Node('Task_RT',       'serviceTask', 'realtime_db_writer','Lane_Tier1', col=9),
+        Node('Task_OB',       'serviceTask', 'orderbook_collector','Lane_Tier1', col=10),
+        Node('GW_FanIn1', 'parallelGateway', 'tier-1 ready', 'Lane_Script', col=11),
+        Node('GW_FanOut2', 'parallelGateway', 'spawn Tier-2', 'Lane_Script', col=12),
+        Node('Task_OBW',      'serviceTask', 'orderbook_writer\n(X1.2)','Lane_Tier2', col=13),
+        Node('Task_WLD',      'serviceTask', 'watchlist_downloader','Lane_Tier2', col=14),
+        Node('Task_DOR',      'serviceTask', 'data_orchestrator', 'Lane_Tier2', col=15),
+        Node('Task_DEB',      'serviceTask', 'debug_supervisor',  'Lane_Tier2', col=13),
+        Node('Task_DW',       'serviceTask', 'dashboard_watchdog','Lane_Tier2', col=14),
+        Node('Task_SW',       'serviceTask', 'sweep_watchdog',    'Lane_Tier2', col=15),
+        Node('GW_FanIn2', 'parallelGateway', 'all 11 spawned', 'Lane_Script', col=16),
+        Node('End_Ready', 'endEvent', '11 roles claimed\nin process_registry',
+             'Lane_Done', col=17),
+    ]
+    # Parallel fan-out edges (Tier 1)
+    e = [
+        Edge('s1', 'Start_Boot', 'Task_EarlyKill'),
+        Edge('s2', 'Task_EarlyKill', 'Task_Parquet'),
+        Edge('s3', 'Task_Parquet', 'Task_Recovery'),
+        Edge('s4', 'Task_Recovery', 'GW_FanOut1'),
+        Edge('s5a','GW_FanOut1', 'Task_Monitor'),
+        Edge('s5b','GW_FanOut1', 'Task_Cluster'),
+        Edge('s5c','GW_FanOut1', 'Task_Dash'),
+        Edge('s5d','GW_FanOut1', 'Task_Bot'),
+        Edge('s5e','GW_FanOut1', 'Task_RT'),
+        Edge('s5f','GW_FanOut1', 'Task_OB'),
+        Edge('s6a','Task_Monitor','GW_FanIn1'),
+        Edge('s6b','Task_Cluster','GW_FanIn1'),
+        Edge('s6c','Task_Dash',   'GW_FanIn1'),
+        Edge('s6d','Task_Bot',    'GW_FanIn1'),
+        Edge('s6e','Task_RT',     'GW_FanIn1'),
+        Edge('s6f','Task_OB',     'GW_FanIn1'),
+        Edge('s7', 'GW_FanIn1', 'GW_FanOut2'),
+        # Tier-2 fan-out — second pass after Tier-1 health
+        Edge('s8a','GW_FanOut2', 'Task_OBW'),
+        Edge('s8b','GW_FanOut2', 'Task_WLD'),
+        Edge('s8c','GW_FanOut2', 'Task_DOR'),
+        Edge('s8d','GW_FanOut2', 'Task_DEB'),
+        Edge('s8e','GW_FanOut2', 'Task_DW'),
+        Edge('s8f','GW_FanOut2', 'Task_SW'),
+        Edge('s9a','Task_OBW','GW_FanIn2'),
+        Edge('s9b','Task_WLD','GW_FanIn2'),
+        Edge('s9c','Task_DOR','GW_FanIn2'),
+        Edge('s9d','Task_DEB','GW_FanIn2'),
+        Edge('s9e','Task_DW', 'GW_FanIn2'),
+        Edge('s9f','Task_SW', 'GW_FanIn2'),
+        Edge('s10','GW_FanIn2', 'End_Ready'),
+    ]
+    return Flow('InfraStartup',
+                'Infrastructure startup — restart_all.ps1 to 11 roles claimed',
+                lanes, n, e)
+
+
+# ─── Flow 6: Agent lifecycle — BaseAgent thread loop ────────────────────────
+def agent_lifecycle_flow() -> Flow:
+    lanes = [
+        Lane('Lane_Main',    'Caller (src/main.py)'),
+        Lane('Lane_Init',    'BaseAgent.__init__'),
+        Lane('Lane_Subs',    'AgentBus subscriptions'),
+        Lane('Lane_Thread',  'Background thread (daemon)'),
+        Lane('Lane_Status',  'agent_status.json + heartbeat'),
+        Lane('Lane_End',     'Shutdown'),
+    ]
+    n = [
+        Node('Start_New', 'startEvent', 'SpotAgent(...)\nor similar',
+             'Lane_Main', col=0),
+        Node('Task_Init', 'serviceTask',
+             'self.bus, interval_sec,\n_running=False',
+             'Lane_Init', col=1),
+        Node('Task_Subs', 'serviceTask',
+             'bus.subscribe("signal", _on_signal)\nbus.subscribe("regime", _on_regime)',
+             'Lane_Subs', col=2),
+        Node('Task_Start', 'serviceTask', 'agent.start()\n→ _running=True',
+             'Lane_Main', col=3),
+        Node('Task_Spawn', 'serviceTask', 'Thread(target=_loop,\ndaemon=True).start()',
+             'Lane_Thread', col=4),
+        Node('Task_WriteRunning', 'serviceTask',
+             '_write_agent_status\n("running", interval_sec)\n(holds _status_write_lock)',
+             'Lane_Status', col=5),
+        Node('Task_RunCycle', 'serviceTask',
+             '_run_cycle()\n(subclass-specific)',
+             'Lane_Thread', col=6),
+        Node('GW_CycleEx', 'exclusiveGateway', 'exception?', 'Lane_Thread', col=7),
+        Node('Task_LogErr', 'serviceTask',
+             'logger.error\n_write_agent_status\n("error")',
+             'Lane_Status', col=8),
+        Node('Task_WriteIdle', 'serviceTask',
+             '_write_agent_status\n("idle")',
+             'Lane_Status', col=9),
+        Node('Task_Sleep', 'serviceTask', 'time.sleep(interval_sec)',
+             'Lane_Thread', col=10),
+        Node('GW_StillRun', 'exclusiveGateway', 'self._running?', 'Lane_Thread', col=11),
+        Node('Task_Stop', 'serviceTask', 'agent.stop()\n→ _running=False',
+             'Lane_Main', col=12),
+        Node('End_Exit', 'endEvent', 'thread exits cleanly\n(daemon)',
+             'Lane_End', col=13),
+    ]
+    e = [
+        Edge('a1', 'Start_New',         'Task_Init'),
+        Edge('a2', 'Task_Init',         'Task_Subs'),
+        Edge('a3', 'Task_Subs',         'Task_Start'),
+        Edge('a4', 'Task_Start',        'Task_Spawn'),
+        Edge('a5', 'Task_Spawn',        'Task_WriteRunning'),
+        Edge('a6', 'Task_WriteRunning', 'Task_RunCycle'),
+        Edge('a7', 'Task_RunCycle',     'GW_CycleEx'),
+        Edge('a8a','GW_CycleEx',        'Task_LogErr',     label='yes'),
+        Edge('a8b','GW_CycleEx',        'Task_WriteIdle',  label='no'),
+        Edge('a9', 'Task_LogErr',       'Task_Sleep'),
+        Edge('a10','Task_WriteIdle',    'Task_Sleep'),
+        Edge('a11','Task_Sleep',        'GW_StillRun'),
+        Edge('a12a','GW_StillRun',      'Task_WriteRunning', label='yes (loop)'),
+        Edge('a12b','GW_StillRun',      'Task_Stop',         label='no (stop called)'),
+        Edge('a13','Task_Stop',         'End_Exit'),
+    ]
+    return Flow('AgentLifecycle',
+                'BaseAgent lifecycle — init → loop → stop',
+                lanes, n, e)
+
+
+# ─── Flow 7: Trainer dispatch (factory + class hierarchy) ──────────────────
+def trainer_dispatch_flow() -> Flow:
+    lanes = [
+        Lane('Lane_CO',     'cluster_orch :7700'),
+        Lane('Lane_Factory','get_trainer_agent factory'),
+        Lane('Lane_Reg',    'TRAINER_AGENT_REGISTRY'),
+        Lane('Lane_TA',     'TrainerXAgent (concrete)'),
+        Lane('Lane_Pipe',   'Train function pipeline'),
+        Lane('Lane_CIO',    'cio_overrides.merge_with_defaults'),
+        Lane('Lane_Sign',   'model_integrity + meta JSON'),
+        Lane('Lane_Result', 'Result'),
+    ]
+    n = [
+        Node('Start_Dispatch', 'startEvent', 'cluster_orch\ndispatch (model_key, tf)',
+             'Lane_CO', col=0),
+        Node('Task_Lookup', 'serviceTask', 'get_trainer_agent(key)',
+             'Lane_Factory', col=1),
+        Node('Task_RegRead', 'serviceTask', 'REGISTRY[key]', 'Lane_Reg', col=2),
+        Node('GW_KnownKey', 'exclusiveGateway', 'known key?', 'Lane_Reg', col=3),
+        Node('End_KeyErr', 'endEvent', 'KeyError\n"No trainer agent for ..."',
+             'Lane_Result', col=4),
+        Node('Task_Instantiate', 'serviceTask', 'instantiate fresh\n(NOT singleton)',
+             'Lane_Factory', col=5),
+        Node('Task_TrainCall', 'serviceTask', 'train(rules_version,\nn_samples_min)',
+             'Lane_TA', col=6),
+        Node('Task_ReadRules', 'serviceTask', 'read params +\ncio_overrides\nfrom training_rules.json',
+             'Lane_Pipe', col=7),
+        Node('Task_Merge', 'serviceTask',
+             'merge_with_defaults\nschema-bounded:\n- drop wrong-type\n- drop out-of-range\n- drop non-allowlist',
+             'Lane_CIO', col=8),
+        Node('Task_RunPipe', 'serviceTask',
+             'subclass train function\n(9-step pipeline)',
+             'Lane_Pipe', col=9),
+        Node('GW_Raised', 'exclusiveGateway', 'train raised?', 'Lane_Pipe', col=10),
+        Node('Task_LastResultFail', 'serviceTask',
+             'last_result =\n{ok: False, error: str(e)}',
+             'Lane_TA', col=11),
+        Node('End_Fail', 'endEvent', '(False, {error})',
+             'Lane_Result', col=12),
+        Node('Task_Sign', 'serviceTask', 'sign_model(joblib_path)\nHMAC-SHA256',
+             'Lane_Sign', col=11),
+        Node('Task_WriteMeta', 'serviceTask',
+             'write <key>_meta.json\n{wf_acc, threshold,\ncio_overrides_applied,\nsignature_hex}',
+             'Lane_Sign', col=12),
+        Node('Task_UpdateTask', 'serviceTask',
+             'cluster_orch.\nupdate_task("done",\nmeta_path)',
+             'Lane_CO', col=13),
+        Node('End_OK', 'endEvent', '(True, info, meta_path)',
+             'Lane_Result', col=14),
+    ]
+    e = [
+        Edge('d1', 'Start_Dispatch',  'Task_Lookup'),
+        Edge('d2', 'Task_Lookup',     'Task_RegRead'),
+        Edge('d3', 'Task_RegRead',    'GW_KnownKey'),
+        Edge('d4a','GW_KnownKey',     'End_KeyErr',         label='no'),
+        Edge('d4b','GW_KnownKey',     'Task_Instantiate',   label='yes'),
+        Edge('d5', 'Task_Instantiate','Task_TrainCall'),
+        Edge('d6', 'Task_TrainCall',  'Task_ReadRules'),
+        Edge('d7', 'Task_ReadRules',  'Task_Merge'),
+        Edge('d8', 'Task_Merge',      'Task_RunPipe'),
+        Edge('d9', 'Task_RunPipe',    'GW_Raised'),
+        Edge('d10a','GW_Raised',      'Task_LastResultFail',label='yes'),
+        Edge('d10b','GW_Raised',      'Task_Sign',          label='no'),
+        Edge('d11', 'Task_LastResultFail','End_Fail'),
+        Edge('d12', 'Task_Sign',      'Task_WriteMeta'),
+        Edge('d13', 'Task_WriteMeta', 'Task_UpdateTask'),
+        Edge('d14', 'Task_UpdateTask','End_OK'),
+    ]
+    return Flow('TrainerDispatch',
+                'Trainer dispatch — factory → train → sign → meta JSON',
+                lanes, n, e)
+
+
+# ─── Flow 8: Risk gates — RiskAgent traverses 9 gates in order ─────────────
+def risk_gates_flow() -> Flow:
+    lanes = [
+        Lane('Lane_Bus',     'AgentBus (input)'),
+        Lane('Lane_Pretrade','Pre-trade gates (1-3)'),
+        Lane('Lane_DDgates', 'Drawdown gates (4-5)'),
+        Lane('Lane_Liquid',  'Liquidity + β gates (6-7)'),
+        Lane('Lane_LLM',     'AgenticLLM macro veto (8)'),
+        Lane('Lane_Kelly',   'Kelly sizing (9)'),
+        Lane('Lane_Order',   'Order publish'),
+        Lane('Lane_Block',   'Block / kill paths'),
+    ]
+    n = [
+        Node('Start_Sig', 'startEvent', 'receive\n"trade_signal"',
+             'Lane_Bus', col=0),
+        Node('GW_MetaDir', 'exclusiveGateway',
+             'meta_pass=True AND\ndirection != 0?', 'Lane_Bus', col=1),
+        Node('End_DropMeta', 'endEvent', 'drop (no log)', 'Lane_Block', col=2),
+
+        Node('GW_G1', 'exclusiveGateway', 'G1: data_freshness\n<=300s?', 'Lane_Pretrade', col=2),
+        Node('GW_G2', 'exclusiveGateway', 'G2: API latency\n<500ms?', 'Lane_Pretrade', col=3),
+        Node('GW_G3', 'exclusiveGateway', 'G3: circuit\nbreaker open?', 'Lane_Pretrade', col=4),
+
+        Node('GW_G4', 'exclusiveGateway', 'G4: cum drawdown\n<10%?', 'Lane_DDgates', col=5),
+        Node('Task_HardKill', 'serviceTask',
+             '_hard_kill()\npublish "risk_kill_switch"\nflatten_all',
+             'Lane_Block', col=6),
+        Node('GW_G5', 'exclusiveGateway', 'G5: daily loss\n<5%?', 'Lane_DDgates', col=6),
+
+        Node('GW_G6', 'exclusiveGateway', 'G6: liquidity\nproximity <0.85?', 'Lane_Liquid', col=7),
+        Node('GW_G7', 'exclusiveGateway', 'G7: BetaFilter\nwould_breach?', 'Lane_Liquid', col=8),
+
+        Node('Task_LLM', 'serviceTask',
+             'AgenticLLM.evaluate_trade\n(60s decision cache,\n11-model fallback)',
+             'Lane_LLM', col=9),
+        Node('GW_G8', 'exclusiveGateway', 'G8: LLM\nREJECTED?', 'Lane_LLM', col=10),
+
+        Node('Task_Kelly', 'serviceTask',
+             'G9: kelly.size\n(capital, p_win,\nvol_scale × size_mult)',
+             'Lane_Kelly', col=11),
+
+        Node('Task_PubOrder', 'serviceTask',
+             'publish "order"\n{pending, size_usdt}',
+             'Lane_Order', col=12),
+        Node('End_Order', 'endEvent', 'order dispatched to\nExecutionAgent',
+             'Lane_Order', col=13),
+        Node('End_Block', 'endEvent', 'BLOCKED', 'Lane_Block', col=8),
+    ]
+    e = [
+        Edge('g1',  'Start_Sig',    'GW_MetaDir'),
+        Edge('g2a', 'GW_MetaDir',   'End_DropMeta',   label='no'),
+        Edge('g2b', 'GW_MetaDir',   'GW_G1',          label='yes'),
+        Edge('g3a', 'GW_G1',        'End_Block',      label='stale'),
+        Edge('g3b', 'GW_G1',        'GW_G2',          label='fresh'),
+        Edge('g4a', 'GW_G2',        'End_Block',      label='slow'),
+        Edge('g4b', 'GW_G2',        'GW_G3',          label='fast'),
+        Edge('g5a', 'GW_G3',        'End_Block',      label='open'),
+        Edge('g5b', 'GW_G3',        'GW_G4',          label='closed'),
+        Edge('g6a', 'GW_G4',        'Task_HardKill',  label='breach'),
+        Edge('g6b', 'GW_G4',        'GW_G5',          label='ok'),
+        Edge('g7',  'Task_HardKill','End_Block'),
+        Edge('g8a', 'GW_G5',        'Task_HardKill',  label='breach'),
+        Edge('g8b', 'GW_G5',        'GW_G6',          label='ok'),
+        Edge('g9a', 'GW_G6',        'End_Block',      label='close to liq'),
+        Edge('g9b', 'GW_G6',        'GW_G7',          label='clear'),
+        Edge('g10a','GW_G7',        'End_Block',      label='|β| breach'),
+        Edge('g10b','GW_G7',        'Task_LLM',       label='ok'),
+        Edge('g11', 'Task_LLM',     'GW_G8'),
+        Edge('g12a','GW_G8',        'End_Block',      label='REJECTED'),
+        Edge('g12b','GW_G8',        'Task_Kelly',     label='APPROVED'),
+        Edge('g13', 'Task_Kelly',   'Task_PubOrder'),
+        Edge('g14', 'Task_PubOrder','End_Order'),
+    ]
+    return Flow('RiskGates',
+                'RiskAgent — 9-gate stack traversal (fail-closed defaults)',
+                lanes, n, e)
+
+
 def main() -> None:
     print('Rendering BPMN 2.0 XML files to', OUT_DIR)
     _save(training_flow())
     _save(trading_flow())
     _save(registry_claim_flow())
+    _save(models_lifecycle_flow())
+    _save(infra_startup_flow())
+    _save(agent_lifecycle_flow())
+    _save(trainer_dispatch_flow())
+    _save(risk_gates_flow())
     print('Done.')
 
 
