@@ -4,8 +4,9 @@ import logging
 import re
 import threading
 import time
+from datetime import datetime, timezone
 from dotenv import load_dotenv
-from src.utils.safe_json import read_json
+from src.utils.safe_json import read_json, write_json
 
 logger = logging.getLogger(__name__)
 
@@ -42,10 +43,195 @@ _model_cooldown_until: dict[str, float] = {}
 # the signal-recursion + market-specialist loop kicked in. Even with the
 # topology fix in place, a single specialist sending one signal per second
 # does not need a fresh LLM evaluation each tick — the macro/news picture
-# does not change at that rate. A 60s TTL collapses 60 signals into 1 call.
-_DECISION_TTL_S = 60.0
+# does not change at that rate. The 2026-05-14 Tier 1 plan bumped this from
+# 60s to 300s (5 min) — macro/news context does not flip in 60 seconds and
+# the 5x reduction in calls saves quota on Pro / paid tiers.
+_DECISION_TTL_S = 300.0
 _decision_cache: dict[tuple[str, str], tuple[float, str, str]] = {}
 # key -> (expires_at_monotonic, decision, reason)
+
+# Budget guard (Phase 2 of the 2026-05-14 Tier 1 quota plan).
+# Tracks month-to-date USD spend across paid Gemini Flash / Pro calls and
+# progressively drops the more expensive tiers from the cascade as spend
+# approaches the configured cap. Gemma 3 calls cost $0 on the free-quota
+# pool so they're never counted (and never blocked by the cap).
+_BUDGET_ENV = "LLM_MONTHLY_BUDGET_USD"
+_DEFAULT_BUDGET_USD = 1.25  # $15/year as a soft monthly ceiling
+_BUDGET_STATE_PATH = "data/llm_budget_state.json"
+
+# Approximate Tier 1 rates per Google's published pricing as of 2026-05-14.
+# Verify in console; pricing may change. Pro is intentionally last in the
+# cascade so we rarely touch the high output-token rate.
+# Tuple: (input_$_per_1M, output_$_per_1M).
+_TIER_1_RATES_USD_PER_1M: dict[str, tuple[float, float]] = {
+    "gemini-3.1-pro-preview":        (1.50, 12.00),
+    "gemini-2.5-pro":                (1.25, 10.00),
+    "gemini-3-pro-preview":          (1.25, 10.00),
+    "gemini-3.1-flash-lite-preview": (0.10, 0.40),
+    "gemini-3-flash-preview":        (0.10, 0.40),
+    "gemini-2.5-flash":              (0.10, 0.40),
+    "gemini-2.5-flash-lite":         (0.075, 0.30),
+    "gemini-2.0-flash":              (0.075, 0.30),
+    "gemini-2.0-flash-lite":         (0.075, 0.30),
+    "gemini-2.0-flash-001":          (0.075, 0.30),
+    "gemini-2.0-flash-lite-001":     (0.075, 0.30),
+    # Gemma family is free-quota; explicit 0.0 entries keep the dict lookup
+    # cheap and document the policy. Models absent from this dict default
+    # to (0.0, 0.0) — see _model_rates_usd_per_1m for the fallback.
+    "gemma-3-27b-it": (0.0, 0.0),
+    "gemma-3-12b-it": (0.0, 0.0),
+    "gemma-3-4b-it":  (0.0, 0.0),
+    "gemma-3-2b-it":  (0.0, 0.0),
+    "gemma-3-1b-it":  (0.0, 0.0),
+}
+
+# Budget guard one-shot warning flag so we don't spam logs every call.
+_budget_cap_warned_at_pct: float = 0.0
+
+
+def _model_rates_usd_per_1m(model_id: str) -> tuple[float, float]:
+    """Return (input_rate, output_rate) per 1M tokens for `model_id`.
+    Unknown models default to (0.0, 0.0) — they won't trip the cap, and
+    if it's a paid model we missed, the worst case is one untracked call
+    until the operator adds the rate to the table."""
+    return _TIER_1_RATES_USD_PER_1M.get(model_id, (0.0, 0.0))
+
+
+def _is_free_quota_model(model_id: str) -> bool:
+    """Gemma family is the free-quota tier on Tier 1."""
+    return model_id.startswith("gemma-")
+
+
+def _is_pro_model(model_id: str) -> bool:
+    """Pro models are the most expensive output tokens — first to be dropped."""
+    return "-pro" in model_id
+
+
+def _read_budget_state() -> dict:
+    """Read MTD spend tracker. Auto-resets at month boundary."""
+    raw = read_json(_BUDGET_STATE_PATH, default={})
+    current_month = datetime.now(timezone.utc).strftime("%Y-%m")
+    if not isinstance(raw, dict) or raw.get("month_key") != current_month:
+        return {
+            "month_key": current_month,
+            "spent_usd": 0.0,
+            "calls_by_model": {},
+            "tokens": {"input": 0, "output": 0},
+            "last_call_iso": None,
+        }
+    return raw
+
+
+def _budget_cap_usd() -> float:
+    """Read LLM_MONTHLY_BUDGET_USD from env. Returns the cap or 0.0 if
+    invalid / disabled. 0.0 means "no cap" — every paid model stays in
+    the cascade."""
+    raw = (os.environ.get(_BUDGET_ENV) or "").strip()
+    if not raw:
+        return _DEFAULT_BUDGET_USD
+    try:
+        val = float(raw)
+        return max(val, 0.0)
+    except ValueError:
+        logger.warning(
+            "%s=%r is not a number; using default %.2f.",
+            _BUDGET_ENV, raw, _DEFAULT_BUDGET_USD,
+        )
+        return _DEFAULT_BUDGET_USD
+
+
+def _record_call_cost(model_id: str, input_tokens: int, output_tokens: int) -> float:
+    """Update the MTD spend tracker. Returns the cost of THIS call in USD.
+    Skips disk I/O for zero-cost (Gemma) calls to keep the hot path cheap."""
+    in_rate, out_rate = _model_rates_usd_per_1m(model_id)
+    cost = (input_tokens * in_rate + output_tokens * out_rate) / 1_000_000.0
+    if cost <= 0.0:
+        return 0.0
+    with _cache_lock:
+        state = _read_budget_state()
+        state["spent_usd"] = float(state.get("spent_usd", 0.0)) + cost
+        calls = state.setdefault("calls_by_model", {})
+        calls[model_id] = int(calls.get(model_id, 0)) + 1
+        toks = state.setdefault("tokens", {"input": 0, "output": 0})
+        toks["input"] = int(toks.get("input", 0)) + int(input_tokens)
+        toks["output"] = int(toks.get("output", 0)) + int(output_tokens)
+        state["last_call_iso"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        try:
+            write_json(_BUDGET_STATE_PATH, state)
+        except Exception as e:
+            # Don't crash on budget-state write failures — the cap is a
+            # convenience guard, not a safety-critical control.
+            logger.warning("LLM budget state write failed: %s", e)
+    return cost
+
+
+def _budget_filter(models: list[str]) -> list[str]:
+    """Progressively drop paid tiers from the cascade as MTD spend approaches
+    the cap. Gemma always passes through (free quota).
+
+    Thresholds (% of LLM_MONTHLY_BUDGET_USD):
+      <80%       : full cascade
+      80-94.99%  : drop Pro models (expensive output tokens)
+      95-99.99%  : drop ALL paid models (Pro + Flash); Gemma only
+      >=100%     : Gemma only (paid cascade frozen until month rollover)
+    """
+    cap = _budget_cap_usd()
+    if cap <= 0.0:
+        return models  # no cap configured
+    spent = float(_read_budget_state().get("spent_usd", 0.0))
+    pct = spent / cap
+    _maybe_warn_budget(pct, spent, cap)
+    if pct >= 0.95:
+        return [m for m in models if _is_free_quota_model(m)]
+    if pct >= 0.80:
+        return [m for m in models if not _is_pro_model(m)]
+    return models
+
+
+def _maybe_warn_budget(pct: float, spent: float, cap: float) -> None:
+    """One-shot per threshold band. Resets if pct drops below the band
+    (e.g., month rollover)."""
+    global _budget_cap_warned_at_pct
+    thresholds = (1.0, 0.95, 0.80)
+    for t in thresholds:
+        if pct >= t and _budget_cap_warned_at_pct < t:
+            level = logging.CRITICAL if t >= 1.0 else logging.WARNING
+            logger.log(
+                level,
+                "LLM budget at %.0f%% MTD ($%.4f / $%.2f cap). "
+                "%s",
+                pct * 100, spent, cap,
+                "Paid models frozen until month rollover; Gemma-only cascade active." if t >= 0.95
+                else ("Pro models dropped from cascade; paid Flash + Gemma still active." if t >= 0.80
+                      else ""),
+            )
+            _budget_cap_warned_at_pct = t
+            return
+    if pct < 0.80 and _budget_cap_warned_at_pct > 0.0:
+        _budget_cap_warned_at_pct = 0.0  # rolled over to a new month
+
+
+def _extract_token_counts(response, prompt: str) -> tuple[int, int]:
+    """Pull (input, output) token counts from the Gemini response.
+    Falls back to a 4-char-per-token estimate if usage_metadata is absent."""
+    try:
+        um = getattr(response, "usage_metadata", None)
+        if um is not None:
+            pt = getattr(um, "prompt_token_count", None)
+            ct = getattr(um, "candidates_token_count", None)
+            if pt is not None and ct is not None:
+                return int(pt), int(ct)
+    except Exception:
+        pass
+    in_est = max(1, len(prompt) // 4)
+    out_est = max(1, len(getattr(response, "text", "") or "") // 4)
+    return in_est, out_est
+
+
+def _reset_budget_state_for_tests() -> None:
+    """Test-only: clear in-memory budget warning flag."""
+    global _budget_cap_warned_at_pct
+    _budget_cap_warned_at_pct = 0.0
 
 
 def _is_cooled_down(model_id: str) -> bool:
@@ -96,19 +282,31 @@ def _cache_decision(symbol: str, action: str, decision: str, reason: str) -> Non
             time.monotonic() + _DECISION_TTL_S, decision, reason,
         )
 
-# Paid / most capable models first for trade decisions; free tier as fallback.
+# Cheap-first cascade per the 2026-05-14 Tier 1 quota plan.
+# Gemma 3 (free quota, 72,000 RPD combined) carries the typical case at $0.
+# Gemini 2.0 Flash (Unlimited RPD on Tier 1) is the cheapest paid fallback.
+# Mid Flash and Pro are reserved for the rare cases where Tiers A+B+C are
+# all rate-limited simultaneously — virtually never happens in operation.
+# The budget guard (_budget_filter) progressively drops paid entries as MTD
+# spend approaches LLM_MONTHLY_BUDGET_USD.
 _ALL_MODELS = [
-    "gemini-3.1-pro-preview",
-    "gemini-3-pro-preview",
-    "gemini-2.5-pro",
-    "gemini-3.1-flash-lite-preview",
-    "gemini-3-flash-preview",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-001",
+    # Tier A — free quota
+    "gemma-3-27b-it",
+    "gemma-3-12b-it",
+    "gemma-3-4b-it",
+    # Tier B — cheap paid (Unlimited RPD)
     "gemini-2.0-flash-lite",
-    "gemini-2.0-flash-lite-001",
+    "gemini-2.0-flash",
+    # Tier C — Gemma small fallback
+    "gemma-3-2b-it",
+    # Tier D — mid Flash
+    "gemini-2.5-flash-lite",
+    "gemini-3.1-flash-lite-preview",
+    "gemini-2.5-flash",
+    "gemini-3-flash-preview",
+    # Tier E — Pro (last resort; first to be dropped by budget guard at 80% MTD)
+    "gemini-2.5-pro",
+    "gemini-3.1-pro-preview",
 ]
 
 
@@ -194,6 +392,19 @@ class AgenticLLM:
         if active:
             models_to_try = active
 
+        # Budget guard — progressively drops paid models as MTD spend climbs.
+        # Gemma (free quota) always passes through. If the operator's cascade
+        # has zero free-quota models AND we're over the cap, this list goes
+        # empty and we fall through to the fail-open contract below.
+        models_to_try = _budget_filter(models_to_try)
+        if not models_to_try:
+            decision = "APPROVED"
+            cap = _budget_cap_usd()
+            reason = (f"LLM monthly budget cap (${cap:.2f}) reached — "
+                      f"trade auto-approved.")
+            _cache_decision(symbol, action, decision, reason)
+            return decision, reason
+
         last_err = None
         for model_id in models_to_try:
             try:
@@ -202,6 +413,11 @@ class AgenticLLM:
                     contents=prompt,
                     config=_gntypes.GenerateContentConfig()
                 )
+                # Record actual token usage for the budget tracker. Done
+                # before parsing so even unparseable responses count against
+                # the cap (we paid for the tokens regardless of usefulness).
+                in_tok, out_tok = _extract_token_counts(response, prompt)
+                _record_call_cost(model_id, in_tok, out_tok)
                 raw_text = response.text
                 match = re.search(r'\{[^{}]*\}', raw_text, re.DOTALL)
                 if not match:

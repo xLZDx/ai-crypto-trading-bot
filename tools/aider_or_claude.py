@@ -18,13 +18,22 @@ Equivalent to:
     aider --model <chain[0]> ... target_file.py
 with automatic retry on the rest of the chain on quota errors.
 
-Model fallback order (top → bottom):
-    1. gemini/gemini-2.5-pro      (highest quality, lowest quota)
-    2. gemini/gemini-2.5-flash    (mid quality, mid quota)
-    3. gemini/gemini-2.0-flash    (cheaper, larger quota)
-    4. gemini/gemini-2.0-flash-lite (cheapest Gemini)
-    5. anthropic/claude-sonnet-4-6  (only if ANTHROPIC_API_KEY set)
-    6. EXIT 42 — signal to caller (direct-Claude path takes over)
+Model fallback order (top → bottom). 2026-05-14 Tier 1 update — cheap-first
+to honor the $15/year budget cap (see core/GEMINI_QUOTA_PLAN_2026-05-14_tier1.md).
+Gemma 3 first because it sits on the free-quota pool ($0 at low volume);
+paid Flash next; Pro last (most expensive output tokens).
+    1. gemini/gemma-3-27b-it           (free quota, 14.4K RPD)
+    2. gemini/gemma-3-12b-it           (free quota, 14.4K RPD)
+    3. gemini/gemini-2.0-flash         (~$0.075/1M input, Unlimited RPD)
+    4. gemini/gemini-2.0-flash-lite    (~$0.075/1M input, Unlimited RPD)
+    5. gemini/gemini-3.1-flash-lite-preview (~$0.10/1M, 100K RPD)
+    6. gemini/gemini-2.5-pro           (last resort, $1.25-$10/1M)
+    7. EXIT 42 — signal to caller (direct-Claude path takes over)
+
+No anthropic/claude-sonnet-4-6 entry: the controlling Claude Code session
+already covers paid-Claude capacity, so calling it here would double-bill.
+On exit 42 the Claude Code session finishes the work directly at no
+incremental cost.
 
 Quota signals detected in Aider stdout/stderr:
     - "rate limit"
@@ -44,12 +53,15 @@ import sys
 from pathlib import Path
 
 # Default fallback chain. Override with $AIDER_MODEL_CHAIN (comma-separated).
+# 2026-05-14 Tier 1 update — cheap-first per the $15/year budget plan.
 DEFAULT_CHAIN = [
-    "gemini/gemini-2.5-pro",
-    "gemini/gemini-2.5-flash",
-    "gemini/gemini-2.0-flash",
-    "gemini/gemini-2.0-flash-lite",
-    "anthropic/claude-sonnet-4-6",
+    "gemini/gemma-3-27b-it",                 # free quota
+    "gemini/gemma-3-12b-it",                 # free quota
+    "gemini/gemini-2.0-flash",               # cheap paid, Unlimited RPD
+    "gemini/gemini-2.0-flash-lite",          # cheap paid, Unlimited RPD
+    "gemini/gemini-3.1-flash-lite-preview",  # mid Flash, 100K RPD
+    "gemini/gemini-2.5-pro",                 # last-resort Pro
+    # No anthropic/claude-sonnet-4-6 — Claude Code session is the exit-42 path.
 ]
 
 # Regex that fires on any rate-limit / quota signal in stdout+stderr.
