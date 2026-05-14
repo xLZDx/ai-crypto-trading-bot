@@ -36,6 +36,16 @@ class MLPredictor:
         self.last_status = "init"          # 'ok'|'low_confidence'|'no_data'|'not_loaded'|'error'|'init'
         self._last_confidence = 0.5
         self._embedded_features: list[str] | None = None
+        # Locked feature list — resolved once at __init__ via the same
+        # priority chain that _get_model_features() uses (embedded → meta
+        # JSON → recursive find_features → hardcoded). Frozen here so a
+        # post-init meta JSON rewrite (e.g. another process retrains the
+        # model and bumps n_features) cannot make us pass N+k columns to
+        # an in-memory model trained on N. Was bug 2026-05-14: bot loaded
+        # 20-feat trend_model.joblib, then retrain rewrote meta JSON to
+        # 22 features; every predict re-read meta → 22 cols → XGBoost
+        # raised "Feature shape mismatch, expected: 20, got 22" ×2315.
+        self._features: list[str] | None = None
 
         if os.path.exists(self.model_path):
             try:
@@ -56,6 +66,14 @@ class MLPredictor:
                 self.accuracy       = meta.get("accuracy", 0.0)
                 self.long_accuracy  = meta.get("long_accuracy", 0.0)
                 self.short_accuracy = meta.get("short_accuracy", 0.0)
+                # Resolve and freeze the feature list NOW so it stays in
+                # lockstep with the in-memory model object.
+                self._features = self._resolve_features()
+                if self._features:
+                    logger.info(
+                        "MLPredictor[%s] locked features at init: %d cols",
+                        os.path.basename(self.model_path), len(self._features),
+                    )
             except Exception as exc:
                 logger.error("Failed to load ML model from %s: %s", self.model_path, exc)
                 self.last_error = f"Model load failed: {exc}"
@@ -144,6 +162,19 @@ class MLPredictor:
     # ── Feature building ──────────────────────────────────────────────────────
 
     def _get_model_features(self) -> list[str]:
+        """
+        Return the cached feature list (resolved once at __init__).
+        Frozen on init so meta-JSON rewrites by a concurrent trainer cannot
+        drift the runtime feature count away from the in-memory model.
+        """
+        if self._features is not None:
+            return self._features
+        # Fallback for callers that constructed MLPredictor with a missing
+        # model file (is_loaded=False) — still resolve so feature consumers
+        # (meta_labeler training, etc.) get a usable list.
+        return self._resolve_features()
+
+    def _resolve_features(self) -> list[str]:
         """
         Read the model's exact feature list from sklearn's feature_names_in_.
         Falls back to type-specific hardcoded lists if not available.
