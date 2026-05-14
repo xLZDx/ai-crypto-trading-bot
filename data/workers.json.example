@@ -1,0 +1,27 @@
+{
+  "_doc": "Expected worker roster — see core/MULTI_WORKER_SETUP.md. Currently informational only; a roster-vs-live diff endpoint is on the Phase 5b backlog. Rename to workers.json to activate when that ships.",
+  "version": 1,
+  "workers": [
+    {
+      "name": "Razer-Local",
+      "lane": "cpu",
+      "expected": true,
+      "owner": "operator",
+      "notes": "always present as master + cpu lane (hostname=Razer)"
+    },
+    {
+      "name": "Razer-GPU",
+      "lane": "gpu",
+      "expected": true,
+      "owner": "operator",
+      "notes": "RTX 3080 Ti Laptop 16GB — TFT/OFT primary"
+    },
+    {
+      "name": "Ivan",
+      "lane": "gpu",
+      "expected": true,
+      "owner": "operator",
+      "notes": "secondary GPU laptop on LAN. Launcher: C:\\ai-worker\\restart_workers.ps1"
+    }
+  ]
+}
