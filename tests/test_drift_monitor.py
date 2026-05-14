@@ -147,6 +147,80 @@ class TestParseBaselineFilename(unittest.TestCase):
         self.assertIsNone(dm._parse_baseline_filename("not_a_pattern"))
 
 
+class TestIsDriftPaused(_TmpRoot):
+    """Phase 6c — bot-facing helper. Read-only consumer of drift_state.json."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._old_mode = os.environ.pop("LLM_DRIFT_PAUSE", None)
+
+    def tearDown(self) -> None:
+        if self._old_mode is not None:
+            os.environ["LLM_DRIFT_PAUSE"] = self._old_mode
+        else:
+            os.environ.pop("LLM_DRIFT_PAUSE", None)
+        super().tearDown()
+
+    def test_warn_mode_never_pauses(self) -> None:
+        os.environ["LLM_DRIFT_PAUSE"] = "warn"
+        paused, why = dm.is_drift_paused("trend", "1h")
+        self.assertFalse(paused)
+        self.assertIn("warn", why)
+
+    def test_off_mode_never_pauses(self) -> None:
+        os.environ["LLM_DRIFT_PAUSE"] = "off"
+        paused, why = dm.is_drift_paused("trend", "1h")
+        self.assertFalse(paused)
+
+    def test_enforce_no_baselines_does_not_pause(self) -> None:
+        """If nothing's been trained, there's nothing to drift FROM."""
+        os.environ["LLM_DRIFT_PAUSE"] = "enforce"
+        # Empty cells
+        paused, why = dm.is_drift_paused("trend", "1h")
+        self.assertFalse(paused)
+        self.assertIn("no_baselines", why)
+
+    def test_enforce_clean_cell_does_not_pause(self) -> None:
+        """Cell exists, no pause_count → don't halt."""
+        os.environ["LLM_DRIFT_PAUSE"] = "enforce"
+        np.random.seed(10)
+        payload = _baseline_payload(np.random.normal(0, 1, 1000))
+        (self.baselines / "trend__1h.json").write_text(json.dumps(payload))
+        # Same-dist actuals → no drift
+        actual = pd.DataFrame({"ofi_z": np.random.normal(0, 1, 1000)})
+        actual.to_parquet(self.training_runs / "trend__1h.parquet")
+        dm.run_once()
+        paused, why = dm.is_drift_paused("trend", "1h")
+        self.assertFalse(paused)
+        self.assertEqual(why, "cell_clean")
+
+    def test_enforce_paused_cell_blocks_trading(self) -> None:
+        """Hard-feature pause severity + enforce → return (True, reason)."""
+        os.environ["LLM_DRIFT_PAUSE"] = "enforce"
+        np.random.seed(11)
+        ref = np.random.normal(0, 1, 2000)
+        payload = _baseline_payload(ref, feat="ofi_z")
+        (self.baselines / "trend__1h.json").write_text(json.dumps(payload))
+        # 5σ shift → pause
+        actual = pd.DataFrame({"ofi_z": np.random.normal(5.0, 0.5, 2000)})
+        actual.to_parquet(self.training_runs / "trend__1h.parquet")
+        dm.run_once()
+        paused, why = dm.is_drift_paused("trend", "1h")
+        self.assertTrue(paused)
+        self.assertIn("ofi_z", why)
+
+    def test_enforce_unknown_cell_does_not_pause(self) -> None:
+        os.environ["LLM_DRIFT_PAUSE"] = "enforce"
+        # Some other (model, tf) trained but caller asks about a different one
+        np.random.seed(12)
+        payload = _baseline_payload(np.random.normal(0, 1, 500))
+        (self.baselines / "trend__1h.json").write_text(json.dumps(payload))
+        dm.run_once()
+        paused, why = dm.is_drift_paused("base", "4h")  # not the trained cell
+        self.assertFalse(paused)
+        self.assertEqual(why, "cell_not_found")
+
+
 class TestStartStop(_TmpRoot):
     def test_start_returns_true_first_time_false_after(self) -> None:
         # Make sure no previous test left the thread alive

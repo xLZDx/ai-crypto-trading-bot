@@ -225,6 +225,7 @@ def check_drift(
     actual_df,
     *,
     hard_features: Iterable[str] | None = None,
+    force_mode: str | None = None,
 ) -> DriftReport:
     """Compare a live feature DataFrame against the persisted baseline.
 
@@ -235,8 +236,19 @@ def check_drift(
     Returns a DriftReport whose `pause_triggered` flag is True iff at
     least one HARD-feature exceeded PSI_PAUSE_THRESHOLD AND
     LLM_DRIFT_PAUSE=enforce.
+
+    `force_mode` overrides the env-var read for this single call. Used
+    by drift_monitor.run_once which needs warn-semantics (compute the
+    report, fill pause_count/warn_count) even when LLM_DRIFT_PAUSE is
+    globally set to enforce — the monitor is a passive observer and
+    must persist the cell report; the bot's is_drift_paused() consumer
+    is what actually honors enforce by halting trades.
     """
-    mode = _load_mode()
+    if force_mode is not None:
+        raw = str(force_mode).strip().lower()
+        mode = raw if raw in _VALID_MODES else _MODE_WARN
+    else:
+        mode = _load_mode()
     rep = DriftReport(mode=mode)
     if mode == _MODE_OFF:
         return rep

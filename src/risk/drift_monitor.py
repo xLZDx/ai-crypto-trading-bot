@@ -184,7 +184,15 @@ def _run_one_cell(baseline_path: Path) -> CellState:
 
     try:
         from src.risk.drift_psi import check_drift
-        rep = check_drift(payload["features"], actual)
+        # Phase 6c — force warn mode here even if LLM_DRIFT_PAUSE=enforce.
+        # The monitor is a passive observer and must persist the report
+        # regardless of operator's enforcement mode; the bot's
+        # is_drift_paused() consumer reads the persisted report and
+        # honors enforce by halting trades. Pre-fix, drift_monitor inside
+        # an enforce-mode env propagated DriftPauseError and the cell
+        # got persisted as {error: "..."} instead of a real report,
+        # which then made is_drift_paused unable to find pause_count.
+        rep = check_drift(payload["features"], actual, force_mode="warn")
         return CellState(
             model=model, tf=tf,
             baseline_age_days=baseline_age,
@@ -240,6 +248,53 @@ def get_cached_state() -> dict[str, Any]:
     except Exception as e:
         logger.warning("[drift_monitor] could not read cached state: %s", e)
         return {}
+
+
+def is_drift_paused(model: str, tf: str) -> tuple[bool, str]:
+    """Return (is_paused, reason) for the given (model, tf) cell.
+
+    Phase 6c (2026-05-14) — designed to be called from the bot's order
+    manager / risk gate before emitting a trade signal that depends on
+    this (model, tf). Read-only: consumes the cached drift_state.json,
+    does NOT trigger a recompute. Returns False with reason="no_baseline"
+    when nothing's been trained yet (don't pause — there's nothing to
+    drift FROM).
+
+    The pause is gated by LLM_DRIFT_PAUSE env so the operator can
+    promote drift checking from advisory (warn) to blocking (enforce)
+    without redeploying.
+
+    Usage in the bot:
+        from src.risk.drift_monitor import is_drift_paused
+        paused, why = is_drift_paused('trend', '1h')
+        if paused:
+            logger.warning("[trade] skipped trend@1h signal — drift: %s", why)
+            return  # don't trade
+    """
+    # Cheap env read on each call — operator can flip the mode without
+    # bot restart. Default 'warn' = drift detected but trades proceed.
+    mode = (os.environ.get("LLM_DRIFT_PAUSE") or "warn").strip().lower()
+    if mode != "enforce":
+        return False, f"LLM_DRIFT_PAUSE={mode} — not enforcing"
+
+    state = get_cached_state()
+    cells = state.get("cells") or []
+    if not cells:
+        return False, "no_baselines_yet"
+    for c in cells:
+        if c.get("model") == model and c.get("tf") == tf:
+            rep = c.get("report") or {}
+            if rep.get("pause_count", 0) > 0:
+                # Identify which hard features are pausing
+                findings = rep.get("findings") or []
+                paused_feats = [
+                    f.get("feature") for f in findings
+                    if f.get("severity") == "pause" and f.get("is_hard")
+                ]
+                names = ", ".join(paused_feats[:5]) or "?"
+                return True, f"hard-feature drift: {names}"
+            return False, "cell_clean"
+    return False, "cell_not_found"
 
 
 # ── Background thread ────────────────────────────────────────────────────
