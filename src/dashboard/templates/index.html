@@ -7101,6 +7101,18 @@ async function loadDataCoverage() {
   try {
     const r = await fetch('/api/data/coverage', { headers: hdrs() });
     const d = await r.json();
+    // Phase I (2026-05-14) — cache_warming returned on first call means the
+    // background thread hasn't finished yet. Render a clear placeholder
+    // and auto-retry after 4s so the operator sees data without clicking
+    // Refresh themselves.
+    if (d.cache_warming) {
+      if (chip) chip.textContent = 'Warming cache…';
+      if (grid) grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;color:#fbbf24;padding:14px;font-size:.65rem">
+        ⏳ Scanning every symbol × timeframe gzip... will refresh automatically in 4s.
+      </div>`;
+      setTimeout(loadDataCoverage, 4000);
+      return;
+    }
     const symbols    = d.symbols || [];
     const timeframes = d.timeframes || [];
     const rows       = d.rows || [];

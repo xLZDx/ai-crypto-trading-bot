@@ -52,6 +52,7 @@ FEATURE_COLUMNS = [
     'vol_regime',
     'is_trending',
     'is_volatile',
+    'news_sentiment',     # Phase I (2026-05-14) — operator request, news bias
 ]
 
 
@@ -189,6 +190,23 @@ def prepare_trend_data(filepath, timeframe: str = '1h', symbol: str | None = Non
     df['signal_don'] = 0.0
     df.loc[df['don_pos_20'] > 0.95, 'signal_don'] = 1.0
     df.loc[df['don_pos_20'] < 0.05, 'signal_don'] = -1.0
+
+    # Phase I (2026-05-14) — wire news sentiment into trend trainer.
+    # add_news_sentiment prefers the parquet partition tree at
+    # data/parquet/_NEWS/news/yyyymm=* (long history, multi-source) and
+    # falls back to data/raw/cryptocompare_news.csv. Missing data fills
+    # with 0.0 — never raises.
+    try:
+        from src.analysis.feature_engineering import add_news_sentiment
+        _news_csv = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            '..', 'data', 'raw', 'cryptocompare_news.csv',
+        )
+        df = add_news_sentiment(df, _news_csv)
+    except Exception as e:
+        log.warning("[trend] add_news_sentiment skipped: %s", e)
+        if 'news_sentiment' not in df.columns:
+            df['news_sentiment'] = 0.0
 
     # Per-TF asymmetric barriers (pt=4, sl=2 — let winners run, tight stops).
     tb_params = _trend_tb_params(timeframe)

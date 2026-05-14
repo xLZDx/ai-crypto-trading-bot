@@ -53,6 +53,7 @@ FEATURE_COLUMNS = [
     'vol_regime',
     'is_trending',
     'is_volatile',
+    'news_sentiment',     # Phase I (2026-05-14) — operator request
 ]
 
 
@@ -96,6 +97,18 @@ def _engineer_scalping_features(df: pd.DataFrame) -> pd.DataFrame:
     df['signal_bb'] = 0.0
     df.loc[df['bb_pb'] < 0.1, 'signal_bb'] = 1.0
     df.loc[df['bb_pb'] > 0.9, 'signal_bb'] = -1.0
+
+    # Phase I (2026-05-14) — wire news sentiment.
+    try:
+        from src.analysis.feature_engineering import add_news_sentiment
+        import os as _os
+        _proj = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+        _news_csv = _os.path.join(_proj, 'data', 'raw', 'cryptocompare_news.csv')
+        df = add_news_sentiment(df, _news_csv)
+    except Exception as e:
+        log.warning("[scalping] add_news_sentiment skipped: %s", e)
+        if 'news_sentiment' not in df.columns:
+            df['news_sentiment'] = 0.0
 
     # Triple barrier: dynamic volatility-based barriers for scalping
     labels, t1_times = triple_barrier_labels_vectorized(df, pt_multiplier=1.5, sl_multiplier=1.5, max_bars=5)

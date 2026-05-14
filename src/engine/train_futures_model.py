@@ -45,6 +45,7 @@ FEATURE_COLUMNS = [
     'vol_regime',
     'is_trending',
     'is_volatile',
+    'news_sentiment',     # Phase I (2026-05-14) — operator request
 ]
 
 
@@ -98,6 +99,16 @@ def prepare_futures_data(filepath, timeframe: str = '1h', symbol: str | None = N
     df['signal_rsi'] = 0.0
     df.loc[df['rsi_14'] < 30, 'signal_rsi'] = 1.0
     df.loc[df['rsi_14'] > 70, 'signal_rsi'] = -1.0
+
+    # Phase I (2026-05-14) — wire news sentiment (parquet → CSV fallback).
+    try:
+        from src.analysis.feature_engineering import add_news_sentiment
+        _news_csv = os.path.join(base_dir, 'data', 'raw', 'cryptocompare_news.csv')
+        df = add_news_sentiment(df, _news_csv)
+    except Exception as e:
+        log.warning("[futures] add_news_sentiment skipped: %s", e)
+        if 'news_sentiment' not in df.columns:
+            df['news_sentiment'] = 0.0
 
     # Triple barrier for SHORTS: dynamic ATR-based barriers
     labels, t1_times = triple_barrier_labels_vectorized(df, pt_multiplier=2.0, sl_multiplier=2.0, max_bars=12)
