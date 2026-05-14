@@ -134,5 +134,38 @@ class TestFeatureListLockedAtInit(unittest.TestCase):
         self.assertGreater(len(feats), 0)
 
 
+class TestStaleMetaJsonDoesNotCauseShapeMismatch(unittest.TestCase):
+    """Phase E (2026-05-14) — second-order regression. After Phase A locked
+    features at init, the operator hit a NEW case where the meta JSON was
+    rewritten to a STALE shape mid-session (n_features=20, features=[])
+    while the in-memory model expected 22. The fix: _resolve_features now
+    consults model.n_features_in_ FIRST and rejects candidate lists whose
+    length doesn't match.
+    """
+
+    def test_resolve_features_matches_model_n_features_in(self) -> None:
+        from src.analysis.ml_predictor import MLPredictor
+        from unittest import mock
+        # Build a fake model that exposes n_features_in_=22
+        fake_model = mock.MagicMock()
+        fake_model.n_features_in_ = 22
+        # Strip attrs find_features would normally walk through.
+        fake_model.feature_names_in_ = None
+        # Construct the predictor without going through the real __init__.
+        p = MLPredictor.__new__(MLPredictor)
+        p.model = fake_model
+        p.is_loaded = True
+        p._embedded_features = None
+        p._features = None
+        p.model_path = "/nonexistent/trend_model.joblib"
+        p.model_type = "trend"
+        p.last_error = ""
+        p.last_status = "init"
+        p._last_confidence = 0.5
+        feats = p._resolve_features()
+        self.assertEqual(len(feats), 22,
+                         f"Expected 22-length list (matches model.n_features_in_=22), got {len(feats)}")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -176,55 +176,160 @@ class MLPredictor:
 
     def _resolve_features(self) -> list[str]:
         """
-        Read the model's exact feature list from sklearn's feature_names_in_.
-        Falls back to type-specific hardcoded lists if not available.
-        Tries multiple attribute paths for CalibratedClassifierCV wrappers.
-        """
-        # 0. Trainers (e.g. train_model_v2) embed the feature list alongside
-        # the estimator inside the joblib payload — prefer that over guessing.
-        if self._embedded_features:
-            return self._embedded_features
+        Resolve the feature list this predictor will pass to model.predict().
+        Authoritative source: the IN-MEMORY model's `n_features_in_` count
+        (walked recursively through CalibratedClassifierCV + the XGB wrapper
+        in src/utils/gpu_classifier.py:_clf). If the count is known, every
+        candidate list is filtered to only those whose len matches — that
+        way a stale meta JSON or out-of-sync hardcoded list can never
+        produce a shape mismatch against the loaded joblib.
 
-        # 1. Try to read from meta JSON
+        Priority chain (each candidate must satisfy any count constraint):
+          0. _embedded_features (joblib payload dict, train_model_v2 path)
+          1. meta JSON sibling (<model>_meta.json features list)
+          2. recursive feature_names_in_ on the model
+          3. type-specific hardcoded list
+
+        Why this matters: 2026-05-14 hit a case where the bot loaded
+        trend_model.joblib (22-feat XGB) but a maintenance job had clobbered
+        trend_model_meta.json to {n_features:20, features:[]}. The meta
+        skipped because features.len==0, find_features failed because the
+        XGB wrapper hides feature_names_in_, hardcoded returned 20 — but
+        the model expected 22. Now we walk the model FIRST to learn its
+        expected count, and reject any candidate list whose length doesn't
+        match. If nothing matches, synthesize fX columns of the right
+        length so the predict path can't shape-mismatch.
+        """
+        expected_n = self._inspect_model_n_features()
+
+        def _accept(lst: list[str] | None) -> bool:
+            if not lst:
+                return False
+            if expected_n is None:
+                return True
+            return len(lst) == expected_n
+
+        # 0. Embedded features from the joblib payload.
+        if _accept(self._embedded_features):
+            return list(self._embedded_features)
+
+        # 1. Sibling meta JSON.
         meta_path = self.model_path.replace(".joblib", "_meta.json")
         if os.path.exists(meta_path):
             try:
                 import json
                 with open(meta_path, "r", encoding="utf-8") as f:
                     meta = json.load(f)
-                if "features" in meta and isinstance(meta["features"], list) and len(meta["features"]) > 0:
-                    return meta["features"]
-                if "feature_names" in meta and isinstance(meta["feature_names"], list) and len(meta["feature_names"]) > 0:
-                    return meta["feature_names"]
+                cand = meta.get("features") if isinstance(meta.get("features"), list) else None
+                if _accept(cand):
+                    return list(cand)
+                cand2 = meta.get("feature_names") if isinstance(meta.get("feature_names"), list) else None
+                if _accept(cand2):
+                    return list(cand2)
             except Exception as e:
                 logger.debug("Could not read features from meta json: %s", e)
 
-        # 2. Try recursive search in the object
+        # 2. Recursive feature_names_in_ probe.
         def find_features(obj, depth=0):
             if depth > 5 or obj is None:
                 return None
             if hasattr(obj, "feature_names_in_"):
-                return list(obj.feature_names_in_)
-            for attr in ["estimator", "base_estimator", "best_estimator_", "model", "_final_estimator", "step"]:
+                fns = getattr(obj, "feature_names_in_", None)
+                if fns is not None:
+                    try:
+                        return list(fns)
+                    except Exception:
+                        return None
+            for attr in ["_clf", "estimator", "base_estimator", "best_estimator_",
+                         "model", "_final_estimator", "step"]:
                 if hasattr(obj, attr):
                     res = find_features(getattr(obj, attr), depth + 1)
-                    if res: return res
+                    if res:
+                        return res
             if hasattr(obj, "calibrated_classifiers_"):
                 for clf in getattr(obj, "calibrated_classifiers_"):
                     res = find_features(clf, depth + 1)
-                    if res: return res
+                    if res:
+                        return res
             if hasattr(obj, "steps"):
                 for name, step in getattr(obj, "steps"):
                     res = find_features(step, depth + 1)
-                    if res: return res
+                    if res:
+                        return res
             return None
 
-        features = find_features(self.model)
-        if features:
-            return features
+        recursed = find_features(self.model)
+        if _accept(recursed):
+            return list(recursed)
+
+        # 3. Hardcoded fallback list.
+        hardcoded = self._hardcoded_features()
+        if _accept(hardcoded):
+            return list(hardcoded)
+
+        # 4. Last-ditch: if the in-memory model says it wants N features
+        # but no candidate list matched, synthesize fX names that match the
+        # count. The predict path fills unknown columns with 0, so this is
+        # safe — better than letting a shape mismatch propagate.
+        if expected_n is not None:
+            logger.warning(
+                "[MLPredictor] %s: no feature list matched model's "
+                "n_features_in_=%d (embedded=%s, meta=%s, recursed=%s, "
+                "hardcoded=%s). Synthesizing fX placeholders.",
+                os.path.basename(self.model_path), expected_n,
+                len(self._embedded_features) if self._embedded_features else None,
+                len(meta.get("features") or []) if 'meta' in locals() and isinstance(meta, dict) else None,
+                len(recursed) if recursed else None,
+                len(hardcoded) if hardcoded else None,
+            )
+            return [f"f{i}" for i in range(expected_n)]
 
         logger.debug("[MLPredictor] feature_names_in_ not found — using hardcoded list for '%s'", self.model_type)
-        return self._hardcoded_features()
+        return hardcoded or []
+
+    def _inspect_model_n_features(self) -> int | None:
+        """Walk the loaded model to find its actual `n_features_in_`. This
+        is the authoritative count the model will accept at predict time —
+        meta JSON / hardcoded lists must match it.
+        """
+        if self.model is None:
+            return None
+        seen: set[int] = set()
+        def walk(obj, depth=0):
+            if depth > 6 or obj is None or id(obj) in seen:
+                return None
+            seen.add(id(obj))
+            n = getattr(obj, "n_features_in_", None)
+            if isinstance(n, int) and n > 0:
+                return n
+            for a in ("_clf", "estimator", "base_estimator", "best_estimator_",
+                      "model", "_final_estimator"):
+                if hasattr(obj, a):
+                    r = walk(getattr(obj, a), depth + 1)
+                    if r is not None:
+                        return r
+            if hasattr(obj, "calibrated_classifiers_"):
+                for c in obj.calibrated_classifiers_:
+                    r = walk(c, depth + 1)
+                    if r is not None:
+                        return r
+            if hasattr(obj, "steps"):
+                for _, step in obj.steps:
+                    r = walk(step, depth + 1)
+                    if r is not None:
+                        return r
+            # XGBoost wrapped path — inner xgboost.XGBClassifier has its
+            # own n_features_in_ but the wrapper hides it.
+            if hasattr(obj, "get_booster"):
+                try:
+                    b = obj.get_booster()
+                    nf = b.num_features()
+                    if nf:
+                        return int(nf)
+                except Exception:
+                    pass
+            return None
+        return walk(self.model)
 
     def _hardcoded_features(self) -> list[str]:
         """Type-specific fallback feature lists matching each training script.
