@@ -485,6 +485,15 @@ def train_scalping_model(timeframe: str = '1m'):
         log.info("Also wrote legacy artifacts -> %s / %s",
                  paths['legacy_model'].name, paths['legacy_meta'].name)
 
+    # Phase K (2026-05-14) — record run in training history.
+    try:
+        from src.analytics.training_history import record_run_from_meta
+        record_run_from_meta(meta, model='scalping', tf=timeframe,
+                             trainer='train_scalping_model.py',
+                             meta_path=str(paths['meta']))
+    except Exception as e:
+        log.warning("[scalping] record_run skipped: %s", e)
+
 
 if __name__ == "__main__":
     import argparse

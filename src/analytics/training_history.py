@@ -397,8 +397,54 @@ def backfill_from_meta_files() -> int:
     return added
 
 
+def record_run_from_meta(
+    meta: dict, *, model: str, tf: str, trainer: str,
+    meta_path: str | None = None, started_at: float | None = None,
+) -> str | None:
+    """Convenience wrapper for trainer hooks. Extracts the standard
+    metric/HP fields from a meta dict and calls record_run().
+    Failure-safe: returns None and logs on any error so a record-run
+    failure never kills a training run.
+    """
+    try:
+        finished_at = None
+        ts = meta.get("last_trained")
+        if ts:
+            try:
+                from datetime import datetime
+                finished_at = datetime.fromisoformat(
+                    ts.replace("Z", "+00:00")
+                ).timestamp()
+            except Exception:
+                pass
+        return record_run(
+            model=model, tf=tf,
+            metrics={k: meta.get(k) for k in (
+                "accuracy", "accuracy_test", "auc_roc",
+                "long_accuracy", "short_accuracy", "win_precision",
+                "win_rate_pct", "walk_forward_mean_acc",
+                "walk_forward_std_acc", "bull_wr", "bear_wr",
+            ) if meta.get(k) is not None},
+            hp=meta.get("hp"),
+            n_samples=meta.get("n_samples"),
+            n_features=meta.get("n_features"),
+            features_list=meta.get("features"),
+            started_at=started_at,
+            finished_at=finished_at,
+            trainer=trainer,
+            meta_path=meta_path,
+        )
+    except Exception as e:
+        logger.warning(
+            "record_run_from_meta failed (model=%s tf=%s trainer=%s): %s",
+            model, tf, trainer, e,
+        )
+        return None
+
+
 __all__ = [
     "HISTORY_PATH",
-    "record_run", "get_runs", "get_baseline", "promote_baseline",
+    "record_run", "record_run_from_meta",
+    "get_runs", "get_baseline", "promote_baseline",
     "score_run", "winning_hyperparameters", "backfill_from_meta_files",
 ]

@@ -251,6 +251,31 @@ class CIOAgent:
             'best_user_attrs': dict(best.user_attrs),
             'completed_at': datetime.now(timezone.utc).isoformat(),
         }
+        # Phase K (2026-05-14) — pipe training history so operator viewing
+        # the proposal sees Optuna's pick AND the historical winner side
+        # by side. Aids "is this proposal actually an improvement?" review.
+        try:
+            from src.analytics.training_history import (
+                winning_hyperparameters, get_runs,
+            )
+            tf = best.params.get('timeframe', '1h')
+            historical = winning_hyperparameters('meta', tf)
+            recent_runs = get_runs(model='meta', tf=tf, limit=5)
+            summary['history'] = {
+                'winning_run': historical,
+                'recent_runs': [{
+                    'run_id': r.get('run_id'),
+                    'score': r.get('score'),
+                    'finished_at': r.get('finished_at'),
+                    'delta_vs_baseline': r.get('delta_vs_baseline'),
+                } for r in recent_runs],
+                'note': ('Compare Optuna best_value (Sortino) against '
+                         'historical score (composite). Different metrics — '
+                         'use as directional signal, not direct comparison.'),
+            }
+        except Exception as e:
+            logger.warning("CIO: could not attach training history: %s", e)
+            summary['history'] = {'error': str(e)}
         self._persist_proposal(summary)
         logger.info("CIO Agent best: %.4f params=%s", best.value, best.params)
         return summary

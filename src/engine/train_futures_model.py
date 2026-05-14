@@ -299,6 +299,15 @@ def train_futures_model(timeframe: str = '1h'):
         log.info("Also wrote legacy artifacts -> %s / %s",
                  paths['legacy_model'].name, paths['legacy_meta'].name)
 
+    # Phase K (2026-05-14) — record run in training history.
+    try:
+        from src.analytics.training_history import record_run_from_meta
+        record_run_from_meta(meta, model='futures', tf=timeframe,
+                             trainer='train_futures_model.py',
+                             meta_path=str(paths['meta']))
+    except Exception as e:
+        log.warning("[futures] record_run skipped: %s", e)
+
 
 if __name__ == "__main__":
     import argparse

@@ -455,6 +455,15 @@ def train_meta_labeler(
         log.info("Also wrote legacy artifacts -> %s / %s",
                  paths['legacy_model'].name, paths['legacy_meta'].name)
 
+    # Phase K (2026-05-14) — record run in training history.
+    try:
+        from src.analytics.training_history import record_run_from_meta
+        record_run_from_meta(meta, model='meta', tf=timeframe,
+                             trainer='train_meta_labeler.py',
+                             meta_path=str(paths['meta']))
+    except Exception as e:
+        log.warning("[meta] record_run skipped: %s", e)
+
 
 if __name__ == "__main__":
     # Configure logging only when running as a script (not at import time).

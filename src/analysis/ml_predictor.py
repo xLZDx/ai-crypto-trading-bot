@@ -213,9 +213,22 @@ class MLPredictor:
         if _accept(self._embedded_features):
             return list(self._embedded_features)
 
-        # 1. Sibling meta JSON.
-        meta_path = self.model_path.replace(".joblib", "_meta.json")
-        if os.path.exists(meta_path):
+        # 1. Sibling meta JSON. Two naming conventions exist:
+        #    a. Canonical: `btc_rf_model.joblib` -> `btc_rf_model_meta.json`
+        #    b. Per-TF:    `base_15m_model.joblib` -> `base_15m_meta.json`
+        # Phase K.3 (2026-05-14): try both forms so per-TF predictors can
+        # read meta JSON instead of falling all the way through to the
+        # hardcoded list (which lost feature_names + n_features info).
+        candidates: list[str] = []
+        a = self.model_path.replace(".joblib", "_meta.json")
+        candidates.append(a)
+        # Per-TF convention: drop the "_model" infix.
+        if "_model.joblib" in self.model_path:
+            b = self.model_path.replace("_model.joblib", "_meta.json")
+            candidates.append(b)
+        for meta_path in candidates:
+            if not os.path.exists(meta_path):
+                continue
             try:
                 import json
                 with open(meta_path, "r", encoding="utf-8") as f:
@@ -227,7 +240,7 @@ class MLPredictor:
                 if _accept(cand2):
                     return list(cand2)
             except Exception as e:
-                logger.debug("Could not read features from meta json: %s", e)
+                logger.debug("Could not read features from meta json %s: %s", meta_path, e)
 
         # 2. Recursive feature_names_in_ probe.
         def find_features(obj, depth=0):

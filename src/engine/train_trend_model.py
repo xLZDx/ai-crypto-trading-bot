@@ -427,6 +427,15 @@ def train_trend_model(timeframe: str = '1h'):
         log.info("Also wrote legacy artifacts -> %s / %s",
                  paths['legacy_model'].name, paths['legacy_meta'].name)
 
+    # Phase K (2026-05-14) — record run in training history.
+    try:
+        from src.analytics.training_history import record_run_from_meta
+        record_run_from_meta(meta, model='trend', tf=timeframe,
+                             trainer='train_trend_model.py',
+                             meta_path=str(paths['meta']))
+    except Exception as e:
+        log.warning("[trend] record_run skipped: %s", e)
+
 
 if __name__ == "__main__":
     import argparse
