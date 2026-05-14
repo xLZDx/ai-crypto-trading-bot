@@ -171,7 +171,15 @@ class HealthSnapshot:
 
 # Process discovery: scan psutil for a cmdline matching the role's spec.
 def _find_role_pid(role: RoleSpec) -> int | None:
-    """Return the PID of the running process for `role`, or None."""
+    """Return the PID of the running process for `role`, or None.
+
+    Phase F (2026-05-14): support BOTH launch styles regardless of which
+    one the spec uses. ``restart_all.ps1`` launches ``python src/main.py``
+    (script-style); a manual operator restart often uses ``python -m src.main``
+    (module-style). Without this dual-form matching, the live process is
+    invisible to the Monitor table -> shows "dead" with no PID, and the
+    Kill / Restart / Start buttons either no-op or spawn a duplicate.
+    """
     try:
         import psutil
     except ImportError:
@@ -182,13 +190,36 @@ def _find_role_pid(role: RoleSpec) -> int | None:
     if len(role.cmd) >= 3 and role.cmd[1] == "-m":
         needle_module = role.cmd[2]
     elif len(role.cmd) >= 2:
-        # For script-style launches, match by the last 2 path segments so
-        # absolute-vs-relative path differences don't break detection.
-        # `D:\test 2\...\src\dashboard\app.py` and `src/dashboard/app.py`
-        # both end with `dashboard/app.py` -> highly specific match.
+        # For script-style launches, derive the project-relative path so
+        # the match works regardless of whether the launch used absolute
+        # or relative paths. `_python_script("src/dashboard/app.py")` and
+        # `D:\proj\src\dashboard\app.py` both yield the tail `src/dashboard/app.py`.
         tail = Path(role.cmd[1]).as_posix()
-        parts = tail.split("/")
-        needle_path_tail = "/".join(parts[-2:]) if len(parts) >= 2 else tail
+        if "/src/" in tail:
+            needle_path_tail = "src/" + tail.split("/src/", 1)[1]
+        elif tail.startswith("src/"):
+            needle_path_tail = tail
+        else:
+            parts = tail.split("/")
+            needle_path_tail = "/".join(parts[-2:]) if len(parts) >= 2 else tail
+    # Always also build the OTHER form so we match both launch styles.
+    # module -> path tail
+    if needle_module and not needle_path_tail:
+        # "src.dashboard.app" -> "src/dashboard/app.py"
+        # "src.main"          -> "src/main.py"
+        needle_path_tail = needle_module.replace(".", "/") + ".py"
+    # path tail -> module
+    if needle_path_tail and not needle_module:
+        # "src/dashboard/app.py" -> "src.dashboard.app"
+        # "src/main.py"          -> "src.main"
+        # "dashboard/app.py"     -> "src.dashboard.app" (project assumption)
+        stem = needle_path_tail
+        if stem.endswith(".py"):
+            stem = stem[:-3]
+        as_mod = stem.replace("/", ".")
+        if not as_mod.startswith("src."):
+            as_mod = "src." + as_mod
+        needle_module = as_mod
     for proc in psutil.process_iter(["pid", "name", "cmdline"]):
         try:
             cmdline = proc.info.get("cmdline") or []
@@ -198,9 +229,12 @@ def _find_role_pid(role: RoleSpec) -> int | None:
             if "python" not in (proc.info.get("name") or "").lower():
                 continue
             if needle_module:
+                # `-m src.main` lands as `... -m src.main` (with possible
+                # trailing args). The endswith check covers the trailing-
+                # arg case; the substring covers everything else.
                 if (f"-m {needle_module}" in joined
                         or (f" {needle_module} " in joined and " -m " in joined)
-                        or joined.rstrip().endswith(f" {needle_module}") and " -m " in joined):
+                        or (joined.rstrip().endswith(f" {needle_module}") and " -m " in joined)):
                     return int(proc.info["pid"])
             if needle_path_tail and needle_path_tail in joined:
                 return int(proc.info["pid"])
@@ -438,10 +472,16 @@ class ProcessManager:
         self._stop.set()
 
     def _loop(self, interval_s: int) -> None:
-        auto_kill = (os.environ.get("AUTO_KILL_BAD_HEALTH", "false").lower()
-                     in ("1", "true", "yes"))
         bad_threshold = 3  # consecutive bad checks before auto-kill
         while not self._stop.is_set():
+            # Re-read AUTO_KILL_BAD_HEALTH on every tick so the dashboard's
+            # POST /api/processes/auto_kill toggle takes effect without
+            # needing a process_manager restart. Before this, the loop
+            # cached the boolean at thread start, so a runtime toggle was
+            # a no-op until the next dashboard restart (operator-visible
+            # bug 2026-05-14).
+            auto_kill = (os.environ.get("AUTO_KILL_BAD_HEALTH", "false").lower()
+                         in ("1", "true", "yes"))
             try:
                 for key in ROLE_SPECS:
                     snap = self.refresh_one(key)

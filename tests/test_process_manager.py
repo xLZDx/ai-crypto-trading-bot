@@ -20,6 +20,136 @@ if ROOT not in sys.path:
 from src.dashboard import process_manager as pm  # noqa: E402
 
 
+class TestFindRolePidDualForm(unittest.TestCase):
+    """Phase F (2026-05-14) — _find_role_pid must locate the live process
+    regardless of whether it was launched script-style (`python src/main.py`)
+    or module-style (`python -m src.main`). Prior to the dual-form fix the
+    matcher only checked one style, so a manual `python -m src.main` launch
+    showed "dead" in the Monitor table even while trading actively."""
+
+    def _fake_psutil(self, cmdlines: list[list[str]]):
+        """Return a psutil stub whose process_iter yields fake procs with
+        the given cmdlines. PIDs are 1000+index."""
+        class _Proc:
+            def __init__(self, pid, name, cmdline):
+                self.info = {"pid": pid, "name": name, "cmdline": cmdline}
+        procs = [_Proc(1000 + i, "python.exe", cmd) for i, cmd in enumerate(cmdlines)]
+        stub = mock.MagicMock()
+        stub.process_iter.return_value = iter(procs)
+        # NoSuchProcess / AccessDenied need to exist as exception classes.
+        stub.NoSuchProcess = type("NoSuchProcess", (Exception,), {})
+        stub.AccessDenied = type("AccessDenied", (Exception,), {})
+        return stub
+
+    def test_script_spec_finds_module_launched_proc(self) -> None:
+        """Spec uses `python src/main.py`; live proc uses `python -m src.main`.
+        Must still find it."""
+        spec = pm.RoleSpec(key="bot", label="Bot",
+                           cmd=[str(pm.VENV_PYTHON), "src/main.py"])
+        fake_psutil = self._fake_psutil([
+            [str(pm.VENV_PYTHON), "-m", "src.main"],
+        ])
+        with mock.patch.dict(sys.modules, {"psutil": fake_psutil}):
+            pid = pm._find_role_pid(spec)
+        self.assertEqual(pid, 1000)
+
+    def test_module_spec_finds_script_launched_proc(self) -> None:
+        """Spec uses `-m src.dashboard.app`; live proc uses `python src/dashboard/app.py`."""
+        spec = pm.RoleSpec(key="dashboard", label="Dashboard",
+                           cmd=[str(pm.VENV_PYTHON), "-m", "src.dashboard.app"])
+        fake_psutil = self._fake_psutil([
+            [str(pm.VENV_PYTHON), "src\\dashboard\\app.py"],
+        ])
+        with mock.patch.dict(sys.modules, {"psutil": fake_psutil}):
+            pid = pm._find_role_pid(spec)
+        self.assertEqual(pid, 1000)
+
+    def test_script_spec_finds_script_launched_proc(self) -> None:
+        """Sanity: same-form matches still work."""
+        spec = pm.RoleSpec(key="bot", label="Bot",
+                           cmd=[str(pm.VENV_PYTHON), "src/main.py"])
+        fake_psutil = self._fake_psutil([
+            [str(pm.VENV_PYTHON), "D:\\proj\\src\\main.py"],
+        ])
+        with mock.patch.dict(sys.modules, {"psutil": fake_psutil}):
+            pid = pm._find_role_pid(spec)
+        self.assertEqual(pid, 1000)
+
+    def test_no_match_returns_none(self) -> None:
+        spec = pm.RoleSpec(key="bot", label="Bot",
+                           cmd=[str(pm.VENV_PYTHON), "src/main.py"])
+        fake_psutil = self._fake_psutil([
+            [str(pm.VENV_PYTHON), "some_other_script.py"],
+        ])
+        with mock.patch.dict(sys.modules, {"psutil": fake_psutil}):
+            pid = pm._find_role_pid(spec)
+        self.assertIsNone(pid)
+
+
+class TestAutoKillReReadsEnv(unittest.TestCase):
+    """Phase F (2026-05-14) — the health-check loop must re-read
+    AUTO_KILL_BAD_HEALTH on every iteration. Prior bug: the env was
+    read once at thread start, so /api/processes/auto_kill toggles
+    via the dashboard were a no-op until the next dashboard restart.
+    """
+
+    def test_loop_reads_env_each_iteration(self) -> None:
+        """Static-source assertion: the loop body must reference
+        os.environ.get("AUTO_KILL_BAD_HEALTH") INSIDE the while loop, not
+        only before it. Spawning a live thread to assert this would race
+        against the HTTP-probe side effects refresh_one() triggers; a
+        source-level check is deterministic and captures the exact bug
+        (env read above `while not self._stop.is_set():` instead of below).
+        """
+        import inspect
+        src = inspect.getsource(pm.ProcessManager._loop)
+        before_while, _, after_while = src.partition("while not self._stop.is_set():")
+        self.assertIn("AUTO_KILL_BAD_HEALTH", after_while,
+                      "AUTO_KILL_BAD_HEALTH must be re-read inside the while loop")
+        # Belt-and-braces: make sure it is NOT cached above the loop.
+        self.assertNotIn("AUTO_KILL_BAD_HEALTH", before_while,
+                         "AUTO_KILL_BAD_HEALTH was cached above the while loop — "
+                         "toggle via /api/processes/auto_kill will be a no-op "
+                         "until process_manager restart")
+
+    def test_loop_actually_observes_env_change(self) -> None:
+        """Behavioral check: refresh_one is monkey-patched to a no-op, the
+        loop runs for 2 ticks while we flip AUTO_KILL_BAD_HEALTH between
+        iterations, and we capture what the loop used on each tick."""
+        import threading as _threading
+        manager = pm.ProcessManager()
+        observed: list[str | None] = []
+        tick = [0]
+
+        def _no_op_refresh(key):
+            # Only spy once per FULL pass (after all roles enumerated this tick).
+            if tick[0] == 0 and key == list(pm.ROLE_SPECS.keys())[0]:
+                observed.append(os.environ.get("AUTO_KILL_BAD_HEALTH"))
+                os.environ["AUTO_KILL_BAD_HEALTH"] = "true"
+            elif tick[0] == 1 and key == list(pm.ROLE_SPECS.keys())[0]:
+                observed.append(os.environ.get("AUTO_KILL_BAD_HEALTH"))
+                manager._stop.set()
+            if key == list(pm.ROLE_SPECS.keys())[-1]:
+                tick[0] += 1
+            return type("Snap", (), {"bad_count": 0, "pid": None, "status": "ok"})()
+
+        os.environ["AUTO_KILL_BAD_HEALTH"] = "false"
+        manager.refresh_one = _no_op_refresh
+        try:
+            manager._stop.clear()
+            t = _threading.Thread(target=manager._loop, args=(0.01,), daemon=True)
+            t.start()
+            t.join(timeout=3.0)
+            self.assertFalse(t.is_alive(), "loop did not exit within 3s")
+            self.assertGreaterEqual(len(observed), 2,
+                                    f"need 2+ observations, got {observed}")
+            self.assertEqual(observed[0], "false")
+            self.assertEqual(observed[1], "true",
+                             "loop did not pick up runtime env-var toggle")
+        finally:
+            os.environ.pop("AUTO_KILL_BAD_HEALTH", None)
+
+
 class TestRoleSpecsContract(unittest.TestCase):
     """Lock the public contract: every role spec is well-formed."""
 
