@@ -1046,6 +1046,78 @@ def api_processes_auto_kill_toggle():
     return jsonify({'ok': True, 'enabled': enabled})
 
 
+# ============================================================
+# Phase 7 (2026-05-14) — Training Wizard endpoints.
+# /api/wizard/suggest   GET   ?model=trend&tf=1h
+# /api/wizard/ask       POST  body={question, context}
+# /api/wizard/matrix    GET   — list every (model, tf) per expected coverage
+# ============================================================
+
+@app.route('/api/wizard/suggest', methods=['GET'])
+@require_api_key
+def api_wizard_suggest():
+    """Return ranked improvement recommendations for a (model, tf) pair.
+
+    Query params:
+      model: trend | base | futures | scalping | meta | regime | tft | oft
+      tf:    1m | 15m | 1h | 4h | 1d (depending on model)
+
+    The recommender is rule-based; no LLM is called here. For free-text
+    follow-ups the operator uses POST /api/wizard/ask."""
+    model = (request.args.get('model') or '').strip().lower()
+    tf = (request.args.get('tf') or '').strip().lower()
+    if not model or not tf:
+        return jsonify({'ok': False, 'error': 'model and tf query params required'}), 400
+    try:
+        from src.dashboard.wizard import suggest_for_model, KNOWN_MODELS
+        if model not in KNOWN_MODELS:
+            return jsonify({'ok': False, 'error': f'unknown model: {model}',
+                            'valid_models': sorted(KNOWN_MODELS.keys())}), 400
+        report = suggest_for_model(model, tf)
+        return jsonify({'ok': True, 'report': report.to_dict()})
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
+
+
+@app.route('/api/wizard/ask', methods=['POST'])
+@require_api_key
+def api_wizard_ask():
+    """Route a free-text operator question through AgenticLLM.
+    Body: {question: str, context: dict}. Returns {answer, model_used, source}."""
+    body = request.get_json(silent=True) or {}
+    question = (body.get('question') or '').strip()
+    context = body.get('context') if isinstance(body.get('context'), dict) else None
+    if not question:
+        return jsonify({'ok': False, 'error': 'question is required'}), 400
+    try:
+        from src.dashboard.wizard import ask_llm
+        result = ask_llm(question, context=context)
+        return jsonify({'ok': True, **result})
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
+
+
+@app.route('/api/wizard/matrix', methods=['GET'])
+@require_api_key
+def api_wizard_matrix():
+    """Return the full expected (model, tf) coverage matrix the wizard
+    knows about, with current-trained flag per cell. Drives the model
+    selector on the wizard card."""
+    try:
+        from src.dashboard.wizard import (
+            EXPECTED_TFS_PER_MODEL, _meta_path,
+        )
+        out = []
+        for model, tfs in EXPECTED_TFS_PER_MODEL.items():
+            for tf in tfs:
+                path = _meta_path(model, tf)
+                trained = bool(path and path.exists())
+                out.append({'model': model, 'tf': tf, 'trained': trained})
+        return jsonify({'ok': True, 'matrix': out, 'count': len(out)})
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
+
+
 @app.route('/api/cluster/reap', methods=['POST'])
 @require_api_key
 def api_cluster_reap_proxy():

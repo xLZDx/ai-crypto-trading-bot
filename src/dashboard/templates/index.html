@@ -1770,6 +1770,82 @@ document.addEventListener('DOMContentLoaded', function() {
 
     <!-- ══════════ TAB: STRATEGY & ML ══════════ -->
     <div id="tab-strategy" class="tab-pane">
+      <!-- ════════════════════════════════════════════════════════════════
+           Phase 7 (2026-05-14) — Training Wizard card.
+           Operator picks (model, tf); rule-based recommender ranks the
+           top improvements. Free-text Q&A routes through AgenticLLM
+           (Tier 1 cheap-first cascade, budget-guarded).
+           ════════════════════════════════════════════════════════════════ -->
+      <style>
+        .wz-card{background:var(--bg-2);border:1px solid rgba(148,163,184,.12);border-radius:12px;padding:14px 16px;margin-bottom:14px}
+        .wz-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+        .wz-title{font-size:.78rem;font-weight:800;color:#e2e8f0;letter-spacing:.04em;text-transform:uppercase}
+        .wz-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+        .wz-controls select, .wz-controls input{background:rgba(5,8,22,.7);border:1px solid rgba(148,163,184,.2);
+                                                  color:#e2e8f0;padding:5px 10px;border-radius:6px;font-size:.66rem;font-family:inherit}
+        .wz-btn{padding:5px 14px;border-radius:6px;font-size:.65rem;font-weight:700;
+                cursor:pointer;background:rgba(59,130,246,.2);color:#93c5fd;border:1px solid rgba(59,130,246,.4)}
+        .wz-btn:hover{background:rgba(59,130,246,.32)}
+        .wz-rec{background:rgba(15,23,42,.7);border-left:3px solid #64748b;border-radius:6px;
+                padding:9px 13px;margin-bottom:6px;font-size:.66rem}
+        .wz-rec.critical{border-left-color:#fb7185}
+        .wz-rec.high{border-left-color:#f97316}
+        .wz-rec.medium{border-left-color:#fbbf24}
+        .wz-rec.low{border-left-color:#34d399}
+        .wz-rec-title{font-weight:700;color:#e2e8f0;margin-bottom:3px}
+        .wz-rec-detail{color:#94a3b8;line-height:1.5;margin-bottom:5px}
+        .wz-rec-action{color:#86efac;font-family:'JetBrains Mono',monospace;font-size:.6rem;line-height:1.5}
+        .wz-kpi{display:flex;gap:14px;font-size:.62rem;color:#94a3b8;margin-bottom:8px}
+        .wz-kpi b{color:#e2e8f0;font-family:'JetBrains Mono',monospace}
+        .wz-ask{margin-top:10px;padding-top:10px;border-top:1px dashed rgba(148,163,184,.15)}
+        .wz-ask textarea{width:100%;min-height:55px;background:rgba(5,8,22,.7);border:1px solid rgba(148,163,184,.2);
+                          color:#e2e8f0;padding:7px 10px;border-radius:6px;font-size:.66rem;font-family:inherit;resize:vertical}
+        .wz-ans{background:rgba(15,23,42,.6);border:1px solid rgba(59,130,246,.25);border-radius:6px;
+                padding:8px 11px;margin-top:8px;font-size:.65rem;color:#cbd5e1;line-height:1.5}
+      </style>
+      <div class="wz-card" id="card-training-wizard">
+        <div class="wz-hdr">
+          <span class="wz-title">🧙 Training Wizard</span>
+          <span style="font-size:.55rem;color:#64748b">rule-based ranked advice + LLM follow-ups</span>
+        </div>
+        <div class="wz-controls">
+          <label style="font-size:.62rem;color:#94a3b8">Model
+            <select id="wz-model">
+              <option value="trend">trend</option>
+              <option value="base">base</option>
+              <option value="futures">futures</option>
+              <option value="scalping">scalping</option>
+              <option value="meta">meta</option>
+              <option value="regime">regime</option>
+              <option value="tft">tft</option>
+              <option value="oft">oft</option>
+            </select>
+          </label>
+          <label style="font-size:.62rem;color:#94a3b8">Timeframe
+            <select id="wz-tf">
+              <option value="1m">1m</option>
+              <option value="15m">15m</option>
+              <option value="1h" selected>1h</option>
+              <option value="4h">4h</option>
+              <option value="1d">1d</option>
+            </select>
+          </label>
+          <button class="wz-btn" onclick="wzSuggest()">▶ Suggest improvements</button>
+        </div>
+        <div id="wz-kpi"></div>
+        <div id="wz-recs">Click "Suggest improvements" to load ranked recommendations for the selected (model, tf).</div>
+
+        <div class="wz-ask">
+          <div style="font-size:.62rem;color:#94a3b8;margin-bottom:5px">Ask a follow-up (free text, routed via AgenticLLM):</div>
+          <textarea id="wz-q" placeholder="e.g. why does trend underperform during high-vol regimes?"></textarea>
+          <div style="margin-top:6px;display:flex;gap:8px">
+            <button class="wz-btn" onclick="wzAsk()">Ask</button>
+            <span style="font-size:.55rem;color:#64748b;align-self:center">Uses ~250 tokens per call. Budget guard active.</span>
+          </div>
+          <div id="wz-ans"></div>
+        </div>
+      </div>
+
       <style>
         /* ── Collapsible accordion sections ─────────────────────────── */
         .st-sec{background:var(--bg-2);border:1px solid rgba(148,163,184,.12);border-radius:12px;margin-bottom:10px;overflow:hidden}
@@ -4615,6 +4691,63 @@ setInterval(() => {
   }
 }, 30_000);
 document.addEventListener('DOMContentLoaded', () => setTimeout(() => { pmJobsRefresh(); pmWorkersRefresh(); }, 1200));
+
+// Phase 7 (2026-05-14) — Training Wizard handlers.
+async function wzSuggest() {
+  const model = document.getElementById('wz-model').value;
+  const tf = document.getElementById('wz-tf').value;
+  const recs = document.getElementById('wz-recs');
+  const kpi = document.getElementById('wz-kpi');
+  recs.innerHTML = '<span style="color:#64748b">Loading…</span>';
+  kpi.innerHTML = '';
+  try {
+    const r = await fetch(`/api/wizard/suggest?model=${encodeURIComponent(model)}&tf=${encodeURIComponent(tf)}`,
+      { headers: hdrs() });
+    const j = await r.json();
+    if (!j.ok) { recs.innerHTML = `<span style="color:#fb7185">Error: ${esc(j.error||'?')}</span>`; return; }
+    const rep = j.report || {};
+    const aucTxt = rep.auc != null ? Number(rep.auc).toFixed(3) : '—';
+    const accTxt = rep.acc != null ? `${(Number(rep.acc)*100).toFixed(1)}%` : '—';
+    kpi.innerHTML = `<span>AUC: <b>${esc(aucTxt)}</b></span>
+                     <span>Acc: <b>${esc(accTxt)}</b></span>
+                     <span>Last trained: <b>${esc(rep.last_trained||'—')}</b></span>`;
+    const items = rep.recommendations || [];
+    if (!items.length) {
+      recs.innerHTML = `<div class="wz-rec low"><div class="wz-rec-title">No issues detected</div>
+        <div class="wz-rec-detail">${esc((rep.notes||[]).join(' '))||'Model is within expected bounds.'}</div></div>`;
+      return;
+    }
+    recs.innerHTML = items.map(it => `
+      <div class="wz-rec ${esc(it.severity||'medium')}">
+        <div class="wz-rec-title">#${esc(it.rank)} [${esc(it.severity)}] ${esc(it.title)}</div>
+        <div class="wz-rec-detail">${esc(it.detail)}</div>
+        <div class="wz-rec-action">→ ${esc(it.suggested_action)}</div>
+      </div>
+    `).join('');
+  } catch (e) {
+    recs.innerHTML = `<span style="color:#fb7185">Fetch error: ${esc(e.message||e)}</span>`;
+  }
+}
+
+async function wzAsk() {
+  const q = document.getElementById('wz-q').value.trim();
+  if (!q) { alert('Type a question first.'); return; }
+  const model = document.getElementById('wz-model').value;
+  const tf = document.getElementById('wz-tf').value;
+  const ans = document.getElementById('wz-ans');
+  ans.innerHTML = '<span style="color:#64748b">Thinking…</span>';
+  try {
+    const r = await fetch('/api/wizard/ask',
+      { method: 'POST', headers: hdrs(),
+        body: JSON.stringify({question: q, context: {model, tf}}) });
+    const j = await r.json();
+    if (!j.ok) { ans.innerHTML = `<span style="color:#fb7185">Error: ${esc(j.error||'?')}</span>`; return; }
+    ans.innerHTML = `<div>${esc(j.answer || '(no answer)')}</div>
+      <div style="font-size:.55rem;color:#64748b;margin-top:4px">source: ${esc(j.source||'?')}</div>`;
+  } catch (e) {
+    ans.innerHTML = `<span style="color:#fb7185">Fetch error: ${esc(e.message||e)}</span>`;
+  }
+}
 
 async function pmToggleAutoKill() {
   const chip = document.getElementById('pm-auto-kill-chip');
