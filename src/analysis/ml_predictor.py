@@ -233,12 +233,18 @@ class MLPredictor:
                 import json
                 with open(meta_path, "r", encoding="utf-8") as f:
                     meta = json.load(f)
-                cand = meta.get("features") if isinstance(meta.get("features"), list) else None
-                if _accept(cand):
-                    return list(cand)
-                cand2 = meta.get("feature_names") if isinstance(meta.get("feature_names"), list) else None
-                if _accept(cand2):
-                    return list(cand2)
+                # Phase L follow-up (2026-05-14) — accept the three keys
+                # different trainers use for their feature list:
+                #   features      — train_model / train_trend / train_futures / train_scalping
+                #   feature_names — older legacy schemas
+                #   meta_features — train_meta_labeler.py (line 439)
+                # Without `meta_features` here, MLPredictor falls through
+                # to the recursive search on meta_labeler.joblib and ends
+                # up returning the wrong list.
+                for key in ("features", "feature_names", "meta_features"):
+                    cand = meta.get(key) if isinstance(meta.get(key), list) else None
+                    if _accept(cand):
+                        return list(cand)
             except Exception as e:
                 logger.debug("Could not read features from meta json %s: %s", meta_path, e)
 
