@@ -244,6 +244,42 @@ class RiskAgent(BaseAgent):
                 logger.info("[RiskAgent] %s LLM-REJECTED: %s", sym, reason)
                 return
 
+        # ── 3.5. Concept-drift pause (Phase 6c, 2026-05-14) ───────────────
+        # Read the cached drift_state.json (refreshed hourly by
+        # drift_monitor) and halt new entries when LLM_DRIFT_PAUSE=enforce
+        # AND a hard feature (ofi_z, funding_z, macd_hist, frac_diff_d40,
+        # atr_14, ...) has drifted to PSI ≥ 0.25 since training.
+        #
+        # The agent doesn't carry explicit model_key/tf on the payload —
+        # infer from payload['market']:
+        #   spot     → base + trend
+        #   futures  → futures
+        #   scalping → scalping
+        # If ANY of those cells is paused, halt. Default tf = 1h
+        # (SpotAgent's comment "spot 1h"); scalping defaults to 1m.
+        try:
+            from src.risk.drift_monitor import is_drift_paused
+            market = (payload.get("market") or "").lower()
+            cells_to_check: list[tuple[str, str]] = []
+            if market == "spot":
+                cells_to_check = [("base", "1h"), ("trend", "1h")]
+            elif market == "futures":
+                cells_to_check = [("futures", "1h")]
+            elif market == "scalping" or market == "spot_scalping":
+                cells_to_check = [("scalping", "1m")]
+            for _m, _tf in cells_to_check:
+                paused, why = is_drift_paused(_m, _tf)
+                if paused:
+                    logger.warning(
+                        "[RiskAgent] %s DRIFT-PAUSED on %s@%s: %s",
+                        sym, _m, _tf, why,
+                    )
+                    return
+        except Exception as _e:
+            # Drift gate is advisory; never let a failure here halt
+            # legitimate trading. Log and continue.
+            logger.debug("[RiskAgent] drift gate skipped: %s", _e)
+
         # ── 4. Kelly sizing ───────────────────────────────────────────────
         drawdown_pct = (self.peak_capital - self.capital) / self.peak_capital
         vol_scale = max(0.5, 1.0 - drawdown_pct * 2)  # reduce size as drawdown grows
