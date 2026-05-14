@@ -5500,28 +5500,90 @@ def _record_completed_backtest_duration(key: str, tf: str | None,
             pass
 
 
+def _last_run_duration(model_key: str, tf: str | None) -> float | None:
+    """Phase 2e (2026-05-14) — return the duration of the most recent SUCCESSFUL
+    training run for this (model, tf), or None when no run on record.
+
+    Operator directive: "take the time from last run as ETA for all models".
+    The rolling-average system worked but stale seeds (last saved 3+ days ago)
+    were skewing the ETA when per-tf history was missing. Falling back to the
+    most recent completed run gives the operator a reality-based ETA that
+    immediately reflects new data sizes / hardware changes.
+
+    Scan order:
+      1. Most recent job with status='done', matching (model, tf), valid timing
+      2. Most recent job with status='done', matching model only (any tf)
+      3. None — caller falls back to the rolling average / seed
+    """
+    best_match: float | None = None
+    best_match_ts: float = 0.0
+    best_model_only: float | None = None
+    best_model_only_ts: float = 0.0
+    with _training_jobs_lock:
+        jobs = list(_training_jobs.values())
+    for j in jobs:
+        if j.get('status') != 'done':
+            continue
+        m = j.get('model') or ''
+        if m != model_key:
+            continue
+        started = float(j.get('started_at') or 0)
+        finished = float(j.get('finished_at') or 0)
+        if started <= 0 or finished <= started:
+            continue
+        dur = finished - started
+        if dur <= 0 or dur > 12 * 3600:  # sanity: positive, <12h
+            continue
+        jtf = j.get('tf')
+        if tf and jtf == tf and finished > best_match_ts:
+            best_match = dur
+            best_match_ts = finished
+        if finished > best_model_only_ts:
+            best_model_only = dur
+            best_model_only_ts = finished
+    if best_match is not None:
+        return best_match
+    return best_model_only
+
+
 def _eta_for_row(model_key: str, tf: str | None) -> dict:
-    """Phase 98 — return ETA-train + ETA-backtest + total seconds for a model
-    row in the Model Training table. Per-(model, tf) entries take precedence;
-    fall back to model-only when no per-tf history yet. Returns dict with the
-    three field names emitted to the frontend.
+    """Phase 98 + Phase 2e — return ETA-train + ETA-backtest + total seconds.
+    Lookup order:
+      1. Most recent SUCCESSFUL run for (model, tf) from _training_jobs (live)
+      2. Rolling-average for (model, tf) — _TYPICAL_DURATIONS_BY_TF
+      3. Most recent SUCCESSFUL run for (model, *) — model-only fallback
+      4. Rolling-average for (model, *) — _TYPICAL_DURATIONS
+    The live lookup (1, 3) is the operator directive; the cached averages
+    (2, 4) are the fallback for models without recent history.
     """
     train_s: float | None = None
     bt_s:    float | None = None
-    if tf:
+
+    # Step 1: live last-run lookup, exact (model, tf) match
+    train_s = _last_run_duration(model_key, tf)
+    # Step 2: rolling avg by (model, tf)
+    if train_s is None and tf:
         tf_key = f'{model_key}@{tf}'
         train_s = _TYPICAL_DURATIONS_BY_TF.get(tf_key)
-        bt_s    = _TYPICAL_BACKTEST_S.get(tf_key)
+    # Step 3 implicit in _last_run_duration's model-only fallback already
+    # ran above. If still None, fall to the seed:
     if train_s is None:
         train_s = _TYPICAL_DURATIONS.get(model_key)
+
+    # Backtest: same fall-through (no live lookup yet; backtest history
+    # is recorded separately by _spawn_followup_backtest).
+    if tf:
+        tf_key = f'{model_key}@{tf}'
+        bt_s = _TYPICAL_BACKTEST_S.get(tf_key)
     if bt_s is None:
-        # Try model-key entry from backtest map first; fall back to seed default.
         bt_s = _TYPICAL_BACKTEST_S.get(model_key)
     if bt_s is None:
         bt_s = _TYPICAL_BACKTEST_DEFAULT.get(model_key, 30.0)
+
     out = {
         'eta_train_s':    round(train_s, 1) if train_s is not None else None,
         'eta_backtest_s': round(bt_s, 1) if bt_s is not None else None,
+        'eta_source':     'last_run' if train_s is not None else 'seed',
     }
     if train_s is not None and bt_s is not None:
         out['eta_total_s'] = round(train_s + bt_s, 1)
@@ -5536,27 +5598,44 @@ def _eta_for_row(model_key: str, tf: str | None) -> dict:
 
 def _annotate_job_timing(j: dict) -> dict:
     """Decorate a job dict with elapsed_s / eta_s fields. Pure read; the
-    underlying job entry is not mutated. ETA uses the typical duration
-    map; if a job is past the typical estimate, eta is reported as 0
-    (rather than negative) so the UI shows '… overdue' without confusing
-    arithmetic."""
+    underlying job entry is not mutated. ETA uses last-run duration when
+    available (Phase 2e), falling back to the rolling-average seed.
+
+    Past the typical estimate, eta is reported as 0 (rather than negative)
+    so the UI shows '… overdue' without confusing arithmetic."""
     out = dict(j)
     started_at = j.get('started_at') or 0
     queued_at  = j.get('queued_at')  or 0
     finished   = j.get('finished_at')
     status     = j.get('status', '')
+    model_key  = j.get('model') or ''
+    tf         = j.get('tf')
     now = time.time()
+
+    def _typical_for(m: str, t: str | None) -> float | None:
+        # Phase 2e — prefer the live last-run duration; fall back to rolling avg.
+        # Skips its own job_id to avoid self-referential ETA when finished_at is
+        # set but we still want to compute elapsed.
+        live = _last_run_duration(m, t)
+        if live is not None:
+            return live
+        if t:
+            v = _TYPICAL_DURATIONS_BY_TF.get(f'{m}@{t}')
+            if v is not None:
+                return v
+        return _TYPICAL_DURATIONS.get(m)
+
     if status in ('running', 'queued') and not finished:
         if status == 'running' and started_at > 0:
             elapsed = max(0.0, now - started_at)
             out['elapsed_s'] = round(elapsed, 1)
-            typ = _TYPICAL_DURATIONS.get(j.get('model', ''))
+            typ = _typical_for(model_key, tf)
             if typ:
                 out['eta_s'] = round(max(0.0, typ - elapsed), 1)
                 out['typical_s'] = round(typ, 1)
         elif status == 'queued' and queued_at > 0:
             out['queued_for_s'] = round(max(0.0, now - queued_at), 1)
-            typ = _TYPICAL_DURATIONS.get(j.get('model', ''))
+            typ = _typical_for(model_key, tf)
             if typ:
                 out['typical_s'] = round(typ, 1)
     elif finished and started_at > 0:

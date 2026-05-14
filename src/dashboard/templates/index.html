@@ -1442,7 +1442,7 @@ document.addEventListener('DOMContentLoaded', function() {
         .lt-stat-lbl{font-size:.5rem;color:#64748b;letter-spacing:.06em;text-transform:uppercase}
         .lt-stat-val{font-size:1.05rem;font-weight:800;color:#e2e8f0;margin-top:2px;font-family:'JetBrains Mono', monospace}
       </style>
-      <div class="card lt-card">
+      <div class="card lt-card" id="card-live-trading">
         <div class="lt-row" style="margin-bottom:10px">
           <div>
             <div class="section-label">Live Trading</div>
@@ -1485,7 +1485,7 @@ document.addEventListener('DOMContentLoaded', function() {
       </div>
 
       <!-- Performance Overview — single collapsible card -->
-      <div class="card" style="margin-bottom:14px">
+      <div class="card" id="card-performance" style="margin-bottom:14px">
         <div class="card-header">
           <div>
             <div class="section-label">Performance Overview</div>
@@ -1713,7 +1713,7 @@ document.addEventListener('DOMContentLoaded', function() {
       <!-- Live Orders Board — all markets, no filter -->
       <div class="section-label" style="margin-bottom:8px">Live Orders — All Markets</div>
 
-      <div class="card" style="margin-bottom:10px">
+      <div class="card" id="card-open-trades" style="margin-bottom:10px">
         <div class="card-header">
           <div>
             <div class="section-label">Open Positions</div>
@@ -3176,7 +3176,7 @@ document.addEventListener('DOMContentLoaded', function() {
       </div>
 
       <!-- CIO Agent (Optuna orchestrator) control panel -->
-      <div class="card" style="margin-bottom:12px">
+      <div class="card" id="card-cio-agent" style="margin-bottom:12px">
         <div class="card-h" style="display:flex;justify-content:space-between;align-items:center">
           <span>🤖 CIO Agent (Optuna Hyperparameter Study)</span>
           <span id="cio-state-badge" style="padding:3px 8px;border-radius:3px;background:#444;font-size:11px">idle</span>
@@ -3211,7 +3211,7 @@ document.addEventListener('DOMContentLoaded', function() {
       </div>
 
       <!-- Sprint 0 §S0-2 Bake-off cut list -->
-      <div class="card" style="margin-bottom:12px">
+      <div class="card" id="card-bakeoff" style="margin-bottom:12px">
         <div class="card-h" style="display:flex;justify-content:space-between;align-items:center">
           <span>🔪 Bake-off Cut List (§S0-2)</span>
           <button onclick="loadBakeOff()" style="padding:6px 12px;cursor:pointer">⚙ Run bake-off</button>
@@ -3237,7 +3237,7 @@ document.addEventListener('DOMContentLoaded', function() {
         </div>
       </div>
 
-      <div class="card" style="margin-bottom:12px">
+      <div class="card" id="card-kpi-compare" style="margin-bottom:12px">
         <div class="card-h" style="display:flex;justify-content:space-between;align-items:center">
           <span>📐 Model × Timeframe KPI Comparison</span>
           <button onclick="loadModelComparison()" style="padding:6px 12px;cursor:pointer">↻ Refresh</button>
@@ -3249,7 +3249,10 @@ document.addEventListener('DOMContentLoaded', function() {
           Yellow row = experimental TF (still applicable but lower priority).
         </div>
       </div>
-      <div class="card">
+      <div class="card" id="card-kpi-table">
+        <div class="card-h" style="display:flex;justify-content:space-between;align-items:center">
+          <span>📊 Model × TF KPI Table</span>
+        </div>
         <table id="model-comparison-table" style="width:100%;border-collapse:collapse;font-size:13px">
           <thead style="background:#222;color:#eee">
             <tr>
