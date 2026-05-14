@@ -4763,7 +4763,10 @@ async function _anEnqueueRetrain(model, tf) {
   try {
     const r = await fetch(`/api/training/run/${encodeURIComponent(model)}?tf=${encodeURIComponent(tf)}`,
                           { method: 'POST', headers: hdrs() });
-    return await r.json();
+    const body = await r.json();
+    body._http_status = r.status;
+    body._already_running = (r.status === 409 && body.existing_job_id);
+    return body;
   } catch (e) {
     return { ok: false, error: e.message || String(e) };
   }
@@ -4772,36 +4775,42 @@ async function _anEnqueueRetrain(model, tf) {
 async function anApplyAll() {
   const rows = document.querySelectorAll('#an-suggestions-table tbody tr[data-cell]');
   if (!rows.length) { alert('No cells loaded — click Load suggestions first.'); return; }
-  if (!confirm(`Enqueue retrain for ALL ${rows.length} cells? This will queue up to ${rows.length} training jobs.`)) return;
-  let ok = 0, fail = 0;
+  if (!confirm(`Enqueue retrain for ALL ${rows.length} cells?\n\n(Cells already running/queued by the cluster sweep are counted as success — they're getting retrained either way.)`)) return;
+  let enqueued = 0, already = 0, failed = 0;
   for (const row of rows) {
     const cell = row.getAttribute('data-cell');
     const [model, tf] = cell.split('@');
     const result = await _anEnqueueRetrain(model, tf);
-    if (result.ok || result.job_id) { ok++; } else { fail++; }
+    if (result.ok && result.job_id)        enqueued++;
+    else if (result._already_running)      already++;
+    else                                   failed++;
     await new Promise(r => setTimeout(r, 200));   // stagger
   }
-  alert(`Apply All complete: ${ok} enqueued, ${fail} failed.`);
+  alert(`Apply All complete:\n  ${enqueued} freshly enqueued\n  ${already} already running/queued (cluster sweep)\n  ${failed} actually failed`);
+  try { anLoadSuggestions(); } catch (_) {}
 }
 
 async function anApplySelected() {
   const checked = Array.from(document.querySelectorAll('.an-sug-chk:checked'));
   if (!checked.length) { alert('No rows checked.'); return; }
-  if (!confirm(`Enqueue retrain for ${checked.length} selected cell(s)?`)) return;
-  let ok = 0, fail = 0;
+  if (!confirm(`Enqueue retrain for ${checked.length} selected cell(s)?\n\n(Cells already running/queued by the cluster sweep are counted as success — they're getting retrained either way.)`)) return;
+  let enqueued = 0, already = 0, failed = 0;
   for (const chk of checked) {
     const cell = chk.getAttribute('data-cell');
     const [model, tf] = cell.split('@');
     const result = await _anEnqueueRetrain(model, tf);
-    if (result.ok || result.job_id) { ok++; } else { fail++; }
+    if (result.ok && result.job_id)        enqueued++;
+    else if (result._already_running)      already++;
+    else                                   failed++;
     await new Promise(r => setTimeout(r, 200));
   }
-  alert(`Apply Selected complete: ${ok} enqueued, ${fail} failed.`);
+  alert(`Apply Selected complete:\n  ${enqueued} freshly enqueued\n  ${already} already running/queued (cluster sweep)\n  ${failed} actually failed`);
   // Clear selection state after applying.
   window._anSuggestionSelection.clear();
   document.querySelectorAll('.an-sug-chk').forEach(c => { c.checked = false; });
   const all = document.getElementById('an-sel-all');
   if (all) all.checked = false;
+  try { anLoadSuggestions(); } catch (_) {}
 }
 
 function anSelAll(checked) {
@@ -5275,8 +5284,61 @@ async function wzShowAll() {
     cells.sort((a, b) => (_rank[a._sev.sev] - _rank[b._sev.sev]));
     window._wzAllCells = cells;
     if (!cells.length) { recs.innerHTML = '<div class="wz-rec low">No cells returned.</div>'; return; }
+    // Phase H+ (2026-05-15) — fetch live job statuses + run-history scores
+    // for every cell so the matrix shows current retrain state + Δ vs
+    // baseline. Two API calls (jobs + analytics/runs) — both cached.
+    const _statusMap = {};   // "model@tf" -> {status, job_id, elapsed_s, eta_s}
+    const _scoreMap  = {};   // "model@tf" -> {score, delta, latest_run_id}
+    try {
+      const [jobsResp, runsResp] = await Promise.all([
+        fetch('/api/training/jobs?limit=80', { headers: hdrs() }).then(r => r.json()).catch(() => ({jobs:[]})),
+        fetch('/api/analytics/runs?limit=200', { headers: hdrs() }).then(r => r.json()).catch(() => ({rows:[]})),
+      ]);
+      // Build job-status map keyed by (model, tf). Newest-first wins — already-running
+      // / queued takes precedence over older done.
+      for (const j of (jobsResp.jobs || [])) {
+        const k = `${j.model}@${j.tf}`;
+        const cur = _statusMap[k];
+        if (!cur || (j.status !== 'done' && cur.status === 'done')) {
+          _statusMap[k] = {status: j.status, job_id: j.job_id, elapsed_s: j.elapsed_s, eta_s: j.eta_s};
+        }
+      }
+      // Build score+delta map from training history — keep the latest row per cell.
+      for (const r of (runsResp.rows || [])) {
+        const k = `${r.model}@${r.tf}`;
+        if (!(k in _scoreMap)) {
+          const d = r.delta_vs_baseline || {};
+          _scoreMap[k] = {score: r.score, delta: d.d_score, run_id: r.run_id, is_baseline: r.is_baseline};
+        }
+      }
+    } catch (_) { /* missing data degrades to em-dashes */ }
     const counts = { critical: 0, moderate: 0, info: 0, ok: 0 };
     cells.forEach(c => { counts[c._sev.sev] = (counts[c._sev.sev]||0) + 1; });
+    const _statusPill = (s) => {
+      if (!s) return `<span style="color:#475569">—</span>`;
+      const m = {
+        running:  {c:'#fbbf24', t:'RUNNING'},
+        queued:   {c:'#93c5fd', t:'QUEUED'},
+        starting: {c:'#fbbf24', t:'STARTING'},
+        done:     {c:'#34d399', t:'COMPLETED'},
+        error:    {c:'#fb7185', t:'FAILED'},
+        cancelled:{c:'#94a3b8', t:'CANCELLED'},
+        lost:     {c:'#fb7185', t:'LOST'},
+        partial:  {c:'#fbbf24', t:'PARTIAL'},
+      }[s.status] || {c:'#94a3b8', t:s.status.toUpperCase()};
+      const extra = (s.status === 'running' && s.elapsed_s)
+        ? `<div style="color:#64748b;font-size:.5rem">${Math.round(s.elapsed_s)}s` +
+          (s.eta_s ? ` · ~${Math.round(s.eta_s)}s` : '') + `</div>` : '';
+      return `<span style="display:inline-block;padding:1px 7px;border-radius:999px;font-size:.52rem;font-weight:800;letter-spacing:.04em;background:${m.c}22;color:${m.c};border:1px solid ${m.c}66">${m.t}</span>${extra}`;
+    };
+    const _scoreCell = (sc) => {
+      if (!sc || sc.score == null) return `<span style="color:#475569">—</span>`;
+      const main = `<span style="color:#fbbf24;font-weight:700">${sc.score.toFixed(1)}</span>`;
+      if (sc.delta == null || sc.is_baseline) return `${main} <span style="color:#64748b;font-size:.55rem">baseline</span>`;
+      const sign = sc.delta > 0 ? '+' : '';
+      const dColor = sc.delta > 0.01 ? '#34d399' : sc.delta < -0.01 ? '#fb7185' : '#94a3b8';
+      return `${main} <span style="color:${dColor};font-size:.6rem">${sign}${sc.delta.toFixed(1)}</span>`;
+    };
     recs.innerHTML = `
       <div style="font-size:.6rem;color:#94a3b8;margin-bottom:8px">
         <b>${cells.length}</b> cells ·
@@ -5291,6 +5353,8 @@ async function wzShowAll() {
           <th style="padding:5px;width:30px"><input type="checkbox" id="wz-sel-all" onclick="wzSelAll(this.checked)"></th>
           <th style="padding:5px;text-align:left">Severity</th>
           <th style="padding:5px;text-align:left">Model · TF</th>
+          <th style="padding:5px;text-align:left">Status</th>
+          <th style="padding:5px;text-align:left">Score · Δ vs baseline</th>
           <th style="padding:5px;text-align:left">Top recommendation · why</th>
           <th style="padding:5px;text-align:left">Suggested action</th>
           <th style="padding:5px;text-align:left">Action</th>
@@ -5303,10 +5367,14 @@ async function wzShowAll() {
           const sev = c._sev;
           const cellKey = `${c.model}@${c.tf}`;
           const checked = window._wzSelection.has(cellKey) ? 'checked' : '';
+          const statusHtml = _statusPill(_statusMap[cellKey]);
+          const scoreHtml  = _scoreCell(_scoreMap[cellKey]);
           return `<tr style="border-bottom:1px solid rgba(148,163,184,.08)" data-cell="${esc(cellKey)}" data-sev="${sev.sev}">
             <td style="padding:5px;text-align:center"><input type="checkbox" class="wz-sug-chk" data-cell="${esc(cellKey)}" ${checked} onchange="wzToggleRow('${esc(cellKey)}', this.checked)"></td>
             <td style="padding:5px"><span style="display:inline-block;padding:2px 7px;border-radius:999px;font-size:.52rem;font-weight:800;letter-spacing:.06em;background:${sev.bg};color:${sev.color};border:1px solid ${sev.color}66">${sev.label}</span></td>
             <td style="padding:5px;color:#e2e8f0;font-weight:700">${esc(c.model)} · ${esc(c.tf)}</td>
+            <td style="padding:5px">${statusHtml}</td>
+            <td style="padding:5px">${scoreHtml}</td>
             <td style="padding:5px;color:#cbd5e1">${esc(title)}${detail ? `<div style="color:#64748b;font-size:.55rem;margin-top:2px">${esc(detail)}</div>` : ''}</td>
             <td style="padding:5px;color:#94a3b8">${esc(action)}</td>
             <td style="padding:5px"><button class="wz-btn" style="padding:2px 8px;font-size:.55rem" onclick="wzApply('${esc(c.model)}', '${esc(c.tf)}')">↻ Retrain</button></td>
@@ -5322,39 +5390,54 @@ async function _wzEnqueueRetrain(model, tf) {
   try {
     const r = await fetch(`/api/training/run/${encodeURIComponent(model)}?tf=${encodeURIComponent(tf)}`,
                           { method: 'POST', headers: hdrs() });
-    return await r.json();
+    const body = await r.json();
+    // Phase H+ (2026-05-15) — 409 "already_running" means the cell is ALREADY
+    // being retrained (by my submission OR by the cluster's auto-sweep). That's
+    // a SUCCESS from the operator's standpoint — the cell IS getting retrained,
+    // just not by THIS particular click. Don't count it as failure.
+    body._http_status = r.status;
+    body._already_running = (r.status === 409 && body.existing_job_id);
+    return body;
   } catch (e) { return { ok: false, error: e.message || String(e) }; }
 }
 
 async function wzApplyAll() {
   const cells = window._wzAllCells || [];
   if (!cells.length) { alert('No cells loaded — click "Show all" first.'); return; }
-  if (!confirm(`Enqueue retrain for ALL ${cells.length} cells?`)) return;
-  let ok = 0, fail = 0;
+  if (!confirm(`Enqueue retrain for ALL ${cells.length} cells?\n\n(Cells already running/queued by the cluster sweep are counted as success — they're getting retrained either way.)`)) return;
+  let enqueued = 0, already = 0, failed = 0;
   for (const c of cells) {
     const r = await _wzEnqueueRetrain(c.model, c.tf);
-    if (r.ok || r.job_id) ok++; else fail++;
+    if (r.ok && r.job_id)             enqueued++;
+    else if (r._already_running)      already++;
+    else                              failed++;
     await new Promise(res => setTimeout(res, 200));
   }
-  alert(`Apply All complete: ${ok} enqueued, ${fail} failed.`);
+  alert(`Apply All complete:\n  ${enqueued} freshly enqueued\n  ${already} already running/queued (cluster sweep)\n  ${failed} actually failed`);
+  // Re-render to show updated statuses.
+  try { wzShowAll(); } catch (_) {}
 }
 
 async function wzApplySelected() {
   const checked = Array.from(document.querySelectorAll('.wz-sug-chk:checked'));
   if (!checked.length) { alert('No rows checked. Click "Show all" first, then check rows.'); return; }
-  if (!confirm(`Enqueue retrain for ${checked.length} selected cell(s)?`)) return;
-  let ok = 0, fail = 0;
+  if (!confirm(`Enqueue retrain for ${checked.length} selected cell(s)?\n\n(Cells already running/queued by the cluster sweep are counted as success — they're getting retrained either way.)`)) return;
+  let enqueued = 0, already = 0, failed = 0;
   for (const chk of checked) {
     const [model, tf] = chk.getAttribute('data-cell').split('@');
     const r = await _wzEnqueueRetrain(model, tf);
-    if (r.ok || r.job_id) ok++; else fail++;
+    if (r.ok && r.job_id)             enqueued++;
+    else if (r._already_running)      already++;
+    else                              failed++;
     await new Promise(res => setTimeout(res, 200));
   }
-  alert(`Apply Selected complete: ${ok} enqueued, ${fail} failed.`);
+  alert(`Apply Selected complete:\n  ${enqueued} freshly enqueued\n  ${already} already running/queued (cluster sweep)\n  ${failed} actually failed`);
   window._wzSelection.clear();
   document.querySelectorAll('.wz-sug-chk').forEach(c => { c.checked = false; });
   const all = document.getElementById('wz-sel-all');
   if (all) all.checked = false;
+  // Re-render to show updated statuses.
+  try { wzShowAll(); } catch (_) {}
 }
 
 function wzSelAll(checked) {
