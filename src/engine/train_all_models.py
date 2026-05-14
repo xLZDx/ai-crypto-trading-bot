@@ -108,10 +108,98 @@ _LOCK_PATH = os.path.join(project_root, 'data', 'train_all_models.lock')
 _CURRENT_PATH = os.path.join(project_root, 'data', 'training_current.json')
 
 
+class _LockHeld(Exception):
+    """Internal sentinel — raised inside the transaction block to bail
+    without writing when the lock is held by another live process."""
+
+
 def _acquire_run_lock(force: bool = False) -> bool:
     """Acquire the single-instance lock. Returns True on success.
     Returns False (and logs reason) if another live instance holds it.
-    Auto-reclaims stale locks (pid not alive)."""
+    Auto-reclaims stale locks (pid not alive).
+
+    Phase 97 root-cause fix (2026-05-14)
+    -----------------------------------
+    The earlier version had a TOCTOU race: it used `os.path.exists` +
+    raw `open(,'r')` to CHECK the lock, then a separate `write_json` to
+    CLAIM it. The check held NO lock, so two concurrent _acquire_run_lock
+    calls would both pass the "no live owner" check before either
+    completed its write — both processes proceeded and both wrote to
+    train_all_models.lock, with one silently winning. Operator saw two
+    parallel `train_all_models.py` instances training the same models
+    in race-conditions over the artifacts.
+
+    Fix: wrap the entire check-and-claim in safe_json.transaction, which
+    holds ONE FileLock across read + liveness check + write. The second
+    caller now serializes behind the first, reads the first's lock
+    payload, sees a live PID, and refuses cleanly.
+    """
+    import datetime as _dt, socket as _sock
+
+    try:
+        from src.utils.safe_json import transaction
+    except Exception as exc:
+        # safe_json not importable? Fall back to the legacy raw write
+        # (better than no lock at all). This branch effectively never
+        # fires in practice.
+        log.warning("safe_json.transaction unavailable (%s); using raw write fallback", exc)
+        return _legacy_acquire_run_lock(force=force)
+
+    try:
+        with transaction(_LOCK_PATH, default={}) as state:
+            prev_pid = int(state.get('pid', 0)) if isinstance(state, dict) else 0
+            if prev_pid:
+                alive = False
+                try:
+                    import psutil
+                    alive = psutil.pid_exists(prev_pid)
+                    if alive:
+                        p = psutil.Process(prev_pid)
+                        alive = ('python' in (p.name() or '').lower()
+                                 and 'train_all_models' in ' '.join(p.cmdline() or []))
+                except Exception:
+                    pass
+                if alive and not force:
+                    log.error(
+                        "Another train_all_models.py is already running "
+                        "(pid=%d, started=%s). Pass --force to override "
+                        "or kill that process first.",
+                        prev_pid, state.get('started_iso', '?'),
+                    )
+                    # Raise to bail out of the transaction WITHOUT writing
+                    # — preserves the existing owner's lock entry. safe_json
+                    # transaction docs: "If the block raises, the file is
+                    # NOT rewritten — exceptions propagate after the lock
+                    # is released."
+                    raise _LockHeld()
+                if alive and force:
+                    log.warning(
+                        "Another train_all_models.py is running (pid=%d) "
+                        "but --force given; proceeding in parallel "
+                        "(both will compete for CPU/GPU).",
+                        prev_pid,
+                    )
+                else:
+                    log.info("Reclaiming stale lock from dead pid=%d", prev_pid)
+            # Claim — clear() preserves the dict identity so the transaction
+            # picks up the new payload via the same reference.
+            state.clear()
+            state['pid']         = os.getpid()
+            state['started_iso'] = _dt.datetime.now(_dt.timezone.utc).isoformat()
+            state['host']        = _sock.gethostname()
+    except _LockHeld:
+        return False
+    except Exception as exc:
+        # Unexpected error inside transaction — log and proceed (better
+        # than refusing legitimate training because of an IO glitch).
+        log.warning("lock acquire raised unexpectedly: %s — proceeding anyway", exc)
+    return True
+
+
+def _legacy_acquire_run_lock(force: bool = False) -> bool:
+    """Pre-Phase-97 raw-write fallback for the rare case safe_json is
+    unimportable. Documented as legacy because it has the TOCTOU race
+    the new version fixes."""
     import json as _json, datetime as _dt, socket as _sock
     if os.path.exists(_LOCK_PATH):
         try:
@@ -121,47 +209,24 @@ def _acquire_run_lock(force: bool = False) -> bool:
             prev = {}
         prev_pid = int(prev.get('pid', 0))
         if prev_pid:
-            alive = False
             try:
                 import psutil
-                alive = psutil.pid_exists(prev_pid)
-                if alive:
-                    p = psutil.Process(prev_pid)
-                    alive = ('python' in (p.name() or '').lower()
-                             and 'train_all_models' in ' '.join(p.cmdline() or []))
+                if psutil.pid_exists(prev_pid) and not force:
+                    log.error("legacy fallback: lock held by pid=%d", prev_pid)
+                    return False
             except Exception:
                 pass
-            if alive and not force:
-                log.error("Another train_all_models.py is already running "
-                          "(pid=%d, started=%s). Pass --force to override "
-                          "or kill that process first.",
-                          prev_pid, prev.get('started_iso', '?'))
-                return False
-            if alive and force:
-                log.warning("Another train_all_models.py is running (pid=%d) "
-                            "but --force given; proceeding in parallel "
-                            "(both will compete for CPU/GPU).",
-                            prev_pid)
-            else:
-                log.info("Reclaiming stale lock from dead pid=%d", prev_pid)
     payload = {
-        'pid':         os.getpid(),
+        'pid': os.getpid(),
         'started_iso': _dt.datetime.now(_dt.timezone.utc).isoformat(),
-        'host':        _sock.gethostname(),
+        'host': _sock.gethostname(),
     }
     try:
         os.makedirs(os.path.dirname(_LOCK_PATH), exist_ok=True)
-        # Phase A12 (2026-05-12): atomic write via safe_json. The
-        # previous raw open(,'w') had a race where a concurrent
-        # _acquire_run_lock / _release_run_lock could see a half-
-        # written file and produce a corrupted lock state. safe_json
-        # uses filelock + write-temp-then-rename to make the write
-        # atomic from any reader's point of view.
-        from src.utils.safe_json import write_json as _safe_write
-        _safe_write(_LOCK_PATH, payload)
+        with open(_LOCK_PATH, 'w', encoding='utf-8') as f:
+            _json.dump(payload, f)
     except Exception as exc:
-        log.warning("Could not write lock file %s: %s — proceeding anyway",
-                    _LOCK_PATH, exc)
+        log.warning("legacy lock write failed: %s — proceeding anyway", exc)
     return True
 
 
