@@ -5064,21 +5064,68 @@ def api_training_run_one(key: str):
 def api_training_stop(job_id: str):
     """Kill the subprocess backing this training job. Returns ok=true if
     we either killed something or the job was already finished. Returns
-    404 only if the job_id was never seen."""
+    404 only if the job_id was never seen.
+
+    Two-stage kill (Phase 2c, 2026-05-14):
+      1. Popen path — dashboard spawned the subprocess and kept a Popen in
+         _training_active_procs. Call proc.kill() directly.
+      2. Orphan PID path — job was spawned by train_all_models.py or the
+         sweep watchdog; no Popen in this dashboard process but child_pid
+         is persisted in the job record. Look it up and kill via psutil
+         (recursively, since trainer scripts spawn worker children).
+
+    Before this fix, the orphan path returned ok=true with
+    "already finished" while the PID was still alive — the operator's Stop
+    button confirmed the prompt but the process kept running."""
     with _training_jobs_lock:
         rec = _training_jobs.get(job_id)
     if not rec:
         return jsonify({'ok': False, 'error': f'unknown job_id {job_id}'}), 404
+
+    # Path 1 — dashboard-spawned Popen
     with _training_active_lock:
         proc = _training_active_procs.pop(job_id, None)
-    if proc is None:
-        return jsonify({'ok': True, 'message': 'job already finished',
-                        'status': rec.get('status')})
-    try:
-        proc.kill()
-        return jsonify({'ok': True, 'message': 'killed', 'job_id': job_id})
-    except Exception as exc:
-        return jsonify({'ok': False, 'error': str(exc)}), 500
+    if proc is not None:
+        try:
+            proc.kill()
+            _record_job(job_id, status='killed', finished_at=time.time(),
+                        errors=['killed by operator via /api/training/stop (popen)'])
+            return jsonify({'ok': True, 'method': 'popen', 'message': 'killed',
+                            'job_id': job_id})
+        except Exception as exc:
+            return jsonify({'ok': False, 'error': f'popen.kill() failed: {exc}'}), 500
+
+    # Path 2 — orphan with a persisted child_pid still alive
+    child_pid = rec.get('child_pid')
+    if child_pid and _pid_alive(child_pid):
+        try:
+            import psutil
+            p = psutil.Process(int(child_pid))
+            # Kill child processes first so they don't survive the parent.
+            # Trainers commonly spawn workers (LightGBM, sklearn n_jobs, etc.)
+            for c in p.children(recursive=True):
+                try:
+                    c.kill()
+                except Exception:
+                    pass
+            p.kill()
+            try:
+                p.wait(timeout=3)
+            except Exception:
+                pass
+            _record_job(job_id, status='killed', finished_at=time.time(),
+                        errors=[f'killed orphan PID {child_pid} by operator '
+                                f'via /api/training/stop'])
+            return jsonify({'ok': True, 'method': 'orphan-pid',
+                            'killed_pid': int(child_pid), 'job_id': job_id})
+        except Exception as exc:
+            return jsonify({'ok': False,
+                            'error': f'orphan kill failed: {exc}'}), 500
+
+    # Path 3 — neither Popen nor live PID; job is genuinely done
+    return jsonify({'ok': True, 'method': 'noop',
+                    'message': 'job already finished (no Popen, no live PID)',
+                    'status': rec.get('status')})
 
 
 @app.route('/api/training/active', methods=['GET'])

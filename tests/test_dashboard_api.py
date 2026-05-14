@@ -25,7 +25,6 @@ from src.dashboard.app import app  # noqa: E402
 
 def _make_client():
     app.config["TESTING"] = True
-    # DASHBOARD_API_KEY is empty in test env → require_api_key is a no-op.
     return app.test_client()
 
 
@@ -37,12 +36,19 @@ class _DashboardTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.client = _make_client()
         self._ctx = self.client.__enter__()
+        # If the operator has DASHBOARD_API_KEY in .env, require_api_key is
+        # active and the test_client must send it on every request. Reading
+        # from env here means tests work both with and without the key set.
+        self._headers = {}
+        api_key = os.environ.get("DASHBOARD_API_KEY")
+        if api_key:
+            self._headers["X-API-Key"] = api_key
 
     def tearDown(self) -> None:
         self.client.__exit__(None, None, None)
 
     def get(self, path: str) -> tuple[int, dict]:
-        r = self._ctx.get(path)
+        r = self._ctx.get(path, headers=self._headers)
         return r.status_code, r.get_json() or {}
 
     def post(self, path: str, body: dict | None = None) -> tuple[int, dict]:
@@ -50,6 +56,7 @@ class _DashboardTestCase(unittest.TestCase):
             path,
             data=json.dumps(body or {}),
             content_type="application/json",
+            headers=self._headers,
         )
         return r.status_code, r.get_json() or {}
 
@@ -403,6 +410,126 @@ class TestTrainingJobStatePersistence(_DashboardTestCase):
         finally:
             with _app_mod._training_jobs_lock:
                 _app_mod._training_jobs.pop(job_id, None)
+
+
+class TestTrainingStopOrphanPid(_DashboardTestCase):
+    """Phase 2c (2026-05-14): /api/training/stop must kill orphan training PIDs
+    that have a child_pid recorded but no Popen in this dashboard process.
+
+    Pre-fix: endpoint returned ok=true / "already finished" when the dashboard
+    had no Popen, while the actual process kept running. Operator clicked
+    Stop, popup confirmed, process never died.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        import src.dashboard.app as dash_app
+        self.dash = dash_app
+        # Snapshot the original _training_jobs so each test cleans up.
+        with dash_app._training_jobs_lock:
+            self._orig_jobs = dict(dash_app._training_jobs)
+
+    def tearDown(self) -> None:
+        # Restore _training_jobs to its pre-test state.
+        with self.dash._training_jobs_lock:
+            self.dash._training_jobs.clear()
+            self.dash._training_jobs.update(self._orig_jobs)
+        super().tearDown()
+
+    def _spawn_sleeper(self, seconds: int = 60) -> int:
+        """Spawn a real python.exe sleeper so the test has a live PID to kill.
+        Returns the PID."""
+        import subprocess
+        import sys
+        proc = subprocess.Popen(
+            [sys.executable, "-c", f"import time; time.sleep({seconds})"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        # Give the OS a beat to register the PID.
+        import time
+        time.sleep(0.2)
+        return proc.pid
+
+    def test_orphan_pid_is_killed_and_job_marked(self) -> None:
+        """Job record has child_pid but no Popen → endpoint must look up the
+        PID, kill it, and update status to 'killed'."""
+        import time as _time
+        pid = self._spawn_sleeper(60)
+        job_id = f"test-orphan-{pid}"
+        try:
+            with self.dash._training_jobs_lock:
+                # created_at=now so the cap-eviction inside _record_job
+                # (drops oldest when len > _TRAINING_JOBS_MAX=50) doesn't
+                # pop our test record before the test reads it back.
+                self.dash._training_jobs[job_id] = {
+                    "job_id": job_id,
+                    "model": "scalping",
+                    "tf": "1m",
+                    "child_pid": pid,
+                    "status": "running",
+                    "created_at": _time.time(),
+                }
+            # Verify the PID is alive before we hit the endpoint.
+            self.assertTrue(self.dash._pid_alive(pid),
+                            f"sleeper PID {pid} died before test could call /stop")
+            status, body = self.post(f"/api/training/stop/{job_id}")
+            self.assertEqual(status, 200, f"unexpected status: {status} body={body}")
+            self.assertTrue(body.get("ok"), f"expected ok=true, got {body}")
+            self.assertEqual(body.get("method"), "orphan-pid",
+                             f"expected method=orphan-pid, got {body}")
+            self.assertEqual(body.get("killed_pid"), pid)
+            # Confirm PID actually died (the bug was: ok=true but PID alive).
+            import time
+            deadline = time.time() + 3.0
+            while time.time() < deadline and self.dash._pid_alive(pid):
+                time.sleep(0.1)
+            self.assertFalse(self.dash._pid_alive(pid),
+                             f"PID {pid} still alive after /stop returned ok=true")
+            # Confirm job record was updated.
+            with self.dash._training_jobs_lock:
+                rec = self.dash._training_jobs.get(job_id, {})
+            self.assertEqual(rec.get("status"), "killed",
+                             f"expected status=killed, got {rec.get('status')}")
+            self.assertIsNotNone(rec.get("finished_at"))
+        finally:
+            # If anything failed, kill our sleeper so it doesn't run the full 60s.
+            try:
+                import psutil
+                if psutil.pid_exists(pid):
+                    psutil.Process(pid).kill()
+            except Exception:
+                pass
+
+    def test_dead_pid_returns_noop_method(self) -> None:
+        """Job record has child_pid but the PID is dead → endpoint returns
+        ok=true with method=noop (no Popen and no live PID = nothing to do)."""
+        # Spawn-and-immediately-kill so the PID is in /proc-equivalent state
+        # 'dead' or gone.
+        pid = self._spawn_sleeper(60)
+        import psutil
+        try:
+            psutil.Process(pid).kill()
+            psutil.Process(pid).wait(timeout=2)
+        except Exception:
+            pass
+        job_id = f"test-dead-{pid}"
+        with self.dash._training_jobs_lock:
+            self.dash._training_jobs[job_id] = {
+                "job_id": job_id, "model": "scalping",
+                "child_pid": pid, "status": "running",
+            }
+        status, body = self.post(f"/api/training/stop/{job_id}")
+        self.assertEqual(status, 200)
+        self.assertTrue(body.get("ok"))
+        self.assertEqual(body.get("method"), "noop",
+                         f"expected method=noop for dead PID, got {body}")
+
+    def test_unknown_job_id_returns_404(self) -> None:
+        """No job record at all → 404."""
+        status, body = self.post("/api/training/stop/nonexistent-job-id-xyz")
+        self.assertEqual(status, 404)
+        self.assertFalse(body.get("ok"))
 
 
 if __name__ == "__main__":
