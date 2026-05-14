@@ -1835,6 +1835,15 @@ document.addEventListener('DOMContentLoaded', function() {
         <div id="wz-kpi"></div>
         <div id="wz-recs">Click "Suggest improvements" to load ranked recommendations for the selected (model, tf).</div>
 
+        <!-- Phase 6b — drift state summary across all known baselines. -->
+        <div style="margin-top:10px;padding-top:8px;border-top:1px dashed rgba(148,163,184,.15);font-size:.6rem;color:#94a3b8">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+            <span style="font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#93c5fd">📉 Live drift state</span>
+            <button onclick="wzDriftRefresh()" class="wz-btn" style="padding:2px 9px;font-size:.55rem">↻ Recompute now</button>
+          </div>
+          <div id="wz-drift-line">Loading…</div>
+        </div>
+
         <div class="wz-ask">
           <div style="font-size:.62rem;color:#94a3b8;margin-bottom:5px">Ask a follow-up (free text, routed via AgenticLLM):</div>
           <textarea id="wz-q" placeholder="e.g. why does trend underperform during high-vol regimes?"></textarea>
@@ -4743,6 +4752,50 @@ async function wzSuggest() {
     recs.innerHTML = `<span style="color:#fb7185">Fetch error: ${esc(e.message||e)}</span>`;
   }
 }
+
+async function wzDriftLoad() {
+  const el = document.getElementById('wz-drift-line');
+  if (!el) return;
+  try {
+    const r = await fetch('/api/drift/state', { headers: hdrs() });
+    const j = await r.json();
+    if (!j.ok) { el.textContent = `error: ${j.error||'?'}`; return; }
+    const s = j.state || {};
+    const cells = s.cells || [];
+    if (!cells.length) {
+      el.innerHTML = '<span style="color:#64748b">No baselines yet — train a model to populate.</span>';
+      return;
+    }
+    const pause = cells.filter(c => (c.report||{}).pause_count > 0).length;
+    const warn  = cells.filter(c => (c.report||{}).warn_count > 0).length;
+    const ok    = cells.filter(c => !((c.report||{}).pause_count>0 || (c.report||{}).warn_count>0)).length;
+    const lastRun = s.last_run_iso || '—';
+    el.innerHTML = `
+      <span><b style="color:#34d399">${ok}</b> ok</span> &middot;
+      <span><b style="color:#fbbf24">${warn}</b> warn</span> &middot;
+      <span><b style="color:#fb7185">${pause}</b> pause</span> &middot;
+      <span style="color:#64748b">last run: ${esc(lastRun)}</span>
+      <span style="color:#64748b"> &middot; ${cells.length} cells total</span>`;
+  } catch (e) {
+    el.textContent = 'fetch error: ' + (e.message||e);
+  }
+}
+
+async function wzDriftRefresh() {
+  const el = document.getElementById('wz-drift-line');
+  if (el) el.textContent = 'Recomputing…';
+  try {
+    const r = await fetch('/api/drift/run', { method: 'POST', headers: hdrs() });
+    const j = await r.json();
+    if (!j.ok) { if (el) el.textContent = `error: ${j.error||'?'}`; return; }
+    wzDriftLoad();
+  } catch (e) {
+    if (el) el.textContent = 'refresh error: ' + (e.message||e);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => setTimeout(wzDriftLoad, 1400));
+setInterval(() => { if (activeTab === 'strategy') wzDriftLoad(); }, 60_000);
 
 async function wzApply(model, tf) {
   if (!confirm(`Retrain ${model}@${tf} now? This submits a training job to the local scheduler.`)) return;
