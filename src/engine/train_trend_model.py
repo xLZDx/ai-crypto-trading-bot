@@ -21,12 +21,18 @@ if base_dir not in sys.path:
 
 from src.analysis.feature_engineering import (
     add_macd, add_adx, add_time_features, add_atr,
-    add_ofi, add_vwap, add_donchian, add_keltner, add_funding_zscore
+    add_ofi, add_vwap, add_donchian, add_keltner, add_funding_zscore,
+    add_taker_and_trade_features,
 )
 from src.analysis.fractional_diff import add_fractional_diff
 from src.analysis.triple_barrier import triple_barrier_labels_vectorized, label_stats
 
 
+# Phase 3.5 (2026-05-14) — feature set expanded per ml-engineer review:
+# `taker_buy_ratio` + `avg_trade_size` were already computed by
+# add_taker_and_trade_features but never made it into FEATURE_COLUMNS;
+# include them now so the trainer actually sees them. Pre-fix the trend
+# model trained on 19 cols missing taker-side flow and trade-size signal.
 FEATURE_COLUMNS = [
     'frac_diff_d40',
     'macd', 'macd_signal', 'macd_hist',
@@ -39,6 +45,8 @@ FEATURE_COLUMNS = [
     'vwap_dist',
     'ofi_z',
     'funding_z',
+    'taker_buy_ratio',    # NEW — directional flow from raw OHLCV
+    'avg_trade_size',     # NEW — informed-trader proxy
     'signal_macd', 'signal_don',
     'trend_strength',
     'vol_regime',
@@ -47,11 +55,86 @@ FEATURE_COLUMNS = [
 ]
 
 
-def prepare_trend_data(filepath):
+# Per-TF asymmetric Triple Barrier — ml-engineer mandated per-TF params
+# because max_bars must reflect the operator's holding horizon at each tf.
+# pt/sl ratio 2:1 = trend "let winners run" with tighter stops.
+# Defaults are 2.5/1.5/12 inside triple_barrier_labels_vectorized — we
+# override per-tf for the trend model specifically.
+_TREND_TB_BY_TF: dict[str, dict] = {
+    '1m':  {'pt_multiplier': 4.0, 'sl_multiplier': 2.0, 'max_bars': 240},  # ~4h
+    '15m': {'pt_multiplier': 4.0, 'sl_multiplier': 2.0, 'max_bars': 192},  # ~2 days
+    '1h':  {'pt_multiplier': 4.0, 'sl_multiplier': 2.0, 'max_bars': 96},   # ~4 days
+    '4h':  {'pt_multiplier': 4.0, 'sl_multiplier': 2.0, 'max_bars': 48},   # ~8 days
+    '1d':  {'pt_multiplier': 4.0, 'sl_multiplier': 2.0, 'max_bars': 20},   # ~3 weeks
+    '1w':  {'pt_multiplier': 4.0, 'sl_multiplier': 2.0, 'max_bars': 12},   # ~3 months
+}
+
+
+def _trend_tb_params(timeframe: str) -> dict:
+    """Return Triple Barrier params (pt/sl/max_bars) tuned for the trend model
+    at `timeframe`. Per-TF parameterization is mandatory — hardcoding
+    max_bars=96 across all tfs starves 1d of label resolution (would need
+    96 trading days to label one row) and floods 1m with stale timeouts."""
+    return _TREND_TB_BY_TF.get(timeframe, _TREND_TB_BY_TF['1h'])
+
+
+def _merge_funding_csv(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    """Phase 3.5 — merge {symbol}_funding.csv.gz into the candle frame.
+
+    Pre-fix the funding_z feature was always 0.0 because the raw 1h CSV
+    has no funding_rate column. Funding fires every 8h; merge_asof with
+    backward direction + 8h tolerance gives 'last-known funding as of
+    this candle close' semantics with no look-ahead.
+
+    Silently skips if the funding file doesn't exist (spot-only assets
+    like SHIB don't have perpetuals)."""
+    funding_path = os.path.join(base_dir, 'data', 'raw', f'{symbol}_funding.csv.gz')
+    if not os.path.exists(funding_path):
+        log.debug("[trend] no funding CSV for %s — funding_z stays 0", symbol)
+        return df
+    try:
+        funding = pd.read_csv(funding_path)
+        if 'funding_rate' not in funding.columns or 'timestamp' not in funding.columns:
+            log.warning("[trend] %s funding CSV missing expected cols", symbol)
+            return df
+        funding['timestamp'] = pd.to_datetime(funding['timestamp'])
+        funding = funding.sort_values('timestamp').reset_index(drop=True)
+        df_sorted = df.sort_values('timestamp').reset_index(drop=True)
+        merged = pd.merge_asof(
+            df_sorted, funding[['timestamp', 'funding_rate']],
+            on='timestamp',
+            direction='backward',
+            tolerance=pd.Timedelta('8h'),  # funding fires every 8h
+        )
+        return merged
+    except Exception as e:
+        log.warning("[trend] funding merge failed for %s: %s", symbol, e)
+        return df
+
+
+def prepare_trend_data(filepath, timeframe: str = '1h', symbol: str | None = None):
+    """Prepare a single-symbol trend feature frame.
+
+    Phase 3.5 changes:
+      - per-TF asymmetric Triple Barrier (was hardcoded pt=3 sl=3 max_bars=48)
+      - funding_rate merged from {symbol}_funding.csv.gz (was always 0)
+      - taker_buy_ratio + avg_trade_size computed (already in FEATURE_COLUMNS)
+      - dropna() replaced with selective subset (was halving the dataset
+        when funding rows were sparse)
+    """
     log.info("Loading data for Trend Pipeline from %s...", filepath)
     df = pd.read_csv(filepath)
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     df = df.sort_values('timestamp').reset_index(drop=True)
+
+    # Merge funding BEFORE add_funding_zscore so the rolling Z computes
+    # over a real series instead of constant zeros.
+    if symbol is not None:
+        df = _merge_funding_csv(df, symbol)
+
+    # Taker-side flow features (taker_buy_ratio, avg_trade_size) from raw
+    # OHLCV. Already-existed util — just wasn't called before.
+    df = add_taker_and_trade_features(df)
 
     df = add_fractional_diff(df, d=0.4)
     df['return'] = df['close'].pct_change()
@@ -62,8 +145,8 @@ def prepare_trend_data(filepath):
     df = add_vwap(df)
     df = add_donchian(df, n=20)
     df = add_keltner(df)
-    df = add_funding_zscore(df)
-    df = add_atr(df, 14) # Ensure atr_14 exists
+    df = add_funding_zscore(df)   # now sees real funding_rate from merge_asof
+    df = add_atr(df, 14)
 
     # Regime Features
     df['ema_fast'] = df['close'].ewm(span=12, adjust=False).mean()
@@ -87,16 +170,26 @@ def prepare_trend_data(filepath):
     df.loc[df['don_pos_20'] > 0.95, 'signal_don'] = 1.0
     df.loc[df['don_pos_20'] < 0.05, 'signal_don'] = -1.0
 
-    labels, t1_times = triple_barrier_labels_vectorized(df, pt_multiplier=3.0, sl_multiplier=3.0, max_bars=48)
+    # Per-TF asymmetric barriers (pt=4, sl=2 — let winners run, tight stops).
+    tb_params = _trend_tb_params(timeframe)
+    labels, t1_times = triple_barrier_labels_vectorized(df, **tb_params)
     df['target_raw'] = labels
     df['t1_timestamp'] = t1_times
-    
-    # Remove timeouts
+
+    # Filter timeouts → keep only +1/-1 directional labels.
+    # NOTE: t1_timestamp index must match X index post-filter, otherwise
+    # PurgedKFold's t1_series mapping silently misaligns (ml-engineer rev).
     df = df[df['target_raw'] != 0].copy()
     df['target'] = (df['target_raw'] == 1).astype(int)
-    
-    df = df.dropna()
-    log.info("Trend TB distribution: %s", label_stats(labels))
+
+    # Selective dropna — previously `df.dropna()` discarded any row with
+    # ANY NaN, halving the dataset whenever a funding row was sparse or
+    # an indicator had NaN warmup. Only drop on the columns we actually
+    # train on; impute everything else with 0 downstream.
+    _critical = ['target', 't1_timestamp', 'atr_14', 'close']
+    df = df.dropna(subset=[c for c in _critical if c in df.columns])
+    log.info("Trend TB distribution (tf=%s, params=%s): %s",
+             timeframe, tb_params, label_stats(labels))
     return df
 
 
@@ -136,7 +229,7 @@ def train_trend_model(timeframe: str = '1h'):
 
         if os.path.exists(full_data_path):
             try:
-                df = prepare_trend_data(full_data_path)
+                df = prepare_trend_data(full_data_path, timeframe=timeframe, symbol=sym)
                 all_data.append(df)
             except Exception as e:
                 log.error("Failed to prepare %s: %s", sym, e)
@@ -179,8 +272,14 @@ def train_trend_model(timeframe: str = '1h'):
     _trend_hp, _trend_applied = _merge('trend', _TREND_HP_DEFAULTS, _TREND_HP_SCHEMA)
 
     t1_series = combined_df['t1_timestamp']
-    # Embargo = 2 * horizon (48 bars for trend model)
-    pct_embargo = (2.0 * 48) / len(X)
+    # Phase 3.5 — embargo MUST be derived from the actual max_bars used for
+    # this timeframe's barriers, not hardcoded to 48. Previously bumping
+    # max_bars (e.g. to 96 for 1h) silently halved the embargo coverage,
+    # leaking future-leaking train rows into the validation fold.
+    _tb_horizon = _trend_tb_params(timeframe)['max_bars']
+    pct_embargo = (2.0 * _tb_horizon) / max(1, len(X))
+    log.info("[trend] embargo=%.4f (2 x max_bars=%d / len(X)=%d)",
+             pct_embargo, _tb_horizon, len(X))
     cv = PurgedKFold(n_splits=5, t1=t1_series, pct_embargo=pct_embargo)
     fold_accs = []
     for i, (tr, te) in enumerate(cv.split(X)):
