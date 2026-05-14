@@ -1118,6 +1118,62 @@ def api_wizard_matrix():
         return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
 
 
+# ============================================================
+# Phase 6b (2026-05-14) — Drift Monitor endpoints.
+# /api/drift/state  GET   — cached drift report per (model, tf)
+# /api/drift/run    POST  — operator-driven immediate refresh
+# ============================================================
+
+_drift_monitor_started = False
+_drift_monitor_lock = threading.Lock()
+
+
+def _ensure_drift_monitor() -> None:
+    """Lazy-start the drift monitor background thread (same pattern as
+    _ensure_process_manager_loop). Defers thread start until first API
+    call so dashboard startup doesn't pay the cost when nobody's looking."""
+    global _drift_monitor_started
+    if _drift_monitor_started:
+        return
+    with _drift_monitor_lock:
+        if _drift_monitor_started:
+            return
+        try:
+            from src.risk.drift_monitor import start
+            start()
+            _drift_monitor_started = True
+        except Exception as exc:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "Failed to start drift_monitor: %s", exc,
+            )
+
+
+@app.route('/api/drift/state', methods=['GET'])
+@require_api_key
+def api_drift_state():
+    """Return the cached per-cell drift report (data/risk/drift_state.json)."""
+    try:
+        _ensure_drift_monitor()
+        from src.risk.drift_monitor import get_cached_state
+        return jsonify({'ok': True, 'state': get_cached_state()})
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
+
+
+@app.route('/api/drift/run', methods=['POST'])
+@require_api_key
+def api_drift_run():
+    """Force an immediate drift-poll pass. Returns the new state. Useful
+    when the operator wants fresh numbers right after a training cycle."""
+    try:
+        from src.risk.drift_monitor import run_once
+        state = run_once()
+        return jsonify({'ok': True, 'state': state})
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
+
+
 @app.route('/api/cluster/reap', methods=['POST'])
 @require_api_key
 def api_cluster_reap_proxy():

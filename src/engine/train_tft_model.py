@@ -47,7 +47,27 @@ def load_frame(symbol: str, timeframe: str, history_days: int) -> pd.DataFrame |
 
     df = pd.read_csv(data_path)
     df["timestamp"] = pd.to_datetime(df["timestamp"])
-    return df.sort_values("timestamp").reset_index(drop=True)
+    df = df.sort_values("timestamp").reset_index(drop=True)
+
+    # Phase 4 rollout completion (2026-05-14) — F1 data-integrity gate
+    # for TFT. Same validate_ohlcv() the tabular trainers use; runs on
+    # the raw OHLCV BEFORE engineer_frame so a corrupt CSV is caught
+    # before the Darts TimeSeries pipeline (which would otherwise fail
+    # mid-fit with an opaque scaler error).
+    try:
+        from src.utils.data_quality import validate_ohlcv, DataQualityError
+        df, _dq = validate_ohlcv(df, symbol=symbol, timeframe=timeframe)
+        if _dq.soft_warnings:
+            logger.info("[tft][%s/%s] data quality: %s",
+                        symbol, timeframe, _dq.soft_warnings[:3])
+    except Exception as _e:
+        from src.utils.data_quality import DataQualityError as _DQE
+        if isinstance(_e, _DQE):
+            raise
+        logger.warning("[tft][%s/%s] data_quality check skipped: %s",
+                       symbol, timeframe, _e)
+
+    return df
 
 
 def engineer_frame(df: pd.DataFrame, asset_id: int, freq: str, symbol: str = "") -> pd.DataFrame:

@@ -102,10 +102,14 @@ class TestControlPostEndpoint(_DashboardTestCase):
         self.assertEqual(ctrl.get("field_b"), "beta")
 
     def test_non_dict_body_returns_400(self) -> None:
+        # Pass the same X-API-Key the other tests use (when DASHBOARD_API_KEY
+        # is set in env via .env load, require_api_key would otherwise 401
+        # before this endpoint's body-type check fires).
         r = self._ctx.post(
             "/api/control",
             data=json.dumps([1, 2, 3]),
             content_type="application/json",
+            headers=self._headers,
         )
         self.assertEqual(r.status_code, 400)
 
