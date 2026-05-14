@@ -5746,6 +5746,42 @@ function _renderTrainingTable() {
     m._health_tip = h.tip;
   });
 
+  // Phase B (2026-05-14) — Top-5 / Bottom-5 efficiency badges.
+  // Mirrors the server-side score in /api/training/rankings so the badge
+  // here matches what an external caller would compute. We score every
+  // row that has a model on disk AND at least one of accuracy_test / auc /
+  // win_rate. The top-5 by score get TOP-1..5 (green), the bottom-5 get
+  // BOTTOM-1..5 (red, BOTTOM-1 = worst). Rows below the rank floor get
+  // no badge — keeps the table from looking like a fruit salad.
+  const _rankingScore = (m) => {
+    const parts = [];
+    if (m.accuracy_test != null) parts.push([Number(m.accuracy_test), 0.5]);
+    if (m.auc_roc != null)       parts.push([50 + (Number(m.auc_roc) - 0.5) * 100, 0.3]);
+    const wr = (m.bull_wr != null) ? Number(m.bull_wr)
+             : (m.win_precision != null) ? Number(m.win_precision) : null;
+    if (wr != null) parts.push([wr, 0.2]);
+    if (!parts.length) return null;
+    const tw = parts.reduce((s, p) => s + p[1], 0);
+    return parts.reduce((s, p) => s + p[0]*p[1], 0) / tw;
+  };
+  const _rankable = all.filter(m => m.model_exists);
+  _rankable.forEach(m => { m._rank_score = _rankingScore(m); });
+  const _scoredOnly = _rankable.filter(m => m._rank_score != null);
+  _scoredOnly.sort((a, b) => (b._rank_score - a._rank_score));
+  _scoredOnly.forEach((m, i) => { m._rank_index = i; });
+  const _topCount = Math.min(5, _scoredOnly.length);
+  const _botCount = Math.min(5, Math.max(0, _scoredOnly.length - _topCount));
+  // Clear any previous rank annotation so re-renders don't accumulate.
+  all.forEach(m => { m._rank_badge = null; });
+  for (let i = 0; i < _topCount; i++) {
+    _scoredOnly[i]._rank_badge = { kind: 'top', rank: i + 1,
+      score: _scoredOnly[i]._rank_score };
+  }
+  for (let i = 0; i < _botCount; i++) {
+    const m = _scoredOnly[_scoredOnly.length - 1 - i];
+    m._rank_badge = { kind: 'bot', rank: i + 1, score: m._rank_score };
+  }
+
   // Filter by quick pill + search.
   const filtered = all.filter(m => {
     if (_trSearch) {
@@ -5836,6 +5872,19 @@ function _renderTrainingTable() {
       ? `<span class="tr-badge-today">TODAY</span>`
       : (m.age_s != null && m.age_s > 7*86400)
           ? `<span class="tr-badge-stale">STALE</span>` : '';
+    // Phase B (2026-05-14) — efficiency rank pill in the model name cell.
+    // Green TOP-N (1=best) or red BOTTOM-N (1=worst). Tooltip shows the
+    // composite score the rank was derived from.
+    let rankBadge = '';
+    if (m._rank_badge) {
+      const rb = m._rank_badge;
+      const isTop = rb.kind === 'top';
+      const color = isTop ? '#34d399' : '#fb7185';
+      const bg    = isTop ? 'rgba(52,211,153,.18)' : 'rgba(251,113,133,.18)';
+      const label = isTop ? `TOP-${rb.rank}` : `BOT-${rb.rank}`;
+      const tip   = `${isTop ? 'Top' : 'Bottom'} ${rb.rank} by composite efficiency · score=${rb.score.toFixed(1)} (0.5·acc + 0.3·AUC + 0.2·WR)`;
+      rankBadge = ` <span title="${esc(tip)}" style="display:inline-block;font-size:.5rem;font-weight:800;letter-spacing:.04em;padding:1px 5px;margin-left:4px;border-radius:999px;background:${bg};color:${color};border:1px solid ${color}66">${label}</span>`;
+    }
     const wfPct  = m.accuracy_walk_forward;
     const accT   = m.accuracy_test;
     const lng    = m.long_accuracy;
@@ -5940,7 +5989,7 @@ function _renderTrainingTable() {
       ? 'No prior backtest runs — using seed default'
       : `Estimated chained backtest time at this TF`;
     return `<tr data-model-key="${esc(m.key)}" data-eta-total="${_etaTotal==null?'':_etaTotal}" data-eta-train="${_etaTrain==null?'':_etaTrain}" data-eta-bt="${_etaBt==null?'':_etaBt}" data-health-score="${m.health_score==null?'':m.health_score.toFixed(1)}" data-health-grade="${m._health_grade||''}">
-      <td style="color:#e2e8f0;font-weight:700">${m.icon||''} ${esc(m.label||m.key)}${warnMark}</td>
+      <td style="color:#e2e8f0;font-weight:700">${m.icon||''} ${esc(m.label||m.key)}${warnMark}${rankBadge}</td>
       <td style="color:#94a3b8">${esc(m.market||'—')}</td>
       <td style="color:#94a3b8">${esc(m.timeframe||'—')}</td>
       <td style="text-align:center"><span title="${esc(st.tip)}" style="display:inline-block;font-size:.55rem;font-weight:800;letter-spacing:.04em;padding:2px 7px;border-radius:999px;background:${stBg};color:${stColor};border:1px solid ${stColor}55${st.cls==='run'?';animation:pulse 1.5s ease-in-out infinite':''}">${st.txt}</span>${timingSub}</td>

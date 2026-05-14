@@ -6121,6 +6121,137 @@ def api_training_jobs():
     return jsonify({'jobs': annotated, 'total': len(rows)})
 
 
+# ─── Training rankings — Top-N / Bottom-N efficiency scoring ────────────────
+# Phase B (2026-05-14) — score every (model, tf) cell from the same row data
+# /api/strategy/full returns and return Top-N / Bottom-N. The dashboard
+# decorates the Model Training table with TOP-1..N / BOTTOM-1..N badges.
+# External callers (agents, analytics jobs) can read this directly.
+
+def _ranking_score(row: dict) -> float | None:
+    """Composite efficiency score, anchored at 50 (random baseline).
+
+    Inputs (any may be None — score is weighted over what we have):
+      accuracy_test, auc_roc, bull_wr / win_precision
+    Weights when all three present: 0.5 / 0.3 / 0.2.
+    """
+    acc = row.get('accuracy_test')
+    auc = row.get('auc_roc')
+    wr = row.get('bull_wr') if row.get('bull_wr') is not None else row.get('win_precision')
+
+    parts: list[tuple[float, float]] = []
+    if acc is not None:
+        try:
+            parts.append((float(acc), 0.5))
+        except (TypeError, ValueError):
+            pass
+    if auc is not None:
+        try:
+            # AUC 0.5 -> 50; 0.6 -> 60; 0.4 -> 40 — rescales to the same
+            # 0-100 axis as accuracy so the weighted mean is meaningful.
+            parts.append((50.0 + (float(auc) - 0.5) * 100.0, 0.3))
+        except (TypeError, ValueError):
+            pass
+    if wr is not None:
+        try:
+            parts.append((float(wr), 0.2))
+        except (TypeError, ValueError):
+            pass
+    if not parts:
+        return None
+    total_w = sum(w for _, w in parts)
+    return sum(v * w for v, w in parts) / total_w
+
+
+@app.route('/api/training/rankings', methods=['GET'])
+@require_api_key
+def api_training_rankings():
+    """Rank every trained (model, tf) cell by composite efficiency score.
+
+    Query params:
+      top    — how many top-N entries to return (default 5)
+      bottom — how many bottom-N entries to return (default 5)
+      include_untrained — set 1 to include rows with no model file
+                          (default 0: only rows where model_exists is true)
+
+    Returns:
+      {
+        "ranked": [...],          # full sorted list
+        "top_n":  [...],          # the top N rows, with badge=TOP_<rank>
+        "bottom_n": [...],        # the bottom N rows, with badge=BOT_<rank>
+        "n_rankable": <int>,
+        "score_formula": "0.5*acc_test + 0.3*(50+(auc-0.5)*100) + 0.2*win_rate (renorm. by available weights)"
+      }
+    """
+    try:
+        top_n = int(request.args.get('top', 5))
+        bot_n = int(request.args.get('bottom', 5))
+    except (TypeError, ValueError):
+        top_n, bot_n = 5, 5
+    include_untrained = request.args.get('include_untrained', '0') == '1'
+
+    # Re-use strategy_full's row builder by calling the view function within
+    # a request context. We're already in a request, so just dispatch the
+    # function directly — it returns a Flask Response.
+    try:
+        payload = strategy_full().get_json()
+    except Exception as e:
+        return jsonify({'error': f'strategy_full failed: {e}'}), 500
+
+    rows = list((payload or {}).get('ml_models') or [])
+    if not include_untrained:
+        rows = [r for r in rows if r.get('model_exists')]
+
+    scored: list[dict] = []
+    for r in rows:
+        s = _ranking_score(r)
+        if s is None:
+            continue
+        scored.append({
+            'key': r.get('key'),
+            'parent_key': r.get('parent_key'),
+            'label': r.get('label'),
+            'timeframe': r.get('timeframe'),
+            'market': r.get('market'),
+            'accuracy_test': r.get('accuracy_test'),
+            'auc_roc': r.get('auc_roc'),
+            'bull_wr': r.get('bull_wr'),
+            'win_precision': r.get('win_precision'),
+            'runs_today': r.get('runs_today'),
+            'age_s': r.get('age_s'),
+            'score': round(s, 3),
+        })
+    # Sort by score desc, stable on key+tf
+    scored.sort(key=lambda x: (-(x['score'] or 0.0), x.get('key') or '', x.get('timeframe') or ''))
+
+    # Rank, then assign top/bottom badges. Bottom is from the END of the list.
+    for i, r in enumerate(scored, 1):
+        r['rank'] = i
+
+    top_slice: list[dict] = []
+    for i, r in enumerate(scored[:max(0, top_n)], 1):
+        r2 = dict(r)
+        r2['badge'] = f'TOP_{i}'
+        top_slice.append(r2)
+
+    bot_slice: list[dict] = []
+    if scored and bot_n > 0:
+        tail = scored[-bot_n:][::-1]  # worst first
+        for i, r in enumerate(tail, 1):
+            r2 = dict(r)
+            r2['badge'] = f'BOT_{i}'
+            bot_slice.append(r2)
+
+    return jsonify({
+        'ranked':       scored,
+        'top_n':        top_slice,
+        'bottom_n':     bot_slice,
+        'n_rankable':   len(scored),
+        'top_n_count':  len(top_slice),
+        'bottom_n_count': len(bot_slice),
+        'score_formula': '0.5*acc_test + 0.3*(50+(auc-0.5)*100) + 0.2*win_rate (renormalized by available weights)',
+    })
+
+
 # ─── Data coverage + 1s→higher-TF resample endpoints ────────────────────────
 # Operator-triggered backfill of missing timeframes. We resample from the
 # canonical 1s archives in data/raw/historical/ rather than re-downloading
