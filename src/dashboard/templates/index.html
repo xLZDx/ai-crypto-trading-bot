@@ -1333,6 +1333,9 @@ document.addEventListener('DOMContentLoaded', function() {
     <button class="nav-item" data-tab="arbitrage">
       <span class="nav-icon">⚖</span> Arbitrage
     </button>
+    <button class="nav-item" data-tab="analytics">
+      <span class="nav-icon">📈</span> Analytics
+    </button>
   </nav>
 
   <!-- Symbol search -->
@@ -3403,6 +3406,94 @@ document.addEventListener('DOMContentLoaded', function() {
               title="Arbitrage dashboard (proxied from :5002)"></iframe>
     </div><!-- /arbitrage -->
 
+    <!-- ═════════════════════════════ ANALYTICS TAB ═════════════════════════════
+         Phase D (2026-05-14) — training run history with baseline comparison.
+         Visualizes data/training_runs_history.json. Operator can browse every
+         run for every (model, tf), compare current vs baseline, promote a
+         run to baseline, and see which hyperparameters won across all runs.
+         ═══════════════════════════════════════════════════════════════════════ -->
+    <div id="tab-analytics" class="tab-pane">
+      <div class="card" id="card-analytics-controls">
+        <div class="card-header">
+          <span class="card-title">📈 Analytics — Training Run History</span>
+          <span style="display:flex;gap:8px;align-items:center">
+            <select id="an-model" style="background:rgba(5,8,22,.7);color:#e2e8f0;border:1px solid rgba(148,163,184,.2);padding:5px 10px;border-radius:6px;font-size:.66rem">
+              <option value="">All models</option>
+              <option value="base">base</option>
+              <option value="trend">trend</option>
+              <option value="futures">futures</option>
+              <option value="scalping">scalping</option>
+              <option value="meta">meta</option>
+              <option value="regime">regime</option>
+              <option value="tft">tft</option>
+              <option value="oft">oft</option>
+            </select>
+            <select id="an-tf" style="background:rgba(5,8,22,.7);color:#e2e8f0;border:1px solid rgba(148,163,184,.2);padding:5px 10px;border-radius:6px;font-size:.66rem">
+              <option value="">All TFs</option>
+              <option value="1m">1m</option>
+              <option value="5m">5m</option>
+              <option value="15m">15m</option>
+              <option value="1h">1h</option>
+              <option value="4h">4h</option>
+              <option value="1d">1d</option>
+              <option value="1w">1w</option>
+            </select>
+            <button class="btn" style="padding:5px 12px;font-size:.66rem" onclick="anLoad()">↻ Refresh</button>
+            <button class="btn" style="padding:5px 12px;font-size:.66rem;background:rgba(251,191,36,.15);color:#fbbf24;border:1px solid rgba(251,191,36,.4)"
+                    onclick="anBackfill()" title="Scan models/*_meta.json and import every training run we have a meta file for. One-shot — idempotent.">
+              ⬇ Backfill from metas
+            </button>
+          </span>
+        </div>
+        <div class="card-body">
+          <div id="an-summary" style="font-size:.7rem;color:#94a3b8;margin-bottom:10px">Loading…</div>
+          <div id="an-baseline-strip" style="display:none;font-size:.65rem;color:#cbd5e1;background:rgba(15,23,42,.6);border-left:3px solid #34d399;padding:8px 12px;border-radius:6px;margin-bottom:12px"></div>
+        </div>
+      </div>
+
+      <div class="card" id="card-analytics-runs">
+        <div class="card-header"><span class="card-title">Run History</span></div>
+        <div class="card-body">
+          <table style="width:100%;border-collapse:collapse;font-size:.62rem">
+            <thead>
+              <tr style="background:rgba(15,23,42,.6);color:#94a3b8;text-transform:uppercase;font-size:.55rem;letter-spacing:.06em">
+                <th style="padding:6px;text-align:left">Run</th>
+                <th style="padding:6px;text-align:left">Model · TF</th>
+                <th style="padding:6px;text-align:right">Acc%</th>
+                <th style="padding:6px;text-align:right">AUC</th>
+                <th style="padding:6px;text-align:right">Score</th>
+                <th style="padding:6px;text-align:right">Δ Score</th>
+                <th style="padding:6px;text-align:right">Δ Acc</th>
+                <th style="padding:6px;text-align:right">Δ AUC</th>
+                <th style="padding:6px;text-align:left">Date</th>
+                <th style="padding:6px;text-align:left">Action</th>
+              </tr>
+            </thead>
+            <tbody id="an-runs-tbody">
+              <tr><td colspan="10" style="text-align:center;color:#475569;padding:14px">No runs recorded yet — click "⬇ Backfill from metas" to populate.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card" id="card-analytics-winning-hp">
+        <div class="card-header"><span class="card-title">🏆 Winning Hyperparameters</span></div>
+        <div class="card-body">
+          <div id="an-winning" style="font-size:.65rem;color:#94a3b8">Pick a model + TF to see which hyperparameters produced the best score.</div>
+        </div>
+      </div>
+
+      <div class="card" id="card-analytics-suggestions">
+        <div class="card-header">
+          <span class="card-title">🧙 Suggestions across all cells</span>
+          <button class="btn" style="padding:4px 10px;font-size:.6rem" onclick="anLoadSuggestions()">Load suggestions</button>
+        </div>
+        <div class="card-body">
+          <div id="an-suggestions" style="font-size:.65rem;color:#94a3b8">Click "Load suggestions" to run the rule-based recommender against every (model, tf).</div>
+        </div>
+      </div>
+    </div><!-- /analytics -->
+
   </div><!-- /content -->
 </div><!-- /main -->
 </div><!-- /shell -->
@@ -4422,6 +4513,173 @@ document.addEventListener('DOMContentLoaded', _initCardCollapse);
 // Some cards are rendered dynamically after load — re-run wiring when the
 // active tab changes or when known late-render endpoints finish.
 window.addEventListener('load', () => setTimeout(_initCardCollapse, 1500));
+
+// ─── Analytics tab (2026-05-14) ───────────────────────────────────────────
+// Bound to /api/analytics/* endpoints in src/dashboard/app.py. Reads
+// data/training_runs_history.json (managed by src/analytics/training_history.py).
+async function anLoad() {
+  const model = document.getElementById('an-model').value;
+  const tf    = document.getElementById('an-tf').value;
+  const summary = document.getElementById('an-summary');
+  const tbody = document.getElementById('an-runs-tbody');
+  const strip = document.getElementById('an-baseline-strip');
+  summary.textContent = 'Loading…';
+  const qs = [];
+  if (model) qs.push('model=' + encodeURIComponent(model));
+  if (tf)    qs.push('tf=' + encodeURIComponent(tf));
+  qs.push('limit=200');
+  try {
+    const r = await fetch('/api/analytics/runs?' + qs.join('&'), { headers: hdrs() });
+    const j = await r.json();
+    if (!j.ok) { summary.innerHTML = `<span style="color:#fb7185">Error: ${esc(j.error||'?')}</span>`; return; }
+    summary.innerHTML = `<b>${j.count}</b> run(s) shown${model||tf?` for ${esc(model||'*')} @ ${esc(tf||'*')}`:''}.`;
+    if (j.baseline && j.baseline.metrics) {
+      const m = j.baseline.metrics;
+      strip.style.display = '';
+      strip.innerHTML =
+        `<span style="font-weight:800;color:#34d399">Baseline:</span> ${esc(j.baseline.run_id)} · ` +
+        `acc=${(m.accuracy_test||0).toFixed(2)}%  auc=${(m.auc_roc||0).toFixed(3)}  ` +
+        `score=${(j.baseline.score||0).toFixed(2)}`;
+    } else {
+      strip.style.display = 'none';
+    }
+    if (!j.rows.length) {
+      tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#475569;padding:14px">No runs match this filter.</td></tr>';
+      return;
+    }
+    const fmt = (v, d=2) => v == null || isNaN(v) ? '—' : Number(v).toFixed(d);
+    const delta = (v) => {
+      if (v == null) return '—';
+      const c = v > 0.001 ? '#34d399' : v < -0.001 ? '#fb7185' : '#94a3b8';
+      const sign = v > 0 ? '+' : '';
+      return `<span style="color:${c}">${sign}${v.toFixed(2)}</span>`;
+    };
+    tbody.innerHTML = j.rows.map(r => {
+      const m = r.metrics || {};
+      const d = r.delta_vs_baseline || {};
+      const dateStr = r.finished_at
+        ? new Date(r.finished_at * 1000).toLocaleString()
+        : (r.recorded_at ? new Date(r.recorded_at * 1000).toLocaleString() : '—');
+      const baselinePill = r.is_baseline
+        ? `<span style="background:rgba(52,211,153,.18);color:#34d399;padding:1px 5px;border-radius:4px;font-size:.55rem;border:1px solid rgba(52,211,153,.4)">BASELINE</span>`
+        : `<button style="font-size:.55rem;padding:2px 7px;border-radius:5px;background:rgba(59,130,246,.15);color:#93c5fd;border:1px solid rgba(59,130,246,.4);cursor:pointer" onclick="anPromote('${esc(r.run_id)}')">Promote</button>`;
+      return `<tr style="border-bottom:1px solid rgba(148,163,184,.08)">
+        <td style="padding:6px;color:#cbd5e1;font-family:'JetBrains Mono';font-size:.58rem" title="${esc(r.run_id)}">${esc(r.run_id.slice(0, 22))}…</td>
+        <td style="padding:6px;color:#e2e8f0">${esc(r.model)} · ${esc(r.tf)}</td>
+        <td style="padding:6px;text-align:right;color:#cbd5e1">${fmt(m.accuracy_test)}</td>
+        <td style="padding:6px;text-align:right;color:#cbd5e1">${fmt(m.auc_roc, 3)}</td>
+        <td style="padding:6px;text-align:right;color:#fbbf24;font-weight:700">${fmt(r.score)}</td>
+        <td style="padding:6px;text-align:right">${delta(d.d_score)}</td>
+        <td style="padding:6px;text-align:right">${delta(d.d_accuracy_test)}</td>
+        <td style="padding:6px;text-align:right">${delta(d.d_auc_roc * 100)}</td>
+        <td style="padding:6px;color:#94a3b8;font-size:.58rem">${esc(dateStr)}</td>
+        <td style="padding:6px">${baselinePill}</td>
+      </tr>`;
+    }).join('');
+    // After each load, refresh the winning-hp panel if a specific cell is picked.
+    if (model && tf) anLoadWinningHp();
+  } catch (e) {
+    summary.innerHTML = `<span style="color:#fb7185">Fetch error: ${esc(e.message||e)}</span>`;
+  }
+}
+
+async function anBackfill() {
+  if (!confirm('Scan models/*_meta.json and import every training run we have a meta file for? Idempotent — safe to re-run.')) return;
+  try {
+    const r = await fetch('/api/analytics/backfill', { method: 'POST', headers: hdrs() });
+    const j = await r.json();
+    if (!j.ok) { alert('Backfill failed: ' + (j.error || 'unknown')); return; }
+    alert(`Backfill complete. Added ${j.added} run record(s).`);
+    anLoad();
+  } catch (e) {
+    alert('Backfill error: ' + (e.message || e));
+  }
+}
+
+async function anPromote(runId) {
+  if (!confirm(`Promote ${runId} as the new baseline for its (model, tf) cell?\n\nAll later runs in that cell will be re-scored against this run.`)) return;
+  try {
+    const r = await fetch('/api/analytics/baseline', {
+      method: 'POST', headers: hdrs(), body: JSON.stringify({run_id: runId}),
+    });
+    const j = await r.json();
+    if (!j.ok) { alert('Promote failed: ' + (j.error || 'unknown')); return; }
+    anLoad();
+  } catch (e) {
+    alert('Promote error: ' + (e.message || e));
+  }
+}
+
+async function anLoadWinningHp() {
+  const model = document.getElementById('an-model').value;
+  const tf    = document.getElementById('an-tf').value;
+  const out = document.getElementById('an-winning');
+  if (!model || !tf) {
+    out.textContent = 'Pick a specific model + TF to see winning hyperparameters.';
+    return;
+  }
+  try {
+    const r = await fetch(`/api/analytics/winning_hp?model=${encodeURIComponent(model)}&tf=${encodeURIComponent(tf)}`,
+                         { headers: hdrs() });
+    const j = await r.json();
+    if (!j.ok) { out.innerHTML = `<span style="color:#fb7185">Error: ${esc(j.error||'?')}</span>`; return; }
+    if (!j.winning) {
+      out.textContent = `No HP recorded for ${model} @ ${tf} yet.`;
+      return;
+    }
+    const w = j.winning;
+    const hpStr = JSON.stringify(w.best_hp || {}, null, 2);
+    out.innerHTML = `
+      <div><b>Best run:</b> ${esc(w.best_run_id)} · score=<b style="color:#fbbf24">${(w.best_score||0).toFixed(2)}</b> (over ${w.n_runs_considered} runs)</div>
+      <pre style="background:rgba(5,8,22,.7);border:1px solid rgba(148,163,184,.15);border-radius:6px;padding:8px;margin-top:8px;font-size:.6rem;color:#e2e8f0;overflow-x:auto">${esc(hpStr)}</pre>`;
+  } catch (e) {
+    out.innerHTML = `<span style="color:#fb7185">Fetch error: ${esc(e.message||e)}</span>`;
+  }
+}
+
+async function anLoadSuggestions() {
+  const out = document.getElementById('an-suggestions');
+  out.textContent = 'Running rule-based recommender across every (model, tf)…';
+  try {
+    const r = await fetch('/api/analytics/suggestions_all', { headers: hdrs() });
+    const j = await r.json();
+    if (!j.ok) { out.innerHTML = `<span style="color:#fb7185">Error: ${esc(j.error||'?')}</span>`; return; }
+    const cells = j.cells || [];
+    if (!cells.length) { out.textContent = 'No cells returned.'; return; }
+    out.innerHTML = `
+      <div style="margin-bottom:8px"><b>${cells.length}</b> cells scanned.</div>
+      <table style="width:100%;border-collapse:collapse;font-size:.6rem">
+        <thead><tr style="background:rgba(15,23,42,.6);color:#94a3b8;font-size:.55rem;text-transform:uppercase">
+          <th style="padding:5px;text-align:left">Model · TF</th>
+          <th style="padding:5px;text-align:left">Top recommendation</th>
+          <th style="padding:5px;text-align:right">Recs</th>
+          <th style="padding:5px;text-align:left">Action</th>
+        </tr></thead>
+        <tbody>${cells.map(c => {
+          const rec = c.top_rec;
+          const recText = rec ? (rec.title || rec.summary || JSON.stringify(rec).slice(0, 100)) : (c.notes && c.notes[0]) || '—';
+          const cnt = c.rec_count || 0;
+          return `<tr style="border-bottom:1px solid rgba(148,163,184,.08)">
+            <td style="padding:5px;color:#e2e8f0;font-weight:700">${esc(c.model)} · ${esc(c.tf)}</td>
+            <td style="padding:5px;color:#cbd5e1">${esc(recText)}</td>
+            <td style="padding:5px;text-align:right;color:${cnt > 0 ? '#fbbf24' : '#475569'}">${cnt}</td>
+            <td style="padding:5px"><button class="btn" style="padding:2px 8px;font-size:.55rem" onclick="trRunOne('${esc(c.model)}', '${esc(c.tf)}')">↻ Retrain</button></td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>`;
+  } catch (e) {
+    out.innerHTML = `<span style="color:#fb7185">Fetch error: ${esc(e.message||e)}</span>`;
+  }
+}
+
+// First load when the user clicks the Analytics nav-item.
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('[data-tab="analytics"]').forEach(btn => {
+    btn.addEventListener('click', () => setTimeout(() => {
+      if (activeTab === 'analytics') anLoad();
+    }, 100));
+  });
+});
 
 // ─── Auto-orchestrate (2026-05-13) ────────────────────────────────────────
 // Single button that asks the AI agents to (1) run the bake-off cut list,

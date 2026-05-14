@@ -6252,6 +6252,149 @@ def api_training_rankings():
     })
 
 
+# ─── Analytics tab — training run history + baseline tracking ──────────────
+# Phase D (2026-05-14). Backed by src/analytics/training_history.py.
+# Lazy-imported so dashboard startup stays fast even if the module is
+# rebuilt mid-session.
+
+_analytics_backfilled_once = False
+_analytics_backfill_lock = threading.Lock()
+
+
+def _ensure_analytics_backfill() -> int:
+    """Lazy one-shot backfill on first /api/analytics/runs call so the
+    Analytics tab has populated rows immediately for an empty install.
+    Idempotent — the underlying helper dedups by (meta_path, finished_at).
+    """
+    global _analytics_backfilled_once
+    if _analytics_backfilled_once:
+        return 0
+    with _analytics_backfill_lock:
+        if _analytics_backfilled_once:
+            return 0
+        try:
+            from src.analytics import training_history as th
+            n = th.backfill_from_meta_files()
+            _analytics_backfilled_once = True
+            return n
+        except Exception as e:
+            logging.getLogger(__name__).warning(
+                "analytics auto-backfill failed: %s", e)
+            return 0
+
+
+@app.route('/api/analytics/runs', methods=['GET'])
+@require_api_key
+def api_analytics_runs():
+    """Return history rows filtered by (model, tf), newest-first.
+
+    Query:
+      model — optional. Restricts to one model key.
+      tf    — optional. Restricts to one timeframe.
+      limit — optional. Caps the row count (default 50).
+    """
+    try:
+        from src.analytics import training_history as th
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'training_history import failed: {e}'}), 500
+    # First call: import existing model metas so the UI shows real data.
+    _ensure_analytics_backfill()
+    model = (request.args.get('model') or '').strip().lower() or None
+    tf    = (request.args.get('tf') or '').strip().lower() or None
+    try:
+        limit = int(request.args.get('limit', 50))
+    except (TypeError, ValueError):
+        limit = 50
+    rows = th.get_runs(model=model, tf=tf, limit=limit)
+    baseline = th.get_baseline(model, tf) if (model and tf) else None
+    return jsonify({
+        'ok': True, 'count': len(rows), 'rows': rows,
+        'baseline': baseline,
+        'filters': {'model': model, 'tf': tf, 'limit': limit},
+    })
+
+
+@app.route('/api/analytics/baseline', methods=['POST'])
+@require_api_key
+def api_analytics_promote_baseline():
+    """Promote a specific run_id to be the new baseline for its cell.
+    Body: {"run_id": "run_..."}"""
+    body = request.get_json(silent=True) or {}
+    run_id = (body.get('run_id') or '').strip()
+    if not run_id:
+        return jsonify({'ok': False, 'error': 'run_id required in body'}), 400
+    try:
+        from src.analytics import training_history as th
+        ok = th.promote_baseline(run_id)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'{type(e).__name__}: {e}'}), 500
+    if not ok:
+        return jsonify({'ok': False, 'error': f'run_id {run_id} not found'}), 404
+    return jsonify({'ok': True, 'promoted': run_id})
+
+
+@app.route('/api/analytics/winning_hp', methods=['GET'])
+@require_api_key
+def api_analytics_winning_hp():
+    """For a (model, tf), return the hyperparameters that produced the
+    best composite score across all recorded runs."""
+    try:
+        from src.analytics import training_history as th
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'import: {e}'}), 500
+    model = (request.args.get('model') or '').strip().lower()
+    tf    = (request.args.get('tf') or '').strip().lower()
+    if not model or not tf:
+        return jsonify({'ok': False, 'error': 'model and tf required'}), 400
+    result = th.winning_hyperparameters(model, tf)
+    return jsonify({'ok': True, 'model': model, 'tf': tf, 'winning': result})
+
+
+@app.route('/api/analytics/backfill', methods=['POST'])
+@require_api_key
+def api_analytics_backfill():
+    """One-shot operator action — scan models/*_meta.json and synthesize
+    history rows for runs that aren't already recorded."""
+    try:
+        from src.analytics import training_history as th
+        n = th.backfill_from_meta_files()
+        return jsonify({'ok': True, 'added': n})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'{type(e).__name__}: {e}'}), 500
+
+
+@app.route('/api/analytics/suggestions_all', methods=['GET'])
+@require_api_key
+def api_analytics_suggestions_all():
+    """Bundle wizard.suggest_for_model() for every (model, tf) the wizard
+    knows about. The Analytics tab's matrix card consumes this to drive
+    a one-screen "every cell + its top recommendation + Retrain button"
+    view. Heavy — wizard hits disk per cell — so cap to known cells."""
+    try:
+        from src.dashboard.wizard import (
+            suggest_for_model, EXPECTED_TFS_PER_MODEL,
+        )
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'import: {e}'}), 500
+    out = []
+    for model, tfs in EXPECTED_TFS_PER_MODEL.items():
+        for tf in tfs:
+            try:
+                rep = suggest_for_model(model, tf)
+                rep_dict = rep.to_dict() if hasattr(rep, 'to_dict') else {}
+                top = (rep_dict.get('recommendations') or [None])[0]
+                out.append({
+                    'model': model, 'tf': tf,
+                    'top_rec': top,
+                    'rec_count': len(rep_dict.get('recommendations') or []),
+                    'notes': rep_dict.get('notes') or [],
+                })
+            except Exception as exc:
+                out.append({'model': model, 'tf': tf,
+                            'error': f'{type(exc).__name__}: {exc}'})
+    return jsonify({'ok': True, 'count': len(out), 'cells': out})
+
+
 # ─── Data coverage + 1s→higher-TF resample endpoints ────────────────────────
 # Operator-triggered backfill of missing timeframes. We resample from the
 # canonical 1s archives in data/raw/historical/ rather than re-downloading
