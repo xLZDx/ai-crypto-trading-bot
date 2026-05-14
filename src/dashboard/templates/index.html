@@ -3452,20 +3452,22 @@ document.addEventListener('DOMContentLoaded', function() {
       </div>
 
       <div class="card" id="card-analytics-runs">
-        <div class="card-header"><span class="card-title">Run History</span></div>
+        <div class="card-header"><span class="card-title">Run History</span>
+          <span style="font-size:.55rem;color:#64748b;font-weight:600;letter-spacing:.04em">Click a header to sort. Promote = lock that run as the comparison reference for this cell.</span>
+        </div>
         <div class="card-body">
-          <table style="width:100%;border-collapse:collapse;font-size:.62rem">
+          <table style="width:100%;border-collapse:collapse;font-size:.62rem" id="an-runs-table">
             <thead>
-              <tr style="background:rgba(15,23,42,.6);color:#94a3b8;text-transform:uppercase;font-size:.55rem;letter-spacing:.06em">
-                <th style="padding:6px;text-align:left">Run</th>
-                <th style="padding:6px;text-align:left">Model · TF</th>
-                <th style="padding:6px;text-align:right">Acc%</th>
-                <th style="padding:6px;text-align:right">AUC</th>
-                <th style="padding:6px;text-align:right">Score</th>
-                <th style="padding:6px;text-align:right">Δ Score</th>
-                <th style="padding:6px;text-align:right">Δ Acc</th>
-                <th style="padding:6px;text-align:right">Δ AUC</th>
-                <th style="padding:6px;text-align:left">Date</th>
+              <tr style="background:rgba(15,23,42,.6);color:#94a3b8;text-transform:uppercase;font-size:.55rem;letter-spacing:.06em;cursor:pointer">
+                <th style="padding:6px;text-align:left" onclick="anSortRuns('run_id', this)" data-col="run_id">Run ▾</th>
+                <th style="padding:6px;text-align:left" onclick="anSortRuns('cell', this)" data-col="cell">Model · TF ▾</th>
+                <th style="padding:6px;text-align:right" onclick="anSortRuns('accuracy_test', this)" data-col="accuracy_test">Acc% ▾</th>
+                <th style="padding:6px;text-align:right" onclick="anSortRuns('auc_roc', this)" data-col="auc_roc">AUC ▾</th>
+                <th style="padding:6px;text-align:right" onclick="anSortRuns('score', this)" data-col="score">Score ▾</th>
+                <th style="padding:6px;text-align:right" onclick="anSortRuns('d_score', this)" data-col="d_score">Δ Score ▾</th>
+                <th style="padding:6px;text-align:right" onclick="anSortRuns('d_acc', this)" data-col="d_acc">Δ Acc ▾</th>
+                <th style="padding:6px;text-align:right" onclick="anSortRuns('d_auc', this)" data-col="d_auc">Δ AUC ▾</th>
+                <th style="padding:6px;text-align:left" onclick="anSortRuns('finished_at', this)" data-col="finished_at">Date ▾</th>
                 <th style="padding:6px;text-align:left">Action</th>
               </tr>
             </thead>
@@ -4561,8 +4563,8 @@ async function anLoad() {
         ? new Date(r.finished_at * 1000).toLocaleString()
         : (r.recorded_at ? new Date(r.recorded_at * 1000).toLocaleString() : '—');
       const baselinePill = r.is_baseline
-        ? `<span style="background:rgba(52,211,153,.18);color:#34d399;padding:1px 5px;border-radius:4px;font-size:.55rem;border:1px solid rgba(52,211,153,.4)">BASELINE</span>`
-        : `<button style="font-size:.55rem;padding:2px 7px;border-radius:5px;background:rgba(59,130,246,.15);color:#93c5fd;border:1px solid rgba(59,130,246,.4);cursor:pointer" onclick="anPromote('${esc(r.run_id)}')">Promote</button>`;
+        ? `<span title="This run is the reference. Every later run in the same (model, tf) is scored against it." style="background:rgba(52,211,153,.18);color:#34d399;padding:1px 5px;border-radius:4px;font-size:.55rem;border:1px solid rgba(52,211,153,.4)">BASELINE</span>`
+        : `<button title="Make this run the new comparison baseline for (${esc(r.model)}, ${esc(r.tf)}). Δ Score / Δ Acc / Δ AUC on future runs will be computed relative to this run's metrics." style="font-size:.55rem;padding:2px 7px;border-radius:5px;background:rgba(59,130,246,.15);color:#93c5fd;border:1px solid rgba(59,130,246,.4);cursor:pointer" onclick="anPromote('${esc(r.run_id)}', '${esc(r.model)}', '${esc(r.tf)}')">Set as baseline</button>`;
       return `<tr style="border-bottom:1px solid rgba(148,163,184,.08)">
         <td style="padding:6px;color:#cbd5e1;font-family:'JetBrains Mono';font-size:.58rem" title="${esc(r.run_id)}">${esc(r.run_id.slice(0, 22))}…</td>
         <td style="padding:6px;color:#e2e8f0">${esc(r.model)} · ${esc(r.tf)}</td>
@@ -4596,8 +4598,12 @@ async function anBackfill() {
   }
 }
 
-async function anPromote(runId) {
-  if (!confirm(`Promote ${runId} as the new baseline for its (model, tf) cell?\n\nAll later runs in that cell will be re-scored against this run.`)) return;
+async function anPromote(runId, model, tf) {
+  const cellLabel = (model && tf) ? `${model} @ ${tf}` : runId;
+  if (!confirm(`Set this run as the new baseline for ${cellLabel}?\n\n` +
+               `Future Δ Score / Δ Acc / Δ AUC columns will be calculated\n` +
+               `against THIS run's metrics. Use when you've confirmed this\n` +
+               `run is a known-good reference (e.g., post-fix, known data).`)) return;
   try {
     const r = await fetch('/api/analytics/baseline', {
       method: 'POST', headers: hdrs(), body: JSON.stringify({run_id: runId}),
@@ -4608,6 +4614,34 @@ async function anPromote(runId) {
   } catch (e) {
     alert('Promote error: ' + (e.message || e));
   }
+}
+
+let _anRunsSortDir = {};
+function anSortRuns(col, th) {
+  const tbody = document.getElementById('an-runs-tbody');
+  if (!tbody) return;
+  _anRunsSortDir[col] = !_anRunsSortDir[col];
+  const dir = _anRunsSortDir[col] ? 1 : -1;
+  // Read column indexes from the rendered header order.
+  const colIdx = {
+    run_id: 0, cell: 1, accuracy_test: 2, auc_roc: 3, score: 4,
+    d_score: 5, d_acc: 6, d_auc: 7, finished_at: 8,
+  }[col];
+  if (colIdx == null) return;
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  // Skip the empty-state row (single td with colspan).
+  const dataRows = rows.filter(r => r.children.length > 2);
+  dataRows.sort((a, b) => {
+    let av = (a.children[colIdx]?.textContent || '').trim();
+    let bv = (b.children[colIdx]?.textContent || '').trim();
+    // Numeric vs string: try parsing as number first.
+    const an = parseFloat(av.replace(/[^-0-9.]/g, ''));
+    const bn = parseFloat(bv.replace(/[^-0-9.]/g, ''));
+    if (!isNaN(an) && !isNaN(bn)) return dir * (an - bn);
+    return dir * av.localeCompare(bv);
+  });
+  // Re-append in sorted order; non-data rows stay at the top.
+  dataRows.forEach(r => tbody.appendChild(r));
 }
 
 async function anLoadWinningHp() {
@@ -4637,6 +4671,27 @@ async function anLoadWinningHp() {
   }
 }
 
+// Phase G (2026-05-14) — Severity classifier for analytics suggestions.
+// Same set used by the Wizard card (Phase H wires it up there too).
+// CRITICAL: model missing, drift baseline missing, AUC at noise floor.
+// MODERATE: AUC below target (0.55), stale training, sub-noise win-rate.
+function _anClassifySeverity(rec, recsCount) {
+  const text = ((rec && (rec.title || rec.summary || rec.text)) || '').toLowerCase();
+  if (!rec) return { sev: 'ok', label: 'OK', color: '#34d399', bg: 'rgba(52,211,153,.18)' };
+  if (text.includes('no trained') || text.includes('model exists') ||
+      text.includes('drift baseline missing') || text.includes('noise floor')) {
+    return { sev: 'critical', label: 'CRITICAL', color: '#fb7185', bg: 'rgba(251,113,133,.20)' };
+  }
+  if (text.includes('below target') || text.includes('stale') ||
+      text.includes('feature poverty')) {
+    return { sev: 'moderate', label: 'MODERATE', color: '#fbbf24', bg: 'rgba(251,191,36,.18)' };
+  }
+  return { sev: 'info', label: 'INFO', color: '#93c5fd', bg: 'rgba(59,130,246,.18)' };
+}
+
+// State for "Apply selected" — keyed by `<model>@<tf>`.
+window._anSuggestionSelection = window._anSuggestionSelection || new Set();
+
 async function anLoadSuggestions() {
   const out = document.getElementById('an-suggestions');
   out.textContent = 'Running rule-based recommender across every (model, tf)…';
@@ -4646,22 +4701,42 @@ async function anLoadSuggestions() {
     if (!j.ok) { out.innerHTML = `<span style="color:#fb7185">Error: ${esc(j.error||'?')}</span>`; return; }
     const cells = j.cells || [];
     if (!cells.length) { out.textContent = 'No cells returned.'; return; }
+    // Sort: CRITICAL first, then MODERATE, then OK/INFO. Stable.
+    const _sevRank = { critical: 0, moderate: 1, info: 2, ok: 3 };
+    cells.forEach(c => { c._sev = _anClassifySeverity(c.top_rec, c.rec_count); });
+    cells.sort((a, b) => (_sevRank[a._sev.sev] - _sevRank[b._sev.sev]));
     out.innerHTML = `
-      <div style="margin-bottom:8px"><b>${cells.length}</b> cells scanned.</div>
-      <table style="width:100%;border-collapse:collapse;font-size:.6rem">
+      <div style="margin-bottom:8px;display:flex;align-items:center;justify-content:space-between">
+        <span><b>${cells.length}</b> cells · sorted by severity. Check rows then Apply Selected, or click Apply All.</span>
+        <span style="display:flex;gap:8px">
+          <button class="btn" style="padding:4px 12px;font-size:.6rem;background:rgba(251,113,133,.18);color:#fb7185;border:1px solid rgba(251,113,133,.4)"
+                  onclick="anApplyAll()" title="Enqueue a retrain for EVERY cell shown below.">▶ Apply ALL</button>
+          <button class="btn" style="padding:4px 12px;font-size:.6rem"
+                  onclick="anApplySelected()" title="Enqueue a retrain for the checked rows.">▶ Apply Selected</button>
+        </span>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:.6rem" id="an-suggestions-table">
         <thead><tr style="background:rgba(15,23,42,.6);color:#94a3b8;font-size:.55rem;text-transform:uppercase">
-          <th style="padding:5px;text-align:left">Model · TF</th>
-          <th style="padding:5px;text-align:left">Top recommendation</th>
-          <th style="padding:5px;text-align:right">Recs</th>
+          <th style="padding:5px;width:30px"><input type="checkbox" id="an-sel-all" onclick="anSelAll(this.checked)"></th>
+          <th style="padding:5px;text-align:left;cursor:pointer" onclick="anSortSuggestions('model')">Model · TF</th>
+          <th style="padding:5px;text-align:left">Severity</th>
+          <th style="padding:5px;text-align:left">Top recommendation · why</th>
+          <th style="padding:5px;text-align:right;cursor:pointer" onclick="anSortSuggestions('recs')">Recs</th>
           <th style="padding:5px;text-align:left">Action</th>
         </tr></thead>
         <tbody>${cells.map(c => {
           const rec = c.top_rec;
           const recText = rec ? (rec.title || rec.summary || JSON.stringify(rec).slice(0, 100)) : (c.notes && c.notes[0]) || '—';
           const cnt = c.rec_count || 0;
-          return `<tr style="border-bottom:1px solid rgba(148,163,184,.08)">
+          const sev = c._sev;
+          const cellKey = `${c.model}@${c.tf}`;
+          const checked = window._anSuggestionSelection.has(cellKey) ? 'checked' : '';
+          const why = rec && rec.detail ? rec.detail : (rec && rec.reason ? rec.reason : '');
+          return `<tr style="border-bottom:1px solid rgba(148,163,184,.08)" data-cell="${esc(cellKey)}" data-sev="${sev.sev}">
+            <td style="padding:5px;text-align:center"><input type="checkbox" class="an-sug-chk" data-cell="${esc(cellKey)}" ${checked} onchange="anToggleRow('${esc(cellKey)}', this.checked)"></td>
             <td style="padding:5px;color:#e2e8f0;font-weight:700">${esc(c.model)} · ${esc(c.tf)}</td>
-            <td style="padding:5px;color:#cbd5e1">${esc(recText)}</td>
+            <td style="padding:5px"><span style="display:inline-block;padding:2px 7px;border-radius:999px;font-size:.52rem;font-weight:800;letter-spacing:.06em;background:${sev.bg};color:${sev.color};border:1px solid ${sev.color}66">${sev.label}</span></td>
+            <td style="padding:5px;color:#cbd5e1">${esc(recText)}${why ? `<div style="color:#64748b;font-size:.55rem;margin-top:2px">${esc(why)}</div>` : ''}</td>
             <td style="padding:5px;text-align:right;color:${cnt > 0 ? '#fbbf24' : '#475569'}">${cnt}</td>
             <td style="padding:5px"><button class="btn" style="padding:2px 8px;font-size:.55rem" onclick="trRunOne('${esc(c.model)}', '${esc(c.tf)}')">↻ Retrain</button></td>
           </tr>`;
@@ -4672,6 +4747,87 @@ async function anLoadSuggestions() {
   }
 }
 
+// Phase G (2026-05-14) — Apply All / Apply Selected handlers.
+// Both POST /api/training/run/<key>?tf=<tf> for each cell, sequentially
+// with a short stagger so the cluster orchestrator doesn't see a thundering
+// herd of submits in the same millisecond.
+async function _anEnqueueRetrain(model, tf) {
+  try {
+    const r = await fetch(`/api/training/run/${encodeURIComponent(model)}?tf=${encodeURIComponent(tf)}`,
+                          { method: 'POST', headers: hdrs() });
+    return await r.json();
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
+}
+
+async function anApplyAll() {
+  const rows = document.querySelectorAll('#an-suggestions-table tbody tr[data-cell]');
+  if (!rows.length) { alert('No cells loaded — click Load suggestions first.'); return; }
+  if (!confirm(`Enqueue retrain for ALL ${rows.length} cells? This will queue up to ${rows.length} training jobs.`)) return;
+  let ok = 0, fail = 0;
+  for (const row of rows) {
+    const cell = row.getAttribute('data-cell');
+    const [model, tf] = cell.split('@');
+    const result = await _anEnqueueRetrain(model, tf);
+    if (result.ok || result.job_id) { ok++; } else { fail++; }
+    await new Promise(r => setTimeout(r, 200));   // stagger
+  }
+  alert(`Apply All complete: ${ok} enqueued, ${fail} failed.`);
+}
+
+async function anApplySelected() {
+  const checked = Array.from(document.querySelectorAll('.an-sug-chk:checked'));
+  if (!checked.length) { alert('No rows checked.'); return; }
+  if (!confirm(`Enqueue retrain for ${checked.length} selected cell(s)?`)) return;
+  let ok = 0, fail = 0;
+  for (const chk of checked) {
+    const cell = chk.getAttribute('data-cell');
+    const [model, tf] = cell.split('@');
+    const result = await _anEnqueueRetrain(model, tf);
+    if (result.ok || result.job_id) { ok++; } else { fail++; }
+    await new Promise(r => setTimeout(r, 200));
+  }
+  alert(`Apply Selected complete: ${ok} enqueued, ${fail} failed.`);
+  // Clear selection state after applying.
+  window._anSuggestionSelection.clear();
+  document.querySelectorAll('.an-sug-chk').forEach(c => { c.checked = false; });
+  const all = document.getElementById('an-sel-all');
+  if (all) all.checked = false;
+}
+
+function anSelAll(checked) {
+  document.querySelectorAll('.an-sug-chk').forEach(c => {
+    c.checked = checked;
+    const cell = c.getAttribute('data-cell');
+    if (checked) window._anSuggestionSelection.add(cell);
+    else         window._anSuggestionSelection.delete(cell);
+  });
+}
+
+function anToggleRow(cellKey, checked) {
+  if (checked) window._anSuggestionSelection.add(cellKey);
+  else         window._anSuggestionSelection.delete(cellKey);
+}
+
+let _anSortDir = {};
+function anSortSuggestions(col) {
+  const tbody = document.querySelector('#an-suggestions-table tbody');
+  if (!tbody) return;
+  _anSortDir[col] = !_anSortDir[col];
+  const dir = _anSortDir[col] ? 1 : -1;
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  rows.sort((a, b) => {
+    const ak = col === 'model' ? (a.getAttribute('data-cell') || '')
+                               : Number(a.children[4]?.textContent || 0);
+    const bk = col === 'model' ? (b.getAttribute('data-cell') || '')
+                               : Number(b.children[4]?.textContent || 0);
+    if (typeof ak === 'string') return dir * ak.localeCompare(bk);
+    return dir * (ak - bk);
+  });
+  rows.forEach(r => tbody.appendChild(r));
+}
+
 // First load when the user clicks the Analytics nav-item.
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('[data-tab="analytics"]').forEach(btn => {
@@ -4679,6 +4835,11 @@ document.addEventListener('DOMContentLoaded', () => {
       if (activeTab === 'analytics') anLoad();
     }, 100));
   });
+  // Phase G — auto-load Winning HP when model or tf changes.
+  const modelEl = document.getElementById('an-model');
+  const tfEl    = document.getElementById('an-tf');
+  if (modelEl) modelEl.addEventListener('change', () => { anLoad(); anLoadWinningHp(); });
+  if (tfEl)    tfEl.addEventListener('change',    () => { anLoad(); anLoadWinningHp(); });
 });
 
 // ─── Auto-orchestrate (2026-05-13) ────────────────────────────────────────
