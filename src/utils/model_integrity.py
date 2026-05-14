@@ -100,12 +100,30 @@ def _load_key() -> Optional[bytes]:
     "checked, absent" (None) so the env is only read once, and the
     one-shot WARNING fires exactly once even when key stays unset.
     Returns None when unset (callers must treat as fail-open).
+
+    Phase 2g follow-up (2026-05-14) — if the env var isn't in os.environ
+    on first read, attempt load_dotenv() from project_root/.env. This
+    handles trainer subprocesses spawned by PowerShell launchers or
+    by python -m src.engine.train_* that never call load_dotenv themselves.
+    Pre-fix: every such spawn signed the model with key=None (fail-open)
+    leaving the manifest's expected HMAC stale, which surfaced as a
+    banner CRITICAL on next bot model load.
     """
     global _cached_key, _key_warning_emitted, _short_key_warning_emitted
     with _state_lock:
         if _cached_key is not _UNSET:
             return _cached_key  # type: ignore[return-value]
         raw = (os.environ.get(_KEY_ENV) or "").strip()
+        if not raw:
+            # Try one-shot load_dotenv to recover the key from .env when
+            # this module is imported in a subprocess that bypassed the
+            # standard dashboard / bot startup sequence.
+            try:
+                from dotenv import load_dotenv as _ld
+                _ld(os.path.join(_project_root(), ".env"), override=False)
+                raw = (os.environ.get(_KEY_ENV) or "").strip()
+            except Exception:
+                pass
         if not raw:
             if not _key_warning_emitted:
                 logger.warning(

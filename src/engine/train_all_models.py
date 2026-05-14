@@ -6,6 +6,20 @@ project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+# Phase 2g follow-up (2026-05-14) — load .env so MODEL_MANIFEST_KEY (and
+# any other dashboard-side secrets) are in os.environ when sign_model()
+# fires inside the trainer modules. Pre-fix, every train_all_models.py
+# run that overwrote scalping_model.joblib left the file UNSIGNED because
+# sign_model's _load_key() saw MODEL_MANIFEST_KEY=unset and returned None
+# (fail-open path). On the next bot reload the manifest's old HMAC didn't
+# match the new file bytes -> banner CRITICAL. This load_dotenv ensures
+# the trainer subprocess has the same env as the dashboard that spawned it.
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv(os.path.join(project_root, '.env'))
+except Exception:
+    pass
+
 # Redirect all caches to D: drive before any imports that write to C:
 _cache = os.path.join(project_root, 'data', 'cache')
 for _sub in ('temp', 'torch', 'huggingface', 'cuda', 'numba', 'pip'):
