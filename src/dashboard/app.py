@@ -912,6 +912,100 @@ def api_process_registry_reap():
         return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
 
 
+# ============================================================
+# Phase 2d (2026-05-14) — Process control surface for the Monitor tab.
+# /api/processes/list   GET   — table of all roles + health + PID + uptime
+# /api/processes/kill   POST  — kill a PID (recursive)
+# /api/processes/start  POST  — spawn a role's launcher
+# /api/processes/health POST  — force-refresh health snapshot now
+# ============================================================
+
+@app.route('/api/processes/list', methods=['GET'])
+@require_api_key
+def api_processes_list():
+    """Return the per-role status table for the Monitor tab's Processes card.
+
+    Each entry is computed fresh on every poll so the operator sees real
+    state, not a stale snapshot. The background health loop runs every 60s
+    independently and feeds AUTO_KILL_BAD_HEALTH (if enabled)."""
+    try:
+        from src.dashboard.process_manager import get_manager
+        pm = get_manager()
+        pm.refresh_all()  # fresh snapshot at poll time
+        return jsonify({'ok': True, 'processes': pm.list(),
+                        'auto_kill_enabled': (os.environ.get('AUTO_KILL_BAD_HEALTH', 'false').lower()
+                                               in ('1', 'true', 'yes'))})
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
+
+
+@app.route('/api/processes/kill/<int:pid>', methods=['POST'])
+@require_api_key
+def api_processes_kill(pid: int):
+    """Kill an arbitrary PID. Refuses to kill PID 0 or our own dashboard PID
+    (so the operator can't accidentally kill the very process serving the
+    UI). Recursive — kills child processes first."""
+    if pid <= 0:
+        return jsonify({'ok': False, 'error': 'PID must be > 0'}), 400
+    if pid == os.getpid():
+        return jsonify({'ok': False,
+                        'error': 'refusing to kill the dashboard process serving this request'}), 400
+    try:
+        from src.dashboard.process_manager import get_manager
+        result = get_manager().kill(int(pid))
+        status_code = 200 if result.get('ok') else 500
+        return jsonify(result), status_code
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
+
+
+@app.route('/api/processes/start/<role>', methods=['POST'])
+@require_api_key
+def api_processes_start(role: str):
+    """Spawn the launcher for the given role. Refuses if the role is
+    already alive (use /kill first then /start to restart)."""
+    try:
+        from src.dashboard.process_manager import get_manager, ROLE_SPECS
+        if role not in ROLE_SPECS:
+            return jsonify({'ok': False,
+                            'error': f'unknown role: {role}',
+                            'valid_roles': sorted(ROLE_SPECS.keys())}), 400
+        result = get_manager().start(role)
+        status_code = 200 if result.get('ok') else 409  # 409 if already alive
+        return jsonify(result), status_code
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
+
+
+@app.route('/api/processes/health', methods=['POST'])
+@require_api_key
+def api_processes_health_refresh():
+    """Force an immediate health-check pass for every role. Same logic as
+    the background loop but on-demand. Used by the UI's manual refresh."""
+    try:
+        from src.dashboard.process_manager import get_manager
+        pm = get_manager()
+        pm.refresh_all()
+        return jsonify({'ok': True, 'processes': pm.list()})
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
+
+
+# Kick the health loop on first import. Idempotent so reloads don't spawn
+# duplicate threads. Auto-kill is OFF unless AUTO_KILL_BAD_HEALTH=true.
+def _start_process_manager_loop_once() -> None:
+    try:
+        from src.dashboard.process_manager import get_manager
+        get_manager().start_health_loop(interval_s=60)
+    except Exception as exc:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "Failed to start ProcessManager health loop: %s", exc,
+        )
+
+_start_process_manager_loop_once()
+
+
 @app.route('/api/monitor/health')
 @require_api_key
 def monitor_health():

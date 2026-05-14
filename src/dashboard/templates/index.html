@@ -2470,6 +2470,65 @@ document.addEventListener('DOMContentLoaded', function() {
     <!-- ══════════ TAB: MONITOR & LOGS ══════════ -->
     <div id="tab-monitor" class="tab-pane">
 
+      <!-- ════════════════════════════════════════════════════════════════
+           Processes (Phase 2d, 2026-05-14) — operator control surface.
+           List every known role, show health + uptime + last activity,
+           and provide Kill / Restart buttons. Auto-kill is off by default;
+           enable via AUTO_KILL_BAD_HEALTH=true in .env to have the loop
+           kill any role that fails 3 consecutive health checks.
+           ════════════════════════════════════════════════════════════════ -->
+      <style>
+        .pm-row{display:grid;grid-template-columns:1.6fr 70px 110px 130px 90px auto;gap:8px;
+                align-items:center;padding:6px 10px;border-bottom:1px solid rgba(148,163,184,.07);
+                font-size:.7rem;font-family:'JetBrains Mono',monospace}
+        .pm-row.header{font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;font-size:.58rem;background:rgba(30,41,59,.45)}
+        .pm-row:hover:not(.header){background:rgba(30,41,59,.25)}
+        .pm-status{display:inline-flex;align-items:center;gap:5px;font-weight:700}
+        .pm-status .pm-dot{width:7px;height:7px;border-radius:50%}
+        .pm-status.ok{color:#34d399}
+        .pm-status.ok .pm-dot{background:#34d399;box-shadow:0 0 5px #34d39988}
+        .pm-status.stale{color:#fbbf24}
+        .pm-status.stale .pm-dot{background:#fbbf24;box-shadow:0 0 5px #fbbf2488}
+        .pm-status.dead{color:#fb7185}
+        .pm-status.dead .pm-dot{background:#fb7185}
+        .pm-status.unknown{color:#64748b}
+        .pm-status.unknown .pm-dot{background:#64748b}
+        .pm-btn{padding:3px 10px;border-radius:5px;font-size:.6rem;font-weight:700;
+                cursor:pointer;text-transform:uppercase;letter-spacing:.05em;border:1px solid}
+        .pm-btn.kill{background:rgba(251,113,133,.15);color:#fb7185;border-color:rgba(251,113,133,.35)}
+        .pm-btn.kill:hover{background:rgba(251,113,133,.28)}
+        .pm-btn.kill:disabled{opacity:.35;cursor:not-allowed;background:rgba(148,163,184,.08);color:#475569;border-color:rgba(148,163,184,.15)}
+        .pm-btn.start{background:rgba(52,211,153,.15);color:#34d399;border-color:rgba(52,211,153,.3);margin-left:5px}
+        .pm-btn.start:hover{background:rgba(52,211,153,.28)}
+        .pm-btn.start:disabled{opacity:.35;cursor:not-allowed;background:rgba(148,163,184,.08);color:#475569;border-color:rgba(148,163,184,.15)}
+        #pm-auto-kill-chip{padding:2px 8px;border-radius:4px;font-size:.55rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
+        #pm-auto-kill-chip.on{background:rgba(251,113,133,.2);color:#fb7185;border:1px solid rgba(251,113,133,.4)}
+        #pm-auto-kill-chip.off{background:rgba(148,163,184,.12);color:#94a3b8;border:1px solid rgba(148,163,184,.2)}
+      </style>
+      <div class="card" id="card-processes" style="margin-bottom:14px">
+        <div class="card-header">
+          <span class="card-title">🧩 Processes</span>
+          <div style="display:flex;gap:6px;align-items:center">
+            <span id="pm-auto-kill-chip" class="off">Auto-kill OFF</span>
+            <button onclick="pmRefresh()" style="padding:4px 10px;cursor:pointer;font-size:.62rem;border-radius:5px;background:rgba(59,130,246,.18);color:#93c5fd;border:1px solid rgba(59,130,246,.35)">↻ Refresh</button>
+          </div>
+        </div>
+        <div class="card-instructions">
+          Every role the bot needs to run. Green = healthy, yellow = stale (alive but logs not advancing), red = dead. Click <b>Kill</b> to terminate a running PID, <b>Start</b> to spawn a stopped role. Health is rechecked every 60s in the background; this table auto-refreshes every 30s.
+        </div>
+        <div class="card-body">
+          <div class="pm-row header">
+            <span>Role</span>
+            <span>PID</span>
+            <span>Status</span>
+            <span>Last activity</span>
+            <span>Uptime</span>
+            <span style="text-align:right">Actions</span>
+          </div>
+          <div id="pm-rows">Loading…</div>
+        </div>
+      </div>
+
       <!-- Process Registry (Phase X1.1, 2026-05-13) — singleton-enforced
            role table. Every long-running process claims a role; the reaper
            drops zombie entries every 60s. -->
@@ -4294,6 +4353,105 @@ async function reapZombies() {
 }
 
 document.addEventListener('DOMContentLoaded', () => setTimeout(loadProcessRegistry, 800));
+
+// ────────────────────────────────────────────────────────────────────────
+// Phase 2d (2026-05-14) — Processes card on Monitor tab.
+// Polls /api/processes/list every 30s. Kill/Start use confirm() guards.
+// ────────────────────────────────────────────────────────────────────────
+
+function _fmtUptime(s) {
+  s = Math.max(0, Number(s) || 0);
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 's';
+  const h = Math.floor(s/3600);
+  const m = Math.floor((s%3600)/60);
+  return h + 'h ' + m + 'm';
+}
+
+function _fmtLastActivity(mtime) {
+  if (!mtime) return '—';
+  const age = Math.floor(Date.now()/1000 - Number(mtime));
+  if (age < 0) return 'future?';
+  if (age < 60) return age + 's ago';
+  if (age < 3600) return Math.floor(age/60) + 'm ago';
+  return Math.floor(age/3600) + 'h ago';
+}
+
+async function pmRefresh() {
+  try {
+    const r = await fetch('/api/processes/list', { headers: hdrs() });
+    const j = await r.json();
+    if (!j.ok) {
+      document.getElementById('pm-rows').innerHTML =
+        `<div style="padding:14px;color:#fb7185">Error: ${esc(j.error || 'unknown')}</div>`;
+      return;
+    }
+    const chip = document.getElementById('pm-auto-kill-chip');
+    if (chip) {
+      chip.className = j.auto_kill_enabled ? 'on' : 'off';
+      chip.textContent = j.auto_kill_enabled ? 'Auto-kill ON' : 'Auto-kill OFF';
+    }
+    const rows = (j.processes || []).map(p => {
+      const sc = p.status || 'unknown';
+      const pidTxt = p.pid ? String(p.pid) : '—';
+      const killDisabled = !p.pid || sc === 'dead' ? 'disabled' : '';
+      const startDisabled = sc !== 'dead' ? 'disabled' : '';
+      const titleErr = p.last_error ? ` title="${esc(p.last_error)}"` : '';
+      return `
+        <div class="pm-row">
+          <span title="${esc(p.role)}">${esc(p.label || p.role)}</span>
+          <span>${pidTxt}</span>
+          <span class="pm-status ${sc}"${titleErr}><span class="pm-dot"></span>${esc(sc)}</span>
+          <span>${_fmtLastActivity(p.last_log_mtime)}</span>
+          <span>${_fmtUptime(p.uptime_s)}</span>
+          <span style="text-align:right">
+            <button class="pm-btn kill" ${killDisabled}
+              onclick="pmKill(${p.pid}, '${esc(p.role)}')">Kill</button>
+            <button class="pm-btn start" ${startDisabled}
+              onclick="pmStart('${esc(p.role)}')">Start</button>
+          </span>
+        </div>`;
+    }).join('');
+    document.getElementById('pm-rows').innerHTML = rows ||
+      '<div style="padding:14px;color:#94a3b8">No roles registered.</div>';
+  } catch (e) {
+    document.getElementById('pm-rows').innerHTML =
+      `<div style="padding:14px;color:#fb7185">Fetch error: ${esc(e.message || e)}</div>`;
+  }
+}
+
+async function pmKill(pid, role) {
+  if (!pid) return;
+  if (!confirm(`Kill role "${role}" (PID ${pid})? The process tree (including children) will be terminated.`)) return;
+  try {
+    const r = await fetch(`/api/processes/kill/${pid}`, { method: 'POST', headers: hdrs() });
+    const j = await r.json();
+    if (!j.ok) { alert('Kill failed: ' + (j.error || 'unknown')); }
+    setTimeout(pmRefresh, 800);
+  } catch (e) {
+    alert('Kill error: ' + (e.message || e));
+  }
+}
+
+async function pmStart(role) {
+  if (!confirm(`Start role "${role}"? This spawns the role's launcher as a detached process.`)) return;
+  try {
+    const r = await fetch(`/api/processes/start/${encodeURIComponent(role)}`,
+      { method: 'POST', headers: hdrs() });
+    const j = await r.json();
+    if (!j.ok) {
+      alert('Start failed: ' + (j.error || 'unknown') +
+            (j.existing_pid ? ` (already alive as PID ${j.existing_pid})` : ''));
+    }
+    setTimeout(pmRefresh, 1200);
+  } catch (e) {
+    alert('Start error: ' + (e.message || e));
+  }
+}
+
+// First load + 30s poll while Monitor tab is active.
+document.addEventListener('DOMContentLoaded', () => setTimeout(pmRefresh, 900));
+setInterval(() => { if (activeTab === 'monitor') pmRefresh(); }, 30_000);
 
 async function runAutoOrchestrate() {
   const btn  = document.getElementById('auto-orch-btn');
