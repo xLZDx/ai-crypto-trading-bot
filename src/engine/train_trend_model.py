@@ -369,6 +369,16 @@ def train_trend_model(timeframe: str = '1h'):
     sign_model(str(paths['model']))
     log.info("Model saved -> %s", paths['model'])
 
+    # Phase 6b wire-in (2026-05-14) — persist the training feature
+    # distribution so drift_monitor's hourly poll can detect when live
+    # features drift from this trained baseline. Best-effort: a failure
+    # here MUST NOT abort the training (we already have a signed model).
+    try:
+        from src.risk.drift_baseline import save_baseline
+        save_baseline('trend', timeframe, X)
+    except Exception as _e:
+        log.warning("[trend][%s] save_baseline failed: %s", timeframe, _e)
+
     meta = {
         "model": "Trend (HistGBT + Calibrated)",
         "accuracy": accuracy * 100,

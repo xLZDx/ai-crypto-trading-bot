@@ -416,6 +416,13 @@ def train_meta_labeler(
     sign_model(str(paths['model']))
     log.info("Meta-labeler saved -> %s", paths['model'])
 
+    # Phase 6b wire-in — persist training feature distribution baseline.
+    try:
+        from src.risk.drift_baseline import save_baseline
+        save_baseline('meta', timeframe, X)
+    except Exception as _e:
+        log.warning("[meta][%s] save_baseline failed: %s", timeframe, _e)
+
     meta = {
         "model": "Meta-Labeler (HistGBT + Calibrated, AFML asymmetric barriers)",
         "accuracy": accuracy * 100,

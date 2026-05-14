@@ -256,6 +256,13 @@ def train_futures_model(timeframe: str = '1h'):
     sign_model(str(paths['model']))
     log.info("Model saved -> %s", paths['model'])
 
+    # Phase 6b wire-in — persist training feature distribution baseline.
+    try:
+        from src.risk.drift_baseline import save_baseline
+        save_baseline('futures', timeframe, X)
+    except Exception as _e:
+        log.warning("[futures][%s] save_baseline failed: %s", timeframe, _e)
+
     meta = {
         "model": "Futures Short (HistGBT + Calibrated)",
         "accuracy": accuracy * 100,
