@@ -127,6 +127,26 @@ def prepare_trend_data(filepath, timeframe: str = '1h', symbol: str | None = Non
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     df = df.sort_values('timestamp').reset_index(drop=True)
 
+    # Phase 4 (2026-05-14) — F1 data-integrity gate. Pandera schema +
+    # bounds + monotonic-timestamp + gap/zero-volume/spike detection.
+    # DATA_QUALITY_MODE=enforce (default) raises on hard failures so the
+    # trainer aborts instead of fitting to corrupt input. Soft warnings
+    # are persisted into the report and logged.
+    try:
+        from src.utils.data_quality import validate_ohlcv
+        df, dq_report = validate_ohlcv(df, symbol=symbol or '', timeframe=timeframe)
+        if dq_report.soft_warnings:
+            log.info("[trend][%s/%s] data quality: %s",
+                     symbol, timeframe, dq_report.soft_warnings[:3])
+    except Exception as e:
+        # Re-raise DataQualityError; other exceptions get wrapped so the
+        # trainer error message is informative.
+        from src.utils.data_quality import DataQualityError
+        if isinstance(e, DataQualityError):
+            raise
+        log.warning("[trend][%s/%s] data_quality check skipped: %s",
+                    symbol, timeframe, e)
+
     # Merge funding BEFORE add_funding_zscore so the rolling Z computes
     # over a real series instead of constant zeros.
     if symbol is not None:
