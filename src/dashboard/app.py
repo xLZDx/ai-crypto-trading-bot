@@ -930,6 +930,7 @@ def api_processes_list():
     independently and feeds AUTO_KILL_BAD_HEALTH (if enabled)."""
     try:
         from src.dashboard.process_manager import get_manager
+        _ensure_process_manager_loop()  # lazy-start the background loop
         pm = get_manager()
         pm.refresh_all()  # fresh snapshot at poll time
         return jsonify({'ok': True, 'processes': pm.list(),
@@ -977,6 +978,44 @@ def api_processes_start(role: str):
         return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
 
 
+@app.route('/api/processes/restart/<role>', methods=['POST'])
+@require_api_key
+def api_processes_restart(role: str):
+    """Kill the current PID for `role` (if any) then start it fresh.
+    Returns the start() result. If the role wasn't alive, this is equivalent
+    to start. If the kill fails, start is skipped and the kill error is returned."""
+    try:
+        from src.dashboard.process_manager import get_manager, ROLE_SPECS, _find_role_pid
+        if role not in ROLE_SPECS:
+            return jsonify({'ok': False,
+                            'error': f'unknown role: {role}',
+                            'valid_roles': sorted(ROLE_SPECS.keys())}), 400
+        # Refuse to restart the dashboard from inside itself — would tear down
+        # the very process serving this request before it returns.
+        if role == 'dashboard':
+            return jsonify({'ok': False,
+                            'error': 'refusing to restart dashboard from inside itself '
+                                     '(use the OS / restart_all.ps1)'}), 400
+        pm = get_manager()
+        pid = _find_role_pid(ROLE_SPECS[role])
+        kill_result = None
+        if pid:
+            kill_result = pm.kill(int(pid))
+            if not kill_result.get('ok'):
+                return jsonify({'ok': False, 'phase': 'kill',
+                                'kill': kill_result}), 500
+            # Brief pause so the OS releases ports/locks before respawn.
+            time.sleep(1.0)
+        start_result = pm.start(role)
+        status_code = 200 if start_result.get('ok') else 409
+        return jsonify({'ok': start_result.get('ok'),
+                        'phase': 'start',
+                        'kill': kill_result,
+                        'start': start_result}), status_code
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
+
+
 @app.route('/api/processes/health', methods=['POST'])
 @require_api_key
 def api_processes_health_refresh():
@@ -991,19 +1030,73 @@ def api_processes_health_refresh():
         return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
 
 
-# Kick the health loop on first import. Idempotent so reloads don't spawn
-# duplicate threads. Auto-kill is OFF unless AUTO_KILL_BAD_HEALTH=true.
-def _start_process_manager_loop_once() -> None:
-    try:
-        from src.dashboard.process_manager import get_manager
-        get_manager().start_health_loop(interval_s=60)
-    except Exception as exc:
-        import logging as _logging
-        _logging.getLogger(__name__).warning(
-            "Failed to start ProcessManager health loop: %s", exc,
-        )
+@app.route('/api/processes/auto_kill', methods=['POST'])
+@require_api_key
+def api_processes_auto_kill_toggle():
+    """Toggle the AUTO_KILL_BAD_HEALTH knob at runtime. Mutates os.environ
+    so the next health-loop iteration sees the new state — no dashboard
+    restart needed. Body: {"enabled": true|false}. Returns the new state.
 
-_start_process_manager_loop_once()
+    Operator caught that the chip showed "Auto-kill OFF" with no way to
+    enable it from the UI without editing .env + restarting. This endpoint
+    closes that loop."""
+    body = request.get_json(silent=True) or {}
+    enabled = bool(body.get('enabled'))
+    os.environ['AUTO_KILL_BAD_HEALTH'] = 'true' if enabled else 'false'
+    return jsonify({'ok': True, 'enabled': enabled})
+
+
+@app.route('/api/cluster/reap', methods=['POST'])
+@require_api_key
+def api_cluster_reap_proxy():
+    """Best-effort zombie-reap for the cluster orchestrator's worker registry.
+    The orchestrator's _workers dict is in-memory and ages out naturally on
+    `last_seen` (60 s). For stuck TEST_* entries that won't age out (because
+    they were registered without a real backing process), the operator can
+    edit data/orchestrator_state.json on disk and bounce the orchestrator
+    via the Processes card. This endpoint reaps the process_registry role
+    claims (a useful side effect) so the UI's "Refresh" gives a visible
+    improvement even when the cluster-side state is sticky."""
+    try:
+        from src.utils.process_registry import reap_zombies
+        reaped = reap_zombies(by='operator-cluster-refresh')
+        return jsonify({'ok': True, 'reaped_roles': reaped,
+                        'count': len(reaped),
+                        'note': ('cluster worker registry ages out via heartbeat; '
+                                 'use the Processes card to bounce cluster_orch '
+                                 'for a hard reset')})
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
+
+
+# Kick the health loop after Flask has finished initializing. Calling
+# get_manager().start_health_loop() at module-init was hanging requests
+# because the dashboard's own role does an HTTP self-probe via
+# urllib.request.urlopen → that thread blocks on a response from
+# /api/monitor/health while Flask is still binding the listening socket.
+# Defer to "first /api/processes/list call" so the loop only starts after
+# the dashboard is provably serving requests.
+_process_manager_loop_started = False
+_process_manager_loop_lock = threading.Lock()
+
+def _ensure_process_manager_loop() -> None:
+    """Lazy-start the health-check background thread. Safe to call from
+    any request handler; no-op after the first call."""
+    global _process_manager_loop_started
+    if _process_manager_loop_started:
+        return
+    with _process_manager_loop_lock:
+        if _process_manager_loop_started:
+            return
+        try:
+            from src.dashboard.process_manager import get_manager
+            get_manager().start_health_loop(interval_s=60)
+            _process_manager_loop_started = True
+        except Exception as exc:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "Failed to start ProcessManager health loop: %s", exc,
+            )
 
 
 @app.route('/api/monitor/health')
@@ -6656,12 +6749,31 @@ def db_ingest():
 CLUSTER_BASE_URL = 'http://localhost:7700'
 
 
+def _cluster_auth_headers() -> dict:
+    """Return the X-API-Key header the cluster orchestrator expects on
+    mutation endpoints. The orchestrator reads CLUSTER_API_KEY, API_KEY,
+    or DASHBOARD_API_KEY (in that order). The dashboard already loads
+    .env at startup so any of those keys is in os.environ.
+
+    Phase 2g (2026-05-14): operator saw "cluster orchestrator unreachable:
+    HTTP Error 401: UNAUTHORIZED" on every /api/cluster/submit because
+    the proxy never sent auth. Returns {} when no key is set so the
+    in-process unauthenticated-OK fallback still works."""
+    key = (os.environ.get('CLUSTER_API_KEY')
+           or os.environ.get('API_KEY')
+           or os.environ.get('DASHBOARD_API_KEY')
+           or '')
+    return {'X-API-Key': key} if key else {}
+
+
 def _cluster_proxy_get(path: str, timeout: float = 5.0):
     """Forward a GET to the standalone cluster orchestrator. Returns the
     JSON body + status code, or a 503 dict if the standalone is down."""
     import urllib.request as _ur, urllib.error as _ue, json as _j
     try:
-        with _ur.urlopen(f'{CLUSTER_BASE_URL}{path}', timeout=timeout) as r:
+        headers = {'Content-Type': 'application/json', **_cluster_auth_headers()}
+        req = _ur.Request(f'{CLUSTER_BASE_URL}{path}', headers=headers)
+        with _ur.urlopen(req, timeout=timeout) as r:
             return _j.loads(r.read().decode('utf-8')), r.status
     except (_ue.URLError, OSError, _j.JSONDecodeError) as exc:
         return {'error': f'cluster orchestrator unreachable: {exc}',
@@ -6674,9 +6786,9 @@ def _cluster_proxy_post(path: str, body: dict, timeout: float = 5.0,
     import urllib.request as _ur, urllib.error as _ue, json as _j
     try:
         data = _j.dumps(body or {}).encode('utf-8')
+        headers = {'Content-Type': 'application/json', **_cluster_auth_headers()}
         req = _ur.Request(f'{CLUSTER_BASE_URL}{path}', data=data,
-                          method=method,
-                          headers={'Content-Type': 'application/json'})
+                          method=method, headers=headers)
         with _ur.urlopen(req, timeout=timeout) as r:
             return _j.loads(r.read().decode('utf-8')), r.status
     except (_ue.URLError, OSError, _j.JSONDecodeError) as exc:

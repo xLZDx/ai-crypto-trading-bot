@@ -81,8 +81,13 @@ ROLE_SPECS: dict[str, RoleSpec] = {
         key="dashboard", label="Dashboard (:5000)",
         cmd=_python_script("src/dashboard/app.py"),
         log_file="dashboard.log",
-        http_health="http://127.0.0.1:5000/api/monitor/health",
-        health_kind="http",
+        # Cannot use http_health here — the dashboard would self-probe its
+        # own port from the background loop thread, blocking a Flask worker
+        # while waiting for the response. pid+log on dashboard.log is fine:
+        # Werkzeug appends an access-log line to dashboard.log on every
+        # request, so a stale dashboard.log mtime is a reliable "not serving"
+        # signal.
+        health_kind="pid+log",
     ),
     "bot": RoleSpec(
         key="bot", label="Bot (trading engine)",

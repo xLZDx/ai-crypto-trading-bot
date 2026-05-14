@@ -2493,15 +2493,19 @@ document.addEventListener('DOMContentLoaded', function() {
         .pm-status.dead .pm-dot{background:#fb7185}
         .pm-status.unknown{color:#64748b}
         .pm-status.unknown .pm-dot{background:#64748b}
-        .pm-btn{padding:3px 10px;border-radius:5px;font-size:.6rem;font-weight:700;
-                cursor:pointer;text-transform:uppercase;letter-spacing:.05em;border:1px solid}
+        .pm-btn{padding:3px 9px;border-radius:5px;font-size:.58rem;font-weight:700;
+                cursor:pointer;text-transform:uppercase;letter-spacing:.05em;border:1px solid;margin-left:4px}
         .pm-btn.kill{background:rgba(251,113,133,.15);color:#fb7185;border-color:rgba(251,113,133,.35)}
         .pm-btn.kill:hover{background:rgba(251,113,133,.28)}
         .pm-btn.kill:disabled{opacity:.35;cursor:not-allowed;background:rgba(148,163,184,.08);color:#475569;border-color:rgba(148,163,184,.15)}
-        .pm-btn.start{background:rgba(52,211,153,.15);color:#34d399;border-color:rgba(52,211,153,.3);margin-left:5px}
+        .pm-btn.start{background:rgba(52,211,153,.15);color:#34d399;border-color:rgba(52,211,153,.3)}
         .pm-btn.start:hover{background:rgba(52,211,153,.28)}
         .pm-btn.start:disabled{opacity:.35;cursor:not-allowed;background:rgba(148,163,184,.08);color:#475569;border-color:rgba(148,163,184,.15)}
-        #pm-auto-kill-chip{padding:2px 8px;border-radius:4px;font-size:.55rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
+        .pm-btn.restart{background:rgba(59,130,246,.18);color:#93c5fd;border-color:rgba(59,130,246,.4)}
+        .pm-btn.restart:hover{background:rgba(59,130,246,.32)}
+        .pm-btn.restart:disabled{opacity:.35;cursor:not-allowed;background:rgba(148,163,184,.08);color:#475569;border-color:rgba(148,163,184,.15)}
+        #pm-auto-kill-chip{padding:3px 9px;border-radius:4px;font-size:.55rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;cursor:pointer;user-select:none;transition:filter .15s}
+        #pm-auto-kill-chip:hover{filter:brightness(1.25)}
         #pm-auto-kill-chip.on{background:rgba(251,113,133,.2);color:#fb7185;border:1px solid rgba(251,113,133,.4)}
         #pm-auto-kill-chip.off{background:rgba(148,163,184,.12);color:#94a3b8;border:1px solid rgba(148,163,184,.2)}
       </style>
@@ -2509,7 +2513,8 @@ document.addEventListener('DOMContentLoaded', function() {
         <div class="card-header">
           <span class="card-title">🧩 Processes</span>
           <div style="display:flex;gap:6px;align-items:center">
-            <span id="pm-auto-kill-chip" class="off">Auto-kill OFF</span>
+            <span id="pm-auto-kill-chip" class="off" onclick="pmToggleAutoKill()"
+                  title="Click to toggle auto-kill on bad health. When ON, the background loop kills any role that fails 3 consecutive health checks. Default OFF for safety.">Auto-kill OFF</span>
             <button onclick="pmRefresh()" style="padding:4px 10px;cursor:pointer;font-size:.62rem;border-radius:5px;background:rgba(59,130,246,.18);color:#93c5fd;border:1px solid rgba(59,130,246,.35)">↻ Refresh</button>
           </div>
         </div>
@@ -2896,7 +2901,12 @@ document.addEventListener('DOMContentLoaded', function() {
             <span style="font-size:.72rem;font-weight:700;color:#e2e8f0;text-transform:uppercase;letter-spacing:.06em">Training Cluster</span>
             <span class="chip" id="cluster-summary-chip" style="font-size:.58rem;color:#64748b">Loading…</span>
           </div>
-          <span class="ms-chevron-main">▼</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <button onclick="event.stopPropagation(); clusterRefreshFull()"
+                    style="padding:4px 11px;font-size:.6rem;border-radius:5px;cursor:pointer;background:rgba(59,130,246,.2);color:#93c5fd;border:1px solid rgba(59,130,246,.4);font-weight:700"
+                    title="Reap stale TEST_* workers, then re-fetch the live cluster status.">↻ Refresh</button>
+            <span class="ms-chevron-main">▼</span>
+          </div>
         </div>
         <div class="ms-section-body ms-collapsed" id="cluster-section-body">
           <!-- Live local-training progress (this PC). Populated by clusterPoll(). -->
@@ -4397,8 +4407,10 @@ async function pmRefresh() {
     const rows = (j.processes || []).map(p => {
       const sc = p.status || 'unknown';
       const pidTxt = p.pid ? String(p.pid) : '—';
-      const killDisabled = !p.pid || sc === 'dead' ? 'disabled' : '';
-      const startDisabled = sc !== 'dead' ? 'disabled' : '';
+      const alive = p.pid && sc !== 'dead';
+      const killDisabled = alive ? '' : 'disabled';
+      const startDisabled = sc === 'dead' ? '' : 'disabled';
+      const restartDisabled = alive ? '' : 'disabled';
       const titleErr = p.last_error ? ` title="${esc(p.last_error)}"` : '';
       return `
         <div class="pm-row">
@@ -4407,11 +4419,13 @@ async function pmRefresh() {
           <span class="pm-status ${sc}"${titleErr}><span class="pm-dot"></span>${esc(sc)}</span>
           <span>${_fmtLastActivity(p.last_log_mtime)}</span>
           <span>${_fmtUptime(p.uptime_s)}</span>
-          <span style="text-align:right">
+          <span style="text-align:right;white-space:nowrap">
             <button class="pm-btn kill" ${killDisabled}
-              onclick="pmKill(${p.pid}, '${esc(p.role)}')">Kill</button>
+              onclick="pmKill(${p.pid}, '${esc(p.role)}')" title="Terminate this PID + its children">Kill</button>
+            <button class="pm-btn restart" ${restartDisabled}
+              onclick="pmRestart('${esc(p.role)}')" title="Kill the current PID then spawn a fresh launcher">Restart</button>
             <button class="pm-btn start" ${startDisabled}
-              onclick="pmStart('${esc(p.role)}')">Start</button>
+              onclick="pmStart('${esc(p.role)}')" title="Spawn the launcher (only enabled when dead)">Start</button>
           </span>
         </div>`;
     }).join('');
@@ -4449,6 +4463,45 @@ async function pmStart(role) {
     setTimeout(pmRefresh, 1200);
   } catch (e) {
     alert('Start error: ' + (e.message || e));
+  }
+}
+
+async function pmRestart(role) {
+  if (!confirm(`Restart role "${role}"? The current PID will be killed (including children) then a fresh launcher will be spawned.`)) return;
+  try {
+    const r = await fetch(`/api/processes/restart/${encodeURIComponent(role)}`,
+      { method: 'POST', headers: hdrs() });
+    const j = await r.json();
+    if (!j.ok) {
+      const msg = (j.error || (j.start && j.start.error) || (j.kill && j.kill.error) || 'unknown');
+      alert('Restart failed: ' + msg);
+    }
+    // Restart takes ~1.5s (kill + 1s pause + spawn); give the UI time to settle.
+    setTimeout(pmRefresh, 2000);
+  } catch (e) {
+    alert('Restart error: ' + (e.message || e));
+  }
+}
+
+async function pmToggleAutoKill() {
+  const chip = document.getElementById('pm-auto-kill-chip');
+  if (!chip) return;
+  const currentlyOn = chip.classList.contains('on');
+  const willBe = !currentlyOn;
+  const warn = willBe
+    ? 'Enable Auto-kill?\n\nWhen ON, any role failing 3 consecutive 60s health checks will be killed automatically by the background loop. Be careful — a flaky HTTP probe can cascade-kill healthy processes during a transient blip.'
+    : 'Disable Auto-kill?';
+  if (!confirm(warn)) return;
+  try {
+    const r = await fetch('/api/processes/auto_kill',
+      { method: 'POST', headers: hdrs(), body: JSON.stringify({enabled: willBe}) });
+    const j = await r.json();
+    if (!j.ok) { alert('Toggle failed: ' + (j.error || 'unknown')); return; }
+    chip.classList.toggle('on', j.enabled);
+    chip.classList.toggle('off', !j.enabled);
+    chip.textContent = j.enabled ? 'Auto-kill ON' : 'Auto-kill OFF';
+  } catch (e) {
+    alert('Toggle error: ' + (e.message || e));
   }
 }
 
@@ -8461,6 +8514,24 @@ async function clusterRestartWorker(ip, port, name) {
       alert(`Restart failed: ${d.error||'unknown'}`);
     }
   } catch (e) { alert('Error: ' + e.message); }
+}
+
+// Phase 2g (2026-05-14) — full cluster refresh: reap zombie workers
+// (TEST_HB, LOCAL_TEST_CPU, anything offline >120s) then re-poll. The
+// operator-visible Refresh button calls this; clusterPoll is the
+// lighter "just fetch" path used by the 10s interval.
+async function clusterRefreshFull() {
+  const chip = document.getElementById('cluster-summary-chip');
+  if (chip) { chip.textContent = 'reaping zombies…'; chip.style.color = '#fbbf24'; }
+  try {
+    // Process Registry reap covers the role-claim singleton; the cluster
+    // orchestrator separately tracks worker heartbeats. Both can hold stale
+    // entries — call both reaps.
+    await fetch('/api/process/registry/reap', { method: 'POST', headers: hdrs() }).catch(() => {});
+    await fetch('/api/cluster/reap', { method: 'POST', headers: hdrs() }).catch(() => {});
+  } catch (_) {}
+  // Brief settle, then full re-poll.
+  setTimeout(() => clusterPoll(), 500);
 }
 
 async function clusterPoll() {
