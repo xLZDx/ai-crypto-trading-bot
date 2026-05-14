@@ -5691,26 +5691,62 @@ async function loadStrongWeakAnalytics() {
       const list = byTf[tf];
       const strong = list.slice(0, 3);
       const weak   = list.slice(-3).reverse();
-      // esc() is the file's HTML-escape helper. c.model comes from
-      // /api/model_comparison (server-authoritative) but is interpolated
-      // into innerHTML, so escape for consistency with the rest of the
-      // template and to prevent the pattern from being copied into a
-      // higher-risk context. Flagged HIGH by code-reviewer 2026-05-13.
-      const cellLine = c => `<div>${esc(c.model)} → ${_metricLabel(c)} ${fmt(_metric(c))}` +
-                            ((c.last_run||{}).wf_win_rate != null ? ` · WinRate ${fmt(c.last_run.wf_win_rate)}` : '') +
-                            `</div>`;
-      parts.push(`<div style="margin-bottom:10px">
-        <div style="color:#cbd5e1;font-weight:700;margin-bottom:4px">TF ${tf} <span style="color:#475569">(${list.length} cells)</span></div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:.7rem">
-          <div>
-            <div style="color:#34d399;margin-bottom:3px">STRONG (top 3)</div>
-            ${strong.map(cellLine).join('') || '<em style="color:#475569">—</em>'}
+      // Phase J (2026-05-14) — compute cohort statistics so each entry
+      // carries an explanation of WHY it's strong or weak (not just the
+      // bare metric number). Operator request: "show as list with
+      // explanations".
+      const _vals = list.map(_metric).filter(v => v != null);
+      const _median = (() => {
+        const s = [..._vals].sort((a, b) => a - b);
+        if (!s.length) return null;
+        const m = Math.floor(s.length / 2);
+        return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+      })();
+      const _best = _vals.length ? Math.max(..._vals) : null;
+      const _worst = _vals.length ? Math.min(..._vals) : null;
+      const _explainStrong = (c, idx) => {
+        const v = _metric(c);
+        if (v == null) return '';
+        const lbl = _metricLabel(c);
+        if (idx === 0) return `Best ${lbl} in TF cohort (${list.length} cells). Above median by ${(v - _median).toFixed(2)}.`;
+        const pctAboveMedian = _median ? ((v - _median) / Math.abs(_median) * 100) : 0;
+        return `${lbl} ${fmt(v)} — ${pctAboveMedian > 0 ? '+' : ''}${pctAboveMedian.toFixed(0)}% vs cohort median.`;
+      };
+      const _explainWeak = (c, idx) => {
+        const v = _metric(c);
+        if (v == null) return '';
+        const lbl = _metricLabel(c);
+        if (idx === 0) return `Worst ${lbl} in TF cohort. Below median by ${(_median - v).toFixed(2)}.`;
+        const pctBelowMedian = _median ? ((_median - v) / Math.abs(_median) * 100) : 0;
+        return `${lbl} ${fmt(v)} — ${pctBelowMedian.toFixed(0)}% below cohort median.`;
+      };
+      // esc() is the file's HTML-escape helper.
+      const cellLine = (c, idx, explain) => {
+        const lbl = _metricLabel(c);
+        const v = _metric(c);
+        const wr = (c.last_run||{}).wf_win_rate;
+        const extra = wr != null ? ` · WinRate ${fmt(wr)}%` : '';
+        const expl = explain(c, idx);
+        return `<div style="margin-bottom:6px">
+          <div><b>${esc(c.model)}</b> → ${lbl} <b>${fmt(v)}</b>${extra}</div>
+          <div style="color:#64748b;font-size:.6rem">${esc(expl)}</div>
+        </div>`;
+      };
+      parts.push(`<div style="margin-bottom:14px">
+        <div style="color:#cbd5e1;font-weight:700;margin-bottom:6px">TF ${tf}
+          <span style="color:#475569">(${list.length} cells · median ${fmt(_median)} · best ${fmt(_best)} · worst ${fmt(_worst)})</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;font-size:.7rem">
+          <div style="background:rgba(52,211,153,.06);border-left:3px solid #34d399;padding:8px 10px;border-radius:4px">
+            <div style="color:#34d399;font-weight:700;margin-bottom:6px">STRONG (top ${strong.length})</div>
+            ${strong.map((c, i) => cellLine(c, i, _explainStrong)).join('') || '<em style="color:#475569">—</em>'}
           </div>
-          <div>
-            <div style="color:#fb7185;margin-bottom:3px">WEAK (bottom 3)</div>
-            ${weak.map(cellLine).join('') || '<em style="color:#475569">—</em>'}
+          <div style="background:rgba(251,113,133,.06);border-left:3px solid #fb7185;padding:8px 10px;border-radius:4px">
+            <div style="color:#fb7185;font-weight:700;margin-bottom:6px">WEAK (bottom ${weak.length})</div>
+            ${weak.map((c, i) => cellLine(c, i, _explainWeak)).join('') || '<em style="color:#475569">—</em>'}
           </div>
-        </div></div>`);
+        </div>
+      </div>`);
     }
     out.innerHTML = parts.join('');
     _saveMCState({strongWeakHtml: out.innerHTML});
@@ -5743,7 +5779,7 @@ async function loadBakeOff() {
   const metric = document.getElementById('bake-metric').value;
   const rpct   = document.getElementById('bake-retire-pct').value || '0.20';
   const area   = document.getElementById('bake-off-area');
-  if (area) area.textContent = 'Running bake-off…';
+  if (area) area.innerHTML = '<div style="color:#fbbf24">⏳ Running bake-off… (reading data/training_runs/*.parquet)</div>';
   try {
     // 2026-05-13: the bulk hdrs() patcher accidentally injected its options
     // dict as the SECOND argument to encodeURIComponent(metric, …) instead
