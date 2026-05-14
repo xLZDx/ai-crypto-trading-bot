@@ -4297,15 +4297,42 @@ function _initCardCollapse() {
   //    Double-wiring those cards traps them in a "both classes must clear"
   //    state, leaving Strategy-tab Data Coverage / Pipeline / Stability
   //    Heatmap / Pure-Rule-vs-ML stuck collapsed.
-  document.querySelectorAll('.card-header:not(.collapsible-hdr), .card-h').forEach(hdr => {
+  // Phase C (2026-05-14) — also pick up .wz-hdr (Training Wizard) and
+  // any other bespoke header classes registered in _COLLAPSE_HEADER_SELECTORS.
+  // This codifies the "every card is collapsible by default" global rule
+  // recorded in D:\test 2\CLAUDE.md.
+  const hdrSel = '.card-header:not(.collapsible-hdr), .card-h, .wz-hdr';
+  document.querySelectorAll(hdrSel).forEach(hdr => {
     if (hdr.dataset.collapseWired === '1') return;
     if (hdr.closest('.collapsible-section')) return;     // belt-and-braces
     hdr.dataset.collapseWired = '1';
+    // Bespoke headers (like .wz-hdr) don't get the chevron via CSS — add
+    // an inline one so the affordance is visible without a stylesheet edit.
+    if (hdr.classList.contains('wz-hdr') && !hdr.querySelector('.wz-chev')) {
+      const chev = document.createElement('span');
+      chev.className = 'wz-chev';
+      chev.textContent = '▾';
+      chev.style.cssText = 'color:#64748b;font-size:.7rem;margin-left:8px;transition:transform .15s';
+      hdr.appendChild(chev);
+    }
+    hdr.style.cursor = 'pointer';
     hdr.addEventListener('click', (e) => {
       // Don't toggle when clicking a button / input inside the header.
       const t = e.target;
       if (t.closest('button, input, select, a, label')) return;
-      hdr.parentElement.classList.toggle('collapsed');
+      const card = hdr.parentElement;
+      card.classList.toggle('collapsed');
+      // Hide the body when collapsed for cards that aren't `.card`-class
+      // (those have CSS rules already; bespoke .wz-card needs manual JS).
+      if (!card.classList.contains('card')) {
+        const collapsed = card.classList.contains('collapsed');
+        Array.from(card.children).forEach(child => {
+          if (child === hdr) return;
+          child.style.display = collapsed ? 'none' : '';
+        });
+        const chev = hdr.querySelector('.wz-chev');
+        if (chev) chev.style.transform = collapsed ? 'rotate(-90deg)' : '';
+      }
       _persistCollapseState();
     });
   });
@@ -4317,18 +4344,34 @@ function _initCardCollapse() {
   //    whole screen" — auto-collapse hides the dashboard's operational
   //    panels on every page load, defeating the point.
   const saved = (() => { try { return JSON.parse(localStorage.getItem('cardCollapseState') || '{}'); } catch (_) { return {}; } })();
-  document.querySelectorAll('.card').forEach((card, i) => {
+  const _allCards = document.querySelectorAll('.card, .wz-card');
+  _allCards.forEach((card, i) => {
     const id = card.id || `card_${i}`;
     if (_ALWAYS_EXPANDED_CARDS.has(card.id)) return;
     if (card.classList.contains('collapsible-section')) return;
-    if (saved[id] === true) card.classList.add('collapsed');
-    else                    card.classList.remove('collapsed');
+    if (saved[id] === true) {
+      card.classList.add('collapsed');
+      // Apply collapse to bespoke (non-.card) cards manually since their
+      // CSS doesn't react to `.collapsed`.
+      if (!card.classList.contains('card')) {
+        Array.from(card.children).forEach(child => {
+          if (child.classList && (child.classList.contains('wz-hdr') ||
+              child.classList.contains('card-header') ||
+              child.classList.contains('card-h'))) return;
+          child.style.display = 'none';
+        });
+        const chev = card.querySelector('.wz-chev');
+        if (chev) chev.style.transform = 'rotate(-90deg)';
+      }
+    } else {
+      card.classList.remove('collapsed');
+    }
   });
 }
 
 function _persistCollapseState() {
   const state = {};
-  document.querySelectorAll('.card').forEach((card, i) => {
+  document.querySelectorAll('.card, .wz-card').forEach((card, i) => {
     const id = card.id || `card_${i}`;
     state[id] = card.classList.contains('collapsed');
   });
@@ -4336,7 +4379,7 @@ function _persistCollapseState() {
 }
 
 function collapseAllCards() {
-  document.querySelectorAll('.card').forEach(c => {
+  document.querySelectorAll('.card, .wz-card').forEach(c => {
     if (_ALWAYS_EXPANDED_CARDS.has(c.id)) return;
     if (c.classList.contains('collapsible-section')) {
       // Use the existing toggleSection state class so persistence under
@@ -4345,17 +4388,31 @@ function collapseAllCards() {
       if (c.id) { try { localStorage.setItem('st-sec-open:' + c.id, '0'); } catch (_) {} }
     } else {
       c.classList.add('collapsed');
+      if (!c.classList.contains('card')) {
+        Array.from(c.children).forEach(child => {
+          if (child.classList && (child.classList.contains('wz-hdr') ||
+              child.classList.contains('card-header') ||
+              child.classList.contains('card-h'))) return;
+          child.style.display = 'none';
+        });
+        const chev = c.querySelector('.wz-chev');
+        if (chev) chev.style.transform = 'rotate(-90deg)';
+      }
     }
   });
   _persistCollapseState();
 }
 
 function expandAllCards() {
-  document.querySelectorAll('.card').forEach(c => {
+  document.querySelectorAll('.card, .wz-card').forEach(c => {
     c.classList.remove('collapsed');
     if (c.classList.contains('collapsible-section')) {
       c.classList.remove('is-collapsed');
       if (c.id) { try { localStorage.setItem('st-sec-open:' + c.id, '1'); } catch (_) {} }
+    } else if (!c.classList.contains('card')) {
+      Array.from(c.children).forEach(child => { child.style.display = ''; });
+      const chev = c.querySelector('.wz-chev');
+      if (chev) chev.style.transform = '';
     }
   });
   _persistCollapseState();

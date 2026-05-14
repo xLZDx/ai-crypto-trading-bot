@@ -457,3 +457,76 @@ class AgenticLLM:
         fallback_reason = "LLM connection error — trade auto-approved."
         _cache_decision(symbol, action, "APPROVED", fallback_reason)
         return "APPROVED", fallback_reason
+
+    def query(self, prompt: str, *, max_chars: int = 4000) -> dict[str, str | None]:
+        """Free-form query path for non-trade callers (Wizard chat, training
+        guidance, etc). Reuses the same Tier-1 cheap-first cascade,
+        cooldown table, and MTD budget guard as evaluate_trade — the only
+        difference is that we don't ask for a JSON {decision, reason}
+        envelope, we return the raw model text.
+
+        Phase C (2026-05-14) — wizard chat was previously routed through
+        evaluate_trade(), which forced the LLM into APPROVE/VETO mode and
+        produced answers like "this is a valid operational query and does
+        not fall under VETO criteria" instead of actually answering the
+        user's question. This bypass solves that.
+
+        Returns dict with keys: answer (str), model_used (str|None), source (str).
+        """
+        if not self.is_active or self._client is None:
+            return {"answer": "Agent disabled (no API key).",
+                    "model_used": None, "source": "no_api_key"}
+
+        all_models_dead = all(_is_cooled_down(m) for m in _ALL_MODELS)
+        if all_models_dead:
+            return {"answer": "LLM models all cooled down (429/503) — try again in a few minutes.",
+                    "model_used": None, "source": "cooled_down"}
+
+        ctrl = read_json('data/control.json', default={})
+        selected_model = ctrl.get('selected_ai_model')
+        if selected_model and selected_model not in _ALL_MODELS:
+            models_to_try = [selected_model] + _ALL_MODELS
+        elif selected_model:
+            models_to_try = [selected_model] + [m for m in _ALL_MODELS if m != selected_model]
+        else:
+            models_to_try = list(_ALL_MODELS)
+
+        active = [m for m in models_to_try if not _is_cooled_down(m)]
+        if active:
+            models_to_try = active
+        models_to_try = _budget_filter(models_to_try)
+        if not models_to_try:
+            cap = _budget_cap_usd()
+            return {"answer": f"LLM monthly budget cap (${cap:.2f}) reached — Q&A temporarily disabled.",
+                    "model_used": None, "source": "budget_cap"}
+
+        from google.genai import types as _gntypes
+        last_err = None
+        for model_id in models_to_try:
+            try:
+                response = self._client.models.generate_content(
+                    model=model_id, contents=prompt,
+                    config=_gntypes.GenerateContentConfig(),
+                )
+                in_tok, out_tok = _extract_token_counts(response, prompt)
+                _record_call_cost(model_id, in_tok, out_tok)
+                text = (getattr(response, 'text', None) or '').strip()
+                if not text:
+                    last_err = ValueError(f"{model_id}: empty response")
+                    continue
+                return {"answer": text[:max_chars],
+                        "model_used": model_id, "source": "llm"}
+            except Exception as e:
+                last_err = e
+                err_lower = str(e).lower()
+                if any(x in err_lower for x in _TRANSIENT):
+                    if any(x in err_lower for x in ('429', 'quota', '503', 'unavailable', 'overloaded')):
+                        is_free_tier = ('free_tier' in err_lower or 'free tier' in err_lower
+                                        or 'limit: 0' in err_lower)
+                        cd = _FREE_TIER_COOLDOWN_S if is_free_tier else _MODEL_COOLDOWN_S
+                        _mark_cooldown(model_id, cd)
+                    continue
+                break
+        logger.error(f"AgenticLLM.query failed: {last_err}")
+        return {"answer": f"LLM error: {last_err}", "model_used": None,
+                "source": "llm_error"}

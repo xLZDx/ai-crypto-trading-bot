@@ -327,33 +327,28 @@ def ask_llm(question: str, context: dict[str, Any] | None = None) -> dict[str, A
         return {"answer": f"LLM init failed: {exc}", "model_used": None,
                 "source": "init_error"}
 
-    # We piggy-back on the macro-veto prompt path — same client, same
-    # cascade, same budget guard. The wizard prompt is structured so the
-    # JSON-shaped response (which evaluate_trade expects) accommodates a
-    # free-text "reason" field we return as the answer.
+    # Phase C (2026-05-14) — route through AgenticLLM.query() (free-form)
+    # instead of evaluate_trade() (which forces an APPROVE/VETO JSON
+    # envelope). The old path made the LLM frame answers as trade
+    # justifications — operator saw replies like "this is a valid
+    # operational query and does not fall under the VETO criteria"
+    # instead of an actual answer.
     ctx_lines = []
     if context:
         for k, v in list(context.items())[:8]:
             ctx_lines.append(f"  {k}: {v}")
     ctx_text = "\n".join(ctx_lines) if ctx_lines else "  (none)"
     prompt = (
-        f"You are an AI trading-bot training advisor. The operator is asking "
-        f"a specific question about model improvement.\n\n"
+        f"You are an AI trading-bot training advisor. Give the operator a "
+        f"concise, actionable answer (3-5 sentences max). Avoid generic "
+        f"boilerplate; cite specific features, hyperparameters, or training "
+        f"steps when relevant.\n\n"
         f"Context:\n{ctx_text}\n\n"
         f"Question: {question}\n\n"
-        f"Respond ONLY in valid JSON with one field: "
-        f"{{\"decision\": \"APPROVED\", \"reason\": \"<concise actionable answer, "
-        f"max 3 sentences>\"}}"
+        f"Answer:"
     )
-
     try:
-        # Use the macro-veto path which already handles fallback + budget guard.
-        decision, reason = llm.evaluate_trade(
-            symbol="WIZARD", action="ADVISE",
-            technical_reason=prompt, headlines=[], telegram_monitor=None,
-        )
-        return {"answer": reason, "model_used": "via_agentic_llm",
-                "source": "llm"}
+        return llm.query(prompt)
     except Exception as exc:
         return {"answer": f"LLM call failed: {exc}", "model_used": None,
                 "source": "llm_error"}
