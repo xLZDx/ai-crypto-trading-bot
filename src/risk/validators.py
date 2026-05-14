@@ -239,9 +239,47 @@ class ValidationGate:
     ) -> list[str]:
         """
         Return list of feature names that drifted significantly.
-        Uses a simple z-test against the stored mean/std; KS would need raw
-        baseline samples which we don't always have.
+
+        Phase 6 (2026-05-14) — upgraded from mean-shift z-test to PSI +
+        Wasserstein (drift_psi.check_drift). The new check:
+          - Detects shape-only drift (a bimodal actual can match mean+var
+            yet PSI-diverge).
+          - Honors LLM_DRIFT_PAUSE=enforce → DriftPauseError raised on a
+            hard-feature PSI ≥ 0.25. Caller catches and halts new trades.
+          - Falls back to the legacy z-test when bin_edges/bin_props are
+            missing (old baselines without histogram persistence).
+
+        The returned list keeps the same shape as the legacy version
+        (list of drifted feature names) so the caller at line ~170 needs
+        no changes.
         """
+        try:
+            from src.risk.drift_psi import check_drift, DriftPauseError
+        except Exception:
+            check_drift = None
+            DriftPauseError = Exception  # type: ignore
+
+        # Try the new PSI path first — only if the baseline carries bins.
+        has_bins = any(
+            isinstance(stats, dict) and 'bin_edges' in stats and 'bin_props' in stats
+            for stats in last_known_good_dist.values()
+        )
+        if check_drift is not None and has_bins:
+            try:
+                rep = check_drift(last_known_good_dist, feature_df)
+                # check_drift raises DriftPauseError in enforce mode; re-raise
+                # so the caller can halt new trades. validators.py's run()
+                # currently doesn't catch this — production caller (the bot
+                # loop) is the one that needs to handle the halt.
+                drifted = [f.feature for f in rep.findings
+                           if f.severity in ('warn', 'pause')]
+                return drifted
+            except DriftPauseError:
+                raise  # propagate to caller; bot halts new trades
+            except Exception as exc:
+                logger.warning("[drift] PSI path failed, falling back to z-test: %s", exc)
+
+        # Legacy z-test fallback (for old baselines without histograms).
         drifted: list[str] = []
         for col in feature_df.columns:
             if col not in last_known_good_dist:
@@ -253,7 +291,6 @@ class ValidationGate:
             if len(actual) < 10:
                 continue
             actual_mean = float(actual.mean())
-            # 1-sample z-test on the mean shift
             z = abs(actual_mean - ref_mean) / (ref_std / np.sqrt(len(actual)))
             # p ≈ 0.01 ↔ |z| ≈ 2.58
             if z > 2.58:

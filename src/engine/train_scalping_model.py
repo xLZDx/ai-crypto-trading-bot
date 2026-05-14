@@ -117,11 +117,24 @@ def prepare_scalping_data_from_df(df: pd.DataFrame) -> pd.DataFrame:
     return _engineer_scalping_features(df)
 
 
-def prepare_scalping_data(filepath):
+def prepare_scalping_data(filepath, timeframe: str = '1m', symbol: str | None = None):
     log.info("Loading data for Scalping Pipeline from %s...", filepath)
     df = pd.read_csv(filepath)
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     df = df.sort_values('timestamp')
+    # Phase 4 rollout — F1 data-integrity gate.
+    try:
+        from src.utils.data_quality import validate_ohlcv, DataQualityError
+        df, _dq = validate_ohlcv(df, symbol=symbol or '', timeframe=timeframe)
+        if _dq.soft_warnings:
+            log.info("[scalping][%s/%s] data quality: %s",
+                     symbol, timeframe, _dq.soft_warnings[:3])
+    except Exception as e:
+        from src.utils.data_quality import DataQualityError
+        if isinstance(e, DataQualityError):
+            raise
+        log.warning("[scalping][%s/%s] data_quality check skipped: %s",
+                    symbol, timeframe, e)
     return _engineer_scalping_features(df)
 
 
@@ -155,7 +168,7 @@ def _process_single_symbol(sym):
     df_combined = None
     if os.path.exists(full_data_path):
         try:
-            df_1m = prepare_scalping_data(full_data_path)
+            df_1m = prepare_scalping_data(full_data_path, timeframe='1m', symbol=sym)
         except Exception as e:
             log.warning("  [%s] Failed 1m prepare: %s", sym, e)
             df_1m = None

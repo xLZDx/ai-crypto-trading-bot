@@ -163,11 +163,25 @@ FEATURE_COLUMNS = [
 ]
 
 
-def prepare_data(filepath):
+def prepare_data(filepath, timeframe: str = '1h', symbol: str | None = None):
     log.info("Loading data from %s...", filepath)
     df = pd.read_csv(filepath)
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     df = df.sort_values('timestamp').reset_index(drop=True)
+
+    # Phase 4 rollout — F1 data-integrity gate.
+    try:
+        from src.utils.data_quality import validate_ohlcv, DataQualityError
+        df, _dq = validate_ohlcv(df, symbol=symbol or '', timeframe=timeframe)
+        if _dq.soft_warnings:
+            log.info("[base][%s/%s] data quality: %s",
+                     symbol, timeframe, _dq.soft_warnings[:3])
+    except Exception as e:
+        from src.utils.data_quality import DataQualityError
+        if isinstance(e, DataQualityError):
+            raise
+        log.warning("[base][%s/%s] data_quality check skipped: %s",
+                    symbol, timeframe, e)
 
     log.info("Engineering features...")
     # Fractional differencing replaces pct_change
@@ -287,7 +301,7 @@ def train_model(timeframe: str = '1h'):
         if os.path.exists(full_data_path):
             log.info("Processing %s...", sym)
             try:
-                df = prepare_data(full_data_path)
+                df = prepare_data(full_data_path, timeframe=timeframe, symbol=sym)
                 all_data.append(df)
             except Exception as e:
                 log.error("Failed to prepare %s: %s", sym, e)

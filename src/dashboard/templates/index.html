@@ -4717,15 +4717,50 @@ async function wzSuggest() {
         <div class="wz-rec-detail">${esc((rep.notes||[]).join(' '))||'Model is within expected bounds.'}</div></div>`;
       return;
     }
-    recs.innerHTML = items.map(it => `
+    recs.innerHTML = items.map(it => {
+      // Phase 7b — when the recommendation is retrainable, surface a
+      // one-click button that calls /api/training/run/<model> with the
+      // current (model, tf). Otherwise show only the suggested_action
+      // text. We treat these severities as "retrain-actionable":
+      //   - missing cell (high)        → never trained, retrain now
+      //   - stale training (medium)    → retrain to refresh the window
+      //   - drift baseline missing     → retrain (save_baseline at end)
+      const retrainable = ['No trained', 'not retrained', 'Drift baseline missing']
+        .some(t => (it.title||'').includes(t));
+      const applyBtn = retrainable
+        ? `<button class="wz-btn" style="margin-top:6px;padding:3px 10px;font-size:.58rem"
+                   onclick="wzApply('${esc(model)}','${esc(tf)}')">▶ Retrain now</button>`
+        : '';
+      return `
       <div class="wz-rec ${esc(it.severity||'medium')}">
         <div class="wz-rec-title">#${esc(it.rank)} [${esc(it.severity)}] ${esc(it.title)}</div>
         <div class="wz-rec-detail">${esc(it.detail)}</div>
         <div class="wz-rec-action">→ ${esc(it.suggested_action)}</div>
-      </div>
-    `).join('');
+        ${applyBtn}
+      </div>`;
+    }).join('');
   } catch (e) {
     recs.innerHTML = `<span style="color:#fb7185">Fetch error: ${esc(e.message||e)}</span>`;
+  }
+}
+
+async function wzApply(model, tf) {
+  if (!confirm(`Retrain ${model}@${tf} now? This submits a training job to the local scheduler.`)) return;
+  try {
+    const r = await fetch(`/api/training/run/${encodeURIComponent(model)}`, {
+      method: 'POST', headers: hdrs(),
+      body: JSON.stringify({n: 1, tf: tf, force: true}),
+    });
+    const j = await r.json();
+    if (!j.ok) {
+      alert('Retrain failed: ' + (j.error || 'unknown'));
+      return;
+    }
+    alert(`Retrain submitted (job_id=${(j.job_id||'?').toString().slice(0,10)}, routed_to=${j.routed_to||'?'}). ` +
+          `Refresh suggestions in a few minutes to see the new state.`);
+    setTimeout(wzSuggest, 800);
+  } catch (e) {
+    alert('Retrain error: ' + (e.message || e));
   }
 }
 

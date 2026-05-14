@@ -263,6 +263,19 @@ def train_meta_labeler(
                 df = pd.read_csv(fpath)
                 df['timestamp'] = pd.to_datetime(df['timestamp'])
                 df = df.sort_values('timestamp').reset_index(drop=True)
+                # Phase 4 rollout — F1 data-integrity gate.
+                try:
+                    from src.utils.data_quality import validate_ohlcv, DataQualityError
+                    df, _dq = validate_ohlcv(df, symbol=sym, timeframe=timeframe)
+                    if _dq.soft_warnings:
+                        log.info("[meta][%s/%s] data quality: %s",
+                                 sym, timeframe, _dq.soft_warnings[:3])
+                except Exception as _e:
+                    from src.utils.data_quality import DataQualityError as _DQE
+                    if isinstance(_e, _DQE):
+                        raise
+                    log.warning("[meta][%s/%s] data_quality check skipped: %s",
+                                sym, timeframe, _e)
                 signals_df = _build_signal_dataset(
                     df, sym,
                     pt_multiplier=pt, sl_multiplier=sl, max_bars=mb,
