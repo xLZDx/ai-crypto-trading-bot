@@ -2515,7 +2515,7 @@ document.addEventListener('DOMContentLoaded', function() {
           <div style="display:flex;gap:6px;align-items:center">
             <span id="pm-auto-kill-chip" class="off" onclick="pmToggleAutoKill()"
                   title="Click to toggle auto-kill on bad health. When ON, the background loop kills any role that fails 3 consecutive health checks. Default OFF for safety.">Auto-kill OFF</span>
-            <button onclick="pmRefresh()" style="padding:4px 10px;cursor:pointer;font-size:.62rem;border-radius:5px;background:rgba(59,130,246,.18);color:#93c5fd;border:1px solid rgba(59,130,246,.35)">↻ Refresh</button>
+            <button onclick="pmRefresh(); pmJobsRefresh(); pmWorkersRefresh()" style="padding:4px 10px;cursor:pointer;font-size:.62rem;border-radius:5px;background:rgba(59,130,246,.18);color:#93c5fd;border:1px solid rgba(59,130,246,.35)">↻ Refresh All</button>
           </div>
         </div>
         <div class="card-instructions">
@@ -2531,6 +2531,30 @@ document.addEventListener('DOMContentLoaded', function() {
             <span style="text-align:right">Actions</span>
           </div>
           <div id="pm-rows">Loading…</div>
+
+          <!-- Training Jobs (running + recent) — operator can kill any in-flight job from here too -->
+          <div style="margin-top:14px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <div style="font-size:.66rem;font-weight:700;color:#93c5fd;text-transform:uppercase;letter-spacing:.05em">▤ Training Jobs (running + queued)</div>
+              <span id="pm-jobs-summary" style="font-size:.55rem;color:#64748b">—</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1.2fr 1fr 70px 90px 110px 90px auto;gap:8px;align-items:center;padding:5px 10px;border-bottom:1px solid rgba(148,163,184,.07);font-size:.55rem;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em;background:rgba(30,41,59,.45)">
+              <span>Job ID</span><span>Model · TF</span><span>Status</span><span>PID</span><span>Elapsed</span><span>ETA</span><span style="text-align:right">Action</span>
+            </div>
+            <div id="pm-jobs-rows" style="font-size:.65rem;font-family:'JetBrains Mono',monospace">—</div>
+          </div>
+
+          <!-- Cluster Workers — read-only summary; kill-worker not supported (workers run on remote laptops) -->
+          <div style="margin-top:14px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <div style="font-size:.66rem;font-weight:700;color:#93c5fd;text-transform:uppercase;letter-spacing:.05em">🖥 Cluster Workers</div>
+              <span id="pm-workers-summary" style="font-size:.55rem;color:#64748b">—</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1.2fr 70px 80px 1fr 100px 80px;gap:8px;align-items:center;padding:5px 10px;border-bottom:1px solid rgba(148,163,184,.07);font-size:.55rem;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em;background:rgba(30,41,59,.45)">
+              <span>Name</span><span>Lane</span><span>Status</span><span>GPU</span><span>Last seen</span><span style="text-align:right">PID</span>
+            </div>
+            <div id="pm-workers-rows" style="font-size:.65rem;font-family:'JetBrains Mono',monospace">—</div>
+          </div>
         </div>
       </div>
 
@@ -4482,6 +4506,115 @@ async function pmRestart(role) {
     alert('Restart error: ' + (e.message || e));
   }
 }
+
+// Phase 2g+ (2026-05-14) — embedded training-jobs + cluster-workers
+// panels on the Processes card so the operator has one-stop GUI control.
+async function pmJobsRefresh() {
+  try {
+    const r = await fetch('/api/training/jobs', { headers: hdrs() });
+    if (!r.ok) {
+      document.getElementById('pm-jobs-rows').textContent = `error: HTTP ${r.status}`;
+      return;
+    }
+    const j = await r.json();
+    const all = (j.jobs || []);
+    // Show running + queued + last 5 finished (most-recent first).
+    const live = all.filter(x => x.status === 'running' || x.status === 'queued' || x.status === 'starting');
+    const done = all.filter(x => x.status !== 'running' && x.status !== 'queued' && x.status !== 'starting')
+                    .sort((a,b) => (b.finished_at||0) - (a.finished_at||0))
+                    .slice(0, 5);
+    const rows = live.concat(done);
+    const summary = document.getElementById('pm-jobs-summary');
+    if (summary) summary.textContent = `${live.length} active · ${done.length} recent`;
+    const html = rows.map(jr => {
+      const jid = (jr.job_id || '—').toString().substring(0, 12);
+      const model = jr.model || jr.current_model_key || '—';
+      const tf = jr.tf || jr.current_tf || '—';
+      const sc = jr.status || '—';
+      const scColor = sc === 'running' ? '#34d399' : sc === 'queued' ? '#fbbf24'
+                    : sc === 'done' ? '#94a3b8' : sc === 'killed' ? '#fb7185'
+                    : sc === 'failed' || sc === 'lost' ? '#fb7185' : '#64748b';
+      const pid = jr.child_pid || '';
+      const elapsed = jr.elapsed_s ? `${Math.floor(jr.elapsed_s)}s` : '—';
+      const eta = jr.eta_s != null ? `${Math.floor(jr.eta_s)}s` : (jr.typical_s ? `~${Math.floor(jr.typical_s)}s` : '—');
+      const killBtn = (sc === 'running' || sc === 'queued' || sc === 'starting')
+        ? `<button class="pm-btn kill" onclick="pmJobsKill('${esc(jr.job_id)}','${esc(model)}')">Kill</button>`
+        : '<span style="color:#475569">—</span>';
+      return `
+        <div style="display:grid;grid-template-columns:1.2fr 1fr 70px 90px 110px 90px auto;gap:8px;align-items:center;padding:5px 10px;border-bottom:1px solid rgba(148,163,184,.05)">
+          <span title="${esc(jr.job_id||'')}">${esc(jid)}</span>
+          <span>${esc(model)} · ${esc(tf)}</span>
+          <span style="color:${scColor};font-weight:700">${esc(sc)}</span>
+          <span style="color:#94a3b8">${esc(pid.toString())}</span>
+          <span>${esc(elapsed)}</span>
+          <span style="color:#94a3b8">${esc(eta)}</span>
+          <span style="text-align:right">${killBtn}</span>
+        </div>`;
+    }).join('');
+    document.getElementById('pm-jobs-rows').innerHTML = html ||
+      '<div style="padding:10px;color:#64748b">No active jobs and no recent finishes.</div>';
+  } catch (e) {
+    document.getElementById('pm-jobs-rows').innerHTML =
+      `<div style="padding:10px;color:#fb7185">Error: ${esc(e.message||e)}</div>`;
+  }
+}
+
+async function pmJobsKill(jobId, model) {
+  if (!confirm(`Kill training job ${model}:${jobId.substring(0,8)}? The current iteration will be killed.`)) return;
+  try {
+    const r = await fetch(`/api/training/stop/${encodeURIComponent(jobId)}`,
+      { method: 'POST', headers: hdrs() });
+    const j = await r.json();
+    if (!j.ok) alert('Kill failed: ' + (j.error || 'unknown'));
+    else if (j.method === 'noop') alert('Job already finished (no live PID).');
+    setTimeout(pmJobsRefresh, 600);
+  } catch (e) { alert('Kill error: ' + (e.message||e)); }
+}
+
+async function pmWorkersRefresh() {
+  try {
+    const r = await fetch('/api/cluster/status', { headers: hdrs() });
+    if (!r.ok) {
+      document.getElementById('pm-workers-rows').textContent = `error: HTTP ${r.status}`;
+      return;
+    }
+    const d = await r.json();
+    const workers = d.workers || [];
+    const online = workers.filter(w => w.status !== 'offline').length;
+    const sum = document.getElementById('pm-workers-summary');
+    if (sum) sum.textContent = `${online} online / ${workers.length} total`;
+    const now = Math.floor(Date.now()/1000);
+    const rows = workers.map(w => {
+      const lastSeen = w.last_seen ? `${Math.max(0, now - Math.floor(w.last_seen))}s ago` : '—';
+      const offline = (w.status === 'offline') || (w.last_seen && (now - w.last_seen > 120));
+      const statusColor = offline ? '#fb7185' : '#34d399';
+      const gpu = w.gpu_name || (w.cuda_available ? 'CUDA' : 'CPU only');
+      return `
+        <div style="display:grid;grid-template-columns:1.2fr 70px 80px 1fr 100px 80px;gap:8px;align-items:center;padding:5px 10px;border-bottom:1px solid rgba(148,163,184,.05)">
+          <span title="${esc(w.node_id||'')}">${esc(w.name||'—')}</span>
+          <span style="color:#94a3b8">${esc(w.lane||'—')}</span>
+          <span style="color:${statusColor};font-weight:700">${esc(offline ? 'offline' : (w.status||'online'))}</span>
+          <span style="color:#94a3b8;font-size:.6rem">${esc(gpu)}${w.gpu_vram_gb ? ' · ' + Number(w.gpu_vram_gb).toFixed(0) + 'GB' : ''}</span>
+          <span>${esc(lastSeen)}</span>
+          <span style="text-align:right;color:#94a3b8">${esc((w.port||'').toString())}</span>
+        </div>`;
+    }).join('');
+    document.getElementById('pm-workers-rows').innerHTML = rows ||
+      '<div style="padding:10px;color:#64748b">No workers registered. Add one via core/MULTI_WORKER_SETUP.md.</div>';
+  } catch (e) {
+    document.getElementById('pm-workers-rows').innerHTML =
+      `<div style="padding:10px;color:#fb7185">Error: ${esc(e.message||e)}</div>`;
+  }
+}
+
+// Auto-poll the new panels alongside the existing pmRefresh (every 30s).
+setInterval(() => {
+  if (activeTab === 'monitor') {
+    pmJobsRefresh();
+    pmWorkersRefresh();
+  }
+}, 30_000);
+document.addEventListener('DOMContentLoaded', () => setTimeout(() => { pmJobsRefresh(); pmWorkersRefresh(); }, 1200));
 
 async function pmToggleAutoKill() {
   const chip = document.getElementById('pm-auto-kill-chip');
