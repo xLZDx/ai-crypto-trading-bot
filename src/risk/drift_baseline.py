@@ -45,9 +45,16 @@ def _baseline_path(model_key: str, timeframe: str) -> Path:
     return BASELINES_DIR / f'{safe}.json'
 
 
-def save_baseline(model_key: str, timeframe: str, feature_df: pd.DataFrame) -> dict:
+def save_baseline(model_key: str, timeframe: str, feature_df: pd.DataFrame,
+                  n_bins: int = 10) -> dict:
     """
-    Compute per-column {mean, std, q05, q95, n} from `feature_df` and persist.
+    Compute per-column distribution stats from `feature_df` and persist.
+
+    Per-feature payload:
+      - mean, std, q05, q95, n (the original z-test inputs)
+      - bin_edges, bin_props (Phase 6, 2026-05-14) — quantile bin edges
+        + proportion per bin so the PSI drift check can compare a live
+        sample against this empirical distribution.
 
     Returns the saved dict (so the caller can include it in the meta JSON
     for audit). Empty dict on failure.
@@ -56,18 +63,43 @@ def save_baseline(model_key: str, timeframe: str, feature_df: pd.DataFrame) -> d
         logger.warning("[drift_baseline] cannot save: empty DataFrame")
         return {}
 
+    import numpy as np  # imported locally so the module stays import-cheap
     summary: dict[str, dict] = {}
     for col in feature_df.columns:
         series = pd.to_numeric(feature_df[col], errors='coerce').dropna()
         if len(series) < 10:
             continue
-        summary[col] = {
+        entry = {
             'mean': float(series.mean()),
             'std':  float(series.std()),
             'q05':  float(series.quantile(0.05)),
             'q95':  float(series.quantile(0.95)),
             'n':    int(len(series)),
         }
+        # Phase 6 — quantile bins for PSI. We add a small ε to the last bin
+        # edge so np.digitize handles the maximum value cleanly. Constant
+        # features (all-same value) get a single-bin histogram and are
+        # effectively skipped by the PSI check downstream.
+        try:
+            if series.nunique() <= 1:
+                entry['bin_edges'] = [float(series.min()), float(series.min()) + 1e-9]
+                entry['bin_props'] = [1.0]
+            else:
+                quantiles = np.linspace(0, 1, n_bins + 1)
+                edges = series.quantile(quantiles).unique()
+                edges = np.sort(edges)
+                if len(edges) < 2:
+                    edges = np.array([float(series.min()), float(series.max()) + 1e-9])
+                # Last edge bumped so digitize includes the max value.
+                edges[-1] = edges[-1] + 1e-9
+                counts, _ = np.histogram(series.values, bins=edges)
+                total = counts.sum()
+                props = (counts / total).tolist() if total else [0.0] * (len(edges) - 1)
+                entry['bin_edges'] = [float(e) for e in edges]
+                entry['bin_props'] = props
+        except Exception as e:
+            logger.debug("[drift_baseline] bin build failed for %s: %s", col, e)
+        summary[col] = entry
 
     if not summary:
         logger.warning("[drift_baseline] cannot save: no usable numeric columns")
