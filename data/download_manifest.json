@@ -4,579 +4,579 @@
       "1s": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\XRP_USDT_1s.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:33.290631+00:00",
-        "candles_added": 1000
+        "last_sync": "2026-05-15T00:57:15.207236+00:00",
+        "candles_added": 209
       },
       "1m": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\XRP_USDT_1m.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:33.290898+00:00",
-        "candles_added": 31
+        "last_sync": "2026-05-15T00:57:15.207438+00:00",
+        "candles_added": 22
       },
       "1h": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\XRP_USDT_1h.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:33.291224+00:00",
-        "candles_added": 1
+        "last_sync": "2026-05-15T00:57:15.207708+00:00",
+        "candles_added": 0
       },
       "1M": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\XRP_USDT_1M.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:33.291536+00:00",
+        "last_sync": "2026-05-15T00:57:15.208733+00:00",
         "candles_added": 0
       }
     },
-    "last_updated": "2026-05-14T01:26:33.291547+00:00"
+    "last_updated": "2026-05-15T00:57:15.208746+00:00"
   },
   "NEAR/USDT": {
     "timeframes": {
       "1s": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\NEAR_USDT_1s.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:25.720805+00:00",
-        "candles_added": 1000
+        "last_sync": "2026-05-15T00:57:14.884569+00:00",
+        "candles_added": 407
       },
       "1m": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\NEAR_USDT_1m.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:25.721068+00:00",
-        "candles_added": 29
+        "last_sync": "2026-05-15T00:57:14.884943+00:00",
+        "candles_added": 21
       },
       "1h": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\NEAR_USDT_1h.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:25.721263+00:00",
-        "candles_added": 1
+        "last_sync": "2026-05-15T00:57:14.885358+00:00",
+        "candles_added": 0
       },
       "1M": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\NEAR_USDT_1M.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:25.721599+00:00",
+        "last_sync": "2026-05-15T00:57:14.885691+00:00",
         "candles_added": 0
       }
     },
-    "last_updated": "2026-05-14T01:26:25.721609+00:00"
+    "last_updated": "2026-05-15T00:57:14.885714+00:00"
   },
   "UNI/USDT": {
     "timeframes": {
       "1s": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\UNI_USDT_1s.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:47.694331+00:00",
-        "candles_added": 1000
+        "last_sync": "2026-05-15T00:57:35.193062+00:00",
+        "candles_added": 425
       },
       "1m": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\UNI_USDT_1m.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:47.694656+00:00",
-        "candles_added": 29
+        "last_sync": "2026-05-15T00:57:35.193149+00:00",
+        "candles_added": 21
       },
       "1h": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\UNI_USDT_1h.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:47.695105+00:00",
-        "candles_added": 1
+        "last_sync": "2026-05-15T00:57:35.193225+00:00",
+        "candles_added": 0
       },
       "1M": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\UNI_USDT_1M.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:47.695705+00:00",
+        "last_sync": "2026-05-15T00:57:35.193295+00:00",
         "candles_added": 0
       }
     },
-    "last_updated": "2026-05-14T01:26:47.695718+00:00"
+    "last_updated": "2026-05-15T00:57:35.193298+00:00"
   },
   "ADA/USDT": {
     "timeframes": {
       "1s": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\ADA_USDT_1s.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:27:02.780175+00:00",
-        "candles_added": 1000
+        "last_sync": "2026-05-15T00:57:10.649130+00:00",
+        "candles_added": 176
       },
       "1m": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\ADA_USDT_1m.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:27:02.780260+00:00",
-        "candles_added": 33
+        "last_sync": "2026-05-15T00:57:10.649482+00:00",
+        "candles_added": 18
       },
       "1h": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\ADA_USDT_1h.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:27:02.780326+00:00",
-        "candles_added": 1
+        "last_sync": "2026-05-15T00:57:10.649783+00:00",
+        "candles_added": 0
       },
       "1M": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\ADA_USDT_1M.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:27:02.780387+00:00",
+        "last_sync": "2026-05-15T00:57:10.650377+00:00",
         "candles_added": 0
       }
     },
-    "last_updated": "2026-05-14T01:27:02.780390+00:00"
+    "last_updated": "2026-05-15T00:57:10.650393+00:00"
   },
   "ICP/USDT": {
     "timeframes": {
       "1s": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\ICP_USDT_1s.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:15.000330+00:00",
-        "candles_added": 1000
+        "last_sync": "2026-05-15T00:57:15.044466+00:00",
+        "candles_added": 238
       },
       "1m": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\ICP_USDT_1m.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:15.000491+00:00",
-        "candles_added": 27
+        "last_sync": "2026-05-15T00:57:15.044921+00:00",
+        "candles_added": 22
       },
       "1h": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\ICP_USDT_1h.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:15.000750+00:00",
-        "candles_added": 1
+        "last_sync": "2026-05-15T00:57:15.045127+00:00",
+        "candles_added": 0
       },
       "1M": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\ICP_USDT_1M.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:15.000924+00:00",
+        "last_sync": "2026-05-15T00:57:15.045748+00:00",
         "candles_added": 0
       }
     },
-    "last_updated": "2026-05-14T01:26:15.000932+00:00"
+    "last_updated": "2026-05-15T00:57:15.045761+00:00"
   },
   "LINK/USDT": {
     "timeframes": {
       "1s": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\LINK_USDT_1s.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:08.852902+00:00",
-        "candles_added": 1000
+        "last_sync": "2026-05-15T00:57:34.541313+00:00",
+        "candles_added": 432
       },
       "1m": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\LINK_USDT_1m.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:08.853311+00:00",
-        "candles_added": 30
+        "last_sync": "2026-05-15T00:57:34.541563+00:00",
+        "candles_added": 22
       },
       "1h": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\LINK_USDT_1h.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:08.853707+00:00",
-        "candles_added": 1
+        "last_sync": "2026-05-15T00:57:34.541913+00:00",
+        "candles_added": 0
       },
       "1M": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\LINK_USDT_1M.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:08.854029+00:00",
+        "last_sync": "2026-05-15T00:57:34.542250+00:00",
         "candles_added": 0
       }
     },
-    "last_updated": "2026-05-14T01:26:08.854042+00:00"
+    "last_updated": "2026-05-15T00:57:34.542263+00:00"
   },
   "SOL/USDT": {
     "timeframes": {
       "1s": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\SOL_USDT_1s.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:27:00.817090+00:00",
-        "candles_added": 1000
+        "last_sync": "2026-05-15T00:56:51.796024+00:00",
+        "candles_added": 331
       },
       "1m": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\SOL_USDT_1m.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:27:00.817301+00:00",
-        "candles_added": 34
+        "last_sync": "2026-05-15T00:56:51.796649+00:00",
+        "candles_added": 18
       },
       "1h": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\SOL_USDT_1h.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:27:00.817506+00:00",
-        "candles_added": 1
+        "last_sync": "2026-05-15T00:56:51.797322+00:00",
+        "candles_added": 0
       },
       "1M": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\SOL_USDT_1M.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:27:00.817680+00:00",
+        "last_sync": "2026-05-15T00:56:51.797931+00:00",
         "candles_added": 0
       }
     },
-    "last_updated": "2026-05-14T01:27:00.817689+00:00"
+    "last_updated": "2026-05-15T00:56:51.797943+00:00"
   },
   "BTC/USDT": {
     "timeframes": {
       "1s": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\BTC_USDT_1s.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:50.365157+00:00",
-        "candles_added": 1000
+        "last_sync": "2026-05-15T00:57:04.012133+00:00",
+        "candles_added": 300
       },
       "1m": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\BTC_USDT_1m.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:50.365382+00:00",
-        "candles_added": 35
+        "last_sync": "2026-05-15T00:57:04.012515+00:00",
+        "candles_added": 18
       },
       "1h": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\BTC_USDT_1h.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:50.365522+00:00",
+        "last_sync": "2026-05-15T00:57:04.013120+00:00",
         "candles_added": 0
       },
       "1M": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\BTC_USDT_1M.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:50.365714+00:00",
+        "last_sync": "2026-05-15T00:57:04.013439+00:00",
         "candles_added": 0
       }
     },
-    "last_updated": "2026-05-14T01:26:50.365722+00:00"
+    "last_updated": "2026-05-15T00:57:04.013450+00:00"
   },
   "AVAX/USDT": {
     "timeframes": {
       "1s": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\AVAX_USDT_1s.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:36.064290+00:00",
-        "candles_added": 1000
+        "last_sync": "2026-05-15T00:57:29.370880+00:00",
+        "candles_added": 319
       },
       "1m": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\AVAX_USDT_1m.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:36.064832+00:00",
-        "candles_added": 31
+        "last_sync": "2026-05-15T00:57:29.371316+00:00",
+        "candles_added": 23
       },
       "1h": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\AVAX_USDT_1h.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:36.065464+00:00",
-        "candles_added": 1
+        "last_sync": "2026-05-15T00:57:29.371816+00:00",
+        "candles_added": 0
       },
       "1M": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\AVAX_USDT_1M.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:36.065693+00:00",
+        "last_sync": "2026-05-15T00:57:29.372383+00:00",
         "candles_added": 0
       }
     },
-    "last_updated": "2026-05-14T01:26:36.065702+00:00"
+    "last_updated": "2026-05-15T00:57:29.372402+00:00"
   },
   "APT/USDT": {
     "timeframes": {
       "1s": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\APT_USDT_1s.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:58.342973+00:00",
-        "candles_added": 1000
+        "last_sync": "2026-05-15T00:56:36.123735+00:00",
+        "candles_added": 229
       },
       "1m": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\APT_USDT_1m.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:58.343220+00:00",
-        "candles_added": 28
+        "last_sync": "2026-05-15T00:56:36.124195+00:00",
+        "candles_added": 21
       },
       "1h": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\APT_USDT_1h.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:58.343602+00:00",
-        "candles_added": 1
+        "last_sync": "2026-05-15T00:56:36.124968+00:00",
+        "candles_added": 0
       },
       "1M": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\APT_USDT_1M.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:58.343921+00:00",
+        "last_sync": "2026-05-15T00:56:36.125863+00:00",
         "candles_added": 0
       }
     },
-    "last_updated": "2026-05-14T01:26:58.343933+00:00"
+    "last_updated": "2026-05-15T00:56:36.125878+00:00"
   },
   "SHIB/USDT": {
     "timeframes": {
       "1s": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\SHIB_USDT_1s.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:43.750295+00:00",
-        "candles_added": 1000
+        "last_sync": "2026-05-15T00:57:23.523013+00:00",
+        "candles_added": 278
       },
       "1m": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\SHIB_USDT_1m.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:43.751505+00:00",
-        "candles_added": 30
+        "last_sync": "2026-05-15T00:57:23.523468+00:00",
+        "candles_added": 22
       },
       "1h": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\SHIB_USDT_1h.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:43.752644+00:00",
-        "candles_added": 1
+        "last_sync": "2026-05-15T00:57:23.523941+00:00",
+        "candles_added": 0
       },
       "1M": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\SHIB_USDT_1M.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:43.752960+00:00",
+        "last_sync": "2026-05-15T00:57:23.524490+00:00",
         "candles_added": 0
       }
     },
-    "last_updated": "2026-05-14T01:26:43.752975+00:00"
+    "last_updated": "2026-05-15T00:57:23.524506+00:00"
   },
   "DOT/USDT": {
     "timeframes": {
       "1s": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\DOT_USDT_1s.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:15.024022+00:00",
-        "candles_added": 1000
+        "last_sync": "2026-05-15T00:56:44.952571+00:00",
+        "candles_added": 373
       },
       "1m": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\DOT_USDT_1m.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:15.024430+00:00",
-        "candles_added": 30
+        "last_sync": "2026-05-15T00:56:44.952777+00:00",
+        "candles_added": 20
       },
       "1h": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\DOT_USDT_1h.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:15.024756+00:00",
-        "candles_added": 1
+        "last_sync": "2026-05-15T00:56:44.952935+00:00",
+        "candles_added": 0
       },
       "1M": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\DOT_USDT_1M.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:15.025441+00:00",
+        "last_sync": "2026-05-15T00:56:44.953543+00:00",
         "candles_added": 0
       }
     },
-    "last_updated": "2026-05-14T01:26:15.025453+00:00"
+    "last_updated": "2026-05-15T00:56:44.953553+00:00"
   },
   "DOGE/USDT": {
     "timeframes": {
       "1s": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\DOGE_USDT_1s.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:53.447270+00:00",
-        "candles_added": 1000
+        "last_sync": "2026-05-15T00:56:52.410913+00:00",
+        "candles_added": 184
       },
       "1m": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\DOGE_USDT_1m.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:53.447488+00:00",
-        "candles_added": 31
+        "last_sync": "2026-05-15T00:56:52.411621+00:00",
+        "candles_added": 20
       },
       "1h": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\DOGE_USDT_1h.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:53.447743+00:00",
-        "candles_added": 1
+        "last_sync": "2026-05-15T00:56:52.412441+00:00",
+        "candles_added": 0
       },
       "1M": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\DOGE_USDT_1M.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:53.447848+00:00",
+        "last_sync": "2026-05-15T00:56:52.412895+00:00",
         "candles_added": 0
       }
     },
-    "last_updated": "2026-05-14T01:26:53.447853+00:00"
+    "last_updated": "2026-05-15T00:56:52.412910+00:00"
   },
   "TRX/USDT": {
     "timeframes": {
       "1s": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\TRX_USDT_1s.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:09.411486+00:00",
-        "candles_added": 1000
+        "last_sync": "2026-05-15T00:57:23.063721+00:00",
+        "candles_added": 319
       },
       "1m": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\TRX_USDT_1m.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:09.412091+00:00",
-        "candles_added": 31
+        "last_sync": "2026-05-15T00:57:23.064240+00:00",
+        "candles_added": 26
       },
       "1h": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\TRX_USDT_1h.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:09.413496+00:00",
-        "candles_added": 1
+        "last_sync": "2026-05-15T00:57:23.064708+00:00",
+        "candles_added": 0
       },
       "1M": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\TRX_USDT_1M.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:09.413926+00:00",
+        "last_sync": "2026-05-15T00:57:23.065098+00:00",
         "candles_added": 0
       }
     },
-    "last_updated": "2026-05-14T01:26:09.413946+00:00"
+    "last_updated": "2026-05-15T00:57:23.065113+00:00"
   },
   "SUI/USDT": {
     "timeframes": {
       "1s": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\SUI_USDT_1s.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:31.687334+00:00",
-        "candles_added": 1000
+        "last_sync": "2026-05-15T00:57:11.579980+00:00",
+        "candles_added": 235
       },
       "1m": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\SUI_USDT_1m.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:31.687543+00:00",
-        "candles_added": 27
+        "last_sync": "2026-05-15T00:57:11.580271+00:00",
+        "candles_added": 23
       },
       "1h": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\SUI_USDT_1h.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:31.688137+00:00",
-        "candles_added": 1
+        "last_sync": "2026-05-15T00:57:11.580718+00:00",
+        "candles_added": 0
       },
       "1M": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\SUI_USDT_1M.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:31.688477+00:00",
+        "last_sync": "2026-05-15T00:57:11.581056+00:00",
         "candles_added": 0
       }
     },
-    "last_updated": "2026-05-14T01:26:31.688490+00:00"
+    "last_updated": "2026-05-15T00:57:11.581066+00:00"
   },
   "HBAR/USDT": {
     "timeframes": {
       "1s": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\HBAR_USDT_1s.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:44.633957+00:00",
-        "candles_added": 1000
+        "last_sync": "2026-05-15T00:57:29.665161+00:00",
+        "candles_added": 284
       },
       "1m": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\HBAR_USDT_1m.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:44.634283+00:00",
-        "candles_added": 28
+        "last_sync": "2026-05-15T00:57:29.665675+00:00",
+        "candles_added": 22
       },
       "1h": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\HBAR_USDT_1h.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:44.634614+00:00",
-        "candles_added": 1
+        "last_sync": "2026-05-15T00:57:29.666398+00:00",
+        "candles_added": 0
       },
       "1M": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\HBAR_USDT_1M.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:44.634931+00:00",
+        "last_sync": "2026-05-15T00:57:29.667014+00:00",
         "candles_added": 0
       }
     },
-    "last_updated": "2026-05-14T01:26:44.634944+00:00"
+    "last_updated": "2026-05-15T00:57:29.667032+00:00"
   },
   "ETH/USDT": {
     "timeframes": {
       "1s": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\ETH_USDT_1s.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:58.700561+00:00",
-        "candles_added": 1000
+        "last_sync": "2026-05-15T00:56:29.492728+00:00",
+        "candles_added": 332
       },
       "1m": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\ETH_USDT_1m.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:58.700762+00:00",
-        "candles_added": 32
+        "last_sync": "2026-05-15T00:56:29.493286+00:00",
+        "candles_added": 21
       },
       "1h": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\ETH_USDT_1h.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:58.700963+00:00",
-        "candles_added": 1
+        "last_sync": "2026-05-15T00:56:29.493692+00:00",
+        "candles_added": 0
       },
       "1M": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\ETH_USDT_1M.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:58.701132+00:00",
+        "last_sync": "2026-05-15T00:56:29.494076+00:00",
         "candles_added": 0
       }
     },
-    "last_updated": "2026-05-14T01:26:58.701270+00:00"
+    "last_updated": "2026-05-15T00:56:29.494094+00:00"
   },
   "BNB/USDT": {
     "timeframes": {
       "1s": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\BNB_USDT_1s.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:14.840861+00:00",
-        "candles_added": 1000
+        "last_sync": "2026-05-15T00:56:59.592937+00:00",
+        "candles_added": 296
       },
       "1m": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\BNB_USDT_1m.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:14.841149+00:00",
-        "candles_added": 31
+        "last_sync": "2026-05-15T00:56:59.593276+00:00",
+        "candles_added": 25
       },
       "1h": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\BNB_USDT_1h.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:14.841480+00:00",
-        "candles_added": 1
+        "last_sync": "2026-05-15T00:56:59.593860+00:00",
+        "candles_added": 0
       },
       "1M": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\BNB_USDT_1M.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:14.841782+00:00",
+        "last_sync": "2026-05-15T00:56:59.594456+00:00",
         "candles_added": 0
       }
     },
-    "last_updated": "2026-05-14T01:26:14.841794+00:00"
+    "last_updated": "2026-05-15T00:56:59.594469+00:00"
   },
   "LTC/USDT": {
     "timeframes": {
       "1s": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\LTC_USDT_1s.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:27.262742+00:00",
-        "candles_added": 1000
+        "last_sync": "2026-05-15T00:57:35.212583+00:00",
+        "candles_added": 325
       },
       "1m": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\LTC_USDT_1m.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:27.263002+00:00",
-        "candles_added": 29
+        "last_sync": "2026-05-15T00:57:35.212673+00:00",
+        "candles_added": 23
       },
       "1h": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\LTC_USDT_1h.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:27.263291+00:00",
-        "candles_added": 1
+        "last_sync": "2026-05-15T00:57:35.212742+00:00",
+        "candles_added": 0
       },
       "1M": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\LTC_USDT_1M.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:27.263797+00:00",
+        "last_sync": "2026-05-15T00:57:35.212807+00:00",
         "candles_added": 0
       }
     },
-    "last_updated": "2026-05-14T01:26:27.263807+00:00"
+    "last_updated": "2026-05-15T00:57:35.212810+00:00"
   },
   "ATOM/USDT": {
     "timeframes": {
       "1s": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\ATOM_USDT_1s.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:20.672837+00:00",
-        "candles_added": 1000
+        "last_sync": "2026-05-15T00:57:04.603007+00:00",
+        "candles_added": 361
       },
       "1m": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\ATOM_USDT_1m.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:20.673129+00:00",
-        "candles_added": 28
+        "last_sync": "2026-05-15T00:57:04.603157+00:00",
+        "candles_added": 23
       },
       "1h": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\ATOM_USDT_1h.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:20.673528+00:00",
-        "candles_added": 1
+        "last_sync": "2026-05-15T00:57:04.603464+00:00",
+        "candles_added": 0
       },
       "1M": {
         "file": "D:\\test 2\\AI trading assistance\\data\\raw\\ATOM_USDT_1M.csv.gz",
         "exists": true,
-        "last_sync": "2026-05-14T01:26:20.674281+00:00",
+        "last_sync": "2026-05-15T00:57:04.604236+00:00",
         "candles_added": 0
       }
     },
-    "last_updated": "2026-05-14T01:26:20.674295+00:00"
+    "last_updated": "2026-05-15T00:57:04.604251+00:00"
   }
 }
