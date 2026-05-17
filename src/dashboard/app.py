@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import threading
@@ -54,7 +55,7 @@ try:
 except ImportError:
     import logging as _logging
     _logging.getLogger(__name__).warning(
-        "flask-cors not installed — CORS headers will be Flask defaults "
+        "flask-cors not installed -- CORS headers will be Flask defaults "
         "(open). pip install flask-cors>=4.0.0")
 
 # ─── Phase A10 (2026-05-12): rate-limit expensive endpoints ─────────────────
@@ -77,7 +78,7 @@ except ImportError:
     _limiter = None
     import logging as _logging
     _logging.getLogger(__name__).warning(
-        "flask-limiter not installed — /api/chat is unrate-limited "
+        "flask-limiter not installed -- /api/chat is unrate-limited "
         "and can burn Gemini quota. pip install flask-limiter>=3.5.0")
 
 # ─── Gemini model health cache ────────────────────────────────────────────────
@@ -140,7 +141,7 @@ DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "")
 if not DASHBOARD_API_KEY:
     import logging
     logging.getLogger(__name__).warning(
-        "DASHBOARD_API_KEY is not set in .env — dashboard API is unprotected!"
+        "DASHBOARD_API_KEY is not set in .env -- dashboard API is unprotected!"
     )
 
 
@@ -2924,7 +2925,7 @@ def _get_simulator():
         if _simulator_agent is not None:
             return _simulator_agent, _trainer_agent, _strategy_sim
         _t.sleep(0.01)
-    raise RuntimeError("Simulator initializing — retry in a moment")
+    raise RuntimeError("Simulator initializing -- retry in a moment")
 
 
 _db_summary_cache: dict = {'value': {}, 'updated': 0.0}
@@ -6033,13 +6034,23 @@ def api_cluster_sweep():
 
 def _try_submit(cluster_url: str, spec: dict, submitted: list, failed: list) -> None:
     """Helper for api_cluster_sweep — POSTs one task spec, appends to
-    submitted list on success, failed list on error."""
+    submitted list on success, failed list on error.
+
+    2026-05-15 fix: cluster_orch's /api/cluster/submit is protected by the
+    same DASHBOARD_API_KEY when AI_TRADER_REQUIRE_AUTH is set. Pre-fix the
+    dashboard sent no auth header so every sweep submission returned 401.
+    """
     try:
         body = json.dumps(spec).encode('utf-8')
         import urllib.request as _req
+        headers = {'Content-Type': 'application/json'}
+        # Match the cluster's expected auth header. DASHBOARD_API_KEY is the
+        # shared secret across dashboard ↔ cluster_orch ↔ workers.
+        _key = os.getenv('DASHBOARD_API_KEY') or DASHBOARD_API_KEY
+        if _key:
+            headers['X-API-Key'] = _key
         rq = _req.Request(f'{cluster_url}/api/cluster/submit', data=body,
-                          method='POST',
-                          headers={'Content-Type': 'application/json'})
+                          method='POST', headers=headers)
         with _req.urlopen(rq, timeout=10) as r:
             d = json.loads(r.read().decode('utf-8'))
             if d.get('ok'):
@@ -6087,6 +6098,42 @@ def api_training_preview():
         })
     except Exception as exc:
         return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
+
+
+@app.route('/api/training/progress', methods=['GET'])
+@require_api_key
+def api_training_progress():
+    """Per-task training progress: current_epoch / n_epochs, per-epoch
+    timing, ETA. Populated by src.utils.training_progress (TFT epoch
+    callback + each tabular trainer's start/finish hooks).
+
+    Query params:
+      include_terminal=0|1 (default 0) — include done/error tasks
+      limit=N (default 50)
+
+    Each task row carries:
+      task_id, model, tf, current_epoch, n_epochs, epochs_completed,
+      last_epoch_duration_s, mean_epoch_duration_s, elapsed_s, eta_s,
+      status, started_at, last_update_at.
+    """
+    try:
+        from src.utils import training_progress as _tp
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'import: {exc}'}), 500
+    include_terminal = request.args.get('include_terminal', '0') in ('1', 'true', 'yes')
+    try:
+        limit = int(request.args.get('limit', 50))
+    except (TypeError, ValueError):
+        limit = 50
+    if include_terminal:
+        rows = _tp.list_all(limit=limit)
+    else:
+        rows = _tp.list_active()[:limit]
+    return jsonify({
+        'ok': True,
+        'count': len(rows),
+        'tasks': rows,
+    })
 
 
 @app.route('/api/training/jobs', methods=['GET'])
@@ -6336,18 +6383,55 @@ def api_analytics_promote_baseline():
 @app.route('/api/analytics/winning_hp', methods=['GET'])
 @require_api_key
 def api_analytics_winning_hp():
-    """For a (model, tf), return the hyperparameters that produced the
-    best composite score across all recorded runs."""
+    """Winning hyperparameters card data.
+
+    Two modes:
+    - With ?model=X&tf=Y: return the winning HP for that specific cell
+      (legacy behavior).
+    - With no params: return the top-5 winning HP across ALL (model, tf)
+      cells, so the dashboard card has useful default content instead of
+      a "Pick a model + TF" placeholder.
+    """
     try:
         from src.analytics import training_history as th
     except Exception as e:
         return jsonify({'ok': False, 'error': f'import: {e}'}), 500
     model = (request.args.get('model') or '').strip().lower()
     tf    = (request.args.get('tf') or '').strip().lower()
-    if not model or not tf:
-        return jsonify({'ok': False, 'error': 'model and tf required'}), 400
-    result = th.winning_hyperparameters(model, tf)
-    return jsonify({'ok': True, 'model': model, 'tf': tf, 'winning': result})
+    if model and tf:
+        result = th.winning_hyperparameters(model, tf)
+        return jsonify({'ok': True, 'model': model, 'tf': tf, 'winning': result})
+    # Default: aggregate top-5 across all cells.
+    all_rows = th.get_runs(limit=None)
+    by_cell: dict[str, dict] = {}
+    for r in all_rows:
+        cell = r.get('cell')
+        if not cell:
+            continue
+        score = r.get('score') or 0.0
+        prev = by_cell.get(cell)
+        if (prev is None) or (score > (prev.get('score') or 0.0)):
+            by_cell[cell] = r
+    top = sorted(by_cell.values(), key=lambda r: r.get('score') or 0.0, reverse=True)
+    leaders = []
+    for r in top[:5]:
+        if r.get('hp') is None:
+            continue
+        leaders.append({
+            'cell': r.get('cell'),
+            'model': r.get('model'),
+            'tf': r.get('tf'),
+            'best_run_id': r.get('run_id'),
+            'best_score': r.get('score'),
+            'best_hp': r.get('hp'),
+            'recorded_at': r.get('recorded_at'),
+        })
+    return jsonify({
+        'ok': True,
+        'mode': 'overview',
+        'cells_with_runs': len(by_cell),
+        'leaders': leaders,
+    })
 
 
 @app.route('/api/analytics/backfill', methods=['POST'])
@@ -6393,6 +6477,187 @@ def api_analytics_suggestions_all():
                 out.append({'model': model, 'tf': tf,
                             'error': f'{type(exc).__name__}: {exc}'})
     return jsonify({'ok': True, 'count': len(out), 'cells': out})
+
+
+# ─── PC load balancer (2026-05-15) ──────────────────────────────────────────
+# Dashboard gets a process-priority boost; cluster_orch + training subprocesses
+# drop to BELOW_NORMAL so they yield CPU to the UI. Bot is exempt from
+# demotion when running against a live exchange. See src/utils/load_balancer.py.
+# Endpoints are operator-triggered; nothing changes priorities by default
+# until /api/system/load_balancer/enable is called.
+
+@app.route('/api/system/load_balancer/status', methods=['GET'])
+@require_api_key
+def api_load_balancer_status():
+    try:
+        from src.utils import load_balancer as lb
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'import: {e}'}), 500
+    plans = lb.recommend_priorities()
+    return jsonify({
+        'ok': True,
+        'enabled': lb.is_enabled(),
+        'live_trading': lb._is_live_trading(),
+        'trade_mode':   lb._get_trade_mode(),
+        'policy':       lb.DEFAULT_ROLE_POLICY,
+        'plans':        plans,
+        'state':        lb._load_state(),
+    })
+
+
+@app.route('/api/system/load_balancer/apply', methods=['POST'])
+@require_api_key
+def api_load_balancer_apply():
+    try:
+        from src.utils import load_balancer as lb
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'import: {e}'}), 500
+    body = request.get_json(silent=True) or {}
+    dry_run = bool(body.get('dry_run'))
+    summary = lb.apply_priorities(dry_run=dry_run)
+    return jsonify({'ok': True, 'summary': summary})
+
+
+@app.route('/api/system/load_balancer/enable', methods=['POST'])
+@require_api_key
+def api_load_balancer_enable():
+    try:
+        from src.utils import load_balancer as lb
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'import: {e}'}), 500
+    body = request.get_json(silent=True) or {}
+    enabled = bool(body.get('enabled', True))
+    lb.set_enabled(enabled)
+    if enabled:
+        lb.start_background_thread()
+        # Apply immediately so the operator sees an instant effect.
+        summary = lb.apply_priorities()
+        return jsonify({'ok': True, 'enabled': True, 'summary': summary})
+    return jsonify({'ok': True, 'enabled': False})
+
+
+# ─── Unified dashboard job registry (2026-05-15) ────────────────────────────
+# Every long-running button (orchestration, bake-off, training, backfills,
+# CIO study, ...) registers a job here. The dashboard polls /api/jobs to
+# rehydrate UI state on tab switch or page reload, so progress survives the
+# operator switching away mid-run. See src/dashboard/job_registry.py.
+
+@app.route('/api/jobs', methods=['GET'])
+@require_api_key
+def api_jobs_list():
+    """List jobs for a card. Query params:
+       - card_id (required): which card to query
+       - include_terminal=1 (default): include done/error/cancelled
+       - limit=20 (default)
+    """
+    try:
+        from src.dashboard import job_registry as jr
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'import: {e}'}), 500
+    card_id = (request.args.get('card_id') or '').strip()
+    if not card_id:
+        return jsonify({'ok': False, 'error': 'card_id required'}), 400
+    try:
+        limit = int(request.args.get('limit', 20))
+    except (TypeError, ValueError):
+        limit = 20
+    include_terminal = request.args.get('include_terminal', '1') not in ('0', 'false', 'no')
+    jobs = jr.list_for_card(card_id, limit=limit, include_terminal=include_terminal)
+    running = [j for j in jobs if j.get('status') not in {'done', 'error', 'cancelled'}]
+    return jsonify({
+        'ok': True,
+        'card_id': card_id,
+        'count': len(jobs),
+        'running_count': len(running),
+        'jobs': jobs,
+    })
+
+
+@app.route('/api/jobs/register', methods=['POST'])
+@require_api_key
+def api_jobs_register():
+    """Create a new job. Body: {card_id, label, kind?, initial_log?}.
+    Returns {ok, job_id}. Used by frontend-initiated work (e.g. the
+    orchestration chain in runAutoOrchestrate) that wants its progress
+    visible across tab switches."""
+    try:
+        from src.dashboard import job_registry as jr
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'import: {e}'}), 500
+    body = request.get_json(silent=True) or {}
+    card_id = (body.get('card_id') or '').strip()
+    label = (body.get('label') or '').strip() or 'Job'
+    kind = (body.get('kind') or 'generic').strip()
+    initial_log = body.get('initial_log')
+    if not card_id:
+        return jsonify({'ok': False, 'error': 'card_id required'}), 400
+    try:
+        job_id = jr.register(card_id, label=label, kind=kind, initial_log=initial_log)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'{type(e).__name__}: {e}'}), 500
+    return jsonify({'ok': True, 'job_id': job_id})
+
+
+@app.route('/api/jobs/<job_id>/log', methods=['POST'])
+@require_api_key
+def api_jobs_append_log(job_id):
+    """Append a progress line. Body: {msg}."""
+    try:
+        from src.dashboard import job_registry as jr
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'import: {e}'}), 500
+    body = request.get_json(silent=True) or {}
+    msg = body.get('msg')
+    if msg is None:
+        return jsonify({'ok': False, 'error': 'msg required'}), 400
+    ok = jr.append_log(job_id, str(msg))
+    if not ok:
+        return jsonify({'ok': False, 'error': 'job not found'}), 404
+    return jsonify({'ok': True})
+
+
+@app.route('/api/jobs/<job_id>/complete', methods=['POST'])
+@require_api_key
+def api_jobs_complete(job_id):
+    """Mark a job done. Body: {result?, log?}."""
+    try:
+        from src.dashboard import job_registry as jr
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'import: {e}'}), 500
+    body = request.get_json(silent=True) or {}
+    ok = jr.complete(job_id, result=body.get('result'), log=body.get('log'))
+    if not ok:
+        return jsonify({'ok': False, 'error': 'job not found'}), 404
+    return jsonify({'ok': True})
+
+
+@app.route('/api/jobs/<job_id>/fail', methods=['POST'])
+@require_api_key
+def api_jobs_fail(job_id):
+    """Mark a job failed. Body: {error, log?}."""
+    try:
+        from src.dashboard import job_registry as jr
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'import: {e}'}), 500
+    body = request.get_json(silent=True) or {}
+    err = body.get('error') or 'unknown'
+    ok = jr.fail(job_id, error=str(err), log=body.get('log'))
+    if not ok:
+        return jsonify({'ok': False, 'error': 'job not found'}), 404
+    return jsonify({'ok': True})
+
+
+@app.route('/api/jobs/<job_id>', methods=['GET'])
+@require_api_key
+def api_jobs_get(job_id):
+    try:
+        from src.dashboard import job_registry as jr
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'import: {e}'}), 500
+    job = jr.get(job_id)
+    if not job:
+        return jsonify({'ok': False, 'error': 'job not found'}), 404
+    return jsonify({'ok': True, 'job': job})
 
 
 # ─── Data coverage + 1s→higher-TF resample endpoints ────────────────────────
@@ -8072,7 +8337,7 @@ def api_control_trade_mode():
     with _balance_live_lock:
         _balance_live_cache.clear()
     logger = __import__('logging').getLogger(__name__)
-    logger.warning("[control] trade_mode → %s (operator action)", mode)
+    logger.warning("[control] trade_mode -> %s (operator action)", mode)
     return jsonify({'ok': True, 'trade_mode': mode})
 
 
@@ -8502,7 +8767,7 @@ if __name__ == '__main__':
                         if consec_failures >= 3:
                             _log.critical(
                                 "[registry-hb] dashboard lost role ownership for 3 "
-                                "consecutive heartbeats — request immediate restart"
+                                "consecutive heartbeats -- request immediate restart"
                             )
                     else:
                         consec_failures = 0
@@ -8528,6 +8793,19 @@ if __name__ == '__main__':
         start_monitor_thread()
     except Exception as _e:
         print(f"[dashboard] error_monitor init failed: {_e}")
+
+    # 2026-05-15 — start the PC load balancer background loop. It stays
+    # idle until the operator enables it via the Monitor tab card / the
+    # /api/system/load_balancer/enable endpoint, so this is a no-op by
+    # default. If enabled state persisted from a previous session, the
+    # thread picks it up on first tick.
+    try:
+        from src.utils import load_balancer as _lb
+        _lb.start_background_thread(interval_s=30.0)
+        if _lb.is_enabled():
+            _lb.apply_priorities()
+    except Exception as _e:
+        print(f"[dashboard] load_balancer init failed: {_e}")
 
     # Phase 11 — bind via env var. SEC-2 fix: default to 127.0.0.1 (loopback).
     # To expose on the LAN, operator must explicitly set DASHBOARD_BIND_HOST

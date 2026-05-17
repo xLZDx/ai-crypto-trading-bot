@@ -106,7 +106,7 @@ def test_documentation():
 
 def main() -> int:
     print("=" * 60)
-    print("Phase 10 — Live Bot Integration + Documentation")
+    print("Phase 10 -- Live Bot Integration + Documentation")
     print("=" * 60)
     test_feature_reader()
     test_main_py_phase10()

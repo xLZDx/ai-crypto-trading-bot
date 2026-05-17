@@ -74,7 +74,7 @@ def smooth_price(
     try:
         from pykalman import KalmanFilter
     except ImportError as exc:
-        logger.warning("pykalman not installed — returning raw input. (%s)", exc)
+        logger.warning("pykalman not installed -- returning raw input. (%s)", exc)
         return arr.copy()
 
     kf = KalmanFilter(

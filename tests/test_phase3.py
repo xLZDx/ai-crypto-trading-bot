@@ -277,7 +277,7 @@ def test_multi_agent_env():
 # ─── order_manager alpha-decay helper ────────────────────────────────────────
 
 def test_order_manager_decay_helper():
-    print("\n[order_manager — alpha-decay helper]")
+    print("\n[order_manager -- alpha-decay helper]")
     src = (PROJECT_ROOT / "src" / "engine" / "order_manager.py").read_text(encoding="utf-8")
     check("should_alpha_decay_exit() defined", "def should_alpha_decay_exit" in src)
     check("imports alpha_decay.should_exit",
@@ -288,7 +288,7 @@ def test_order_manager_decay_helper():
 
 def main() -> int:
     print("=" * 60)
-    print("Phase 3 — Level 3 Execution & Simulation Tests")
+    print("Phase 3 -- Level 3 Execution & Simulation Tests")
     print("=" * 60)
     test_alpha_decay()
     test_synthetic_exchange()

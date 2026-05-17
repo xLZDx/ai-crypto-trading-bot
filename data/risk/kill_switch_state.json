@@ -1,0 +1,14 @@
+{
+    "paused": false,
+    "paused_at": null,
+    "last_trigger": "manual: smoke test",
+    "last_reset_at": "2026-05-13T14:27:09.427462+00:00",
+    "last_reset_by": "smoke",
+    "last_reset_reason": "end of smoke",
+    "trigger_history": [
+        {
+            "trigger": "manual: smoke test",
+            "at": "2026-05-13T14:27:09.349043+00:00"
+        }
+    ]
+}

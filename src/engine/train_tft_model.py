@@ -14,10 +14,62 @@ if PROJECT_ROOT not in sys.path:
 
 import numpy as np
 import pandas as pd
+import time as _time
 
 from src.analysis.feature_engineering import add_ofi, add_taker_and_trade_features, add_time_features
 
 logger = logging.getLogger(__name__)
+
+
+# 2026-05-15 — per-epoch progress callback. MUST live at module level
+# (not nested inside train_tft_model) so PyTorch Lightning's DataLoader
+# subprocesses can pickle the Trainer's callbacks. The original closure
+# version raised:
+#   PicklingError: Can't pickle local object _EpochProgressCB
+# after spending ~45 min in data prep, wasting two full hours across
+# the orchestrator's retry policy.
+try:
+    from pytorch_lightning.callbacks import Callback as _PLCallback
+
+    class _EpochProgressCB(_PLCallback):
+        """Writes per-epoch timing to data/training_progress.json after
+        every train epoch. task_id + n_epochs are passed in as constructor
+        args so the class itself is fully picklable (no closure capture).
+        """
+        def __init__(self, task_id: str, n_epochs: int):
+            super().__init__()
+            self.task_id = task_id
+            self.n_epochs = int(n_epochs)
+            self._epoch_started_at: float | None = None
+
+        def on_train_epoch_start(self, trainer, pl_module):
+            self._epoch_started_at = _time.time()
+            try:
+                from src.utils import training_progress as _tp
+                _tp.heartbeat(self.task_id)
+            except Exception:
+                pass
+
+        def on_train_epoch_end(self, trainer, pl_module):
+            if self._epoch_started_at is None:
+                return
+            dur = _time.time() - self._epoch_started_at
+            idx = int(getattr(trainer, "current_epoch", 0)) + 1
+            try:
+                from src.utils import training_progress as _tp
+                _tp.epoch_done(self.task_id, idx, dur)
+                prog = _tp.get(self.task_id) or {}
+                logger.info(
+                    "[TFT] epoch %d/%d done in %.1fs (mean=%.1fs, eta=%.0fs)",
+                    idx, self.n_epochs, dur,
+                    prog.get("mean_epoch_duration_s") or dur,
+                    prog.get("eta_s") or 0,
+                )
+            except Exception as exc:
+                logger.warning("[TFT] progress.epoch_done failed: %s", exc)
+
+except Exception:
+    _EpochProgressCB = None  # type: ignore[misc, assignment]
 
 ROOT_PATH = Path(__file__).resolve().parents[2]
 RAW_DIR = ROOT_PATH / "data" / "raw"
@@ -70,6 +122,122 @@ def load_frame(symbol: str, timeframe: str, history_days: int) -> pd.DataFrame |
     return df
 
 
+def _bar_size_ms_for(freq: str) -> int:
+    """Pandas-freq → ms duration. Used by the L2 feature joiner."""
+    return {
+        '1min':  60_000,
+        '5min':  300_000,
+        '15min': 900_000,
+        '30min': 1_800_000,
+        '1h':    3_600_000,
+        '2h':    7_200_000,
+        '4h':    14_400_000,
+        '1D':    86_400_000,
+        '1W':    604_800_000,
+    }.get(freq, 3_600_000)
+
+
+def _maybe_attach_news_features(df: pd.DataFrame, symbol: str, freq: str) -> pd.DataFrame:
+    """Merge bar-aligned news sentiment features. No-op when no news parquet
+    exists or the joiner errors. Operator request 2026-05-15: NLP/sentiment
+    as ML model features."""
+    try:
+        from src.analysis.news_feature_loader import (
+            load_bar_aligned, is_available, NEWS_FEATURE_COLUMNS,
+        )
+    except Exception as exc:
+        logger.debug("[TFT] news loader unavailable (%s)", exc)
+        return df
+    if "timestamp" not in df.columns:
+        return df
+    if not is_available():
+        for col in NEWS_FEATURE_COLUMNS:
+            if col not in df.columns:
+                df[col] = 0.0
+        return df
+    try:
+        ts_ms = (pd.to_datetime(df["timestamp"]).view("int64") // 1_000_000).tolist()
+        bar_ms = _bar_size_ms_for(freq)
+        feats = load_bar_aligned(symbol, ts_ms, bar_ms)
+        for col in NEWS_FEATURE_COLUMNS:
+            df[col] = feats[col].values if col in feats.columns else 0.0
+        logger.info("[TFT] news enrichment: %s -- %d total headlines across bars",
+                    symbol, int(df.get('news_count', pd.Series([0])).sum()))
+    except Exception as exc:
+        logger.warning("[TFT] news enrichment failed (%s) -- zeros", exc)
+        for col in NEWS_FEATURE_COLUMNS:
+            if col not in df.columns:
+                df[col] = 0.0
+    return df
+
+
+def _maybe_attach_tick_features(df: pd.DataFrame, symbol: str, freq: str) -> pd.DataFrame:
+    """Merge 1s-derived tick microstructure features. Operator request
+    2026-05-15: 'pure tick data — build tick-level pipeline'. 1s is the
+    finest granularity on disk; this gives sub-bar intensity proxies."""
+    try:
+        from src.analysis.tick_feature_loader import (
+            load_bar_aligned, TICK_FEATURE_COLUMNS,
+        )
+    except Exception:
+        return df
+    if "timestamp" not in df.columns:
+        return df
+    try:
+        ts_ms = (pd.to_datetime(df["timestamp"]).view("int64") // 1_000_000).tolist()
+        bar_ms = _bar_size_ms_for(freq)
+        feats = load_bar_aligned(symbol, ts_ms, bar_ms)
+        for col in TICK_FEATURE_COLUMNS:
+            df[col] = feats[col].values if col in feats.columns else 0.0
+    except Exception as exc:
+        logger.warning("[TFT] tick enrichment failed (%s) -- zeros", exc)
+        for col in TICK_FEATURE_COLUMNS:
+            if col not in df.columns:
+                df[col] = 0.0
+    return df
+
+
+def _maybe_attach_l2_features(df: pd.DataFrame, symbol: str, freq: str) -> pd.DataFrame:
+    """Merge L2 microstructure features onto a bar-indexed dataframe.
+
+    No-op when the L2 partitions are empty for this symbol — every L2 column
+    is filled with 0.0 so the downstream pipeline keeps a stable schema.
+    Operator request 2026-05-15: "L2-fed TFT pipeline".
+    """
+    try:
+        from src.analysis.l2_feature_loader import (
+            load_bar_aligned, l2_partitions_exist, L2_FEATURE_COLUMNS,
+        )
+    except Exception as exc:
+        logger.debug("[TFT] L2 loader unavailable (%s) -- skipping enrichment", exc)
+        return df
+    if "timestamp" not in df.columns:
+        return df
+    sym = symbol.replace("/", "_").upper()
+    if not l2_partitions_exist(sym):
+        # Stable schema even when no L2 data — fill zeros.
+        for col in L2_FEATURE_COLUMNS:
+            if col not in df.columns:
+                df[col] = 0.0
+        return df
+    try:
+        ts_ms = (pd.to_datetime(df["timestamp"]).view("int64") // 1_000_000).tolist()
+        bar_ms = _bar_size_ms_for(freq)
+        feats = load_bar_aligned(sym, ts_ms, bar_ms,
+                                 closes=df["close"].tolist() if "close" in df.columns else None)
+        # Align by row order — load_bar_aligned preserves the input order.
+        for col in L2_FEATURE_COLUMNS:
+            df[col] = feats[col].values if col in feats.columns else 0.0
+        logger.info("[TFT] L2 enrichment: %s -- %d snapshots across %d bars",
+                    sym, int(df.get('l2_snapshot_count', pd.Series([0])).sum()), len(df))
+    except Exception as exc:
+        logger.warning("[TFT] L2 enrichment failed (%s) -- falling back to zeros", exc)
+        for col in L2_FEATURE_COLUMNS:
+            if col not in df.columns:
+                df[col] = 0.0
+    return df
+
+
 def engineer_frame(df: pd.DataFrame, asset_id: int, freq: str, symbol: str = "") -> pd.DataFrame:
     df = df.copy()
     numeric_cols = ["open", "high", "low", "close", "volume", "quote_volume", "trades_count", "taker_buy_base", "taker_buy_quote", "sentiment_score", "funding_rate"]
@@ -106,6 +274,13 @@ def engineer_frame(df: pd.DataFrame, asset_id: int, freq: str, symbol: str = "")
 
     if "sentiment_score" not in df.columns:
         df["sentiment_score"] = 0.0
+
+    # 2026-05-15 — attach L2 microstructure + news sentiment + tick (1s)
+    # microstructure intensity. Stable schema even when partitions are
+    # empty (zeros), so retrains automatically benefit as data accumulates.
+    df = _maybe_attach_l2_features(df, symbol=symbol, freq=freq)
+    df = _maybe_attach_news_features(df, symbol=symbol, freq=freq)
+    df = _maybe_attach_tick_features(df, symbol=symbol, freq=freq)
 
     return df.dropna(subset=["close"])
 
@@ -183,6 +358,30 @@ def build_series_bundle(df: pd.DataFrame, freq: str):
     past_cov_cols = ["return", "volume", "taker_buy_ratio", "avg_trade_size", "ofi", "funding_rate"]
     if "sentiment_score" in df.columns:
         past_cov_cols.append("sentiment_score")
+    # 2026-05-15 — include L2 microstructure features + news features as
+    # past covariates. Stable-schema design: both loaders write every column
+    # even when no data, so input shape stays constant across retrain cycles.
+    try:
+        from src.analysis.l2_feature_loader import L2_FEATURE_COLUMNS
+        for col in L2_FEATURE_COLUMNS:
+            if col in df.columns and col not in past_cov_cols:
+                past_cov_cols.append(col)
+    except Exception:
+        pass
+    try:
+        from src.analysis.news_feature_loader import NEWS_FEATURE_COLUMNS
+        for col in NEWS_FEATURE_COLUMNS:
+            if col in df.columns and col not in past_cov_cols:
+                past_cov_cols.append(col)
+    except Exception:
+        pass
+    try:
+        from src.analysis.tick_feature_loader import TICK_FEATURE_COLUMNS
+        for col in TICK_FEATURE_COLUMNS:
+            if col in df.columns and col not in past_cov_cols:
+                past_cov_cols.append(col)
+    except Exception:
+        pass
     past_df = _dedupe_for_darts(df)
     past_covariates = TimeSeries.from_dataframe(
         past_df,
@@ -228,16 +427,56 @@ def load_frame_from_db(symbol: str, timeframe: str) -> pd.DataFrame | None:
         return None
 
 
+#: 2026-05-15 — operator-curated presets so flipping the cost/quality dial
+#: is one edit. The worker reads these via training_rules.json. Change the
+#: rules file (or the function defaults below) to switch modes:
+#:
+#:   intent           n_epochs  patience  min_epochs  full_sweep_eta
+#:   "cheap"             3         5         3         ~1.6 h    ← retire-fast
+#:   "fair-vs-gbt"      12         4         3         ~6.4 h    ← fair comparison
+#:   "max-quality"      25         6         3         ~13 h     ← cost-no-object
+#:
+#: min_epochs=3 is a HARD FLOOR for EarlyStopping so a noisy epoch-1 loss
+#: spike cannot terminate the run prematurely. Patience can stop training
+#: only AFTER min_epochs has been reached. PyTorch Lightning enforces this
+#: via Trainer(min_epochs=…), passed through pl_trainer_kwargs.
+TFT_PRESETS = {
+    "cheap":         {"n_epochs": 3,  "patience": 5, "min_epochs": 3},
+    "fair-vs-gbt":   {"n_epochs": 12, "patience": 4, "min_epochs": 3},
+    "max-quality":   {"n_epochs": 25, "patience": 6, "min_epochs": 3},
+}
+
+
 def train_tft_model(
     timeframe: str = "1h",
     input_chunk_length: int = 168,
     output_chunk_length: int = 24,
-    n_epochs: int = 30,
+    n_epochs: int = 10,        # 2026-05-15 operator: 30 → 10 → 3 → 10
     history_days: int = 365 * 2,
     dry_run: bool = False,
+    *,
+    patience: int = 4,         # 2026-05-15 — was 5; now tunable from rules.
+    min_epochs: int = 3,       # 2026-05-15 — HARD FLOOR for EarlyStopping.
+    progress_task_id: str | None = None,  # 2026-05-15 — for dashboard live progress
+    symbols_filter: list[str] | None = None,  # 2026-05-16 — single-symbol smoke
 ):
+    # 2026-05-15 — record real wall-clock start so meta + history have it.
+    # _time is imported at module level (see top of file) for picklable callbacks.
+    _started_at = _time.time()
+    # Live progress tracker — feeds the dashboard's "current epoch / ETA" column.
+    _task_id = progress_task_id or f"tft_{timeframe}_{int(_started_at)}"
+    try:
+        from src.utils import training_progress as _tp
+        _tp.start(_task_id, model="tft", tf=timeframe, n_epochs=int(n_epochs),
+                  trainer="train_tft_model")
+    except Exception as _e:
+        logger.warning("[TFT] progress.start failed: %s", _e)
     freq = _tf_to_pandas_freq(timeframe)
-    symbols = load_symbols()
+    if symbols_filter:
+        symbols = [s.replace("/", "_") for s in symbols_filter]
+        logger.info("[TFT] symbols_filter active -> training on %s only", symbols)
+    else:
+        symbols = load_symbols()
     series_bundle = []
     dry_run_summary: dict[str, int] = {}
 
@@ -319,7 +558,7 @@ def train_tft_model(
             logger.info("CUDA GPU detected: %s  VRAM=%.1f GB", torch.cuda.get_device_name(0), _hw["vram_gb"])
             torch.cuda.empty_cache()
         else:
-            logger.warning("No CUDA GPU detected — training on CPU. Run install_cuda_torch.ps1 to enable GPU.")
+            logger.warning("No CUDA GPU detected -- training on CPU. Run install_cuda_torch.ps1 to enable GPU.")
     except Exception:
         _use_gpu = False
 
@@ -337,13 +576,13 @@ def train_tft_model(
         _monitor_metric = "val_loss"
         if not all(valid_val_mask):
             logger.warning(
-                "[TFT] %d/%d val series long enough (≥%d bars) — using only valid ones.",
+                "[TFT] %d/%d val series long enough (>=%d bars) -- using only valid ones.",
                 sum(valid_val_mask), len(valid_val_mask), MIN_VAL_BARS,
             )
     else:
         # All val series are too short → skip validation and monitor train_loss instead
         logger.warning(
-            "[TFT] All val series shorter than %d bars — EarlyStopping will monitor train_loss.",
+            "[TFT] All val series shorter than %d bars -- EarlyStopping will monitor train_loss.",
             MIN_VAL_BARS,
         )
         _fit_val_tgt = _fit_val_past = _fit_val_future = None
@@ -351,23 +590,35 @@ def train_tft_model(
 
     # EarlyStopping: check_finite=True stops if metric is NaN (guards against empty
     # val loops); strict=True raises if the metric key is never logged (catches
-    # Darts version skew where the key name differs).
+    # Darts version skew where the key name differs). 2026-05-15: patience is
+    # now a parameter (was hard-coded 5) AND min_epochs is enforced at the
+    # Lightning Trainer level so EarlyStopping cannot fire before that floor.
     try:
         from pytorch_lightning.callbacks import EarlyStopping
         _early_stop_cb = [
             EarlyStopping(
                 monitor=_monitor_metric,
-                patience=5,
+                patience=int(patience),
                 mode="min",
                 check_finite=True,
                 min_delta=1e-6,
                 verbose=True,
             )
         ]
+        # 2026-05-15 — use the module-level _EpochProgressCB (picklable,
+        # works with Lightning's DataLoader workers > 0). The closure
+        # version that lived here caused PicklingError on model.fit().
+        if _EpochProgressCB is not None:
+            _early_stop_cb.append(_EpochProgressCB(_task_id, int(n_epochs)))
     except Exception:
         _early_stop_cb = []
 
-    _trainer_kw: dict = {"enable_progress_bar": True}
+    # Clamp min_epochs to at most n_epochs — Lightning raises if min>max.
+    _min_epochs = max(1, min(int(min_epochs), int(n_epochs)))
+    _trainer_kw: dict = {
+        "enable_progress_bar": True,
+        "min_epochs": _min_epochs,
+    }
     if _use_gpu:
         _trainer_kw.update({"accelerator": "gpu", "devices": 1, "strategy": "auto"})
     else:
@@ -391,49 +642,119 @@ def train_tft_model(
     )
 
     logger.info(
-        "Training TFT on %d series  input=%d output=%d epochs=%d  "
-        "device=%s VRAM=%.1fGB  batch=%d hidden=%d  val_monitor=%s",
+        "Training TFT on %d series  input=%d output=%d max_epochs=%d "
+        "min_epochs=%d patience=%d  device=%s VRAM=%.1fGB  batch=%d "
+        "hidden=%d  val_monitor=%s",
         len(scaled_train_tgt),
         input_chunk_length,
         output_chunk_length,
         n_epochs,
+        _min_epochs,
+        int(patience),
         "GPU" if _use_gpu else "CPU",
         _hw["vram_gb"],
         _hw["batch_size"],
         _hw["hidden_size"],
         _monitor_metric,
     )
-    model.fit(
-        series=scaled_train_tgt,
-        past_covariates=scaled_train_past,
-        future_covariates=scaled_train_future,
-        val_series=_fit_val_tgt,
-        val_past_covariates=_fit_val_past,
-        val_future_covariates=_fit_val_future,
-        verbose=True,
-    )
+    try:
+        model.fit(
+            series=scaled_train_tgt,
+            past_covariates=scaled_train_past,
+            future_covariates=scaled_train_future,
+            val_series=_fit_val_tgt,
+            val_past_covariates=_fit_val_past,
+            val_future_covariates=_fit_val_future,
+            verbose=True,
+        )
+    except Exception as _fit_exc:
+        # 2026-05-15 — always mark progress.finish on error so a crashed
+        # training doesn't leave a "running" entry on the dashboard.
+        try:
+            _tp.finish(_task_id, status="error", error=f"{type(_fit_exc).__name__}: {_fit_exc}")
+        except Exception:
+            pass
+        raise
+
+    # 2026-05-15 — capture finished_at + duration + actual epochs run from
+    # the progress tracker (Lightning's current_epoch reflects how many
+    # ran, which may be < n_epochs when EarlyStopping fired).
+    _finished_at = _time.time()
+    _duration_s = _finished_at - _started_at
+    _epochs_completed = 0
+    _per_epoch_s = None
+    try:
+        _prog = _tp.get(_task_id) or {}
+        _epochs_completed = int(_prog.get("epochs_completed") or 0)
+        _per_epoch_s = _prog.get("mean_epoch_duration_s")
+    except Exception:
+        pass
+    # Best-effort per-epoch fallback.
+    if (not _per_epoch_s) and _epochs_completed > 0:
+        _per_epoch_s = _duration_s / _epochs_completed
 
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    # 2026-05-15 — write per-TF meta files alongside the canonical one so
+    # different TFs don't trample each other's records.
+    canonical_meta = MODEL_DIR / "tft_model_meta.json"
+    per_tf_meta    = MODEL_DIR / f"tft_{timeframe}_meta.json"
     model_path = MODEL_DIR / "tft_model.pt"
+    per_tf_model_path = MODEL_DIR / f"tft_{timeframe}_model.pt"
     model.save(str(model_path))
+    # Also save per-TF copy so 4h training doesn't overwrite 1h's weights.
+    try:
+        import shutil
+        shutil.copy2(model_path, per_tf_model_path)
+    except Exception as _e:
+        logger.warning("[TFT] per-tf model copy skipped: %s", _e)
 
     from datetime import datetime, timezone as _tz
-    meta_path = MODEL_DIR / "tft_model_meta.json"
-    with meta_path.open("w", encoding="utf-8") as handle:
-        json.dump(
-            {
-                "symbols": [symbol for symbol, *_ in series_bundle],
-                "timeframe": timeframe,
-                "input_chunk_length": input_chunk_length,
-                "output_chunk_length": output_chunk_length,
-                "n_epochs": n_epochs,
-                "model_path": str(model_path),
-                "device": "GPU" if _use_gpu else "CPU",
-                "last_trained": datetime.now(_tz.utc).isoformat(),
-            },
-            handle,
-            indent=2,
-        )
+    meta_dict = {
+        "symbols": [symbol for symbol, *_ in series_bundle],
+        "timeframe": timeframe,
+        "input_chunk_length": input_chunk_length,
+        "output_chunk_length": output_chunk_length,
+        "n_epochs": n_epochs,                    # max_epochs cap
+        "epochs_completed": _epochs_completed,    # 2026-05-15 — actual
+        "min_epochs": _min_epochs,
+        "patience": int(patience),
+        "model_path": str(model_path),
+        "device": "GPU" if _use_gpu else "CPU",
+        "last_trained": datetime.now(_tz.utc).isoformat(),
+        # 2026-05-15 — real wall-clock instrumentation (operator request:
+        # "save the run time on all TFs ... how long does it take for 1
+        # or for 10").
+        "started_at_unix":   _started_at,
+        "finished_at_unix":  _finished_at,
+        "duration_s":        round(_duration_s, 2),
+        "per_epoch_s":       round(_per_epoch_s, 2) if _per_epoch_s else None,
+        # n_samples / n_features helpful for kpi_gate + history view.
+        "n_samples":  sum(len(t) for t in scaled_train_tgt),
+        "n_features": (scaled_train_past[0].n_components if scaled_train_past else None),
+    }
+    for _path in (canonical_meta, per_tf_meta):
+        with _path.open("w", encoding="utf-8") as handle:
+            json.dump(meta_dict, handle, indent=2)
+
+    # 2026-05-15 — record into training_runs_history. Was previously absent
+    # from the TFT path, which is why /api/analytics/runs showed score=None
+    # for the May-1 training and why we had no per-TF duration on disk.
+    try:
+        from src.analytics.training_history import record_run_from_meta
+        record_run_from_meta(meta_dict, model="tft", tf=timeframe,
+                             trainer="train_tft_model.py",
+                             meta_path=str(per_tf_meta),
+                             started_at=_started_at)
+        logger.info("[TFT] history recorded: %s @ %s duration=%.1fs epochs=%d",
+                    "tft", timeframe, _duration_s, _epochs_completed)
+    except Exception as _e:
+        logger.warning("[TFT] record_run_from_meta skipped: %s", _e)
+
+    # Mark task complete in live progress tracker.
+    try:
+        _tp.finish(_task_id, status="done")
+    except Exception:
+        pass
 
     logger.info("TFT model saved to %s", model_path)
     return {"model_path": str(model_path), "series_count": len(series_bundle), "val_split": VAL_FRAC}
@@ -444,15 +765,37 @@ def main() -> None:
     parser.add_argument("--timeframe", default="1h", choices=["1h", "1m"])
     parser.add_argument("--input-chunk-length", type=int, default=168)
     parser.add_argument("--output-chunk-length", type=int, default=24)
-    parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--epochs", type=int, default=10,            # 2026-05-15: 30 → 10 → 3 → 10
+                        help="max_epochs cap (PyTorch Lightning)")
+    parser.add_argument("--patience", type=int, default=4,           # 2026-05-15 new
+                        help="EarlyStopping patience on val_loss")
+    parser.add_argument("--min-epochs", type=int, default=3,         # 2026-05-15 new — hard floor
+                        help="Hard floor -- EarlyStopping cannot fire before this")
+    parser.add_argument("--preset", type=str, default=None,
+                        choices=list(TFT_PRESETS.keys()),
+                        help="Apply a curated preset (cheap / fair-vs-gbt / max-quality). "
+                             "Overrides --epochs/--patience/--min-epochs.")
     parser.add_argument("--history-days", type=int, default=365 * 2)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    if args.preset:
+        p = TFT_PRESETS[args.preset]
+        n_epochs   = p["n_epochs"]
+        patience   = p["patience"]
+        min_epochs = p["min_epochs"]
+        logger.info("TFT preset=%s -> n_epochs=%d patience=%d min_epochs=%d",
+                    args.preset, n_epochs, patience, min_epochs)
+    else:
+        n_epochs   = args.epochs
+        patience   = args.patience
+        min_epochs = args.min_epochs
     train_tft_model(
         timeframe=args.timeframe,
         input_chunk_length=args.input_chunk_length,
         output_chunk_length=args.output_chunk_length,
-        n_epochs=args.epochs,
+        n_epochs=n_epochs,
+        patience=patience,
+        min_epochs=min_epochs,
         history_days=args.history_days,
         dry_run=args.dry_run,
     )

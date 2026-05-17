@@ -41,7 +41,7 @@ def main() -> int:
     args = p.parse_args()
 
     if not (os.getenv("TELEGRAM_API_ID") and os.getenv("TELEGRAM_API_HASH")):
-        logger.warning("TELEGRAM_API_ID / TELEGRAM_API_HASH not set — exiting.")
+        logger.warning("TELEGRAM_API_ID / TELEGRAM_API_HASH not set -- exiting.")
         return 1
 
     try:

@@ -115,7 +115,7 @@ def save_baseline(model_key: str, timeframe: str, feature_df: pd.DataFrame,
     }
     path = _baseline_path(model_key, timeframe)
     path.write_text(json.dumps(payload, indent=2), encoding='utf-8')
-    logger.info("[drift_baseline] saved %d feature stats → %s", len(summary), path.name)
+    logger.info("[drift_baseline] saved %d feature stats -> %s", len(summary), path.name)
     return payload
 
 
@@ -147,7 +147,7 @@ def load_baseline(
             age_days = (datetime.now(timezone.utc) - ts).total_seconds() / 86400
             if age_days > max_age_days:
                 logger.info(
-                    "[drift_baseline] %s is %.1fd old (> %d) — skipping drift check",
+                    "[drift_baseline] %s is %.1fd old (> %d) -- skipping drift check",
                     path.name, age_days, max_age_days,
                 )
                 return None

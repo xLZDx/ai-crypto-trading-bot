@@ -4,6 +4,7 @@ import json
 import logging
 import numpy as np
 import pandas as pd
+from src.data_ingestion.ohlcv_parquet_loader import load_ohlcv, load_funding
 from sklearn.ensemble import HistGradientBoostingClassifier  # kept for type compat
 from sklearn.calibration import CalibratedClassifierCV
 from src.utils.gpu_classifier import make_classifier  # 2026-05-10 GPU migration
@@ -79,33 +80,24 @@ def _trend_tb_params(timeframe: str) -> dict:
     return _TREND_TB_BY_TF.get(timeframe, _TREND_TB_BY_TF['1h'])
 
 
-def _merge_funding_csv(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
-    """Phase 3.5 — merge {symbol}_funding.csv.gz into the candle frame.
+def _merge_funding(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    """Merge funding_rate from parquet into the candle frame.
 
-    Pre-fix the funding_z feature was always 0.0 because the raw 1h CSV
-    has no funding_rate column. Funding fires every 8h; merge_asof with
-    backward direction + 8h tolerance gives 'last-known funding as of
-    this candle close' semantics with no look-ahead.
-
-    Silently skips if the funding file doesn't exist (spot-only assets
-    like SHIB don't have perpetuals)."""
-    funding_path = os.path.join(base_dir, 'data', 'raw', f'{symbol}_funding.csv.gz')
-    if not os.path.exists(funding_path):
-        log.debug("[trend] no funding CSV for %s — funding_z stays 0", symbol)
-        return df
+    Funding fires every 8h; merge_asof backward + 8h tolerance gives
+    'last-known funding as of this candle close' semantics with no look-ahead.
+    Silently skips if no funding data (spot-only assets like SHIB).
+    """
     try:
-        funding = pd.read_csv(funding_path)
-        if 'funding_rate' not in funding.columns or 'timestamp' not in funding.columns:
-            log.warning("[trend] %s funding CSV missing expected cols", symbol)
+        funding = load_funding(symbol)
+        if funding.empty or 'funding_rate' not in funding.columns:
+            log.debug("[trend] no funding data for %s -- funding_z stays 0", symbol)
             return df
-        funding['timestamp'] = pd.to_datetime(funding['timestamp'])
-        funding = funding.sort_values('timestamp').reset_index(drop=True)
         df_sorted = df.sort_values('timestamp').reset_index(drop=True)
         merged = pd.merge_asof(
             df_sorted, funding[['timestamp', 'funding_rate']],
             on='timestamp',
             direction='backward',
-            tolerance=pd.Timedelta('8h'),  # funding fires every 8h
+            tolerance=pd.Timedelta('8h'),
         )
         return merged
     except Exception as e:
@@ -114,19 +106,17 @@ def _merge_funding_csv(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
 
 
 def prepare_trend_data(filepath, timeframe: str = '1h', symbol: str | None = None):
-    """Prepare a single-symbol trend feature frame.
-
-    Phase 3.5 changes:
-      - per-TF asymmetric Triple Barrier (was hardcoded pt=3 sl=3 max_bars=48)
-      - funding_rate merged from {symbol}_funding.csv.gz (was always 0)
-      - taker_buy_ratio + avg_trade_size computed (already in FEATURE_COLUMNS)
-      - dropna() replaced with selective subset (was halving the dataset
-        when funding rows were sparse)
-    """
-    log.info("Loading data for Trend Pipeline from %s...", filepath)
-    df = pd.read_csv(filepath)
-    df['timestamp'] = pd.to_datetime(df['timestamp'])
-    df = df.sort_values('timestamp').reset_index(drop=True)
+    """Prepare a single-symbol trend feature frame."""
+    if symbol:
+        log.info("Loading data for Trend Pipeline: %s/%s from parquet...", symbol, timeframe)
+        df = load_ohlcv(symbol, timeframe)
+        if df.empty:
+            raise FileNotFoundError(f"No OHLCV data for {symbol}/{timeframe}")
+    else:
+        log.info("Loading data for Trend Pipeline from %s...", filepath)
+        df = pd.read_csv(filepath)
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df = df.sort_values('timestamp').reset_index(drop=True)
 
     # Phase 4 (2026-05-14) — F1 data-integrity gate. Pandera schema +
     # bounds + monotonic-timestamp + gap/zero-volume/spike detection.
@@ -151,7 +141,7 @@ def prepare_trend_data(filepath, timeframe: str = '1h', symbol: str | None = Non
     # Merge funding BEFORE add_funding_zscore so the rolling Z computes
     # over a real series instead of constant zeros.
     if symbol is not None:
-        df = _merge_funding_csv(df, symbol)
+        df = _merge_funding(df, symbol)
 
     # Taker-side flow features (taker_buy_ratio, avg_trade_size) from raw
     # OHLCV. Already-existed util — just wasn't called before.
@@ -256,21 +246,21 @@ def train_trend_model(timeframe: str = '1h'):
 
     all_data = []
     for sym in symbols:
-        full_data_path = os.path.join(base_dir, 'data', 'raw', f'{sym}_{timeframe}.csv.gz')
-        archive_path = os.path.join(base_dir, 'data', 'raw', f'{sym}_spot_{timeframe}.csv.gz')
-        if not os.path.exists(full_data_path) and os.path.exists(archive_path):
-            full_data_path = archive_path
-        if not os.path.exists(full_data_path):
+        log.info("Processing %s...", sym)
+        try:
+            df = prepare_trend_data(None, timeframe=timeframe, symbol=sym)
+            all_data.append(df)
+        except FileNotFoundError:
             log.warning("Data for %s not found. Auto-downloading...", sym)
             from src.data_ingestion.historical_backfill import backfill_history
             backfill_history(symbol=sym.replace('_', '/'), timeframe=timeframe, days=6 * 365)
-
-        if os.path.exists(full_data_path):
             try:
-                df = prepare_trend_data(full_data_path, timeframe=timeframe, symbol=sym)
+                df = prepare_trend_data(None, timeframe=timeframe, symbol=sym)
                 all_data.append(df)
             except Exception as e:
-                log.error("Failed to prepare %s: %s", sym, e)
+                log.error("Failed to prepare %s after download: %s", sym, e)
+        except Exception as e:
+            log.error("Failed to prepare %s: %s", sym, e)
 
     if not all_data:
         log.error("No data found.")
@@ -320,6 +310,7 @@ def train_trend_model(timeframe: str = '1h'):
              pct_embargo, _tb_horizon, len(X))
     cv = PurgedKFold(n_splits=5, t1=t1_series, pct_embargo=pct_embargo)
     fold_accs = []
+    in_sample_fold_accs = []  # P3
     for i, (tr, te) in enumerate(cv.split(X)):
         clf = make_classifier(
             random_state=42,
@@ -333,10 +324,24 @@ def train_trend_model(timeframe: str = '1h'):
         weights = compute_sample_weight('balanced', y.iloc[tr])
         clf.fit(X.iloc[tr], y.iloc[tr], sample_weight=weights)
         fold_accs.append(accuracy_score(y.iloc[te], clf.predict(X.iloc[te])))
+        in_sample_fold_accs.append(accuracy_score(y.iloc[tr], clf.predict(X.iloc[tr])))
         log.info("Trend walk-forward fold %d: %.2f%%", i + 1, fold_accs[-1] * 100)
 
-    log.info("Trend walk-forward mean: %.2f%% ± %.2f%%",
+    log.info("Trend walk-forward mean: %.2f%% +/- %.2f%%",
              np.mean(fold_accs) * 100, np.std(fold_accs) * 100)
+
+    # P3: overfit ratio
+    _wf_mean = float(np.mean(fold_accs))
+    _in_sample_mean = float(np.mean(in_sample_fold_accs)) if in_sample_fold_accs else None
+    _overfit_ratio: float | None = None
+    if _in_sample_mean is not None and _in_sample_mean > 0:
+        _overfit_ratio = (_in_sample_mean - _wf_mean) / _in_sample_mean
+        if _overfit_ratio > 0.20:
+            log.error("[trend] overfit_ratio=%.3f > 0.20 (in_sample=%.2f%% wf=%.2f%%) -- model is memorising",
+                      _overfit_ratio, _in_sample_mean * 100, _wf_mean * 100)
+        elif _overfit_ratio > 0.10:
+            log.warning("[trend] overfit_ratio=%.3f > 0.10 (in_sample=%.2f%% wf=%.2f%%)",
+                        _overfit_ratio, _in_sample_mean * 100, _wf_mean * 100)
 
     n = len(X)
     calib_split = int(n * 0.80)
@@ -412,6 +417,9 @@ def train_trend_model(timeframe: str = '1h'):
         "cio_overrides_applied": dict(_trend_applied) if _trend_applied else None,
         "n_iterations": n_iter,
         "walk_forward_mean_acc": round(float(np.mean(fold_accs)) * 100, 2),
+        "wf_fold_scores": [round(v, 6) for v in fold_accs],
+        "in_sample_mean_acc": round(_in_sample_mean * 100, 2) if _in_sample_mean else None,
+        "overfit_ratio": round(_overfit_ratio, 6) if _overfit_ratio is not None else None,
         "target": "triple_barrier_long_win",
         "symbols": symbols, "timeframe": timeframe,
         "last_trained": datetime.now(timezone.utc).isoformat()

@@ -76,6 +76,10 @@ class CellState:
     actual_source: str = ""        # "training_runs" | "no_actual" | "skip"
     report: dict[str, Any] = field(default_factory=dict)
     note: str = ""
+    # P2: rolling count of consecutive hourly polls where pause_count > 0.
+    # Enforce-tier features halt immediately (count not needed); confirm-tier
+    # features halt only when this reaches 3.
+    consecutive_pause_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -86,6 +90,7 @@ class CellState:
             "actual_source": self.actual_source,
             "report": self.report,
             "note": self.note,
+            "consecutive_pause_count": self.consecutive_pause_count,
         }
 
 
@@ -155,6 +160,19 @@ def _baseline_age_days(payload: dict) -> float | None:
         return None
 
 
+def _prev_consecutive_pause_count(model: str, tf: str) -> int:
+    """Read the last persisted consecutive_pause_count for (model, tf) from
+    the cached drift_state.json. Returns 0 if not found or on read error."""
+    try:
+        state = get_cached_state()
+        for c in state.get("cells") or []:
+            if c.get("model") == model and c.get("tf") == tf:
+                return int(c.get("consecutive_pause_count") or 0)
+    except Exception:
+        pass
+    return 0
+
+
 def _run_one_cell(baseline_path: Path) -> CellState:
     """Run drift check for a single baseline file. Returns a CellState
     even on partial failure (so the state file still has the row)."""
@@ -193,12 +211,19 @@ def _run_one_cell(baseline_path: Path) -> CellState:
         # got persisted as {error: "..."} instead of a real report,
         # which then made is_drift_paused unable to find pause_count.
         rep = check_drift(payload["features"], actual, force_mode="warn")
+
+        # P2: track consecutive hourly polls with pause_count > 0 for confirm-tier.
+        prev_count = _prev_consecutive_pause_count(model, tf)
+        new_pause_count = rep.to_dict().get("pause_count", 0)
+        consecutive = (prev_count + 1) if new_pause_count > 0 else 0
+
         return CellState(
             model=model, tf=tf,
             baseline_age_days=baseline_age,
             checked_at_iso=checked,
             actual_source="training_runs",
             report=rep.to_dict(),
+            consecutive_pause_count=consecutive,
         )
     except Exception as e:
         # DriftPauseError or any other check_drift exception. Caller
@@ -253,16 +278,14 @@ def get_cached_state() -> dict[str, Any]:
 def is_drift_paused(model: str, tf: str) -> tuple[bool, str]:
     """Return (is_paused, reason) for the given (model, tf) cell.
 
-    Phase 6c (2026-05-14) — designed to be called from the bot's order
-    manager / risk gate before emitting a trade signal that depends on
-    this (model, tf). Read-only: consumes the cached drift_state.json,
-    does NOT trigger a recompute. Returns False with reason="no_baseline"
-    when nothing's been trained yet (don't pause — there's nothing to
-    drift FROM).
+    P2 two-tier enforcement (2026-05-17):
+      - Enforce-tier (DRIFT_ENFORCE_FEATURES): halt on first poll with
+        PSI >= 0.25 on any matching feature. No consecutive requirement.
+      - Confirm-tier (remaining DRIFT_HARD_FEATURES): halt only after
+        consecutive_pause_count >= 3 (three consecutive hourly polls).
+        Single-spike false positives are ignored.
 
-    The pause is gated by LLM_DRIFT_PAUSE env so the operator can
-    promote drift checking from advisory (warn) to blocking (enforce)
-    without redeploying.
+    Both tiers require LLM_DRIFT_PAUSE=enforce. Default 'warn' = advisory.
 
     Usage in the bot:
         from src.risk.drift_monitor import is_drift_paused
@@ -271,8 +294,6 @@ def is_drift_paused(model: str, tf: str) -> tuple[bool, str]:
             logger.warning("[trade] skipped trend@1h signal — drift: %s", why)
             return  # don't trade
     """
-    # Cheap env read on each call — operator can flip the mode without
-    # bot restart. Default 'warn' = drift detected but trades proceed.
     mode = (os.environ.get("LLM_DRIFT_PAUSE") or "warn").strip().lower()
     if mode != "enforce":
         return False, f"LLM_DRIFT_PAUSE={mode} — not enforcing"
@@ -281,19 +302,46 @@ def is_drift_paused(model: str, tf: str) -> tuple[bool, str]:
     cells = state.get("cells") or []
     if not cells:
         return False, "no_baselines_yet"
+
     for c in cells:
-        if c.get("model") == model and c.get("tf") == tf:
-            rep = c.get("report") or {}
-            if rep.get("pause_count", 0) > 0:
-                # Identify which hard features are pausing
-                findings = rep.get("findings") or []
-                paused_feats = [
-                    f.get("feature") for f in findings
-                    if f.get("severity") == "pause" and f.get("is_hard")
-                ]
-                names = ", ".join(paused_feats[:5]) or "?"
-                return True, f"hard-feature drift: {names}"
+        if c.get("model") != model or c.get("tf") != tf:
+            continue
+
+        rep = c.get("report") or {}
+        if not rep or rep.get("pause_count", 0) == 0:
             return False, "cell_clean"
+
+        findings = rep.get("findings") or []
+
+        # Enforce-tier: immediate halt on first poll.
+        from src.risk.drift_psi import _enforce_features
+        enforce_set = _enforce_features()
+        enforce_paused = [
+            f.get("feature") for f in findings
+            if f.get("severity") == "pause"
+            and f.get("is_enforce")
+            and f.get("feature") in enforce_set
+        ]
+        if enforce_paused:
+            names = ", ".join(enforce_paused[:5])
+            return True, f"enforce-tier drift (immediate): {names}"
+
+        # Confirm-tier: halt only after 3 consecutive polls.
+        consecutive = int(c.get("consecutive_pause_count") or 0)
+        if consecutive >= 3:
+            confirm_paused = [
+                f.get("feature") for f in findings
+                if f.get("severity") == "pause" and f.get("is_hard")
+                and not f.get("is_enforce")
+            ]
+            names = ", ".join(confirm_paused[:5]) or "?"
+            return True, (
+                f"confirm-tier drift ({consecutive} consecutive polls): {names}"
+            )
+        return False, (
+            f"confirm-tier drift detected but only {consecutive}/3 consecutive polls"
+        )
+
     return False, "cell_not_found"
 
 
@@ -346,5 +394,5 @@ def stop() -> None:
 
 __all__ = [
     "CellState", "DEFAULT_INTERVAL_S",
-    "run_once", "get_cached_state", "start", "stop",
+    "run_once", "get_cached_state", "is_drift_paused", "start", "stop",
 ]

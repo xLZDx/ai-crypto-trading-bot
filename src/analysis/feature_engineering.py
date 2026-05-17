@@ -4,6 +4,116 @@ import pandas as pd
 import logging
 
 
+def add_l2_features(df: pd.DataFrame, symbol: str, freq_ms: int) -> pd.DataFrame:
+    """Attach L2/microstructure features to a bar-indexed dataframe.
+
+    2026-05-15 operator request — feed L2 microstructure into the GBT
+    trainers (base/trend/futures/scalping/meta). When the L2 parquet store
+    is empty for `symbol`, all columns are filled with 0.0 so the trainer
+    keeps a stable feature schema and can opportunistically benefit as the
+    store accumulates."""
+    df = df.copy()
+    try:
+        from src.analysis.l2_feature_loader import (
+            load_bar_aligned, L2_FEATURE_COLUMNS,
+        )
+    except Exception:
+        return df
+    ts_col = 'timestamp' if 'timestamp' in df.columns else None
+    if ts_col is None:
+        for c in L2_FEATURE_COLUMNS:
+            if c not in df.columns:
+                df[c] = 0.0
+        return df
+    try:
+        ts_ms = (pd.to_datetime(df[ts_col]).view('int64') // 1_000_000).tolist()
+        closes = df['close'].tolist() if 'close' in df.columns else None
+        feats = load_bar_aligned(symbol, ts_ms, freq_ms, closes=closes)
+        for c in L2_FEATURE_COLUMNS:
+            df[c] = feats[c].values if c in feats.columns else 0.0
+    except Exception:
+        for c in L2_FEATURE_COLUMNS:
+            if c not in df.columns:
+                df[c] = 0.0
+    return df
+
+
+def add_news_features(df: pd.DataFrame, symbol: str, freq_ms: int) -> pd.DataFrame:
+    """Attach bar-aligned news sentiment features from
+    data/parquet/_NEWS/news/. Stable-schema contract: every column is
+    filled with 0.0 when no data is present."""
+    df = df.copy()
+    try:
+        from src.analysis.news_feature_loader import (
+            load_bar_aligned, NEWS_FEATURE_COLUMNS,
+        )
+    except Exception:
+        return df
+    ts_col = 'timestamp' if 'timestamp' in df.columns else None
+    if ts_col is None:
+        for c in NEWS_FEATURE_COLUMNS:
+            if c not in df.columns:
+                df[c] = 0.0
+        return df
+    try:
+        ts_ms = (pd.to_datetime(df[ts_col]).view('int64') // 1_000_000).tolist()
+        feats = load_bar_aligned(symbol, ts_ms, freq_ms)
+        for c in NEWS_FEATURE_COLUMNS:
+            df[c] = feats[c].values if c in feats.columns else 0.0
+    except Exception:
+        for c in NEWS_FEATURE_COLUMNS:
+            if c not in df.columns:
+                df[c] = 0.0
+    return df
+
+
+def add_tick_features(df: pd.DataFrame, symbol: str, freq_ms: int) -> pd.DataFrame:
+    """Attach 1s-derived microstructure features to a bar-indexed dataframe.
+
+    2026-05-15 — the project's archives are at 1-second resolution; this
+    function aggregates them into the target-bar timeline as tick-like
+    intensity features (taker imbalance, volume concentration, intra-bar
+    range, signed volume drift). Stable-schema contract."""
+    df = df.copy()
+    try:
+        from src.analysis.tick_feature_loader import (
+            load_bar_aligned, TICK_FEATURE_COLUMNS,
+        )
+    except Exception:
+        return df
+    ts_col = 'timestamp' if 'timestamp' in df.columns else None
+    if ts_col is None:
+        for c in TICK_FEATURE_COLUMNS:
+            if c not in df.columns:
+                df[c] = 0.0
+        return df
+    try:
+        ts_ms = (pd.to_datetime(df[ts_col]).view('int64') // 1_000_000).tolist()
+        feats = load_bar_aligned(symbol, ts_ms, freq_ms)
+        for c in TICK_FEATURE_COLUMNS:
+            df[c] = feats[c].values if c in feats.columns else 0.0
+    except Exception:
+        for c in TICK_FEATURE_COLUMNS:
+            if c not in df.columns:
+                df[c] = 0.0
+    return df
+
+
+def freq_to_ms(tf: str) -> int:
+    """Canonical TF token → ms duration."""
+    return {
+        '1m':  60_000,
+        '5m':  300_000,
+        '15m': 900_000,
+        '30m': 1_800_000,
+        '1h':  3_600_000,
+        '4h':  14_400_000,
+        '1d':  86_400_000,
+        '1w':  604_800_000,
+        '1mo': 2_592_000_000,
+    }.get(tf, 3_600_000)
+
+
 def add_taker_and_trade_features(df: pd.DataFrame) -> pd.DataFrame:
     if 'taker_buy_base' in df.columns:
         df['taker_buy_ratio'] = df['taker_buy_base'] / df['volume'].replace(0, 0.0001)
@@ -377,7 +487,7 @@ def add_news_sentiment(df: pd.DataFrame, news_path: str) -> pd.DataFrame:
             return df
     except Exception as exc:
         logging.getLogger(__name__).debug(
-            "news_sentiment: parquet path failed (%s) — falling back to CSV.", exc)
+            "news_sentiment: parquet path failed (%s) -- falling back to CSV.", exc)
 
     # ── Legacy CSV fallback ───────────────────────────────────────────────
     if not os.path.exists(news_path):
@@ -463,7 +573,7 @@ def add_finbert_sentiment(df: pd.DataFrame, news_path: str, batch_size: int = 64
         )
     except Exception as e:
         logging.getLogger(__name__).warning(
-            "FinBERT unavailable (%s) — falling back to keyword sentiment.", e
+            "FinBERT unavailable (%s) -- falling back to keyword sentiment.", e
         )
         return add_news_sentiment(df, news_path)
 
@@ -513,7 +623,7 @@ def add_finbert_sentiment(df: pd.DataFrame, news_path: str, batch_size: int = 64
         logging.getLogger(__name__).info("FinBERT sentiment merged successfully.")
 
     except Exception as e:
-        logging.getLogger(__name__).error("FinBERT pipeline failed (%s) — falling back.", e)
+        logging.getLogger(__name__).error("FinBERT pipeline failed (%s) -- falling back.", e)
         return add_news_sentiment(df, news_path)
 
     return df

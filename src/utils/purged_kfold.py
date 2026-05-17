@@ -97,7 +97,7 @@ class PurgedKFold:
             if self.t1 is not None and x_index is None:
                 logger.warning(
                     "PurgedKFold: t1 series supplied but X has no .index "
-                    "(numpy ndarray?) — t1-span purging SKIPPED for fold %d. "
+                    "(numpy ndarray?) -- t1-span purging SKIPPED for fold %d. "
                     "Convert X to a DataFrame with the same index as t1 to "
                     "enable AFML purging.", fold,
                 )
@@ -127,7 +127,7 @@ class PurgedKFold:
                     # is then weaker. Embargo still applies.
                     logger.warning(
                         "PurgedKFold: could not apply t1-span purging at fold=%d "
-                        "(%s) — embargo-only train set returned.",
+                        "(%s) -- embargo-only train set returned.",
                         fold, e, exc_info=True,
                     )
 

@@ -198,9 +198,16 @@ if _TORCH_OK:
 
         @staticmethod
         def gaussian_nll(out: OFTOutput, y_return: "torch.Tensor") -> "torch.Tensor":
-            """Negative log-likelihood under N(μ, σ²) — supervises (μ, log_var)."""
-            var = torch.exp(out.log_var).clamp(min=1e-6)
-            return 0.5 * ((y_return - out.mu) ** 2 / var + out.log_var).mean()
+            """Negative log-likelihood under N(μ, σ²) — supervises (μ, log_var).
+
+            log_var is clamped to [-6, 4] before both the variance and the
+            log-det term so the gradient cannot drive unbounded variance collapse
+            (otherwise the model minimises NLL by setting log_var → -∞ while
+            keeping mu ≈ 0, producing arbitrarily negative loss with no signal).
+            """
+            log_var = out.log_var.clamp(min=-6.0, max=4.0)
+            var = torch.exp(log_var)
+            return 0.5 * ((y_return - out.mu) ** 2 / var + log_var).mean()
 
         @staticmethod
         def bce_p_move(out: OFTOutput, y_binary: "torch.Tensor") -> "torch.Tensor":

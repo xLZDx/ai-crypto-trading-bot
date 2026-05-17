@@ -64,7 +64,7 @@ class GoogleDriveBackup:
             from pydrive2.auth import GoogleAuth
             from pydrive2.drive import GoogleDrive
         except ImportError:
-            logger.warning("pydrive2 not installed — Google Drive backup disabled. "
+            logger.warning("pydrive2 not installed -- Google Drive backup disabled. "
                            "Run: pip install --no-cache-dir pydrive2")
             return False
 
@@ -85,7 +85,7 @@ class GoogleDriveBackup:
             creds_cache    = PROJECT_ROOT / "data" / "gdrive_creds.txt"
             if not client_secrets.exists():
                 logger.warning("[gdrive] No GDRIVE_SA_JSON env var and "
-                               "client_secrets.json missing — backup disabled.")
+                               "client_secrets.json missing -- backup disabled.")
                 return False
             try:
                 gauth.LoadCredentialsFile(str(creds_cache))

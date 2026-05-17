@@ -63,7 +63,7 @@ def _safe_symbol(symbol: str) -> str:
     norm = symbol.replace("/", "_").upper()
     if not _re.fullmatch(r'[A-Z0-9_.\-]+', norm):
         raise ValueError(
-            f"unsafe symbol {symbol!r} — only [A-Z0-9_.-] allowed after "
+            f"unsafe symbol {symbol!r} -- only [A-Z0-9_.-] allowed after "
             f"slash-to-underscore normalization (got {norm!r})"
         )
     return norm
@@ -78,7 +78,7 @@ def _safe_timeframe(timeframe: str | None) -> str | None:
         return None
     if timeframe not in SUPPORTED_TIMEFRAMES:
         raise ValueError(
-            f"unsafe timeframe {timeframe!r} — must be one of "
+            f"unsafe timeframe {timeframe!r} -- must be one of "
             f"{SUPPORTED_TIMEFRAMES}"
         )
     return timeframe
@@ -297,7 +297,7 @@ class ParquetStore:
             err = str(exc)
             if "Out of Memory" in err or "OutOfMemory" in err or "memory" in err.lower():
                 logger.warning(
-                    "[ParquetStore] %s OOM on single-pass — falling back to per-month writes",
+                    "[ParquetStore] %s OOM on single-pass -- falling back to per-month writes",
                     sym,
                 )
                 try:

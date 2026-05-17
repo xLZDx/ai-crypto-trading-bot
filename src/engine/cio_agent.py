@@ -164,7 +164,7 @@ class CIOAgent:
             except optuna.exceptions.TrialPruned:
                 raise
             except Exception as e:
-                logger.warning("ML Engineer pre-flight skipped (error %s) — proceeding", e)
+                logger.warning("ML Engineer pre-flight skipped (error %s) -- proceeding", e)
 
         # ── 3. Submit training task to cluster ──
         spec = {
@@ -184,7 +184,7 @@ class CIOAgent:
 
         if self.task_submitter is None:
             # Smoke-test mode — no cluster wired yet. Return random for testing.
-            logger.warning("CIO: no task_submitter wired — running in smoke-test mode")
+            logger.warning("CIO: no task_submitter wired -- running in smoke-test mode")
             return float(trial.number % 7) * 0.1  # deterministic stub
 
         task_id = self.task_submitter(spec)
@@ -276,6 +276,41 @@ class CIOAgent:
         except Exception as e:
             logger.warning("CIO: could not attach training history: %s", e)
             summary['history'] = {'error': str(e)}
+
+        # 2026-05-15 — plateau detection. Operator review (per the Russian
+        # "plateau vs spike" analysis): refuse a winner that's an isolated
+        # spike in parameter space. Attach a neighbourhood-robustness
+        # ranking to the proposal so the operator (and apply_best) can
+        # prefer a slightly-lower-but-robust plateau over a brittle peak.
+        try:
+            from src.engine.cio_plateau import (
+                select_plateau_winner, summarise_for_proposal,
+            )
+            sel = select_plateau_winner(study, k=5, alpha=0.5, min_trials=8)
+            summary['plateau_analysis'] = summarise_for_proposal(sel)
+            if sel is not None and sel.recommendation == 'plateau':
+                # Emit a separate recommended_params field so apply_best can
+                # opt into the plateau winner. The spike is still recorded
+                # under best_params for full provenance.
+                summary['plateau_recommended'] = True
+                summary['recommended_params'] = sel.plateau_winner.params
+                logger.info(
+                    "CIO Agent plateau winner: trial=%d plateau_score=%.4f "
+                    "raw=%.4f recovery_ratio=%.2f -- recommended over spike "
+                    "(trial=%d raw=%.4f)",
+                    sel.plateau_winner.trial_id, sel.plateau_winner.plateau_score,
+                    sel.plateau_winner.raw_value, sel.plateau_recovery_ratio,
+                    sel.spike_winner.trial_id, sel.spike_winner.raw_value,
+                )
+            else:
+                summary['plateau_recommended'] = False
+                summary['recommended_params'] = dict(best.params)
+        except Exception as e:
+            logger.warning("CIO: plateau analysis failed: %s", e)
+            summary['plateau_analysis'] = {'error': str(e)}
+            summary['plateau_recommended'] = False
+            summary['recommended_params'] = dict(best.params)
+
         self._persist_proposal(summary)
         logger.info("CIO Agent best: %.4f params=%s", best.value, best.params)
         return summary
@@ -356,18 +391,34 @@ class CIOAgent:
         except Exception as e:
             return {'ok': False, 'error': f'cannot write backup: {e}'}
 
-        # Merge best_params into cio_overrides
+        # 2026-05-15 — prefer the plateau winner when the proposal's
+        # plateau analysis recommends one. Falls back to spike best_params
+        # if no plateau winner. Always records both in cio_overrides for
+        # provenance.
         before = dict(rules['models'][target_model].get('cio_overrides') or {})
-        after = dict(winning.get('best_params') or {})
+        plateau_recommended = bool(winning.get('plateau_recommended'))
+        if plateau_recommended and winning.get('recommended_params'):
+            after = dict(winning.get('recommended_params') or {})
+            after['_source'] = 'plateau_winner'
+        else:
+            after = dict(winning.get('best_params') or {})
+            after['_source'] = 'spike_winner' if plateau_recommended is False else 'best_params'
         after['_applied_at'] = datetime.now(timezone.utc).isoformat()
         after['_study'] = study
         after['_best_value'] = float(winning.get('best_value', 0.0))
+        # Embed the spike vs plateau audit trail so a future operator can
+        # see WHICH choice was applied without re-reading the proposal.
+        pa = winning.get('plateau_analysis') or {}
+        if pa.get('available'):
+            after['_plateau_recommendation'] = pa.get('recommendation')
+            after['_plateau_recovery_ratio'] = pa.get('plateau_recovery_ratio')
+            after['_spike_params'] = (pa.get('spike_winner') or {}).get('params')
         rules['models'][target_model]['cio_overrides'] = after
 
         write_json(str(TRAINING_RULES_PATH), rules)
         logger.info(
             "CIO apply_best: %s.cio_overrides updated (study=%s, best_value=%.4f) "
-            "→ backup=%s",
+            "-> backup=%s",
             target_model, study, after['_best_value'], backup_path.name,
         )
         return {

@@ -120,7 +120,7 @@ def migrate_table(table: str, dry_run: bool = False, batch: int = 50_000) -> tup
                 f"SELECT * FROM {table} LIMIT {offset},{offset + batch}"
             )
         except Exception as exc:
-            logger.warning("  - %s: query failed at offset %d — %s", table, offset, exc)
+            logger.warning("  - %s: query failed at offset %d -- %s", table, offset, exc)
             break
         if not rows:
             break
@@ -149,7 +149,7 @@ def main() -> int:
                         format="%(asctime)s %(levelname)s %(message)s")
 
     if not _questdb_alive(args.host, args.port):
-        logger.info("QuestDB not reachable on %s:%s — nothing to migrate. "
+        logger.info("QuestDB not reachable on %s:%s -- nothing to migrate. "
                     "(Skip the migration; this is normal once QuestDB has "
                     "been retired.)", args.host, args.port)
         return 0
@@ -157,7 +157,7 @@ def main() -> int:
     from src.database.parquet_client import _TABLES
     tables = [args.table] if args.table else list(_TABLES.keys())
 
-    logger.info("Migrating %d table(s) from QuestDB → ParquetClient%s",
+    logger.info("Migrating %d table(s) from QuestDB -> ParquetClient%s",
                 len(tables), " (dry-run)" if args.dry_run else "")
     grand_total = 0
     grand_written = 0

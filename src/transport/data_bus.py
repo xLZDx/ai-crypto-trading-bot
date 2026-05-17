@@ -79,7 +79,7 @@ def _load_bus_key() -> bytes:
         return hashlib.sha256(raw.encode("utf-8")).digest()
     key = secrets.token_bytes(32)
     logger.critical(
-        "ZMQ_BUS_KEY not set in .env — generated an ephemeral key for "
+        "ZMQ_BUS_KEY not set in .env -- generated an ephemeral key for "
         "this process only. Cross-process pub/sub will FAIL silently "
         "(subscribers reject envelopes signed with a different key). "
         "Add ZMQ_BUS_KEY=<random 32+ char string> to .env on every "
@@ -182,7 +182,7 @@ class DataBus:
                 logger.info("[DataBus] bind %s on port %d", key, port)
             else:
                 sock.connect(connect_addr(port, self.master_host))
-                logger.info("[DataBus] connect %s → %s", key, connect_addr(port, self.master_host))
+                logger.info("[DataBus] connect %s -> %s", key, connect_addr(port, self.master_host))
             if sock_type == zmq.SUB and topic_filter is not None:
                 sock.setsockopt(zmq.SUBSCRIBE, topic_filter)
             self._sockets[key] = sock

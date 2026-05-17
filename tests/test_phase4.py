@@ -149,7 +149,7 @@ def test_kelly_prior():
 # ─── risk_manager CVaR helper ───────────────────────────────────────────────
 
 def test_risk_manager_cvar():
-    print("\n[Risk Manager — CVaR helper]")
+    print("\n[Risk Manager -- CVaR helper]")
     src = (PROJECT_ROOT / "src" / "analysis" / "risk_manager.py").read_text(encoding="utf-8")
     check("cvar_position_weights() defined", "def cvar_position_weights" in src)
     check("imports CVaROptimizer", "from src.analysis.cvar_optimizer import CVaROptimizer" in src)
@@ -160,7 +160,7 @@ def test_risk_manager_cvar():
 # ─── requirements.txt — cvxpy ───────────────────────────────────────────────
 
 def test_requirements():
-    print("\n[requirements.txt — Phase 4]")
+    print("\n[requirements.txt -- Phase 4]")
     req = (PROJECT_ROOT / "requirements.txt").read_text(encoding="utf-8")
     check("cvxpy in requirements.txt", "cvxpy" in req)
 
@@ -169,7 +169,7 @@ def test_requirements():
 
 def main() -> int:
     print("=" * 60)
-    print("Phase 4 — Level 4 Portfolio Optimization Tests")
+    print("Phase 4 -- Level 4 Portfolio Optimization Tests")
     print("=" * 60)
     test_requirements()
     test_cvar_optimizer()

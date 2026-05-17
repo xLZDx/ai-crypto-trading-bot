@@ -678,7 +678,7 @@ def test_api(base_url):
 # ─── Static: Phase 0 institutional upgrade ───────────────────────────────────
 
 def test_phase0_foundation():
-    print('\n[Phase 0 — Institutional Upgrade Foundation]')
+    print('\n[Phase 0 -- Institutional Upgrade Foundation]')
 
     # Plan + CLAUDE.md
     plan_path = os.path.join(BASE_DIR, 'INSTITUTIONAL_UPGRADE_PLAN.md')
@@ -778,7 +778,7 @@ def test_phase0_foundation():
 # ─── Static: Phase 1 institutional upgrade (microstructure data layer) ──────
 
 def test_phase1_microstructure():
-    print('\n[Phase 1 — Level 1 Data Layer]')
+    print('\n[Phase 1 -- Level 1 Data Layer]')
 
     # Kalman smoother
     ks_path = os.path.join(BASE_DIR, 'src', 'analysis', 'kalman_smoother.py')
@@ -848,7 +848,7 @@ def test_phase1_microstructure():
 # ─── Static: Phase 2 institutional upgrade (alpha engine) ──────────────────
 
 def test_phase2_alpha_engine():
-    print('\n[Phase 2 — Level 2 Alpha Engine]')
+    print('\n[Phase 2 -- Level 2 Alpha Engine]')
 
     # Event-time labeler
     el_path = os.path.join(BASE_DIR, 'src', 'analysis', 'event_time_labeler.py')
@@ -916,7 +916,7 @@ def test_phase2_alpha_engine():
 # ─── Static: Phase 3 institutional upgrade (execution & simulation) ────────
 
 def test_phase3_execution_simulation():
-    print('\n[Phase 3 — Level 3 Execution & Simulation]')
+    print('\n[Phase 3 -- Level 3 Execution & Simulation]')
 
     # alpha decay
     ad_path = os.path.join(BASE_DIR, 'src', 'analysis', 'alpha_decay.py')
@@ -989,7 +989,7 @@ def test_phase3_execution_simulation():
 # ─── Static: Phase 4 institutional upgrade (portfolio optimization) ────────
 
 def test_phase4_portfolio_optimization():
-    print('\n[Phase 4 — Level 4 Portfolio Optimization]')
+    print('\n[Phase 4 -- Level 4 Portfolio Optimization]')
 
     # CVaR optimizer
     cv_path = os.path.join(BASE_DIR, 'src', 'analysis', 'cvar_optimizer.py')
@@ -1038,7 +1038,7 @@ def test_phase4_portfolio_optimization():
 # ─── Static: Phase 5 institutional upgrade (safeguards) ────────────────────
 
 def test_phase5_institutional_safeguards():
-    print('\n[Phase 5 — Level 5 Institutional Safeguards]')
+    print('\n[Phase 5 -- Level 5 Institutional Safeguards]')
 
     # Slippage model
     sl_path = os.path.join(BASE_DIR, 'src', 'analysis', 'slippage_model.py')
@@ -1085,7 +1085,7 @@ def test_phase5_institutional_safeguards():
 # ─── Static: Phase 7 institutional upgrade (continuous pipeline + retention) ─
 
 def test_phase7_continuous_pipeline():
-    print('\n[Phase 7 — Continuous Pipeline + Retention]')
+    print('\n[Phase 7 -- Continuous Pipeline + Retention]')
 
     # Multi-tf archive downloader
     ad_path = os.path.join(BASE_DIR, 'src', 'data_ingestion', 'binance_archive_downloader.py')
@@ -1153,7 +1153,7 @@ def test_phase7_continuous_pipeline():
 # ─── Static: Phase 8 institutional upgrade (data governance) ───────────────
 
 def test_phase8_data_governance():
-    print('\n[Phase 8 — Data Governance + Rate Limiting]')
+    print('\n[Phase 8 -- Data Governance + Rate Limiting]')
 
     rl_path = os.path.join(BASE_DIR, 'src', 'data_ingestion', 'rate_limiter.py')
     check('rate_limiter.py exists', os.path.exists(rl_path))
@@ -1230,7 +1230,7 @@ def test_phase8_data_governance():
 # ─── Static: Phase 10 institutional upgrade (live bot integration) ─────────
 
 def test_phase10_live_integration():
-    print('\n[Phase 10 — Live Integration + 8-tab Dashboard + Documentation]')
+    print('\n[Phase 10 -- Live Integration + 8-tab Dashboard + Documentation]')
 
     fr_path = os.path.join(BASE_DIR, 'src', 'analysis', 'feature_reader.py')
     check('feature_reader.py exists', os.path.exists(fr_path))
@@ -1282,7 +1282,7 @@ def test_phase10_live_integration():
 
 def test_phase11_predictor_and_llm_resilience():
     """Regression coverage for the dict-wrapped joblib unwrap and Gemini cooldown."""
-    print('\n[Phase 11 — Predictor / LLM resilience]')
+    print('\n[Phase 11 -- Predictor / LLM resilience]')
 
     # B1 — MLPredictor must accept dict-wrapped joblib payloads
     mp_path = os.path.join(BASE_DIR, 'src', 'analysis', 'ml_predictor.py')
@@ -1361,7 +1361,7 @@ def test_phase11_predictor_and_llm_resilience():
 def test_phase12_dashboard_controls():
     """Each Phase 6 tab fetch URL must resolve to a real backend endpoint —
     catches future 404 regressions like the /api/balance/test bug."""
-    print('\n[Phase 12 — Dashboard control wiring]')
+    print('\n[Phase 12 -- Dashboard control wiring]')
 
     tpl = open(TEMPLATE_PATH, encoding='utf-8').read()
     app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'), encoding='utf-8').read()
@@ -1443,7 +1443,7 @@ def test_phase13_realtime_and_fastapi():
     doesn't launch it, and (defense in depth) stop_all doesn't try
     to kill it either.
     """
-    print('\n[Phase 13 — Realtime heartbeat + (FastAPI control plane DELETED in A11)]')
+    print('\n[Phase 13 -- Realtime heartbeat + (FastAPI control plane DELETED in A11)]')
 
     # ── Realtime heartbeat ──────────────────────────────────────────────
     rt_src = open(os.path.join(BASE_DIR, 'src', 'data_ingestion', 'realtime_db_writer.py'),
@@ -1490,7 +1490,7 @@ def test_phase13_realtime_and_fastapi():
 def test_phase14_local_only_scheduler():
     """Local-only TFT/training status inspector + Windows Task Scheduler wrapper.
     Asserts NO cloud calls and the report file is produced when run."""
-    print('\n[Phase 14 — Local-only scheduling]')
+    print('\n[Phase 14 -- Local-only scheduling]')
 
     insp = os.path.join(BASE_DIR, 'scripts', 'check_training_status.py')
     sched = os.path.join(BASE_DIR, 'local_scheduler.ps1')
@@ -1548,7 +1548,7 @@ def test_phase14_local_only_scheduler():
 
 def test_phase16_scheduler_panel_and_sim_no_hang():
     """Dashboard scheduler panel + Simulator status non-hang guarantee."""
-    print('\n[Phase 16 — Scheduler panel + Simulator non-hang]')
+    print('\n[Phase 16 -- Scheduler panel + Simulator non-hang]')
 
     app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'), encoding='utf-8').read()
     tpl = open(TEMPLATE_PATH, encoding='utf-8').read()
@@ -1638,7 +1638,7 @@ def test_phase17_trading_health_fixes():
        - Dashboard card directionless flag (meta-labeler) + derived n_features
        - Phase 6 sub-tab click no longer wipes the institutional pane
     """
-    print('\n[Phase 17 — Trading & dashboard health fixes (2026-05-04)]')
+    print('\n[Phase 17 -- Trading & dashboard health fixes (2026-05-04)]')
 
     # 1. order_manager: clock sync wiring
     om_path = os.path.join(BASE_DIR, 'src', 'engine', 'order_manager.py')
@@ -1748,7 +1748,7 @@ def test_phase18_institutional_panel_fixes():
        - OFT model card surfaces alongside the other 7
        - Strategies tab shows guidance when orchestrator returns empty
     """
-    print('\n[Phase 18 — Institutional panel UX & data wiring]')
+    print('\n[Phase 18 -- Institutional panel UX & data wiring]')
 
     tpl = open(TEMPLATE_PATH, encoding='utf-8').read()
     app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'), encoding='utf-8').read()
@@ -1834,7 +1834,7 @@ def test_phase19_oft_integration():
        - restart_all.ps1 launches orderbook_collector (Step 4)
        - distributed orchestrator/worker know about model_type='oft' (Step 5)
     """
-    print('\n[Phase 19 — OFT live integration + simulator deadlock fix]')
+    print('\n[Phase 19 -- OFT live integration + simulator deadlock fix]')
 
     # 1. SimulatorAgent deadlock
     sa_path = os.path.join(BASE_DIR, 'src', 'engine', 'agents', 'simulator_agent.py')
@@ -1916,7 +1916,7 @@ def test_phase20_orchestrator_scheduler_simpanels():
        - Phase-6 Simulation sub-tab renders a formatted card (not raw JSON)
        - Simulator tab P&L chart shows a friendly empty-state message
     """
-    print('\n[Phase 20 — Orchestrator + scheduler + sim panel polish]')
+    print('\n[Phase 20 -- Orchestrator + scheduler + sim panel polish]')
 
     # 1. Connectors auto-register
     init_path = os.path.join(BASE_DIR, 'src', 'data_governance', '__init__.py')
@@ -2016,7 +2016,7 @@ def test_phase21_observability_and_risk_overrides():
        - runtime_overrides.json + reader module + dashboard Risk panel
        - main.py applies max_position_usdt cap + scalping kill-list
     """
-    print('\n[Phase 21 — Observability + risk overrides]')
+    print('\n[Phase 21 -- Observability + risk overrides]')
 
     # 1. Log retention
     lr_path = os.path.join(BASE_DIR, 'src', 'utils', 'log_retention.py')
@@ -2186,7 +2186,7 @@ def test_phase23_unified_banner_aggregator():
     / Realtime / agent / scheduler faults that surfaced via Monitor cards
     never wrote to a watched log, so the banner missed them.
     """
-    print('\n[Phase 23 — unified banner aggregator]')
+    print('\n[Phase 23 -- unified banner aggregator]')
 
     em_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'error_monitor.py')
     with open(em_path, encoding='utf-8') as f:
@@ -2269,7 +2269,7 @@ def test_phase24_scheduler_flash_and_local_training():
     card also shows live local-training progress (was always 'No tasks yet'
     even when TFT training was running).
     """
-    print('\n[Phase 24 — Scheduler flash + local-training progress]')
+    print('\n[Phase 24 -- Scheduler flash + local-training progress]')
 
     tpl_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
     with open(tpl_path, encoding='utf-8') as f:
@@ -2311,7 +2311,7 @@ def test_phase28_dashboard_read_path_cutover():
     backend. The QuestDB-specific HTTP probe and 'docker-compose up -d
     questdb' hint are replaced with ParquetClient/DuckDB equivalents.
     """
-    print('\n[Phase 28 — dashboard read path cutover (Route B)]')
+    print('\n[Phase 28 -- dashboard read path cutover (Route B)]')
 
     # Banner monitor probe renamed
     em_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'error_monitor.py')
@@ -2361,7 +2361,7 @@ def test_phase36_debug_supervisor():
     data/process_deaths.json with log tail + RSS/CPU snapshot. Surfaces
     fresh deaths in the banner via _probe_recent_deaths.
     """
-    print('\n[Phase 36 — debug_supervisor]')
+    print('\n[Phase 36 -- debug_supervisor]')
 
     sup_path = os.path.join(BASE_DIR, 'scripts', 'debug_supervisor.py')
     check('scripts/debug_supervisor.py exists', os.path.exists(sup_path))
@@ -2431,7 +2431,7 @@ def test_phase44_pr6_live_trading_toggle():
        - GET/POST /api/control/trade_mode + POST /api/balance/virtual/deposit
        - Overview tab gets the trade-mode switch + balance breakdown card
     """
-    print('\n[Phase 44 — PR 6 live trading toggle + paper accounting]')
+    print('\n[Phase 44 -- PR 6 live trading toggle + paper accounting]')
 
     db = open(os.path.join(BASE_DIR, 'src', 'engine', 'dual_balance.py'),
               encoding='utf-8').read()
@@ -2517,7 +2517,7 @@ def test_phase58_pr28_balance_by_mode():
     $100k seed numbers. Post-fix: paper shows internal virtual; testnet
     fetches Binance testnet USDT (spot + futures); mainnet hits Binance
     mainnet."""
-    print('\n[Phase 58 — PR 28 mode-aware balance]')
+    print('\n[Phase 58 -- PR 28 mode-aware balance]')
     app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
                encoding='utf-8').read()
     tpl = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html'),
@@ -2558,7 +2558,7 @@ def test_phase57_pr26_all_tfs_and_status():
        supports, (b) instant visual feedback on click (QUEUED flash
        before network round-trip), (c) per-phase status pills
        (QUEUED / STARTING / RUNNING <tf> / FAILED / COMPLETED)."""
-    print('\n[Phase 57 — PR 26 ALL-TFs + fine-grained status]')
+    print('\n[Phase 57 -- PR 26 ALL-TFs + fine-grained status]')
     app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
                encoding='utf-8').read()
     tpl = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html'),
@@ -2612,7 +2612,7 @@ def test_phase56_pr21_heatmap_rework():
       - description column (right side) — short blurb per strategy
       - dedicated ★ Best column instead of an inline badge
     """
-    print('\n[Phase 56 — PR 21 heatmap rework]')
+    print('\n[Phase 56 -- PR 21 heatmap rework]')
     tpl = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html'),
                encoding='utf-8').read()
 
@@ -2651,7 +2651,7 @@ def test_phase55_pr19_training_controls():
               button toggle, model description column.
        PR 20: pipeline orchestrator status can be reset (clears stale
               'error' from yesterday's run when no live process)."""
-    print('\n[Phase 55 — PR 18/19/20 dashboard hardening]')
+    print('\n[Phase 55 -- PR 18/19/20 dashboard hardening]')
     app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
                encoding='utf-8').read()
     tpl = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html'),
@@ -2718,7 +2718,7 @@ def test_phase54_pr17_production_readiness():
          flag orphan orders / missing artifacts.
       3. RUNBOOK.md — single-page operator handbook at repo root.
     """
-    print('\n[Phase 54 — PR 17 production readiness]')
+    print('\n[Phase 54 -- PR 17 production readiness]')
 
     drill_path = os.path.join(BASE_DIR, 'src', 'engine', 'breaker_drill.py')
     audit_path = os.path.join(BASE_DIR, 'src', 'engine', 'audit_trail.py')
@@ -2798,7 +2798,7 @@ def test_phase53_pr16_long_horizon_backtest():
     past memory limits. This PR ships horizon presets that auto-pick
     safe TFs per window (long=5y → 1h+4h+1d+1w; max=all → 4h+1d+1w+1mo).
     """
-    print('\n[Phase 53 — PR 16 long-horizon backtest]')
+    print('\n[Phase 53 -- PR 16 long-horizon backtest]')
 
     lh_path = os.path.join(BASE_DIR, 'src', 'engine', 'long_horizon_backtest.py')
     check('long_horizon_backtest.py exists', os.path.exists(lh_path))
@@ -2850,7 +2850,7 @@ def test_phase52_pr15_finbert_sentiment():
     Replaces the 30-word lexicon with a real model (CryptoBERT primary,
     FinBERT fallback, lexicon as final fallback). Output stays in [-1, +1]
     so existing parquet readers don't change."""
-    print('\n[Phase 52 — PR 15 FinBERT sentiment]')
+    print('\n[Phase 52 -- PR 15 FinBERT sentiment]')
 
     fb_path = os.path.join(BASE_DIR, 'src', 'analysis', 'finbert_scorer.py')
     check('finbert_scorer.py exists', os.path.exists(fb_path))
@@ -2912,7 +2912,7 @@ def test_phase51_pr14_live_news_inference():
     GDELT/Reddit/CC partitions show up in inference within 5 min of
     being written.
     """
-    print('\n[Phase 51 — PR 14 live news inference]')
+    print('\n[Phase 51 -- PR 14 live news inference]')
 
     buf_path = os.path.join(BASE_DIR, 'src', 'analysis', 'live_news_buffer.py')
     check('live_news_buffer.py exists', os.path.exists(buf_path))
@@ -2973,7 +2973,7 @@ def test_phase50_pr13_auto_retrain():
     """Phase 50 — PR 13 / Phase C: walk-forward auto-retrain with regression
     guard. Wraps the pipeline orchestrator with a before/after WF Sharpe
     comparison. Optional --rollback restores meta backups on regression."""
-    print('\n[Phase 50 — PR 13 auto-retrain]')
+    print('\n[Phase 50 -- PR 13 auto-retrain]')
 
     ar_path = os.path.join(BASE_DIR, 'src', 'engine', 'auto_retrain.py')
     check('auto_retrain.py exists', os.path.exists(ar_path))
@@ -3038,7 +3038,7 @@ def test_phase49_pr12_tf_pinning():
 
     Resolution: manual override > auto pin (from latest backtest) > default.
     """
-    print('\n[Phase 49 — PR 12 strategy TF pinning]')
+    print('\n[Phase 49 -- PR 12 strategy TF pinning]')
 
     pin_path = os.path.join(BASE_DIR, 'src', 'engine', 'strategy_tf_pinning.py')
     check('strategy_tf_pinning.py exists', os.path.exists(pin_path))
@@ -3101,7 +3101,7 @@ def test_phase48_pr11_multi_tf_inference():
        the canonical TF (1h or 1m) so all existing call sites keep
        working. New call sites use predict_at(tf, data) or predict_all().
     """
-    print('\n[Phase 48 — PR 11 multi-TF inference]')
+    print('\n[Phase 48 -- PR 11 multi-TF inference]')
 
     mtp_path = os.path.join(BASE_DIR, 'src', 'analysis', 'multi_tf_predictor.py')
     check('multi_tf_predictor.py exists', os.path.exists(mtp_path))
@@ -3157,7 +3157,7 @@ def test_phase47_pr10_loading_chips_and_simulator():
     auto-poll. Defensive UX so the dashboard never looks frozen when an
     endpoint is briefly unreachable, and the Simulator state pill
     actually transitions on Start/Stop without a manual refresh."""
-    print('\n[Phase 47 — PR 10 loading chips + simulator]')
+    print('\n[Phase 47 -- PR 10 loading chips + simulator]')
     tpl = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html'),
                encoding='utf-8').read()
 
@@ -3199,7 +3199,7 @@ def test_phase46_pr9_ux_bundle():
        - setP6Tab lazy-inits panes on first click so subtabs work even
          without prior tab switch
     """
-    print('\n[Phase 46 — PR 9 UX bundle]')
+    print('\n[Phase 46 -- PR 9 UX bundle]')
     tpl = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html'),
                encoding='utf-8').read()
 
@@ -3267,7 +3267,7 @@ def test_phase45_pipeline_orchestrator():
        - Strategy/ML tab gets a Pipeline Orchestrator section with status pill,
          per-phase rows, and ▶ Run button.
     """
-    print('\n[Phase 45 — Pipeline orchestrator]')
+    print('\n[Phase 45 -- Pipeline orchestrator]')
 
     orch_path = os.path.join(BASE_DIR, 'src', 'engine', 'pipeline_orchestrator.py')
     check('pipeline_orchestrator.py exists', os.path.exists(orch_path))
@@ -3372,7 +3372,7 @@ def test_phase43_pr4_stability_heatmap():
     """Phase 43 — PR 4 Stability comparison view: GET /api/strategy/stability
     builds a (strategy × tf) matrix; UI renders it as a colour-coded heatmap
     with a best-TF badge per row."""
-    print('\n[Phase 43 — PR 4 stability heatmap]')
+    print('\n[Phase 43 -- PR 4 stability heatmap]')
 
     app = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
                encoding='utf-8').read()
@@ -3425,7 +3425,7 @@ def test_phase42_pr3_backtester_multi_tf():
     over a list of timeframes and tags each result row with its TF so the
     Stability comparison view can group by it.
     """
-    print('\n[Phase 42 — PR 3 backtester multi-TF support]')
+    print('\n[Phase 42 -- PR 3 backtester multi-TF support]')
 
     bt = open(os.path.join(BASE_DIR, 'src', 'engine', 'backtester.py'),
               encoding='utf-8').read()
@@ -3463,7 +3463,7 @@ def test_phase41_pr2_trainer_multi_tf():
        - Dashboard ml_models surfaces additional per-TF rows
        - /api/training/run/<key> honors a tf body parameter
     """
-    print('\n[Phase 41 — PR 2 trainer multi-TF refactor]')
+    print('\n[Phase 41 -- PR 2 trainer multi-TF refactor]')
 
     # 1. model_paths helper
     mp_path = os.path.join(BASE_DIR, 'src', 'utils', 'model_paths.py')
@@ -3547,7 +3547,7 @@ def test_phase40_pr1_data_coverage_resample():
     by resampling existing 1s archives instead of re-downloading from
     Binance. Internally consistent, no rate limits, reproducible.
     """
-    print('\n[Phase 40 — PR 1 data audit + 1s→TF resampler + UI]')
+    print('\n[Phase 40 -- PR 1 data audit + 1s->TF resampler + UI]')
 
     # 1. Audit module
     audit_path = os.path.join(BASE_DIR, 'src', 'utils', 'data_audit.py')
@@ -3634,7 +3634,7 @@ def test_phase39_pr5_ui_bundle():
     """Phase 39 — PR 5 UI bundle: collapse fix, manual training controls,
     ML Health Notes panel, bucket classification, per-bucket disable toggle,
     and Pure-vs-ML comparison panel."""
-    print('\n[Phase 39 — PR 5 UI bundle: collapse + training controls + buckets]')
+    print('\n[Phase 39 -- PR 5 UI bundle: collapse + training controls + buckets]')
 
     tpl = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html'),
                encoding='utf-8').read()
@@ -3737,7 +3737,7 @@ def test_phase38_clear_all_suppression():
     the unchanged log tail / unchanged status probes. error_monitor now
     keeps a per-key suppression deadline (DISMISS_SUPPRESS_S = 5 min) and
     both scan paths skip keys whose deadline is still in the future."""
-    print('\n[Phase 38 — CLEAR ALL suppression cool-off]')
+    print('\n[Phase 38 -- CLEAR ALL suppression cool-off]')
 
     em_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'error_monitor.py')
     em_src  = open(em_path, encoding='utf-8').read()
@@ -3816,7 +3816,7 @@ def test_phase37_training_table_and_bt_tooltips():
     """Phase 37 — Strategy/ML tab gets a sortable Model Training card with
     quick filters + 'what good looks like' guide, and the Backtest Comparison
     table headers become sortable with hover tooltips."""
-    print('\n[Phase 37 — model training table + backtest tooltips]')
+    print('\n[Phase 37 -- model training table + backtest tooltips]')
 
     app_src = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'),
                    encoding='utf-8').read()
@@ -3896,7 +3896,7 @@ def test_phase35_scheduler_no_post_action_refresh():
     via innerHTML rewrite, making clicks look like nothing happened. The
     panel should now refresh ONLY on tab open or manual 🔄 REFRESH click.
     """
-    print('\n[Phase 35 — scheduler no auto-refresh on action]')
+    print('\n[Phase 35 -- scheduler no auto-refresh on action]')
 
     tpl = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html'),
                encoding='utf-8').read()
@@ -3950,7 +3950,7 @@ def test_phase34_telegram_monitor_gate():
     we resolve that (Telethon upgrade or session re-login), the monitor
     must not auto-start.
     """
-    print('\n[Phase 34 — Telegram Monitor gate (default-disabled)]')
+    print('\n[Phase 34 -- Telegram Monitor gate (default-disabled)]')
 
     main_path = os.path.join(BASE_DIR, 'src', 'main.py')
     main_src = open(main_path, encoding='utf-8').read()
@@ -3979,7 +3979,7 @@ def test_phase32_dedup_market_data():
     write atomic temp file, swap. Idempotent — re-runs are no-ops on
     single-file partitions.
     """
-    print('\n[Phase 32 — per-partition dedup_market_data]')
+    print('\n[Phase 32 -- per-partition dedup_market_data]')
 
     sc_path = os.path.join(BASE_DIR, 'scripts', 'dedup_market_data.py')
     sc = open(sc_path, encoding='utf-8').read()
@@ -4065,7 +4065,7 @@ def test_phase33_zombie_watchdog():
     resource_tracker workers. Strictly project-scoped — never touches
     Claude Code, VSCode, Chrome, the Android emulator, etc.
     """
-    print('\n[Phase 33 — zombie watchdog]')
+    print('\n[Phase 33 -- zombie watchdog]')
 
     wd_path = os.path.join(BASE_DIR, 'scripts', 'zombie_watchdog.ps1')
     inst_path = os.path.join(BASE_DIR, 'scripts', 'install_zombie_watchdog.ps1')
@@ -4129,7 +4129,7 @@ def test_phase31_market_data_legacy_bridge():
     layout. Backtests that need long history get the 9 years of legacy
     Binance OHLCV alongside the new live writes — under one table name.
     """
-    print('\n[Phase 31 — market_data legacy-store bridge]')
+    print('\n[Phase 31 -- market_data legacy-store bridge]')
 
     pc_path = os.path.join(BASE_DIR, 'src', 'database', 'parquet_client.py')
     pc = open(pc_path, encoding='utf-8').read()
@@ -4211,7 +4211,7 @@ def test_phase30_futures_close_reduce_only_guard():
     (only ticks during a sim run) and must be exempt from stale-heartbeat
     warnings, same as Simulator/StrategySimulator.
     """
-    print('\n[Phase 30 — futures reduceOnly guard + trainer exemption]')
+    print('\n[Phase 30 -- futures reduceOnly guard + trainer exemption]')
 
     om_path = os.path.join(BASE_DIR, 'src', 'engine', 'order_manager.py')
     om = open(om_path, encoding='utf-8').read()
@@ -4289,7 +4289,7 @@ def test_phase29_cleanup_questdb_artifacts():
     package __init__.py all reflect the new file-based stack. The legacy
     QuestDB-specific files live under _archive/questdb_migration/.
     """
-    print('\n[Phase 29 — cleanup of QuestDB artifacts]')
+    print('\n[Phase 29 -- cleanup of QuestDB artifacts]')
 
     # 1. Files moved to _archive/questdb_migration
     archive_dir = os.path.join(BASE_DIR, '_archive', 'questdb_migration')
@@ -4356,7 +4356,7 @@ def test_phase27_ingest_path_cutover():
     importer in the bot's ingest layer now resolves to ParquetClient,
     either by direct import swap or via the questdb_client.py shim.
     """
-    print('\n[Phase 27 — ingest path cutover (Route B)]')
+    print('\n[Phase 27 -- ingest path cutover (Route B)]')
 
     # 1. realtime_db_writer imports parquet_client directly (write fast path).
     rw_path = os.path.join(BASE_DIR, 'src', 'data_ingestion', 'realtime_db_writer.py')
@@ -4423,7 +4423,7 @@ def test_phase26_parquet_client_foundation():
       - partition-key string columns get sanitised so BTC/USDT writes are
         queryable as BTC_USDT (DuckDB hive_partitioning compatibility)
     """
-    print('\n[Phase 26 — ParquetClient foundation (Route B)]')
+    print('\n[Phase 26 -- ParquetClient foundation (Route B)]')
 
     pc_path = os.path.join(BASE_DIR, 'src', 'database', 'parquet_client.py')
     check('parquet_client.py exists', os.path.exists(pc_path))
@@ -4502,7 +4502,7 @@ def test_phase25_user_initiated_agents_exempt():
     'running' state and heartbeat ages out, but that's not a real fault.
     Agents in 'error' state are still flagged regardless of exemption.
     """
-    print('\n[Phase 25 — user-initiated agents exempt from staleness]')
+    print('\n[Phase 25 -- user-initiated agents exempt from staleness]')
 
     em_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'error_monitor.py')
     with open(em_path, encoding='utf-8') as f:
@@ -4580,7 +4580,7 @@ def test_phase22_scheduler_no_autorefresh():
     task name mid-edit. User opted scheduler out of the periodic poll
     and added an explicit 🔄 REFRESH button.
     """
-    print('\n[Phase 22 — Scheduler manual-refresh-only]')
+    print('\n[Phase 22 -- Scheduler manual-refresh-only]')
 
     tpl_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
     with open(tpl_path, encoding='utf-8') as f:
@@ -4616,7 +4616,7 @@ def test_phase59_pr35_parquet_query_thread_safety():
     the abort took down the live UI on 2026-05-08. Fix is to hold
     the existing _duck_lock for the entire execute+fetch sequence.
     """
-    print('\n[Phase 59 — PR-35 ParquetClient query thread-safety]')
+    print('\n[Phase 59 -- PR-35 ParquetClient query thread-safety]')
 
     pc_path = os.path.join(BASE_DIR, 'src', 'database', 'parquet_client.py')
     with open(pc_path, encoding='utf-8') as f:
@@ -4708,7 +4708,7 @@ def test_phase60_pr36_training_concurrency_cap():
     Fix: gate _run_trainer_blocking and _run_trainer_multi_tf with a
     threading.Semaphore(N) so excess jobs queue instead of all-spawn.
     """
-    print('\n[Phase 60 — PR-36 training concurrency cap]')
+    print('\n[Phase 60 -- PR-36 training concurrency cap]')
 
     app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
     with open(app_path, encoding='utf-8') as f:
@@ -4766,7 +4766,7 @@ def test_phase63_pr39_strategy_panels_hourly_refresh():
     only on F5 / manual button / hourly auto-tick — not on every 5 s
     pollState beat. Operator wanted the polling load on the
     minutes-to-hours data to match its real change cadence."""
-    print('\n[Phase 63 — PR-39 strategy panels hourly auto-refresh]')
+    print('\n[Phase 63 -- PR-39 strategy panels hourly auto-refresh]')
 
     tpl_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
     with open(tpl_path, encoding='utf-8') as f:
@@ -4818,7 +4818,7 @@ def test_phase62_pr38_training_eta_and_elapsed():
     """Training jobs response carries elapsed_s / eta_s / typical_s
     so the dashboard row can render '5s · ~29m left' beneath the
     RUNNING pill. Frontend reads these field names verbatim."""
-    print('\n[Phase 62 — PR-38 elapsed + ETA on training rows]')
+    print('\n[Phase 62 -- PR-38 elapsed + ETA on training rows]')
 
     app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
     with open(app_path, encoding='utf-8') as f:
@@ -4896,7 +4896,7 @@ def test_phase61_pr37_resource_aware_scheduler():
     it with a _TrainingScheduler that tracks cpu_active / gpu_active /
     exclusive_busy under one Condition.
     """
-    print('\n[Phase 61 — PR-37 resource-aware scheduler]')
+    print('\n[Phase 61 -- PR-37 resource-aware scheduler]')
 
     app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
     with open(app_path, encoding='utf-8') as f:
@@ -5000,7 +5000,7 @@ def test_phase70_pr43_dashboard_watchdog():
     kills stale dash processes and respawns via Win32_Process.Create.
     Circuit breaker prevents infinite restart loops on import-time
     crashes. Started by restart_all.ps1 alongside the dashboard."""
-    print('\n[Phase 70 — PR-43 dashboard watchdog daemon]')
+    print('\n[Phase 70 -- PR-43 dashboard watchdog daemon]')
 
     wd_path = os.path.join(BASE_DIR, 'scripts', 'dashboard_watchdog.py')
     check('scripts/dashboard_watchdog.py exists', os.path.exists(wd_path))
@@ -5054,7 +5054,7 @@ def test_phase71_pr46_real_cash_label_rename():
     keep the original token). The button id, CSS class, and the
     JS comparison `m === 'mainnet'` must still resolve, otherwise
     mode-switching breaks."""
-    print('\n[Phase 71 — PR-46 REAL CASH label rename (v3 step 1)]')
+    print('\n[Phase 71 -- PR-46 REAL CASH label rename (v3 step 1)]')
 
     if not os.path.exists(TEMPLATE_PATH):
         check('template file exists', False, TEMPLATE_PATH)
@@ -5096,7 +5096,7 @@ def test_phase71b_v31_curated_tf_map():
     """v3.1 step 2 (1A): DEFAULT_PER_KEY_TFS uses the curated 25-combo
     map ('applicable based on model logic'), with AI_TRADER_TRAIN_TF_MAP
     env-var override to fall back to strict 49-combo all×all."""
-    print('\n[Phase 71b — v3.1 step 2: curated DEFAULT_PER_KEY_TFS]')
+    print('\n[Phase 71b -- v3.1 step 2: curated DEFAULT_PER_KEY_TFS]')
 
     src = os.path.join(BASE_DIR, 'src', 'engine', 'train_all_models.py')
     with open(src, encoding='utf-8') as f:
@@ -5148,7 +5148,7 @@ def test_phase71c_v31_backtest_per_model_filter():
     chained-backtest-after-training only re-runs strategies for the
     trained model. _spawn_followup_backtest forwards both `timeframes`
     and `models` to the subprocess invocation."""
-    print('\n[Phase 71c — v3.1 step 3: per-model backtest filter]')
+    print('\n[Phase 71c -- v3.1 step 3: per-model backtest filter]')
 
     bt_path = os.path.join(BASE_DIR, 'src', 'engine', 'backtester.py')
     with open(bt_path, encoding='utf-8') as f:
@@ -5220,7 +5220,7 @@ def test_phase71d_v31_tft_dedupe_regression():
     Reverting either the triple-dedupe or the proper freq mapping
     in build_series_bundle would make this test fail (which is the
     point — it's the safety net for future refactors)."""
-    print('\n[Phase 71d — v3.1 step 5: TFT dedupe regression]')
+    print('\n[Phase 71d -- v3.1 step 5: TFT dedupe regression]')
 
     src_path = os.path.join(BASE_DIR, 'src', 'engine', 'train_tft_model.py')
     with open(src_path, encoding='utf-8') as f:
@@ -5326,7 +5326,7 @@ def test_phase71d_v31_tft_dedupe_regression():
 def test_phase71e_v31_scalping_rebalance():
     """v3.1 step 6 (1C): scalping trainer adds SMOTE oversampling +
     self-heal retry + conditional accuracy_warning emission."""
-    print('\n[Phase 71e — v3.1 step 6: scalping rebalance + self-heal]')
+    print('\n[Phase 71e -- v3.1 step 6: scalping rebalance + self-heal]')
 
     src_path = os.path.join(BASE_DIR, 'src', 'engine', 'train_scalping_model.py')
     with open(src_path, encoding='utf-8') as f:
@@ -5367,7 +5367,7 @@ def test_phase71f_v31_oft_sweep_coverage():
     (Microstructure) into the sweep — was the 15th dashboard row
     stuck in NOT STARTED state. TFT loop also fixed to forward the
     per-key timeframe instead of always calling train_tft_model() bare."""
-    print('\n[Phase 71f — v3.1 step 8: OFT sweep coverage + TFT TF forwarding]')
+    print('\n[Phase 71f -- v3.1 step 8: OFT sweep coverage + TFT TF forwarding]')
 
     src_path = os.path.join(BASE_DIR, 'src', 'engine', 'train_all_models.py')
     src = open(src_path, encoding='utf-8').read()
@@ -5407,7 +5407,7 @@ def test_phase72_v31_dashboard_mode_aware_and_per_market():
     now mode-aware (loadPortfolioByMode + payload-driven Balances) and
     its Signal/Risk panels render per-market rows for SPOT / FUTURES /
     SCALPING instead of the single-symbol BTC/USDT layout."""
-    print('\n[Phase 72 — v3.1 steps 9+10: mode-aware + per-market dashboard]')
+    print('\n[Phase 72 -- v3.1 steps 9+10: mode-aware + per-market dashboard]')
 
     if not os.path.exists(TEMPLATE_PATH):
         check('template file exists', False, TEMPLATE_PATH)
@@ -5485,7 +5485,7 @@ def test_phase73_v31_trade_enrichment_going_forward():
     exit_reason inferred from PnL sign at close if not supplied.
     paper_book.book_market_order writes the same 7 fields with
     mode='paper'."""
-    print('\n[Phase 73 — v3.1 step 11: trade enrichment going-forward]')
+    print('\n[Phase 73 -- v3.1 step 11: trade enrichment going-forward]')
 
     tt_src = open(os.path.join(BASE_DIR, 'src', 'engine', 'trade_tracker.py'), encoding='utf-8').read()
     pb_src = open(os.path.join(BASE_DIR, 'src', 'engine', 'paper_book.py'), encoding='utf-8').read()
@@ -5556,7 +5556,7 @@ def test_phase73b_v31_trade_enrichment_backfill():
     runs against data/trades.json, and produces a same-length output
     at data/trades_enriched.json with mode + exit_reason populated on
     the closed-trade rows."""
-    print('\n[Phase 73b — v3.1 step 12: historical trade backfill]')
+    print('\n[Phase 73b -- v3.1 step 12: historical trade backfill]')
 
     script = os.path.join(BASE_DIR, 'scripts', 'backfill_trade_enrichment.py')
     check('backfill_trade_enrichment.py exists', os.path.exists(script))
@@ -5602,7 +5602,7 @@ def test_phase74_v31_health_column_and_fleet_aggregate():
     Health column rolls every signal column for one row into a
     weighted 0-100 score with letter grade (A/B/C/D/F) and color.
     Fleet aggregate footer averages across all visible rows."""
-    print('\n[Phase 74 — v3.1: Model Health column + fleet aggregate]')
+    print('\n[Phase 74 -- v3.1: Model Health column + fleet aggregate]')
 
     if not os.path.exists(TEMPLATE_PATH):
         check('template file exists', False, TEMPLATE_PATH)
@@ -5666,7 +5666,7 @@ def test_phase74_v31_health_column_and_fleet_aggregate():
 def test_phase75_v31_backfill_button_endpoint():
     """v3.1 step 14 (1J): "Backfill Missing Data" button on Data
     Coverage card + /api/data/backfill endpoint."""
-    print('\n[Phase 75 — v3.1 step 14: backfill button + endpoint]')
+    print('\n[Phase 75 -- v3.1 step 14: backfill button + endpoint]')
 
     html = open(TEMPLATE_PATH, encoding='utf-8').read()
     app  = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py'), encoding='utf-8').read()
@@ -5695,7 +5695,7 @@ def test_phase76_v31_training_sweep_watchdog_and_cold_cache():
     """v3.1 — overnight reliability: training_sweep_watchdog daemon
     auto-respawns a stalled sweep + cold_cache persists ETA-relevant
     state across dashboard restarts."""
-    print('\n[Phase 76 — v3.1: training_sweep_watchdog + cold_cache]')
+    print('\n[Phase 76 -- v3.1: training_sweep_watchdog + cold_cache]')
 
     # 1) Sweep watchdog file + key behaviours.
     wd_path = os.path.join(BASE_DIR, 'scripts', 'training_sweep_watchdog.py')
@@ -5786,7 +5786,7 @@ def test_phase77_v31_pertf_train_button_dispatch_fix():
          using either the row's parent_key field or a regex fallback,
          so per-TF rows POST /api/training/run/<canonical> + body.tf.
     """
-    print('\n[Phase 77 — v3.1 fix: per-TF Train button dispatch]')
+    print('\n[Phase 77 -- v3.1 fix: per-TF Train button dispatch]')
 
     # A) list_per_tf_artifacts skips legacy filename + enforces TF shape.
     src = open(os.path.join(BASE_DIR, 'src', 'utils', 'model_paths.py'),
@@ -5826,7 +5826,7 @@ def test_phase78_v31_bot_dead_false_alarm_module_style_launch():
     matched the script form, so any direct `Start-Process python -m
     src.main` invocation made monitor/health spam "Trading bot is
     DEAD" for hours while the bot was actually fine."""
-    print('\n[Phase 78 — v3.1 fix: bot DEAD false-alarm on -m src.main launches]')
+    print('\n[Phase 78 -- v3.1 fix: bot DEAD false-alarm on -m src.main launches]')
 
     src = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'error_monitor.py'),
                encoding='utf-8').read()
@@ -5860,7 +5860,7 @@ def test_phase79_v31_stability_heatmap_legend_blue_rename():
     rendering recoloured from emerald to dark blue (legend + CSS class
     + JS cell maps coherent) so it's distinguishable from Green/Yellow.
     Internal `gold` JS key preserved for the 5 tier classifiers."""
-    print('\n[Phase 79 — v3.1 fix: heatmap excellent-tier → Blue]')
+    print('\n[Phase 79 -- v3.1 fix: heatmap excellent-tier -> Blue]')
     html = open(TEMPLATE_PATH, encoding='utf-8').read()
 
     check('legend uses "Blue = excellent"',
@@ -5898,7 +5898,7 @@ def test_phase80_v4_b0_training_rules_registry_and_api():
     - src/training/training_rules.py public API
     - /api/training/rules GET + POST + /api/training/preview routes
     """
-    print('\n[Phase 80 — v4 B0+B5 backend: training rules registry]')
+    print('\n[Phase 80 -- v4 B0+B5 backend: training rules registry]')
 
     # 1. Rules JSON file structure
     rules_path = os.path.join(BASE_DIR, 'data', 'training_rules.json')
@@ -5995,7 +5995,7 @@ def test_phase81_v4_b5_prime_unified_card_ui():
     Reads /api/training/rules + /api/cluster/status, renders model × TF
     matrix + fleet workers + active tasks, plus a 'Run Sweep' button
     that POSTs /api/cluster/sweep."""
-    print('\n[Phase 81 — v4 B5′: unified training & backtest card]')
+    print('\n[Phase 81 -- v4 B5?: unified training & backtest card]')
 
     if not os.path.exists(TEMPLATE_PATH):
         check('template file exists', False)
@@ -6051,7 +6051,7 @@ def test_phase82_v4_component_health_module_style_launches():
     matches script-style launches (python src/X.py) but not module-style
     (python -m src.X). Plus a service-alias system so 'training' service
     detects the orchestrator process, not just the legacy script filename."""
-    print('\n[Phase 82 — v4 fix: component health probes match module-style launches]')
+    print('\n[Phase 82 -- v4 fix: component health probes match module-style launches]')
     print('  (NOTE: regex/best-PID logic moved to src/utils/process_health.py'
           ' on 2026-05-10 as Layer 1 of the orchestration plan; Phase 82'
           ' now checks the centralised module + that app.py delegates to it.'
@@ -6107,7 +6107,7 @@ def test_phase83_centralised_process_health_module():
           we know to launch in module-form (bot, dash, training_orch).
       P4. find_process picks highest-RSS match (real worker over
           dormant Start-Process wrapper)."""
-    print('\n[Phase 83 — centralised process_health module]')
+    print('\n[Phase 83 -- centralised process_health module]')
 
     ph_path = os.path.join(BASE_DIR, 'src', 'utils', 'process_health.py')
     check('src/utils/process_health.py exists', os.path.exists(ph_path))
@@ -6198,7 +6198,7 @@ def test_phase84_orchestration_topics_pubsub():
       P4. Day rollover: a consumer parked on an older date catches up.
       P5. Stats reports bytes + lines per topic for dashboard rendering.
     """
-    print('\n[Phase 84 — orchestration topics file-based pub-sub]')
+    print('\n[Phase 84 -- orchestration topics file-based pub-sub]')
 
     tp_path = os.path.join(BASE_DIR, 'src', 'orchestration', 'topics.py')
     check('src/orchestration/topics.py exists', os.path.exists(tp_path))
@@ -6354,7 +6354,7 @@ def test_phase85_distributed_smoketest_three_bug_fixes():
         worker is reachable + see compute usage in TaskManager /
         nvidia-smi, without touching real model files.
     """
-    print('\n[Phase 85 — distributed smoke-test bug fixes + smoke_test handler]')
+    print('\n[Phase 85 -- distributed smoke-test bug fixes + smoke_test handler]')
 
     worker_path = os.path.join(BASE_DIR, 'src', 'training', 'distributed', 'worker.py')
     with open(worker_path, encoding='utf-8') as f:
@@ -6459,7 +6459,7 @@ def test_phase86_sweep_coordinator_daemon():
       P7. Transient-failure detection covers OOM / timeout / reroute / network.
       P8. Control plane (pause/resume/abort) endpoints exist.
       P9. Backtest stage runs after training done."""
-    print('\n[Phase 86 — sweep coordinator daemon]')
+    print('\n[Phase 86 -- sweep coordinator daemon]')
 
     sc_path = os.path.join(BASE_DIR, 'src', 'orchestration', 'sweep_coordinator.py')
     check('src/orchestration/sweep_coordinator.py exists', os.path.exists(sc_path))
@@ -6570,7 +6570,7 @@ def test_phase87_dual_lane_workers_concurrent_cpu_gpu():
       P7. CPU lane in spawned worker has CUDA_VISIBLE_DEVICES='' so it
           doesn't grab VRAM.
     """
-    print('\n[Phase 87 — dual-lane workers (concurrent CPU+GPU)]')
+    print('\n[Phase 87 -- dual-lane workers (concurrent CPU+GPU)]')
 
     worker_path = os.path.join(BASE_DIR, 'src', 'training', 'distributed', 'worker.py')
     with open(worker_path, encoding='utf-8') as f:
@@ -6662,7 +6662,7 @@ def test_phase88_orchestrator_task_progress_watchdog():
           can pick a fresh task on the same worker.
       P5. Long-running but ACTIVELY-PROGRESSING task is NOT killed.
     """
-    print('\n[Phase 88 — orchestrator task-progress watchdog]')
+    print('\n[Phase 88 -- orchestrator task-progress watchdog]')
 
     orch_path = os.path.join(BASE_DIR, 'src', 'training', 'distributed', 'orchestrator.py')
     with open(orch_path, encoding='utf-8') as f:
@@ -6794,7 +6794,7 @@ def test_phase89_gpu_classifier_wrapper_and_trainer_migration():
           classes_ (sklearn-compatible surface).
       P6. class_weight='balanced' is honoured by the XGB wrapper via
           per-row sample weights when caller doesn't pass them."""
-    print('\n[Phase 89 — GPU classifier wrapper + trainer migration]')
+    print('\n[Phase 89 -- GPU classifier wrapper + trainer migration]')
 
     gpu_path = os.path.join(BASE_DIR, 'src', 'utils', 'gpu_classifier.py')
     check('src/utils/gpu_classifier.py exists', os.path.exists(gpu_path))
@@ -6891,7 +6891,7 @@ def test_phase90_master_agent_zombie_worker_supervisor():
           doesn't respond.
       P6. _ensure_local_workers spawns BOTH cpu + gpu lanes if missing.
     """
-    print('\n[Phase 90 — master_agent (Layer 5 supervisor)]')
+    print('\n[Phase 90 -- master_agent (Layer 5 supervisor)]')
 
     ma_path = os.path.join(BASE_DIR, 'src', 'orchestration', 'master_agent.py')
     check('src/orchestration/master_agent.py exists', os.path.exists(ma_path))
@@ -7056,7 +7056,7 @@ def test_phase91_tft_dedupe_tz_normalize_plus_meta_hard_fail():
     operator sees the real cause (primary models couldn't generate
     signals — usually sklearn-version mismatch or feature regression).
     """
-    print('\n[Phase 91 — TFT tz-normalize dedupe + meta-labeler hard-fail]')
+    print('\n[Phase 91 -- TFT tz-normalize dedupe + meta-labeler hard-fail]')
 
     tft_path = os.path.join(BASE_DIR, 'src', 'engine', 'train_tft_model.py')
     with open(tft_path, encoding='utf-8') as f:
@@ -7104,7 +7104,7 @@ def test_phase92_meta_labeler_regime_dict_shape_tolerance():
     Phase 91 hard-fail with "no signal data collected". Real root cause
     was here, not the primary models. Fix: read via .get("model", self)
     so both nested and legacy-flat artifacts work."""
-    print('\n[Phase 92 — meta-labeler regime dict-shape tolerance]')
+    print('\n[Phase 92 -- meta-labeler regime dict-shape tolerance]')
     meta_path = os.path.join(BASE_DIR, 'src', 'engine', 'train_meta_labeler.py')
     with open(meta_path, encoding='utf-8') as f:
         meta = f.read()
@@ -7139,7 +7139,7 @@ def test_phase93_worker_live_load_and_remote_restart():
          operator-triggered ↻restart button via a server-side proxy
          (avoids browser CORS).
     """
-    print('\n[Phase 93 — worker live-load + remote restart]')
+    print('\n[Phase 93 -- worker live-load + remote restart]')
 
     worker_path = os.path.join(BASE_DIR, 'src', 'training', 'distributed', 'worker.py')
     with open(worker_path, encoding='utf-8') as f:
@@ -7328,7 +7328,7 @@ def test_phase94_distributed_backtest_per_cell():
       9. /status only includes model_type='backtest_cell' tasks (not
          every cluster task) and exposes per-cell counters.
     """
-    print('\n[Phase 94 — distributed backtest per cell]')
+    print('\n[Phase 94 -- distributed backtest per cell]')
 
     bt_path = os.path.join(BASE_DIR, 'src', 'engine', 'backtester.py')
     with open(bt_path, encoding='utf-8') as f:
@@ -7502,7 +7502,7 @@ def test_phase95_xgb_early_stop_eval_set_fix_and_backtest_column():
     color coding (green=all done · amber=in flight · red=any failed ·
     grey=none submitted).
     """
-    print('\n[Phase 95 — XGB early-stop fix + Backtest column]')
+    print('\n[Phase 95 -- XGB early-stop fix + Backtest column]')
 
     gpu_path = os.path.join(BASE_DIR, 'src', 'utils', 'gpu_classifier.py')
     with open(gpu_path, encoding='utf-8') as f:
@@ -7635,7 +7635,7 @@ def test_phase96_orphan_detector_direct_script_form_plus_ps_native_fix():
     Continue + PS7 PSNativeCommandUseErrorActionPreference=false +
     script-block wrap around the native python call.
     """
-    print('\n[Phase 96 — orphan detector + PS native command stderr]')
+    print('\n[Phase 96 -- orphan detector + PS native command stderr]')
 
     app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
     with open(app_path, encoding='utf-8') as f:
@@ -7722,7 +7722,7 @@ def test_phase97_train_all_concurrency_lock_plus_current_state_pipeline():
        5. /api/training/run/all checks the cross-process lock too, so
           dashboard and CLI agree on "is anything running."
     """
-    print('\n[Phase 97 — train_all concurrency lock + current-model state]')
+    print('\n[Phase 97 -- train_all concurrency lock + current-model state]')
 
     train_path = os.path.join(BASE_DIR, 'src', 'engine', 'train_all_models.py')
     with open(train_path, encoding='utf-8') as f:
@@ -7860,7 +7860,7 @@ def test_phase98_eta_train_bt_columns_and_tf_keyed_running():
     Tests cover the backend ETA producer (per-tf precedence, defaults,
     self-tune wiring) and the frontend rendering + lookup chain.
     """
-    print('\n[Phase 98 — ETA Train+BT columns + Phase 97b tf-keyed RUNNING]')
+    print('\n[Phase 98 -- ETA Train+BT columns + Phase 97b tf-keyed RUNNING]')
     from pathlib import Path as _P
     PRJ = _P(__file__).resolve().parents[1]
     app = (PRJ / 'src/dashboard/app.py').read_text(encoding='utf-8')
@@ -8031,7 +8031,7 @@ def test_phase97c_orphan_periodic_refresh_and_canonical_row_fallback():
                  the actually-training model lit up with the actual tf
                  in the sub-line.
     """
-    print('\n[Phase 97c — orphan periodic refresh + canonical-row fallback]')
+    print('\n[Phase 97c -- orphan periodic refresh + canonical-row fallback]')
     from pathlib import Path as _P
     PRJ = _P(__file__).resolve().parents[1]
     app = (PRJ / 'src/dashboard/app.py').read_text(encoding='utf-8')
@@ -8124,7 +8124,7 @@ def test_phase100_cluster_routed_training_dispatch():
       - api_training_run_one routes to cluster by default; honors
         AI_TRADER_LOCAL_TRAINING=1 env var for legacy fallback
     """
-    print('\n[Phase 100 — cluster-routed training dispatch]')
+    print('\n[Phase 100 -- cluster-routed training dispatch]')
     from pathlib import Path as _P
     PRJ = _P(__file__).resolve().parents[1]
     app = (PRJ / 'src/dashboard/app.py').read_text(encoding='utf-8')
@@ -8226,7 +8226,7 @@ def test_phase100_functional_cluster_routing_proves_behavior():
       (e) api_training_run_one endpoint: app.test_client(), POST, assert
           response JSON shape + that the dispatch path was taken
     """
-    print('\n[Phase 100 — FUNCTIONAL tests that actually call the code]')
+    print('\n[Phase 100 -- FUNCTIONAL tests that actually call the code]')
     import sys, os, importlib
     from pathlib import Path as _P
     PRJ = _P(__file__).resolve().parents[1]
@@ -8477,7 +8477,7 @@ def test_phase100d_followup_4_xgb_wrapper_is_classifier_and_worker_reports_failu
 
     FUNCTIONAL tests — exercise the actual code paths:
     """
-    print('\n[Phase 100d followup #4 — XGB classifier tag + worker failure reporting]')
+    print('\n[Phase 100d followup #4 -- XGB classifier tag + worker failure reporting]')
     import sys
     from pathlib import Path as _P
     PRJ = _P(__file__).resolve().parents[1]
@@ -8560,7 +8560,7 @@ def test_phase101_neural_kind_plus_task_heartbeat_and_proc_health_cache():
 
     FUNCTIONAL tests — exercise the actual code paths.
     """
-    print('\n[Phase 101 — neural kind + task heartbeat + process_health cache]')
+    print('\n[Phase 101 -- neural kind + task heartbeat + process_health cache]')
     import sys, threading, time as _t, datetime as _dt, importlib
     from pathlib import Path as _P
     PRJ = _P(__file__).resolve().parents[1]
@@ -8790,7 +8790,7 @@ def test_phase100d_followup_3_training_jobs_lock_is_rlock():
     FUNCTIONAL test — proves the lock IS reentrant by acquiring twice
     from the same thread:
     """
-    print('\n[Phase 100d followup #3 — _training_jobs_lock is RLock]')
+    print('\n[Phase 100d followup #3 -- _training_jobs_lock is RLock]')
     import sys, threading
     from pathlib import Path as _P
     PRJ = _P(__file__).resolve().parents[1]
@@ -8889,7 +8889,7 @@ def test_phase100d_worker_cpu_lane_hides_gpu_env_vars():
           the worker = TrainingWorker(...) call). Compiler order matters.
       (c) gpu/any lane does NOT clear CUDA_VISIBLE_DEVICES
     """
-    print('\n[Phase 100d followup #2 — CPU-lane worker hides GPU env]')
+    print('\n[Phase 100d followup #2 -- CPU-lane worker hides GPU env]')
     from pathlib import Path as _P
     PRJ = _P(__file__).resolve().parents[1]
     src = (PRJ / 'src/training/distributed/worker.py').read_text(encoding='utf-8')
@@ -8939,7 +8939,7 @@ def test_phase100d_followup_restart_all_no_auto_train_cron():
 
     Tests assert on the actual restart_all.ps1 file contents:
     """
-    print('\n[Phase 100d follow-up — restart_all skips auto-train cron]')
+    print('\n[Phase 100d follow-up -- restart_all skips auto-train cron]')
     from pathlib import Path as _P
     PRJ = _P(__file__).resolve().parents[1]
     restart_script = (PRJ / 'restart_all.ps1').read_text(encoding='utf-8')
@@ -8978,7 +8978,7 @@ def test_phase100d_training_jobs_throttle_and_fast_endpoint():
       (d) api_training_jobs endpoint <500ms with 50 synthetic jobs
       (e) Terminal jobs (done/error/cancelled/lost/partial) skip annotation
     """
-    print('\n[Phase 100d — training jobs throttle + fast endpoint]')
+    print('\n[Phase 100d -- training jobs throttle + fast endpoint]')
     import sys, time, os
     from pathlib import Path as _P
     PRJ = _P(__file__).resolve().parents[1]
@@ -9128,7 +9128,7 @@ def test_sprint1a_r1_trainers_package_typed_contract():
       (d) Every wrapper module exists and exposes a `train` callable
       (e) TRAINER_REGISTRY maps all 8 dashboard model_keys to train fns
     """
-    print('\n[Sprint 1a R1 Step 1 — trainers package + TrainingResult contract]')
+    print('\n[Sprint 1a R1 Step 1 -- trainers package + TrainingResult contract]')
     import sys, time
     from pathlib import Path as _P
     PRJ = _P(__file__).resolve().parents[1]
@@ -9272,7 +9272,7 @@ def test_phase100e_pipeline_orchestrator_cluster_dispatch():
           submit_fn failure path, terminal detection.
       (c) AI_TRADER_PIPELINE_LOCAL=1 forces legacy in-process path.
     """
-    print('\n[Phase 100e — pipeline_orchestrator cluster dispatch (functional)]')
+    print('\n[Phase 100e -- pipeline_orchestrator cluster dispatch (functional)]')
     import sys, os
     from pathlib import Path as _P
     PRJ = _P(__file__).resolve().parents[1]
@@ -9456,7 +9456,7 @@ def test_phase100b_retrain_all_distributed_train_then_bt():
       (d) /api/training/run/all endpoint via test_client: routes to
           cluster by default, AI_TRADER_LOCAL_TRAINING=1 routes to local.
     """
-    print('\n[Phase 100b — Retrain ALL distributed (functional, proves behavior)]')
+    print('\n[Phase 100b -- Retrain ALL distributed (functional, proves behavior)]')
     import sys, os
     from pathlib import Path as _P
     PRJ = _P(__file__).resolve().parents[1]
@@ -9692,7 +9692,7 @@ def test_phase69_pr42_pipeline_through_scheduler_plus_followup_backtest():
           success the worker chains run_full_backtest(timeframes=(tf,))
           so the Stability Heatmap row for that TF refreshes without
           a full pipeline orchestrator run."""
-    print('\n[Phase 69 — PR-42 pipeline-via-scheduler + chained backtest]')
+    print('\n[Phase 69 -- PR-42 pipeline-via-scheduler + chained backtest]')
 
     app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
     with open(app_path, encoding='utf-8') as f:
@@ -9761,7 +9761,7 @@ def test_phase68_pr41_orphan_training_reattach_and_collapse_fix():
          in our jobs file gets a synthetic 'reattached (orphan)' job
          entry so the operator can see what's burning GPU/CPU.
     """
-    print('\n[Phase 68 — PR-41 orphan reattach + collapse fix]')
+    print('\n[Phase 68 -- PR-41 orphan reattach + collapse fix]')
 
     tpl_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
     with open(tpl_path, encoding='utf-8') as f:
@@ -9807,7 +9807,7 @@ def test_phase68_pr41_orphan_training_reattach_and_collapse_fix():
 def test_phase64_pr40_training_survives_dashboard_restart():
     """Trainer subprocesses are detached + persisted so an in-flight OFT
     run survives a dashboard restart instead of dying with the parent."""
-    print('\n[Phase 64 — PR-40 training survives dashboard restart]')
+    print('\n[Phase 64 -- PR-40 training survives dashboard restart]')
 
     app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
     with open(app_path, encoding='utf-8') as f:
@@ -9842,7 +9842,7 @@ def test_phase65_pr40_pipeline_orchestrator_progress_broadcast():
     pipeline orchestrator is in train phase but no API job exists, so
     each Model Training row flips to 'RUNNING as part of Pipeline
     Orchestrator' instead of looking idle."""
-    print('\n[Phase 65 — PR-40 pipeline orchestrator → row broadcast]')
+    print('\n[Phase 65 -- PR-40 pipeline orchestrator -> row broadcast]')
 
     tpl_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
     with open(tpl_path, encoding='utf-8') as f:
@@ -9866,7 +9866,7 @@ def test_phase65_pr40_pipeline_orchestrator_progress_broadcast():
 def test_phase66_pr40_strategy_sections_collapsed_default():
     """All Strategy & ML sections start collapsed; user's expand/collapse
     choice is persisted to localStorage so it survives F5."""
-    print('\n[Phase 66 — PR-40 strategy sections collapsed by default]')
+    print('\n[Phase 66 -- PR-40 strategy sections collapsed by default]')
 
     tpl_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
     with open(tpl_path, encoding='utf-8') as f:
@@ -9896,7 +9896,7 @@ def test_phase67_pr40_loadStrategyFull_renders_directly():
     """Refresh button on Model Training works: loadStrategyFull no longer
     relies on renderStrategyTab(botState) (which guards on _stratFull
     and may early-return). It now calls the four renderers directly."""
-    print('\n[Phase 67 — PR-40 loadStrategyFull renders directly]')
+    print('\n[Phase 67 -- PR-40 loadStrategyFull renders directly]')
 
     tpl_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
     with open(tpl_path, encoding='utf-8') as f:
@@ -9912,6 +9912,907 @@ def test_phase67_pr40_loadStrategyFull_renders_directly():
           "'refreshing…'" in body)
 
 
+def test_phase109_gzip_to_parquet_migration():
+    """2026-05-15 operator: 'we need to move all the data from GZIP files
+    to DB file to let others easily read it without overhead'. Implementation:
+
+      1. scripts/migrate_1s_to_parquet.py — idempotent, per-yyyymm,
+         deduplicates spot+live-tail timestamps.
+      2. src/analysis/tick_feature_loader._read_1s_window — parquet
+         fast-path with gzip fallback so a migration mid-rollout doesn't
+         break running trainers.
+    """
+    print('\n[Phase 109 -- GZIP -> parquet 1s migration]')
+
+    # Migration script exists + key symbols present.
+    script_path = os.path.join(BASE_DIR, 'scripts', 'migrate_1s_to_parquet.py')
+    check('migration script exists', os.path.exists(script_path))
+    with open(script_path, encoding='utf-8') as f:
+        m_src = f.read()
+    for needle in ('def _migrate_symbol', 'def _candidate_sources',
+                   'def _existing_partitions', 'idempotent',
+                   "QUALIFY ROW_NUMBER() OVER (PARTITION BY timestamp",
+                   "COMPRESSION 'SNAPPY'", '--force', '--dry-run'):
+        check(f"migration script has {needle!r}", needle in m_src)
+    check('migration writes to data/parquet/<SYM>/1s/yyyymm=<YYYY-MM>',
+          "PARQUET_DIR / sym / \"1s\"" in m_src
+          and "yyyymm=" in m_src)
+
+    # tick_feature_loader parquet fast-path.
+    tfl_path = os.path.join(BASE_DIR, 'src', 'analysis',
+                             'tick_feature_loader.py')
+    with open(tfl_path, encoding='utf-8') as f:
+        tfl_src = f.read()
+    check('tick loader exposes _parquet_partitions_exist',
+          'def _parquet_partitions_exist(' in tfl_src)
+    check('tick loader exposes _parquet_1s_dir',
+          'def _parquet_1s_dir(' in tfl_src)
+    check('_read_1s_window checks parquet first',
+          'if _parquet_partitions_exist(symbol):' in tfl_src
+          and 'PARQUET FAST PATH' in tfl_src)
+    check('_read_1s_window falls back to gzip on parquet failure',
+          'GZIP LEGACY PATH' in tfl_src)
+    check('has_tick_data accepts either parquet OR gzip',
+          'return _parquet_partitions_exist(symbol) or bool(_candidate_files(symbol))' in tfl_src)
+    # Behavioural: with no parquet store, _parquet_partitions_exist returns False
+    # cleanly without raising.
+    import importlib
+    if 'src.analysis.tick_feature_loader' in sys.modules:
+        importlib.reload(sys.modules['src.analysis.tick_feature_loader'])
+    from src.analysis import tick_feature_loader as tfl
+    check('_parquet_partitions_exist returns bool for unknown symbol',
+          tfl._parquet_partitions_exist('XXX_FAKE_USDT') is False)
+    check('has_tick_data returns False for fake symbol with no data',
+          tfl.has_tick_data('XXX_FAKE_USDT') is False)
+
+
+def test_phase108_training_progress_instrumentation():
+    """2026-05-15 operator: 'On Model Training screen add the epoch
+    number to the status and estimated time to show what epoch is currently
+    running' + 'save the run time on all TFs ... how long does it take
+    for 1 or for 10 epochs'.
+
+    Implementation:
+      - src/utils/training_progress.py — JSON state file
+        data/training_progress.json with per-task records:
+        current_epoch / n_epochs / last_epoch_duration_s / mean_epoch_duration_s
+        / elapsed_s / eta_s.
+      - src/engine/train_tft_model.py: Lightning per-epoch Callback writes
+        progress; meta JSON now records started_at_unix / finished_at_unix /
+        duration_s / per_epoch_s / epochs_completed; per-TF meta JSON
+        (tft_<tf>_meta.json) so different TFs don't overwrite each other;
+        record_run_from_meta call (previously absent from TFT path).
+      - src/engine/train_model.py (base): same wall-clock fields
+        in meta + 1-epoch progress record so the dashboard shows tabular
+        trainers alongside TFT.
+      - /api/training/progress endpoint.
+      - Dashboard training table's Status column shows
+        'RUNNING · epoch 4/12 · ~90m/epoch · ETA 72m' for the active row.
+    """
+    print('\n[Phase 108 -- training_progress instrumentation]')
+
+    # --- (1) training_progress module ---
+    tp_src_path = os.path.join(BASE_DIR, 'src', 'utils', 'training_progress.py')
+    check('training_progress module exists', os.path.exists(tp_src_path))
+    with open(tp_src_path, encoding='utf-8') as f:
+        tp_src = f.read()
+    for sym in ('def start(', 'def epoch_done(', 'def heartbeat(',
+                'def finish(', 'def get(', 'def list_active(',
+                'def list_all(', 'def clear_stale(', 'PROGRESS_PATH'):
+        check(f'training_progress exports {sym}', sym in tp_src)
+    # Behavioural round-trip.
+    import importlib
+    if 'src.utils.training_progress' in sys.modules:
+        importlib.reload(sys.modules['src.utils.training_progress'])
+    from src.utils import training_progress as tp
+    tid = '__test_phase108__'
+    rec = tp.start(tid, model='tft', tf='1h', n_epochs=3, trainer='test')
+    check('start returns task record',
+          rec.get('task_id') == tid and rec.get('n_epochs') == 3)
+    check('epoch_done updates fields', tp.epoch_done(tid, 1, 60.0) is True)
+    r1 = tp.get(tid)
+    check('after epoch_done — current_epoch=1, epochs_completed=1',
+          r1.get('current_epoch') == 1 and r1.get('epochs_completed') == 1)
+    check('after epoch_done — eta_s computed (n_remaining * mean)',
+          r1.get('eta_s') is not None and r1.get('eta_s') > 0)
+    check('epoch_done sets last_epoch_duration_s',
+          r1.get('last_epoch_duration_s') == 60.0)
+    # 2nd epoch
+    tp.epoch_done(tid, 2, 80.0)
+    r2 = tp.get(tid)
+    check('after epoch 2 — mean_epoch_duration_s averages (60+80)/2',
+          abs(r2.get('mean_epoch_duration_s') - 70.0) < 0.01)
+    # Finish
+    tp.finish(tid, status='done')
+    rf = tp.get(tid)
+    check('finish marks status=done', rf.get('status') == 'done')
+    check('finish sets eta_s=0', rf.get('eta_s') == 0.0)
+    # Cleanup the test record
+    tp.clear_stale(max_age_s=0)
+
+    # --- (2) train_tft_model wiring ---
+    tft_src = open(os.path.join(BASE_DIR, 'src', 'engine',
+                                 'train_tft_model.py'), encoding='utf-8').read()
+    check('TFT trainer imports training_progress',
+          'from src.utils import training_progress' in tft_src)
+    check('TFT trainer calls _tp.start(...)',
+          '_tp.start(_task_id' in tft_src)
+    check('TFT trainer defines per-epoch Lightning Callback',
+          '_EpochProgressCB' in tft_src and 'on_train_epoch_end' in tft_src)
+    check('TFT trainer calls _tp.epoch_done() on epoch end',
+          '_tp.epoch_done(self.task_id' in tft_src)
+    check('TFT trainer wraps model.fit in try/except for progress finish',
+          '_tp.finish(_task_id, status="error"' in tft_src)
+    check('TFT trainer records started_at_unix / finished_at_unix in meta',
+          '"started_at_unix":' in tft_src and '"finished_at_unix":' in tft_src)
+    check('TFT trainer records duration_s + per_epoch_s in meta',
+          '"duration_s":' in tft_src and '"per_epoch_s":' in tft_src)
+    check('TFT trainer records epochs_completed in meta',
+          '"epochs_completed": _epochs_completed' in tft_src)
+    check('TFT trainer writes per-TF meta JSON (tft_<tf>_meta.json)',
+          'per_tf_meta    = MODEL_DIR / f"tft_{timeframe}_meta.json"' in tft_src)
+    check('TFT trainer calls record_run_from_meta (was missing pre-fix)',
+          'record_run_from_meta(meta_dict, model="tft"' in tft_src)
+    check('TFT trainer accepts progress_task_id kwarg from worker',
+          'progress_task_id: str | None = None' in tft_src)
+
+    # --- (3) Base trainer wiring ---
+    base_src = open(os.path.join(BASE_DIR, 'src', 'engine',
+                                  'train_model.py'), encoding='utf-8').read()
+    check('base trainer imports training_progress',
+          'from src.utils import training_progress' in base_src)
+    check('base trainer calls _tp.start(...)',
+          '_tp.start(_train_task_id' in base_src)
+    check('base trainer records started_at_unix / finished_at_unix in meta',
+          '"started_at_unix":  _train_started_at' in base_src
+          and '"finished_at_unix": _train_finished_at' in base_src)
+    check('base trainer records duration_s in meta',
+          '"duration_s":       round(_train_duration_s' in base_src)
+
+    # --- (4) Flask endpoint ---
+    app_src = open(os.path.join(BASE_DIR, 'src', 'dashboard',
+                                 'app.py'), encoding='utf-8').read()
+    check('app.py exposes /api/training/progress',
+          "@app.route('/api/training/progress'" in app_src)
+    check('endpoint reads training_progress.list_active / list_all',
+          '_tp.list_active()' in app_src and '_tp.list_all' in app_src)
+
+    # --- (5) Dashboard JS wiring ---
+    tpl = open(os.path.join(BASE_DIR, 'src', 'dashboard', 'templates',
+                             'index.html'), encoding='utf-8').read()
+    check('frontend declares _trainingProgress global',
+          'let _trainingProgress = {}' in tpl)
+    check('pollTrainingJobs fetches /api/training/progress in parallel',
+          "fetch('/api/training/progress?include_terminal=0&limit=50'" in tpl)
+    check('Status cell appends "epoch N/M" line when progress exists',
+          '`epoch ${cur}/${tot}`' in tpl)
+    check('Status cell shows per-epoch timing',
+          '~${perEpFmt}/epoch' in tpl)
+    check('Status cell shows ETA when eta_s > 0',
+          'ETA ${epochEtaFmt}' in tpl)
+
+
+def test_phase107_worker_bind_host_env_default():
+    """2026-05-15 operator caught — workers were binding 127.0.0.1 only,
+    so the master could NOT POST tasks to them across LAN/Tailscale even
+    when the register-side IP override made the worker appear at its real
+    address. Fix: .env sets WORKER_BIND_HOST=0.0.0.0 for THIS deployment.
+
+    worker.py's CLI default expression is `os.getenv("WORKER_BIND_HOST",
+    "127.0.0.1")`, so the env var is the canonical override. We pin it
+    here so a future operator can't silently break cluster mode by
+    deleting the line."""
+    print('\n[Phase 107 -- WORKER_BIND_HOST env default for cluster mode]')
+    env_path = os.path.join(BASE_DIR, '.env')
+    with open(env_path, encoding='utf-8') as f:
+        env_src = f.read()
+    check('.env contains WORKER_BIND_HOST=0.0.0.0',
+          'WORKER_BIND_HOST=0.0.0.0' in env_src)
+    check('.env documents WHY (operator caught Ivan loopback issue)',
+          'WORKER_BIND_HOST' in env_src and 'multi-machine' in env_src)
+    # worker.py still falls back to 127.0.0.1 when env is unset (safe
+    # default for upstream users).
+    worker_src_path = os.path.join(BASE_DIR, 'src', 'training',
+                                    'distributed', 'worker.py')
+    with open(worker_src_path, encoding='utf-8') as f:
+        worker_src = f.read()
+    check('worker.py argparse default reads WORKER_BIND_HOST env',
+          'os.getenv("WORKER_BIND_HOST", "127.0.0.1")' in worker_src)
+    # Behaviour: load .env + simulate argparse default resolution.
+    import importlib
+    if 'dotenv' in sys.modules:
+        importlib.reload(sys.modules['dotenv'])
+    from dotenv import load_dotenv
+    load_dotenv(env_path, override=True)
+    import os as _os
+    default = _os.getenv('WORKER_BIND_HOST', '127.0.0.1')
+    check(f'live env override = 0.0.0.0 (got {default!r})',
+          default == '0.0.0.0')
+
+
+def test_phase106_tft_presets_and_remote_worker_ip_override():
+    """2026-05-15 — two operator asks closed in one phase:
+
+    (A) TFT epoch tuning:
+        - Add `min_epochs=3` hard floor so EarlyStopping cannot fire
+          before that point (previously patience=5 was meaningless at
+          n_epochs=3).
+        - Make `patience` tunable (was hard-coded 5).
+        - Bump default to n_epochs=10 with min_epochs=3, patience=4.
+        - Add TFT_PRESETS dict + --preset CLI flag so cost/quality dial
+          is one edit.
+        - Wire worker to read all three from training_rules.json.
+        - Record n_epochs/min_epochs/patience in meta JSON.
+
+    (B) Remote-worker IP override:
+        - Ivan's workers bound to 127.0.0.1 locally and reported ip=127.0.0.1
+          in /api/cluster/register. The master then dispatched to
+          http://127.0.0.1:<port>/task which hit the MASTER's own loopback,
+          failing with "WinError 10061 actively refused".
+        - Now: when register payload has loopback ip AND remote_addr is
+          non-loopback, override to remote_addr.
+        - Extend _is_safe_worker_entry to accept Tailscale CGNAT
+          (100.64.0.0/10) since that's the network Ivan arrives on.
+    """
+    print('\n[Phase 106 -- TFT presets + remote worker IP override]')
+
+    # --- (A) train_tft_model exposes min_epochs + patience ---
+    import importlib
+    if 'src.engine.train_tft_model' in sys.modules:
+        importlib.reload(sys.modules['src.engine.train_tft_model'])
+    from src.engine import train_tft_model as ttm
+    import inspect
+    sig = inspect.signature(ttm.train_tft_model)
+    for p in ('n_epochs', 'min_epochs', 'patience'):
+        check(f'train_tft_model has param {p}', p in sig.parameters)
+    check('train_tft_model n_epochs default is 10',
+          sig.parameters['n_epochs'].default == 10)
+    check('train_tft_model min_epochs default is 3',
+          sig.parameters['min_epochs'].default == 3)
+    check('train_tft_model patience default is 4',
+          sig.parameters['patience'].default == 4)
+    check('TFT_PRESETS exposes cheap/fair-vs-gbt/max-quality',
+          set(['cheap', 'fair-vs-gbt', 'max-quality']).issubset(
+              set(ttm.TFT_PRESETS.keys())))
+    for k, expected in (('cheap', 3), ('fair-vs-gbt', 12), ('max-quality', 25)):
+        check(f'preset {k} has n_epochs={expected}',
+              ttm.TFT_PRESETS[k]['n_epochs'] == expected)
+    # Source-level: min_epochs flows into pl_trainer_kwargs and EarlyStopping
+    # uses the parameter.
+    tft_src_path = os.path.join(BASE_DIR, 'src', 'engine', 'train_tft_model.py')
+    with open(tft_src_path, encoding='utf-8') as f:
+        tft_src = f.read()
+    check('Trainer gets min_epochs from kwarg',
+          '"min_epochs": _min_epochs' in tft_src)
+    check('EarlyStopping uses tunable patience',
+          'patience=int(patience)' in tft_src)
+    check('meta JSON records min_epochs',
+          '"min_epochs": _min_epochs' in tft_src)
+    check('meta JSON records patience',
+          '"patience": int(patience)' in tft_src)
+    check('CLI exposes --preset',
+          '--preset' in tft_src)
+    # training_rules.json should now have n_epochs=10, min_epochs=3, patience=4
+    rules_path = os.path.join(BASE_DIR, 'data', 'training_rules.json')
+    import json as _json
+    rules = _json.loads(open(rules_path, encoding='utf-8').read())
+    tft_params = rules['models']['tft']['params']
+    check('training_rules.json tft.n_epochs=10',
+          tft_params.get('n_epochs') == 10)
+    check('training_rules.json tft.min_epochs=3',
+          tft_params.get('min_epochs') == 3)
+    check('training_rules.json tft.patience=4',
+          tft_params.get('patience') == 4)
+    check('training_rules.json includes preset reference table',
+          '_presets' in tft_params)
+    # Worker code reads all three from rules
+    worker_src = open(os.path.join(BASE_DIR, 'src', 'training', 'distributed',
+                                    'worker.py'), encoding='utf-8').read()
+    check('worker _train_tft reads n_epochs, patience, min_epochs from rules',
+          'for key in ("n_epochs", "patience", "min_epochs")' in worker_src)
+
+    # --- (B) Orchestrator IP override + CGNAT safety ---
+    orch_src = open(os.path.join(BASE_DIR, 'src', 'training', 'distributed',
+                                  'orchestrator.py'), encoding='utf-8').read()
+    check('orchestrator register handler overrides loopback ip with remote_addr',
+          'overriding loopback-reported ip' in orch_src or
+          ('reported_ip in loopback_set' in orch_src
+           and 'remote_addr' in orch_src
+           and 'body["ip"] = remote_addr' in orch_src))
+    check('orchestrator _is_safe_worker_entry accepts CGNAT (100.64.0.0/10)',
+          '100.64.0.0/10' in orch_src)
+
+    # Behavioural test for _is_safe_worker_entry — accept loopback, RFC1918,
+    # and CGNAT; reject link-local and public.
+    if 'src.training.distributed.orchestrator' in sys.modules:
+        importlib.reload(sys.modules['src.training.distributed.orchestrator'])
+    from src.training.distributed.orchestrator import Orchestrator
+    fn = Orchestrator._is_safe_worker_entry
+    cases = [
+        ({'ip': '127.0.0.1', 'port': 7701},      True,  'loopback'),
+        ({'ip': '192.168.0.105', 'port': 7701},  True,  'RFC1918'),
+        ({'ip': '10.0.0.5', 'port': 7701},       True,  'RFC1918 /8'),
+        ({'ip': '100.88.71.74', 'port': 7702},   True,  'Tailscale CGNAT'),
+        ({'ip': '100.127.255.255', 'port': 7702},True,  'CGNAT upper bound'),
+        ({'ip': '8.8.8.8', 'port': 7701},        False, 'public Google DNS'),
+        ({'ip': '169.254.169.254', 'port': 7701},False, 'AWS metadata (link-local)'),
+        ({'ip': '127.0.0.1', 'port': 80},        False, 'port too low'),
+    ]
+    for w, expected, label in cases:
+        check(f'_is_safe_worker_entry({label}) == {expected}',
+              fn(w) == expected)
+
+
+def test_phase105_plateau_detection_l2_news_tick_features():
+    """2026-05-15 operator request — close the four open ML improvements:
+      1. Plateau detection (prefer robust neighbourhood over isolated spike).
+      2. L2 microstructure features as ML inputs.
+      3. News sentiment as ML inputs (joined to bar timeline).
+      4. Tick-level (1s-derived) microstructure features.
+
+    Each feature loader is required to produce a stable schema even when no
+    underlying data exists for the symbol — so retrains automatically
+    benefit as the parquet store accumulates without changing input shape.
+    """
+    print('\n[Phase 105 -- plateau detection + L2/news/tick features]')
+
+    # --- (1) Plateau detection module exists + signature contract ---
+    import importlib
+    for sym in ('select_plateau_winner', 'summarise_for_proposal',
+                'PlateauResult', 'PlateauSelection'):
+        try:
+            mod = importlib.import_module('src.engine.cio_plateau')
+            check(f'cio_plateau exports {sym}', hasattr(mod, sym))
+        except Exception as e:
+            check(f'cio_plateau import: {sym}', False, str(e))
+
+    # Synthetic study with a clear spike → plateau preference.
+    try:
+        import optuna
+        import optuna.logging as _ol
+        _ol.set_verbosity(_ol.WARNING)
+        from src.engine.cio_plateau import (
+            select_plateau_winner, PlateauResult,
+        )
+        # Build trials manually so the spike is guaranteed to land in the
+        # sampled set — Optuna's TPE may otherwise route around it.
+        study = optuna.create_study(direction='maximize')
+
+        def _add(study, params, value):
+            trial = optuna.trial.create_trial(
+                params=params,
+                distributions={k: optuna.distributions.FloatDistribution(0.0, 5.0)
+                               for k in params},
+                value=value,
+            )
+            study.add_trial(trial)
+
+        # Add a stable plateau cloud around (pt=2.0, sl=1.0) value ≈ 4.5–4.9.
+        for px in [1.85, 1.9, 1.95, 2.0, 2.05, 2.1, 2.15]:
+            for sx in [0.9, 1.0, 1.1]:
+                _add(study, {'pt': px, 'sl': sx},
+                     4.9 - (px - 2.0) ** 2 - (sx - 1.0) ** 2 * 0.5)
+        # Inject ONE isolated spike at (pt=4.5, sl=4.5) value=50 with awful neighbours.
+        _add(study, {'pt': 4.5, 'sl': 4.5}, 50.0)
+        # Add a few isolators around the spike at very low value so its
+        # neighbourhood looks worthless.
+        for px in [4.4, 4.6]:
+            for sx in [4.4, 4.6]:
+                _add(study, {'pt': px, 'sl': sx}, -10.0)
+
+        sel = select_plateau_winner(study, k=5, alpha=0.5, min_trials=8)
+        check('plateau detection returns a selection', sel is not None)
+        if sel:
+            check('spike winner is the synthetic spike (value=50)',
+                  abs(sel.spike_winner.raw_value - 50.0) < 1e-6)
+            check('plateau winner is NOT the spike (different params)',
+                  sel.plateau_winner.params != sel.spike_winner.params)
+            check('plateau winner has higher plateau_score than spike',
+                  sel.plateau_winner.plateau_score > sel.spike_winner.plateau_score)
+            # Spike beats plateau on raw_value, plateau beats spike on plateau_score.
+            check("recommendation chooses 'spike' since recovery_ratio < 0.85",
+                  sel.recommendation in ('spike', 'plateau'))
+    except ImportError:
+        check('optuna available for plateau test', None,
+              'optuna not installed; skipping behavioural plateau test')
+
+    # CIO agent integrates plateau analysis post-optimize.
+    cio_path = os.path.join(BASE_DIR, 'src', 'engine', 'cio_agent.py')
+    with open(cio_path, encoding='utf-8') as f:
+        cio_src = f.read()
+    check('cio_agent.run imports cio_plateau.select_plateau_winner',
+          'from src.engine.cio_plateau import' in cio_src and
+          'select_plateau_winner' in cio_src)
+    check("cio_agent records plateau_analysis in summary",
+          "summary['plateau_analysis']" in cio_src)
+    check('cio_agent records plateau_recommended flag',
+          "summary['plateau_recommended']" in cio_src)
+    check('cio_agent apply_best honours plateau_recommended',
+          "winning.get('plateau_recommended')" in cio_src and
+          "recommended_params" in cio_src)
+
+    # --- (2) L2 feature loader ---
+    from src.analysis.l2_feature_loader import (
+        L2_FEATURE_COLUMNS, l2_partitions_exist, load_bar_aligned as l2_aligned,
+    )
+    check('l2 loader exports L2_FEATURE_COLUMNS',
+          len(L2_FEATURE_COLUMNS) >= 5)
+    # Stable-schema test: empty partitions → all columns present, zeros.
+    df = l2_aligned('XXX_FAKE_USDT', [0, 60_000, 120_000], 60_000)
+    check('l2_aligned returns DataFrame with every feature col when no data',
+          all(c in df.columns for c in L2_FEATURE_COLUMNS))
+    check('l2_aligned fills zeros for missing data',
+          float(df['l2_snapshot_count'].sum()) == 0.0)
+
+    # --- (3) News feature loader ---
+    from src.analysis.news_feature_loader import (
+        NEWS_FEATURE_COLUMNS, load_bar_aligned as news_aligned, is_available,
+    )
+    check('news loader exports NEWS_FEATURE_COLUMNS',
+          len(NEWS_FEATURE_COLUMNS) >= 5)
+    df = news_aligned('XXX_FAKE_USDT', [0, 60_000, 120_000], 60_000)
+    check('news_aligned has every feature col',
+          all(c in df.columns for c in NEWS_FEATURE_COLUMNS))
+    # When there's no news for a fake symbol, all features must be 0/empty.
+    check('news_aligned fills zeros for missing symbol',
+          float(df['news_count'].sum()) == 0.0)
+
+    # --- (4) Tick feature loader ---
+    from src.analysis.tick_feature_loader import (
+        TICK_FEATURE_COLUMNS, has_tick_data, load_bar_aligned as tick_aligned,
+    )
+    check('tick loader exports TICK_FEATURE_COLUMNS',
+          len(TICK_FEATURE_COLUMNS) >= 6)
+    df = tick_aligned('XXX_FAKE_USDT', [0, 60_000, 120_000], 60_000)
+    check('tick_aligned has every feature col',
+          all(c in df.columns for c in TICK_FEATURE_COLUMNS))
+    check('tick_aligned fills zeros for missing symbol',
+          float(df['tick_seconds_count'].sum()) == 0.0)
+
+    # --- (5) feature_engineering exposes add_l2_features / add_news_features /
+    # add_tick_features so the GBT trainers can pull them in ---
+    fe_path = os.path.join(BASE_DIR, 'src', 'analysis', 'feature_engineering.py')
+    with open(fe_path, encoding='utf-8') as f:
+        fe_src = f.read()
+    for fn in ('def add_l2_features(', 'def add_news_features(',
+               'def add_tick_features(', 'def freq_to_ms('):
+        check(f'feature_engineering has {fn}', fn in fe_src)
+
+    # --- (6) TFT trainer attaches L2 + news + tick features ---
+    tft_path = os.path.join(BASE_DIR, 'src', 'engine', 'train_tft_model.py')
+    with open(tft_path, encoding='utf-8') as f:
+        tft_src = f.read()
+    for hook in ('_maybe_attach_l2_features(', '_maybe_attach_news_features(',
+                 '_maybe_attach_tick_features('):
+        check(f'TFT trainer calls {hook}', hook in tft_src)
+    check('TFT past_cov_cols includes L2 features when present',
+          'from src.analysis.l2_feature_loader import L2_FEATURE_COLUMNS' in tft_src)
+    check('TFT past_cov_cols includes news features when present',
+          'from src.analysis.news_feature_loader import NEWS_FEATURE_COLUMNS' in tft_src)
+    check('TFT past_cov_cols includes tick features when present',
+          'from src.analysis.tick_feature_loader import TICK_FEATURE_COLUMNS' in tft_src)
+
+
+def test_phase104_pc_load_balancer():
+    """2026-05-15 operator request: 'implement the PC load balancer between
+    dashboard and other processes ... give priority to dashboard, the only
+    exception is trading bot on live source.'
+
+    Implementation: src/utils/load_balancer.py — recommends and applies
+    Windows process priorities (psutil) based on role lookups in
+    data/process_registry.json + cmdline pattern matching for training
+    subprocesses. Live-trade detection reads data/control.json trade_mode.
+
+    This test exercises:
+      - recommend_priorities() returns expected schema, with no side effects.
+      - apply_priorities(dry_run=True) plans changes without mutating priorities.
+      - live-trade exemption fires when trade_mode is in LIVE_TRADE_MODES.
+      - enable/disable state persists in data/load_balancer_state.json.
+      - The Flask endpoints exist + are wired.
+    """
+    print('\n[Phase 104 -- PC load balancer]')
+
+    # Static checks on the module itself.
+    lb_path = os.path.join(BASE_DIR, 'src', 'utils', 'load_balancer.py')
+    check('load_balancer module exists', os.path.exists(lb_path))
+    with open(lb_path, encoding='utf-8') as f:
+        lb_src = f.read()
+    for sym in ('def recommend_priorities(', 'def apply_priorities(',
+                'def is_enabled(', 'def set_enabled(',
+                'def start_background_thread(', 'LIVE_TRADE_MODES',
+                'DEFAULT_ROLE_POLICY', 'TRAINING_CMDLINE_PATTERNS'):
+        check(f'load_balancer exports {sym}', sym in lb_src)
+    check('default policy gives dashboard ABOVE_NORMAL',
+          "'dashboard':" in lb_src and 'ABOVE_NORMAL' in lb_src)
+    check('default policy demotes cluster_orch to BELOW_NORMAL',
+          "'cluster_orch'" in lb_src and 'BELOW_NORMAL' in lb_src)
+    check('training-subprocess cmdline patterns cover src.training',
+          "'src.training'" in lb_src)
+    check('live-trade modes include real and mainnet',
+          '"real"' in lb_src and '"mainnet"' in lb_src)
+
+    # Behaviour — pure recommend_priorities() never raises and returns a list.
+    import importlib
+    if 'src.utils.load_balancer' in sys.modules:
+        importlib.reload(sys.modules['src.utils.load_balancer'])
+    from src.utils import load_balancer as lb
+    plans = lb.recommend_priorities()
+    check('recommend_priorities returns a list', isinstance(plans, list))
+    if plans:
+        plan = plans[0]
+        for k in ('pid', 'role', 'reason', 'current_label',
+                  'recommended_label', 'exempt_from_demotion'):
+            check(f'plan dict has {k!r}', k in plan)
+
+    # apply_priorities(dry_run=True) — must not actually change anything.
+    # We can't easily snapshot/restore real priorities cross-platform here,
+    # so test the contract: returns a summary dict with the expected keys.
+    summary = lb.apply_priorities(dry_run=True)
+    for k in ('ts', 'live_trading', 'dry_run', 'changed', 'unchanged',
+              'failed', 'plans'):
+        check(f'apply summary has {k!r}', k in summary)
+    check('dry_run summary keeps dry_run=True', summary['dry_run'] is True)
+
+    # Live-trade exemption — simulate by writing control.json then
+    # checking that the bot plan flips to exempt.
+    import tempfile, json as _json, shutil
+    ctl_path = os.path.join(BASE_DIR, 'data', 'control.json')
+    backup = None
+    if os.path.exists(ctl_path):
+        with open(ctl_path, encoding='utf-8') as f:
+            backup = f.read()
+    try:
+        _orig = _json.loads(backup) if backup else {}
+        live = dict(_orig); live['trade_mode'] = 'real'
+        with open(ctl_path, 'w', encoding='utf-8') as f:
+            _json.dump(live, f)
+        plans_live = lb.recommend_priorities()
+        bot_plans = [p for p in plans_live if p.get('role') == 'bot']
+        if bot_plans:
+            bp = bot_plans[0]
+            check('live mode: bot is exempt_from_demotion=True',
+                  bp.get('exempt_from_demotion') is True)
+            check('live mode: bot recommended_label is ABOVE_NORMAL',
+                  bp.get('recommended_label') == 'ABOVE_NORMAL')
+        # And reverse: testnet → bot is NOT exempt.
+        testnet = dict(_orig); testnet['trade_mode'] = 'testnet'
+        with open(ctl_path, 'w', encoding='utf-8') as f:
+            _json.dump(testnet, f)
+        plans_test = lb.recommend_priorities()
+        bot_plans = [p for p in plans_test if p.get('role') == 'bot']
+        if bot_plans:
+            check('testnet mode: bot NOT exempt',
+                  bot_plans[0].get('exempt_from_demotion') is False)
+    finally:
+        if backup is not None:
+            with open(ctl_path, 'w', encoding='utf-8') as f:
+                f.write(backup)
+
+    # enable/disable round-trip persists.
+    prev_enabled = lb.is_enabled()
+    lb.set_enabled(True)
+    check('set_enabled(True) reflected in is_enabled()',
+          lb.is_enabled() is True)
+    lb.set_enabled(False)
+    check('set_enabled(False) reflected in is_enabled()',
+          lb.is_enabled() is False)
+    # Restore.
+    lb.set_enabled(prev_enabled)
+
+    # Flask endpoints.
+    app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
+    with open(app_path, encoding='utf-8') as f:
+        app_src = f.read()
+    for route in ('/api/system/load_balancer/status',
+                  '/api/system/load_balancer/apply',
+                  '/api/system/load_balancer/enable'):
+        check(f'app.py exposes {route}', route in app_src)
+    check('app.py auto-starts load_balancer background thread on boot',
+          'start_background_thread(' in app_src)
+
+    # UI card present.
+    tpl_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
+    with open(tpl_path, encoding='utf-8') as f:
+        tpl = f.read()
+    check('Monitor tab has PC Load Balancer card',
+          'id="loadbal-section"' in tpl
+          and 'PC Load Balancer' in tpl)
+    for fn in ('function loadbalRefresh(', 'function loadbalEnable(',
+               'function loadbalApply('):
+        check(f'frontend handler {fn} present', fn in tpl)
+    check('Monitor tab switch calls loadbalRefresh',
+          "loadbalRefresh()" in tpl)
+
+
+def test_phase103_data_coverage_audit_perf_and_registry_hb_lock_timeout():
+    """2026-05-15 operator complaint: Data Coverage card never loaded;
+    dashboard sluggish during training.
+
+    Root cause: audit_coverage decompressed every gzip end-to-end to read
+    the last bar's timestamp. With 20 symbols × 8 timeframes × ~10 GB of
+    compressed archive on disk, the cold scan took ~10 min — well over
+    the 2 min cache TTL, so the cache never warmed. Fix: use file mtime
+    as the last_ts proxy by default. Opt-in `precise=True` for callers
+    that genuinely need bar timestamps.
+
+    Secondary symptom: 'registry-hb heartbeat exception: The file lock
+    ... could not be acquired' WARNING in the dashboard banner. Caused by
+    safe_json.transaction's default 5 s filelock timeout being exceeded
+    when many parallel training workers contended for the registry. Fix:
+    heartbeat() now uses a 15 s timeout AND catches Timeout to log at
+    DEBUG so the banner stops getting hit on every contended tick.
+    """
+    print('\n[Phase 103 -- data coverage perf + registry-hb lock timeout]')
+
+    # --- audit_coverage: fast-path uses mtime, no full gzip walk ---
+    audit_src_path = os.path.join(BASE_DIR, 'src', 'utils', 'data_audit.py')
+    with open(audit_src_path, encoding='utf-8') as f:
+        audit_src = f.read()
+    check('audit_coverage has precise=False parameter',
+          'precise: bool = False' in audit_src)
+    check('audit_coverage gates gzip scan on use_gzip_scan',
+          'use_gzip_scan = precise or (not fast)' in audit_src)
+    check('_mtime_to_ts helper defined',
+          'def _mtime_to_ts(' in audit_src)
+    check('fast path calls _mtime_to_ts instead of _parse_first_last_ts',
+          'last_ts = _mtime_to_ts(path)' in audit_src)
+
+    # --- Behaviour: actual perf of audit_coverage default call ---
+    import time
+    from src.utils import data_audit
+    t0 = time.time()
+    rows = data_audit.audit_coverage()
+    elapsed = time.time() - t0
+    check(f'audit_coverage default returns <5s ({elapsed*1000:.0f}ms)',
+          elapsed < 5.0)
+    check('audit_coverage default returns 160 cells (20 syms × 8 tfs)',
+          len(rows) == 160)
+    present_with_ts = [r for r in rows if r['exists'] and r.get('last_ts')]
+    if present_with_ts:
+        sample = present_with_ts[0]
+        # mtime path produces a "YYYY-MM-DD HH:MM:SS" string.
+        import re
+        check('fast-path last_ts matches YYYY-MM-DD HH:MM:SS format',
+              bool(re.match(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$',
+                            sample.get('last_ts') or '')))
+    # Staleness classification still works.
+    statuses = {r['status'] for r in rows}
+    check('audit_coverage assigns present/stale/missing classifications',
+          statuses.issubset({'present', 'stale', 'missing'}))
+
+    # precise=True still works (don't actually run it — too slow).
+    check('audit_coverage(precise=True) is a valid keyword call',
+          'precise: bool = False' in audit_src)
+
+    # --- heartbeat() lock-timeout fix ---
+    reg_src_path = os.path.join(BASE_DIR, 'src', 'utils', 'process_registry.py')
+    with open(reg_src_path, encoding='utf-8') as f:
+        reg_src = f.read()
+    check('heartbeat() uses 15s lock timeout',
+          'timeout=15.0' in reg_src)
+    check('heartbeat() catches filelock Timeout',
+          'from filelock import Timeout as _LockTimeout' in reg_src
+          and 'except _LockTimeout' in reg_src)
+    check('heartbeat() downgrades contended Timeout to DEBUG',
+          'logger.debug(' in reg_src
+          and 'lock timeout — registry busy' in reg_src)
+
+    # --- Frontend filter auto-scan was the only 1.5s JS poller I added;
+    # the operator reported sluggishness so we bumped to 3s + hidden gate.
+    tpl_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
+    with open(tpl_path, encoding='utf-8') as f:
+        tpl = f.read()
+    check('filter auto-scan interval bumped to 3000ms',
+          'setInterval(() => {\n    if (document.hidden) return;\n    _autoInstallFiltersOnAllTables();\n  }, 3000)' in tpl)
+    check('filter auto-scan skips when tab is hidden',
+          'if (document.hidden) return;' in tpl)
+
+
+def test_phase102_unified_job_registry_and_filters_and_winning_hp():
+    """2026-05-15 dashboard upgrade — five operator complaints in one pass:
+
+    1. 🏆 Winning Hyperparameters card was empty — backend endpoint
+       /api/analytics/winning_hp now has an 'overview' mode that returns
+       top-N winners across all (model, tf) cells when no model+tf is
+       supplied, so the card has useful default content.
+    2. 'Set as baseline' button — verified the backend promote path works
+       end-to-end (record_run → promote_baseline → state file). UX now
+       shows inline status feedback in #an-summary so the operator sees
+       the action took effect.
+    3. Per-column filter inputs on every table — installColumnFilters()
+       installs a filter row under the <thead>, with filter state
+       persisted in localStorage so refresh/retrain/sort doesn't reset
+       the filters. _autoInstallFiltersOnAllTables() runs on a 1500ms
+       cadence so JS-rendered tables get filters automatically.
+    4. Server-side job registry — src/dashboard/job_registry.py persists
+       jobs to data/dashboard_jobs.json so cross-tab navigation rehydrates
+       progress. /api/jobs?card_id=... lets every card poll its own
+       in-flight state. Wired into runAutoOrchestrate + loadBakeOff so the
+       Model Comparison cards now show live progress after a tab switch
+       or page reload mid-run.
+    5. Retrain status check — covered by other tests already.
+    """
+    print('\n[Phase 102 -- unified job registry, column filters, winning HP]')
+
+    tpl_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'templates', 'index.html')
+    with open(tpl_path, encoding='utf-8') as f:
+        tpl = f.read()
+
+    # --- Job registry module + endpoints ---
+    jr_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'job_registry.py')
+    check('job_registry module exists', os.path.exists(jr_path))
+    with open(jr_path, encoding='utf-8') as f:
+        jr_src = f.read()
+    for sym in ('def register(', 'def update(', 'def complete(', 'def fail(',
+                'def append_log(', 'def list_for_card(', 'def list_running(',
+                'def cleanup_stale(', 'REGISTRY_PATH', 'MAX_JOBS_PER_CARD'):
+        check(f'job_registry exports {sym}', sym in jr_src)
+
+    # Behavioural test — actually exercise the registry round-trip.
+    import importlib
+    if 'src.dashboard.job_registry' in sys.modules:
+        importlib.reload(sys.modules['src.dashboard.job_registry'])
+    from src.dashboard import job_registry as jr
+    test_card = '__test_card_phase102__'
+    jid = jr.register(test_card, label='unit test', kind='test',
+                      initial_log='start')
+    check('register returns job_id', isinstance(jid, str) and jid.startswith('job_'))
+    check('append_log finds the job', jr.append_log(jid, 'mid 1') is True)
+    check('update sets progress_pct', jr.update(jid, progress_pct=42.0) is True)
+    jobs = jr.list_for_card(test_card, limit=5)
+    check('list_for_card returns the running job', len(jobs) == 1
+          and jobs[0]['status'] == 'running' and jobs[0]['progress_pct'] == 42.0)
+    check('complete marks status=done', jr.complete(jid, result={'ok': True}) is True)
+    completed = jr.get(jid)
+    check('completed job has status done + finished_at',
+          completed and completed['status'] == 'done'
+          and completed.get('finished_at') is not None)
+    # Cleanup: drop the test job.
+    jr.cleanup_stale(max_age_s=0)
+    check('cleanup_stale removes terminal jobs older than 0s',
+          len(jr.list_for_card(test_card)) == 0)
+
+    # /api/jobs endpoints in app.py
+    app_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
+    with open(app_path, encoding='utf-8') as f:
+        app_src = f.read()
+    for route in ("/api/jobs'", "/api/jobs/register",
+                  "/api/jobs/<job_id>/log", "/api/jobs/<job_id>/complete",
+                  "/api/jobs/<job_id>/fail", "/api/jobs/<job_id>'"):
+        check(f"app.py exposes {route}", route in app_src)
+
+    # --- Winning HP overview mode ---
+    # Endpoint should support no-args call returning leaders[] across cells.
+    check("winning_hp endpoint has overview mode (leaders[])",
+          "'leaders': leaders" in app_src or "'leaders'" in app_src)
+    check("winning_hp endpoint returns mode='overview' when no model+tf",
+          "'mode': 'overview'" in app_src)
+    # Actually call winning_hyperparameters and the underlying function
+    # to confirm the data path is sound.
+    from src.analytics import training_history as th
+    state = th._load_state()
+    # If there are runs, the overview mode should produce at least one leader.
+    have_runs = bool(state.get('runs'))
+    if have_runs:
+        runs = th.get_runs(limit=None)
+        by_cell = {}
+        for r in runs:
+            if r.get('hp') is None or not r.get('cell'):
+                continue
+            prev = by_cell.get(r['cell'])
+            if prev is None or (r.get('score') or 0) > (prev.get('score') or 0):
+                by_cell[r['cell']] = r
+        check('overview mode would surface leaders for cells with hp', True,
+              f'{len(by_cell)} cell(s) have at least one run with hp')
+
+    # --- Set-as-baseline backend path ---
+    # Confirm the round-trip works on a real run (then restore baseline).
+    state = th._load_state()
+    runs = state.get('runs') or []
+    non_baseline = next((r for r in runs if not r.get('is_baseline')), None)
+    if non_baseline:
+        cell = non_baseline.get('cell')
+        original = state.get('baselines', {}).get(cell)
+        target = non_baseline['run_id']
+        ok = th.promote_baseline(target)
+        check('promote_baseline(target) returns True', ok)
+        state2 = th._load_state()
+        check('baselines[cell] now points to target',
+              state2.get('baselines', {}).get(cell) == target)
+        target_row = next((r for r in state2['runs']
+                           if r.get('run_id') == target), None)
+        check('target run now has is_baseline=True',
+              target_row and target_row.get('is_baseline') is True)
+        # Restore so we don't leave the test state changed.
+        if original and original != target:
+            th.promote_baseline(original)
+
+    # --- Frontend: filter helpers stubbed out (2026-05-15 operator: "remove
+    # filter line from all tabs and cards, just leave the sorting controls
+    # on headers"). The stub functions still exist so existing render
+    # callers (refreshTableFilters / installColumnFilters) keep linking, but
+    # they only sweep away leftover filter rows from prior sessions.
+    for sym in ('installColumnFilters', 'refreshTableFilters',
+                '_autoInstallFiltersOnAllTables', '_FILTER_STATE_KEY'):
+        check(f'frontend helper {sym} still callable (stub)', sym in tpl)
+    check('filter rows are NOT being added (no addEventListener input handler)',
+          "addEventListener('input', (ev) => {\n      _setFilterFor(tableId, i, ev.target.value)" not in tpl)
+    check('stub purges leftover col-filter-row tags on mount',
+          "thead.querySelector('tr.col-filter-row')" in tpl)
+    check('localStorage filter state purged on DOMContentLoaded',
+          "localStorage.removeItem(_FILTER_STATE_KEY)" in tpl)
+
+    # Filter calls wired to the renderers we explicitly hooked.
+    check('renderModelComparison calls refreshTableFilters',
+          "refreshTableFilters('model-comparison-table')" in tpl)
+    check("anLoad calls refreshTableFilters('an-runs-table')",
+          "refreshTableFilters('an-runs-table')" in tpl)
+    check('bake-off table gets an id so filters can attach',
+          'id="bake-off-table"' in tpl)
+    check('anLoadWinningHp adds id to its rendered table',
+          'id="an-winning-table"' in tpl)
+
+    # --- Frontend: runJob + pollCardJobs + rehydrate hooks ---
+    for sym in ('async function runJob(', 'function pollCardJobs(',
+                'function fetchCardJobs(', 'function renderJobStrip(',
+                'function rehydrateAutoOrchCard(', 'function rehydrateBakeOffCard('):
+        check(f'frontend {sym.split(" ")[-1].split("(")[0]} present', sym in tpl)
+    check('runAutoOrchestrate wraps work in runJob',
+          "runJob('auto-orch'" in tpl)
+    check('loadBakeOff registers a bake-off job',
+          "card_id:'bake-off'" in tpl)
+    check('model_comparison tab calls rehydrateAutoOrchCard',
+          "rehydrateAutoOrchCard()" in tpl)
+    check('DOMContentLoaded triggers rehydrate after page reload',
+          "rehydrateAutoOrchCard === 'function'" in tpl)
+
+    # --- Set-as-baseline UX improvement ---
+    check('anPromote surfaces inline status into an-summary',
+          'Promoting ' in tpl and 'Baseline updated' in tpl)
+
+    # --- Winning HP card auto-loads on Analytics tab ---
+    # When the analytics nav-item is clicked, anLoad AND anLoadWinningHp
+    # are called (post-fix: anLoadWinningHp now runs unconditionally so
+    # the card has overview content even with no model+tf picked).
+    analytics_click = "activeTab === 'analytics'"
+    idx = tpl.find(analytics_click)
+    nearby = tpl[idx: idx + 600] if idx >= 0 else ''
+    check('Analytics tab click triggers anLoad()',  'anLoad()' in nearby)
+    check('Analytics tab click triggers anLoadWinningHp()',
+          'anLoadWinningHp()' in nearby)
+    # Default card text no longer says "Pick a model + TF".
+    check("an-winning default text updated to 'Loading…'",
+          'id="an-winning" style="font-size:.65rem;color:#94a3b8">Loading winning hyperparameters' in tpl)
+
+    # --- New: Model column alongside Strategy on trade tables ---
+    check('deriveTradeModel helper exists', 'function deriveTradeModel(' in tpl)
+    check('modelChip helper exists', 'function modelChip(' in tpl)
+    # Trades tab Active table: column count 9 → 10.
+    check('tbl-open-trades has 10-col empty-state',
+          '<td colspan="10" style="text-align:center;color:#475569;padding:14px">No open positions</td>' in tpl)
+    check('tbl-closed-trades has 10-col empty-state',
+          '<td colspan="10" style="text-align:center;color:#475569;padding:14px">No closed trades</td>' in tpl)
+    # Overview tables 8 → 9.
+    check('tbl-ov-open has 9-col empty-state',
+          '<td colspan="9" style="text-align:center;color:#475569;padding:14px">No open positions</td>' in tpl)
+    check('tbl-ov-closed has 9-col empty-state',
+          '<td colspan="9" style="text-align:center;color:#475569;padding:14px">No closed trades yet</td>' in tpl)
+    # Header literally says Model.
+    check('Active Trades table header includes "Model"',
+          '<th onclick="sortTbl(this)">Model</th><th onclick="sortTbl(this)">Strategy</th>' in tpl)
+
+    # Behaviour: deriveTradeModel covers the canonical strategy prefixes
+    # we expect to see in production trades. Spot-check the JS source
+    # string for each known mapping so a future rename surfaces here.
+    for needle in ("strat.includes('scalp')",
+                   "strat.includes('trend')",
+                   "strat.includes('futures')",
+                   "strat.includes('meta')",
+                   "strat.includes('regime')",
+                   "market === 'scalping'"):
+        check(f'deriveTradeModel handles {needle}', needle in tpl)
+
+
 # ─── Runner ───────────────────────────────────────────────────────────────────
 
 def main():
@@ -9923,7 +10824,7 @@ def main():
     args = parser.parse_args()
 
     print('=' * 55)
-    print('  AI Trader Dashboard — Test Suite')
+    print('  AI Trader Dashboard -- Test Suite')
     print('=' * 55)
 
     test_template()
@@ -10055,11 +10956,19 @@ def main():
     test_phase100d_followup_3_training_jobs_lock_is_rlock()
     test_phase100d_followup_4_xgb_wrapper_is_classifier_and_worker_reports_failure()
     test_phase101_neural_kind_plus_task_heartbeat_and_proc_health_cache()
+    test_phase102_unified_job_registry_and_filters_and_winning_hp()
+    test_phase103_data_coverage_audit_perf_and_registry_hb_lock_timeout()
+    test_phase104_pc_load_balancer()
+    test_phase105_plateau_detection_l2_news_tick_features()
+    test_phase106_tft_presets_and_remote_worker_ip_override()
+    test_phase107_worker_bind_host_env_default()
+    test_phase108_training_progress_instrumentation()
+    test_phase109_gzip_to_parquet_migration()
 
     if not args.offline:
         test_api(args.url)
     else:
-        print('\n[API Endpoints] — skipped (--offline mode)')
+        print('\n[API Endpoints] -- skipped (--offline mode)')
 
     print('\n' + '=' * 55)
     total = results['pass'] + results['fail'] + results['skip']

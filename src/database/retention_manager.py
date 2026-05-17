@@ -85,7 +85,7 @@ class RetentionManager:
                 self._records[rec.key] = rec
             logger.info("Retention index loaded: %d partitions", len(self._records))
         except Exception as exc:
-            logger.warning("Could not read retention index (%s) — starting empty.", exc)
+            logger.warning("Could not read retention index (%s) -- starting empty.", exc)
             self._records = {}
 
     def save(self) -> None:

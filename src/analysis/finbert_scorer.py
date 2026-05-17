@@ -182,7 +182,7 @@ def score_batch(texts: Iterable[str],
     try:
         out = _classifier(texts, batch_size=batch_size)
     except Exception as exc:
-        logger.debug("[finbert_scorer] batch err: %s — falling back per-item", exc)
+        logger.debug("[finbert_scorer] batch err: %s -- falling back per-item", exc)
         return [score_one(t, preferred) for t in texts]
     return [_label_to_score(r.get("label", ""), r.get("score", 0.0)) for r in out]
 

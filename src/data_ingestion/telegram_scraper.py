@@ -54,7 +54,7 @@ async def scrape_channel_history():
 
     df = pd.DataFrame(messages_data).sort_values('timestamp')
     df.to_csv(output_path, index=False, encoding='utf-8')
-    logger.info(f"✅ Successfully scraped {len(df)} messages and saved to {output_path}")
+    logger.info(f"OK  Successfully scraped {len(df)} messages and saved to {output_path}")
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

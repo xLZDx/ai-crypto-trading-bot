@@ -175,7 +175,7 @@ def test_orderbook_collector():
 # ─── feature_engineering Phase 1 helpers ─────────────────────────────────────
 
 def test_feature_engineering_phase1():
-    print("\n[feature_engineering — Phase 1 helpers]")
+    print("\n[feature_engineering -- Phase 1 helpers]")
     try:
         from src.analysis.feature_engineering import (
             add_kalman_close, add_l2_features, causal_audit,
@@ -308,7 +308,7 @@ def test_t1_audit():
 # ─── requirements.txt deps ───────────────────────────────────────────────────
 
 def test_requirements():
-    print("\n[requirements.txt — Phase 1]")
+    print("\n[requirements.txt -- Phase 1]")
     req = (PROJECT_ROOT / "requirements.txt").read_text(encoding="utf-8")
     check("pykalman in requirements.txt", "pykalman" in req)
 
@@ -317,7 +317,7 @@ def test_requirements():
 
 def main() -> int:
     print("=" * 60)
-    print("Phase 1 — Level 1 Data Layer Tests")
+    print("Phase 1 -- Level 1 Data Layer Tests")
     print("=" * 60)
     test_requirements()
     test_kalman()

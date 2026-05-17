@@ -129,10 +129,10 @@ async def stream_loop(
 
     qdb = get_questdb()
     if not qdb.is_available():
-        logger.warning("QuestDB unreachable at startup — will still try writes per-tick.")
+        logger.warning("QuestDB unreachable at startup -- will still try writes per-tick.")
 
     url = _ws_url(symbols, timeframes)
-    logger.info("[realtime] Connecting %d symbols × %d timeframes",
+    logger.info("[realtime] Connecting %d symbols x %d timeframes",
                 len(symbols), len(timeframes))
     _write_status(connected=False, symbol=",".join(symbols[:3]))
 
@@ -171,7 +171,7 @@ async def stream_loop(
                           n_written=n_written, error="stopped")
             return
         except Exception as exc:
-            logger.warning("[realtime] WS error: %s — reconnecting in %.1fs", exc, backoff)
+            logger.warning("[realtime] WS error: %s -- reconnecting in %.1fs", exc, backoff)
             _write_status(connected=False, symbol=",".join(symbols[:3]),
                           n_written=n_written, error=str(exc)[:200])
             await asyncio.sleep(backoff)

@@ -65,7 +65,7 @@ class ScalpingAgent(BaseAgent):
     def _on_regime(self, msg) -> None:
         regime = (msg.payload or {}).get("regime", 0)
         if regime == 2:
-            logger.info("[ScalpingAgent] VOLATILE — scalping SUSPENDED (slippage risk).")
+            logger.info("[ScalpingAgent] VOLATILE -- scalping SUSPENDED (slippage risk).")
 
     def _get_regime(self) -> int:
         msg = self.bus.get_latest("regime")
@@ -91,7 +91,7 @@ class ScalpingAgent(BaseAgent):
                 atr = float(df["high"].iloc[-5:].max() - df["low"].iloc[-5:].min())
                 expected_move_pct = atr / last_price if last_price > 0 else 0
                 if expected_move_pct < ROUND_TRIP_FEE * 1.5:
-                    logger.debug("[ScalpingAgent] %s expected move %.4f%% < fee threshold — skip.",
+                    logger.debug("[ScalpingAgent] %s expected move %.4f%% < fee threshold -- skip.",
                                  sym, expected_move_pct * 100)
                     continue
 

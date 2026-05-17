@@ -4,6 +4,7 @@ import json
 import logging
 import numpy as np
 import pandas as pd
+from src.data_ingestion.ohlcv_parquet_loader import load_ohlcv
 from sklearn.ensemble import HistGradientBoostingClassifier  # kept for type compat
 from sklearn.calibration import CalibratedClassifierCV
 # 2026-05-10 GPU migration: tabular trainers now go through make_classifier
@@ -31,6 +32,8 @@ from src.analysis.feature_engineering import (
 )
 from src.analysis.fractional_diff import add_fractional_diff
 from src.analysis.triple_barrier import triple_barrier_labels_vectorized, label_stats
+from src.data_ingestion.open_interest_downloader import load_open_interest
+from src.data_ingestion.fear_greed_downloader import load_fear_greed
 
 
 _RULES_PATH = os.path.join(
@@ -58,7 +61,7 @@ def _load_model_params(model_key: str) -> tuple:
     import hashlib
 
     def _warn_fallback(reason: str):
-        log.warning("HP load: %s — using defaults %s", reason, _HP_DEFAULTS)
+        log.warning("HP load: %s -- using defaults %s", reason, _HP_DEFAULTS)
 
     try:
         with open(_RULES_PATH, 'r', encoding='utf-8') as fh:
@@ -115,11 +118,11 @@ def _load_model_params(model_key: str) -> tuple:
                 continue
             val = clean[key]
             if not isinstance(val, expected_type):
-                log.warning("[CIO override] '%s' expected %s got %s — skipping",
+                log.warning("[CIO override] '%s' expected %s got %s -- skipping",
                             key, expected_type.__name__, type(val).__name__)
                 continue
             if lo is not None and not (lo <= val <= hi):
-                log.warning("[CIO override] '%s'=%s out of range [%s, %s] — skipping",
+                log.warning("[CIO override] '%s'=%s out of range [%s, %s] -- skipping",
                             key, val, lo, hi)
                 continue
             cio_merged[key] = val
@@ -160,14 +163,23 @@ FEATURE_COLUMNS = [
     'is_trending',          # Regime: binary flag
     'is_volatile',          # Regime: binary flag
     'signal_rsi', 'signal_macd', 'signal_bb',
+    # Market-context features (exact join, no resampling):
+    'oi_change_pct',    # 1h OI % change (Binance); 0 for non-1h TFs
+    'fear_greed_norm',  # Fear & Greed 0-1 scaled (daily); 0.5 for non-1d TFs
 ]
 
 
 def prepare_data(filepath, timeframe: str = '1h', symbol: str | None = None):
-    log.info("Loading data from %s...", filepath)
-    df = pd.read_csv(filepath)
-    df['timestamp'] = pd.to_datetime(df['timestamp'])
-    df = df.sort_values('timestamp').reset_index(drop=True)
+    if symbol:
+        log.info("Loading data for %s/%s from parquet...", symbol, timeframe)
+        df = load_ohlcv(symbol, timeframe)
+        if df.empty:
+            raise FileNotFoundError(f"No OHLCV data for {symbol}/{timeframe}")
+    else:
+        log.info("Loading data from %s...", filepath)
+        df = pd.read_csv(filepath)
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df = df.sort_values('timestamp').reset_index(drop=True)
 
     # Phase 4 rollout — F1 data-integrity gate.
     try:
@@ -241,13 +253,61 @@ def prepare_data(filepath, timeframe: str = '1h', symbol: str | None = None):
     news_path = os.path.join(base_dir, 'data', 'raw', 'cryptocompare_news.csv')
     if not os.path.exists(news_path):
         log.warning(
-            "News sentiment CSV not found: %s — 'news_sentiment' feature will be 0.0 for all rows",
+            "News sentiment CSV not found: %s -- 'news_sentiment' feature will be 0.0 for all rows",
             news_path,
         )
     df = add_news_sentiment(df, news_path)
 
-    # Dynamic Volatility-based Triple Barrier
-    labels, t1_times = triple_barrier_labels_vectorized(df, pt_multiplier=2.0, sl_multiplier=2.0, max_bars=24)
+    # ── Market-context features (exact join, no resampling) ───────────────
+    # 1h/4h/1d/1w: Open Interest % change (Binance Futures 1h data).
+    # 4h/1d/1w bar opens always land on 1h boundaries -> exact timestamp match, no resampling.
+    # 15m/5m bars don't align -> skip (intermediate timestamps have no OI entry).
+    if timeframe in ('1h', '4h', '1d', '1w') and symbol:
+        try:
+            oi = load_open_interest(symbol)
+            if not oi.empty:
+                oi = oi[["timestamp", "oi_usdt"]].copy()
+                oi["oi_change_pct"] = oi["oi_usdt"].pct_change().clip(-1, 1)
+                df = df.merge(oi[["timestamp", "oi_change_pct"]], on="timestamp", how="left")
+                df["oi_change_pct"] = df["oi_change_pct"].fillna(0.0)
+                oi_matched = df["oi_change_pct"].ne(0).sum()
+                log.info("[%s/%s] OI join: %d/%d bars matched",
+                         symbol, timeframe, oi_matched, len(df))
+            else:
+                df["oi_change_pct"] = 0.0
+        except Exception as e:
+            log.warning("OI join failed for %s: %s", symbol, e)
+            df["oi_change_pct"] = 0.0
+    else:
+        df["oi_change_pct"] = 0.0
+
+    # 1d only: Fear & Greed index (normalized 0-1, 0.5 = neutral)
+    if timeframe == '1d':
+        try:
+            fg = load_fear_greed()
+            if not fg.empty:
+                fg = fg[["timestamp", "fear_greed"]].copy()
+                fg["fear_greed_norm"] = fg["fear_greed"] / 100.0
+                # date-only join: strip time component for exact match
+                df["_date"] = df["timestamp"].dt.normalize()
+                fg["_date"] = fg["timestamp"].dt.normalize()
+                df = df.merge(fg[["_date", "fear_greed_norm"]], on="_date", how="left")
+                df = df.drop(columns=["_date"])
+                df["fear_greed_norm"] = df["fear_greed_norm"].fillna(0.5)
+                log.info("[%s/1d] FG join: %d rows matched",
+                         symbol, df["fear_greed_norm"].ne(0.5).sum())
+            else:
+                df["fear_greed_norm"] = 0.5
+        except Exception as e:
+            log.warning("Fear & Greed join failed: %s", e)
+            df["fear_greed_norm"] = 0.5
+    else:
+        df["fear_greed_norm"] = 0.5
+
+    # Dynamic Volatility-based Triple Barrier (asymmetric: pt=4, sl=2)
+    # Wizard 2026-05-16: symmetric 2:2 collapsed AUC to ~0.50 (noise floor).
+    # 2:1 ratio = let winners run, cut losers tight — matches trend trainer.
+    labels, t1_times = triple_barrier_labels_vectorized(df, pt_multiplier=4.0, sl_multiplier=2.0, max_bars=24)
     df['target_raw'] = labels
     df['t1_timestamp'] = t1_times
     
@@ -264,6 +324,11 @@ def prepare_data(filepath, timeframe: str = '1h', symbol: str | None = None):
 def train_model(timeframe: str = '1h'):
     """Train the base directional classifier at a given timeframe.
 
+    2026-05-15 — wall-clock instrumentation: records started_at, finished_at,
+    duration_s in the meta JSON + emits a "single-epoch" record to the
+    live training-progress tracker so the dashboard's epoch column shows
+    base/trend/futures/scalping/meta runs alongside TFT's per-epoch view.
+
     timeframe — one of 1m, 5m, 15m, 1h, 4h, 1d, 1w, 1mo. Drives both the
     input file (data/raw/<sym>_<tf>.csv.gz) and the output artifact name
     (per src.utils.model_paths). Default 1h matches the canonical (legacy)
@@ -275,6 +340,18 @@ def train_model(timeframe: str = '1h'):
     into the HP block by _load_model_params() (schema-bounded), and also
     recorded in the meta JSON for audit.
     """
+    # 2026-05-15 — wall-clock instrumentation. Captures start unix-time so
+    # the meta JSON can carry duration_s after the trainer completes.
+    import time as _time
+    _train_started_at = _time.time()
+    _train_task_id = f"base_{timeframe}_{int(_train_started_at)}"
+    try:
+        from src.utils import training_progress as _tp
+        _tp.start(_train_task_id, model="base", tf=timeframe,
+                  n_epochs=1, trainer="train_model.py")
+    except Exception as _e:
+        log.warning("[base] progress.start failed: %s", _e)
+
     from src.utils.cio_overrides import load_cio_overrides
     cio = load_cio_overrides('base')
     if cio:
@@ -288,23 +365,21 @@ def train_model(timeframe: str = '1h'):
         symbols = ['BTC_USDT', 'SOL_USDT', 'ADA_USDT', 'ETH_USDT']
     all_data = []
     for sym in symbols:
-        full_data_path = os.path.join(base_dir, 'data', 'raw', f'{sym}_{timeframe}.csv.gz')
-        archive_path = os.path.join(base_dir, 'data', 'raw', f'{sym}_spot_{timeframe}.csv.gz')
-        if not os.path.exists(full_data_path) and os.path.exists(archive_path):
-            full_data_path = archive_path
-            log.info("  Using archive data for %s: %s", sym, archive_path)
-        if not os.path.exists(full_data_path):
+        log.info("Processing %s...", sym)
+        try:
+            df = prepare_data(None, timeframe=timeframe, symbol=sym)
+            all_data.append(df)
+        except FileNotFoundError:
             log.warning("Data for %s not found. Auto-downloading...", sym)
             from src.data_ingestion.historical_backfill import backfill_history
             backfill_history(symbol=sym.replace('_', '/'), timeframe=timeframe, days=6 * 365)
-
-        if os.path.exists(full_data_path):
-            log.info("Processing %s...", sym)
             try:
-                df = prepare_data(full_data_path, timeframe=timeframe, symbol=sym)
+                df = prepare_data(None, timeframe=timeframe, symbol=sym)
                 all_data.append(df)
             except Exception as e:
-                log.error("Failed to prepare %s: %s", sym, e)
+                log.error("Failed to prepare %s after download: %s", sym, e)
+        except Exception as e:
+            log.error("Failed to prepare %s: %s", sym, e)
 
     if not all_data:
         log.error("No data found to train the model.")
@@ -337,6 +412,7 @@ def train_model(timeframe: str = '1h'):
     pct_embargo = (2.0 * 24) / len(X)
     cv = PurgedKFold(n_splits=5, t1=t1_series, pct_embargo=pct_embargo)
     fold_accuracies = []
+    in_sample_fold_accs = []  # P3: in-sample accuracy per fold for overfit_ratio
     for fold_i, (train_idx, test_idx) in enumerate(cv.split(X)):
         base_clf = make_classifier(
             random_state=42,
@@ -351,10 +427,26 @@ def train_model(timeframe: str = '1h'):
         base_clf.fit(X.iloc[train_idx], y.iloc[train_idx], sample_weight=weights)
         fold_acc = accuracy_score(y.iloc[test_idx], base_clf.predict(X.iloc[test_idx]))
         fold_accuracies.append(fold_acc)
+        in_sample_fold_accs.append(
+            accuracy_score(y.iloc[train_idx], base_clf.predict(X.iloc[train_idx]))
+        )
         log.info("Walk-forward fold %d/%d: accuracy=%.2f%%", fold_i + 1, cv.n_splits, fold_acc * 100)
 
-    log.info("Walk-forward mean accuracy: %.2f%% ± %.2f%%",
+    log.info("Walk-forward mean accuracy: %.2f%% +/- %.2f%%",
              np.mean(fold_accuracies) * 100, np.std(fold_accuracies) * 100)
+
+    # P3: overfit ratio
+    _wf_mean_acc = float(np.mean(fold_accuracies))
+    _in_sample_mean_acc = float(np.mean(in_sample_fold_accs)) if in_sample_fold_accs else None
+    _overfit_ratio: float | None = None
+    if _in_sample_mean_acc is not None and _in_sample_mean_acc > 0:
+        _overfit_ratio = (_in_sample_mean_acc - _wf_mean_acc) / _in_sample_mean_acc
+        if _overfit_ratio > 0.20:
+            log.error("[base] overfit_ratio=%.3f > 0.20 (in_sample=%.2f%% wf=%.2f%%) -- model is memorising",
+                      _overfit_ratio, _in_sample_mean_acc * 100, _wf_mean_acc * 100)
+        elif _overfit_ratio > 0.10:
+            log.warning("[base] overfit_ratio=%.3f > 0.10 (in_sample=%.2f%% wf=%.2f%%)",
+                        _overfit_ratio, _in_sample_mean_acc * 100, _wf_mean_acc * 100)
 
     # Final model — B2: three non-overlapping splits
     #   train  [0 : 70%]   — model fit
@@ -423,6 +515,11 @@ def train_model(timeframe: str = '1h'):
     except Exception as _e:
         log.warning("[base][%s] save_baseline failed: %s", timeframe, _e)
 
+    # 2026-05-15 — capture finished_at + duration before writing meta so
+    # downstream consumers (training_history, dashboard) have the actual
+    # wall-clock cost of this run.
+    _train_finished_at = _time.time()
+    _train_duration_s = _train_finished_at - _train_started_at
     meta = {
         "model": "Base (HistGBT + Calibrated)",
         "accuracy": accuracy * 100,
@@ -434,14 +531,28 @@ def train_model(timeframe: str = '1h'):
         "n_iterations": n_iter,
         "walk_forward_mean_acc": round(float(np.mean(fold_accuracies)) * 100, 2),
         "walk_forward_std_acc": round(float(np.std(fold_accuracies)) * 100, 2),
+        "wf_fold_scores": [round(v, 6) for v in fold_accuracies],
+        "in_sample_mean_acc": round(_in_sample_mean_acc * 100, 2) if _in_sample_mean_acc else None,
+        "overfit_ratio": round(_overfit_ratio, 6) if _overfit_ratio is not None else None,
         "target": "triple_barrier_long_win",
         "symbols": symbols, "timeframe": timeframe,
         "last_trained": datetime.now(timezone.utc).isoformat(),
+        # 2026-05-15 — wall-clock instrumentation.
+        "started_at_unix":  _train_started_at,
+        "finished_at_unix": _train_finished_at,
+        "duration_s":       round(_train_duration_s, 2),
+        "epochs_completed": 1,
+        "per_epoch_s":      round(_train_duration_s, 2),
         # B3: audit trail — which rules version + HP hash produced this artifact
         "hp_rules_version": rules_version,
         "hp_params_hash": params_hash,
         "hp": hp,
     }
+    try:
+        _tp.epoch_done(_train_task_id, 1, _train_duration_s)
+        _tp.finish(_train_task_id, status="done")
+    except Exception as _e:
+        log.warning("[base] progress.finish failed: %s", _e)
     if proba_test is not None:
         from src.utils.model_metrics import merge_metrics_into_meta
         merge_metrics_into_meta(meta, y_test, proba_test)

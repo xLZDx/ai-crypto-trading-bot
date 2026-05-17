@@ -1,0 +1,858 @@
+{
+    "schema_version": 1,
+    "enabled": true,
+    "last_run_ts": 1779043031.8018909,
+    "last_run_summary": {
+        "ts": 1779043031.8018909,
+        "live_trading": false,
+        "dry_run": false,
+        "changed": [],
+        "unchanged": [
+            3520,
+            6240,
+            7216,
+            7524,
+            24060,
+            25376,
+            28668,
+            29284,
+            30304,
+            30812
+        ],
+        "failed": [],
+        "skipped_protected_live_bot": false
+    },
+    "policy": {
+        "dashboard": "ABOVE_NORMAL",
+        "bot": "NORMAL",
+        "cluster_orch": "BELOW_NORMAL",
+        "orderbook_writer": "NORMAL"
+    },
+    "applied": {
+        "22604": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778806675.2497108
+        },
+        "27892": {
+            "role": "cluster_orch",
+            "label": "BELOW_NORMAL",
+            "ts": 1778806675.2497108
+        },
+        "39088": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778806675.2497108
+        },
+        "44508": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778806675.2497108
+        },
+        "47088": {
+            "role": "dashboard",
+            "label": "ABOVE_NORMAL",
+            "ts": 1778806675.2497108
+        },
+        "38608": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778806778.396814
+        },
+        "40288": {
+            "role": "cluster_orch",
+            "label": "BELOW_NORMAL",
+            "ts": 1778806778.396814
+        },
+        "22768": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778806898.8513522
+        },
+        "47236": {
+            "role": "cluster_orch",
+            "label": "BELOW_NORMAL",
+            "ts": 1778806985.2806358
+        },
+        "26396": {
+            "role": "dashboard",
+            "label": "ABOVE_NORMAL",
+            "ts": 1778806985.2806358
+        },
+        "29192": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778806985.2806358
+        },
+        "48328": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778807420.7361193
+        },
+        "40040": {
+            "role": "dashboard",
+            "label": "ABOVE_NORMAL",
+            "ts": 1778807028.6944304
+        },
+        "40148": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778807028.6944304
+        },
+        "47672": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778807028.6944304
+        },
+        "49724": {
+            "role": "cluster_orch",
+            "label": "BELOW_NORMAL",
+            "ts": 1778807028.6944304
+        },
+        "19664": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778807119.0787318
+        },
+        "45160": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778807119.0787318
+        },
+        "34288": {
+            "role": "cluster_orch",
+            "label": "BELOW_NORMAL",
+            "ts": 1778807242.1976466
+        },
+        "36172": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778807242.1976466
+        },
+        "42132": {
+            "role": "dashboard",
+            "label": "ABOVE_NORMAL",
+            "ts": 1778807242.1976466
+        },
+        "46432": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778807242.1976466
+        },
+        "22264": {
+            "role": "dashboard",
+            "label": "ABOVE_NORMAL",
+            "ts": 1778807313.2325714
+        },
+        "33124": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778807420.7361193
+        },
+        "40724": {
+            "role": "dashboard",
+            "label": "ABOVE_NORMAL",
+            "ts": 1778807420.7361193
+        },
+        "42788": {
+            "role": "cluster_orch",
+            "label": "BELOW_NORMAL",
+            "ts": 1778807420.7361193
+        },
+        "39412": {
+            "role": "cluster_orch",
+            "label": "BELOW_NORMAL",
+            "ts": 1778807511.2139122
+        },
+        "42408": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778807511.2139122
+        },
+        "43264": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778807511.2139122
+        },
+        "49128": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778807511.2139122
+        },
+        "50112": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778807511.2139122
+        },
+        "27720": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778807692.4869564
+        },
+        "42628": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778807692.4869564
+        },
+        "10788": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778807813.1448476
+        },
+        "33476": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778807813.1448476
+        },
+        "30564": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778808084.5436988
+        },
+        "34580": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778808084.5436988
+        },
+        "43220": {
+            "role": "cluster_orch",
+            "label": "BELOW_NORMAL",
+            "ts": 1778808084.5436988
+        },
+        "49668": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778808084.5436988
+        },
+        "22332": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778832880.7367587
+        },
+        "36104": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778832880.7367587
+        },
+        "38044": {
+            "role": "cluster_orch",
+            "label": "BELOW_NORMAL",
+            "ts": 1778832880.7367587
+        },
+        "44812": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778832880.7367587
+        },
+        "26260": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778834511.0485911
+        },
+        "48436": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778834511.0485911
+        },
+        "30548": {
+            "role": "cluster_orch",
+            "label": "BELOW_NORMAL",
+            "ts": 1778834752.5956125
+        },
+        "30672": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778834752.5956125
+        },
+        "33948": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778836352.2000623
+        },
+        "41332": {
+            "role": "cluster_orch",
+            "label": "BELOW_NORMAL",
+            "ts": 1778836352.2000623
+        },
+        "46212": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778836352.2000623
+        },
+        "48184": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778836352.2000623
+        },
+        "3156": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778836837.336417
+        },
+        "37896": {
+            "role": "cluster_orch",
+            "label": "BELOW_NORMAL",
+            "ts": 1778836837.336417
+        },
+        "40892": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778836837.336417
+        },
+        "20580": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778858171.49312
+        },
+        "11880": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778858502.466225
+        },
+        "1600": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778858622.8191707
+        },
+        "17424": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778858773.2611816
+        },
+        "26092": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778858773.2611816
+        },
+        "42328": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778858773.2611816
+        },
+        "45040": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778858773.2611816
+        },
+        "45968": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778858773.2611816
+        },
+        "48688": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778858773.2611816
+        },
+        "41508": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778858803.3525229
+        },
+        "48440": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778858923.6736176
+        },
+        "40056": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778860098.2905042
+        },
+        "43640": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778860098.2905042
+        },
+        "46624": {
+            "role": "dashboard",
+            "label": "ABOVE_NORMAL",
+            "ts": 1778860098.2905042
+        },
+        "24940": {
+            "role": "cluster_orch",
+            "label": "BELOW_NORMAL",
+            "ts": 1778862711.3035948
+        },
+        "25916": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778862711.3035948
+        },
+        "27396": {
+            "role": "dashboard",
+            "label": "ABOVE_NORMAL",
+            "ts": 1778862711.3035948
+        },
+        "29000": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778862711.3035948
+        },
+        "3124": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778862801.528946
+        },
+        "11396": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778862801.528946
+        },
+        "23440": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778862801.528946
+        },
+        "30872": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778862801.528946
+        },
+        "36688": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778863343.5845523
+        },
+        "39128": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778863343.5845523
+        },
+        "2196": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778863403.7330627
+        },
+        "23412": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778863403.7330627
+        },
+        "35256": {
+            "role": "cluster_orch",
+            "label": "BELOW_NORMAL",
+            "ts": 1778863403.7330627
+        },
+        "39444": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778863403.7330627
+        },
+        "34564": {
+            "role": "dashboard",
+            "label": "ABOVE_NORMAL",
+            "ts": 1778869248.830672
+        },
+        "27112": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778869279.224283
+        },
+        "27460": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778869279.224283
+        },
+        "31768": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778869279.224283
+        },
+        "36068": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778869279.224283
+        },
+        "25160": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778869610.6599894
+        },
+        "36616": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778869610.6599894
+        },
+        "9152": {
+            "role": "dashboard",
+            "label": "ABOVE_NORMAL",
+            "ts": 1778879368.9959214
+        },
+        "16584": {
+            "role": "cluster_orch",
+            "label": "BELOW_NORMAL",
+            "ts": 1778879368.9959214
+        },
+        "18820": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778879368.9959214
+        },
+        "22992": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778879368.9959214
+        },
+        "7424": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778879519.231374
+        },
+        "17444": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778879519.231374
+        },
+        "15836": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778881656.145424
+        },
+        "16868": {
+            "role": "cluster_orch",
+            "label": "BELOW_NORMAL",
+            "ts": 1778881656.145424
+        },
+        "19060": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778881656.145424
+        },
+        "24612": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778881686.2786064
+        },
+        "25712": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778881686.2786064
+        },
+        "28216": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778881686.2786064
+        },
+        "16444": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778883011.647537
+        },
+        "18336": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778883011.647537
+        },
+        "29208": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778883011.647537
+        },
+        "17772": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778883162.1488442
+        },
+        "20568": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778883162.1488442
+        },
+        "25300": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778883162.1488442
+        },
+        "9092": {
+            "role": "cluster_orch",
+            "label": "BELOW_NORMAL",
+            "ts": 1778883252.473686
+        },
+        "11864": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778883252.473686
+        },
+        "8740": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778884699.6727428
+        },
+        "14080": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778884699.6727428
+        },
+        "28784": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778884699.6727428
+        },
+        "4668": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778889304.0204315
+        },
+        "6740": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778889304.0204315
+        },
+        "19440": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778889304.0204315
+        },
+        "3820": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778890358.9295626
+        },
+        "18676": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778890358.9295626
+        },
+        "23940": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778890358.9295626
+        },
+        "29744": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778890358.9295626
+        },
+        "33500": {
+            "role": "cluster_orch",
+            "label": "BELOW_NORMAL",
+            "ts": 1778890358.9295626
+        },
+        "14104": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778890389.0803425
+        },
+        "28100": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778890389.0803425
+        },
+        "29636": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778890389.0803425
+        },
+        "31196": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778890660.0976028
+        },
+        "31200": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778890660.0976028
+        },
+        "33044": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778890660.0976028
+        },
+        "28984": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778890750.4317973
+        },
+        "29560": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778890750.4317973
+        },
+        "32900": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778890750.4317973
+        },
+        "4216": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778890780.5531573
+        },
+        "5476": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778890780.5531573
+        },
+        "12336": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778890780.5531573
+        },
+        "27180": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778890780.5531573
+        },
+        "32208": {
+            "role": "cluster_orch",
+            "label": "BELOW_NORMAL",
+            "ts": 1778890780.5531573
+        },
+        "32676": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778890780.5531573
+        },
+        "4160": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778891262.7038422
+        },
+        "11544": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778891262.7038422
+        },
+        "17236": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778891262.7038422
+        },
+        "19660": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778891262.7038422
+        },
+        "19896": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778891262.7038422
+        },
+        "28916": {
+            "role": "cluster_orch",
+            "label": "BELOW_NORMAL",
+            "ts": 1778891262.7038422
+        },
+        "30792": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778891262.7038422
+        },
+        "32940": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778891262.7038422
+        },
+        "7912": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778893451.967161
+        },
+        "15840": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778893451.967161
+        },
+        "16572": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778893451.967161
+        },
+        "30876": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778893451.967161
+        },
+        "33508": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778893451.967161
+        },
+        "6240": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778926311.4367332
+        },
+        "14180": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778926311.4367332
+        },
+        "14876": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778926311.4367332
+        },
+        "16568": {
+            "role": "cluster_orch",
+            "label": "BELOW_NORMAL",
+            "ts": 1778926311.4367332
+        },
+        "21568": {
+            "role": "dashboard",
+            "label": "ABOVE_NORMAL",
+            "ts": 1778926311.4367332
+        },
+        "25376": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778926311.4367332
+        },
+        "28668": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778926311.4367332
+        },
+        "7216": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778928566.3861191
+        },
+        "29284": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778928566.3861191
+        },
+        "30304": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778928566.3861191
+        },
+        "30812": {
+            "role": "dashboard",
+            "label": "ABOVE_NORMAL",
+            "ts": 1778938321.7538338
+        },
+        "7524": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778949373.7205942
+        },
+        "24060": {
+            "role": "cluster_orch",
+            "label": "BELOW_NORMAL",
+            "ts": 1778949373.7205942
+        },
+        "10564": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778956962.8769395
+        },
+        "24972": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1778956962.8769395
+        },
+        "19600": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1779029488.8293176
+        },
+        "30864": {
+            "role": "training",
+            "label": "BELOW_NORMAL",
+            "ts": 1779029488.8293176
+        }
+    }
+}

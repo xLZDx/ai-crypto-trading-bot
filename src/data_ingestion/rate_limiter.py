@@ -94,7 +94,7 @@ class RateLimiter:
             now = time.time()
             if now < self._banned_until:
                 sleep_for = self._banned_until - now
-                logger.warning("[ratelimit %s] under ban — sleeping %.1fs", self.host, sleep_for)
+                logger.warning("[ratelimit %s] under ban -- sleeping %.1fs", self.host, sleep_for)
                 time.sleep(min(sleep_for, 60))
                 continue
             with self._lock:
@@ -126,7 +126,7 @@ class RateLimiter:
                 except ValueError:
                     secs = 30.0
                 self._banned_until = time.time() + secs
-                logger.warning("[ratelimit %s] %d Too Many — banned %.0fs", self.host, code, secs)
+                logger.warning("[ratelimit %s] %d Too Many -- banned %.0fs", self.host, code, secs)
         except Exception:
             pass
 

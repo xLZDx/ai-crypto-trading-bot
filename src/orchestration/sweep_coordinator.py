@@ -107,14 +107,14 @@ def _acquire_pidfile() -> bool:
                 from src.utils import process_health as _ph
                 info = _ph.find_process(_ph.KIND_TRAIN_SUPERVISOR)
                 if info is not None and info.pid == old_pid:
-                    logger.error("Another sweep_coordinator is alive (pid=%d) — refusing to start", old_pid)
+                    logger.error("Another sweep_coordinator is alive (pid=%d) -- refusing to start", old_pid)
                     return False
             except Exception:
                 # If process_health import fails, fall back to bare PID check.
                 try:
                     import psutil
                     if psutil.pid_exists(old_pid):
-                        logger.error("Stale-but-alive PID %d holds the pidfile — refusing to start", old_pid)
+                        logger.error("Stale-but-alive PID %d holds the pidfile -- refusing to start", old_pid)
                         return False
                 except Exception:
                     pass
@@ -205,7 +205,7 @@ class SweepCoordinator:
                                 state.get("sweep_id"), state.get("status"))
                     return state
             except Exception as exc:
-                logger.warning("Bad sweep_state.json (%s) — starting fresh", exc)
+                logger.warning("Bad sweep_state.json (%s) -- starting fresh", exc)
         return self._fresh_state()
 
     def _save_state(self) -> None:
@@ -248,7 +248,7 @@ class SweepCoordinator:
         import subprocess
         venv_py = PROJECT_ROOT / "venv" / "Scripts" / "python.exe"
         if not venv_py.exists():
-            logger.warning("venv python not found at %s — skipping local worker spawn", venv_py)
+            logger.warning("venv python not found at %s -- skipping local worker spawn", venv_py)
             return None
         cmd = [str(venv_py), "-u", "-m", "src.training.distributed.worker",
                "--master", CLUSTER_BASE_URL,
@@ -279,7 +279,7 @@ class SweepCoordinator:
             from src.utils import process_health as ph
             existing = ph.find_process(ph.KIND_WORKER)
             if existing:
-                logger.info("Local worker(s) already running (pid=%d) — skipping spawn",
+                logger.info("Local worker(s) already running (pid=%d) -- skipping spawn",
                             existing.pid)
                 # Still wait briefly so any in-flight registration completes
                 time.sleep(3)
@@ -349,7 +349,7 @@ class SweepCoordinator:
                     self._save_state()
                     return
             if model not in self.state["models"]:
-                logger.info("Skipping %s — not in training_rules planned combos", model)
+                logger.info("Skipping %s -- not in training_rules planned combos", model)
                 continue
             self.state["current_model"]      = model
             self.state["current_model_idx"]  = model_idx
@@ -394,7 +394,7 @@ class SweepCoordinator:
                 if self._is_model_fresh(model, tf):
                     tf_state["status"] = "skipped_fresh"
                     self.state["tasks_skipped_fresh"] += 1
-                    logger.info("GPU-lane skip %s @ %s — fresh model on disk", model, tf)
+                    logger.info("GPU-lane skip %s @ %s -- fresh model on disk", model, tf)
                     continue
                 spec = self._build_task_spec(model, tf)
                 task_id = self._submit_task(spec)
@@ -407,7 +407,7 @@ class SweepCoordinator:
                 tf_state["task_id"]  = task_id
                 tf_state["status"]   = "submitted"
                 self.state["tasks_submitted"] += 1
-                logger.info("GPU-lane submit %s @ %s → %s", model, tf, task_id)
+                logger.info("GPU-lane submit %s @ %s -> %s", model, tf, task_id)
         self._save_state()
 
     def _await_gpu_lane(self) -> None:
@@ -491,7 +491,7 @@ class SweepCoordinator:
             if self._is_model_fresh(model, tf):
                 tf_state["status"] = "skipped_fresh"
                 self.state["tasks_skipped_fresh"] += 1
-                logger.info("Skipping %s @ %s — fresh model on disk (< %dh)",
+                logger.info("Skipping %s @ %s -- fresh model on disk (< %dh)",
                             model, tf, SKIP_IF_FRESH_HOURS)
                 continue
             spec = self._build_task_spec(model, tf)
@@ -600,7 +600,7 @@ class SweepCoordinator:
 
     def request_abort(self) -> None:
         self._abort_requested = True
-        logger.info("Abort requested — will stop after current task batch")
+        logger.info("Abort requested -- will stop after current task batch")
 
     def request_pause(self) -> None:
         self._paused = True

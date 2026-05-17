@@ -251,7 +251,7 @@ class KillSwitch:
             d = {k: v for k, v in d.items() if k in known}
             return KillSwitchState(**d)
         except Exception as e:
-            logger.warning("[KillSwitch] could not load state: %s — starting fresh", e)
+            logger.warning("[KillSwitch] could not load state: %s -- starting fresh", e)
             return KillSwitchState()
 
     def _persist(self) -> None:

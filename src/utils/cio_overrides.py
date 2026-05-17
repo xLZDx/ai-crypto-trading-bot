@@ -105,13 +105,13 @@ def merge_with_defaults(
         val = overrides[key]
         if not isinstance(val, expected_type):
             logger.warning(
-                "[CIO override %s] '%s' expected %s got %s — skipping",
+                "[CIO override %s] '%s' expected %s got %s -- skipping",
                 model_key, key, expected_type.__name__, type(val).__name__,
             )
             continue
         if lo is not None and not (lo <= val <= hi):
             logger.warning(
-                "[CIO override %s] '%s'=%s out of range [%s, %s] — skipping",
+                "[CIO override %s] '%s'=%s out of range [%s, %s] -- skipping",
                 model_key, key, val, lo, hi,
             )
             continue
@@ -120,7 +120,7 @@ def merge_with_defaults(
         # 'balanced', 'balanced_subsample', or None.
         if key == 'class_weight' and val not in _CLASS_WEIGHT_ALLOWLIST:
             logger.warning(
-                "[CIO override %s] class_weight=%r not in allowlist %s — skipping",
+                "[CIO override %s] class_weight=%r not in allowlist %s -- skipping",
                 model_key, val, sorted(_CLASS_WEIGHT_ALLOWLIST, key=str),
             )
             continue

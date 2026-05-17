@@ -118,7 +118,7 @@ def fetch_window(query: str, start: datetime, end: datetime,
         try:
             r = requests.get(GDELT_API, params=params, timeout=timeout)
             if r.status_code == 429:
-                logger.info("GDELT 429 on %s — sleeping %ds (attempt %d/%d)",
+                logger.info("GDELT 429 on %s -- sleeping %ds (attempt %d/%d)",
                             query[:30], backoff, attempt + 1, MAX_RETRIES)
                 time.sleep(backoff)
                 backoff *= 2

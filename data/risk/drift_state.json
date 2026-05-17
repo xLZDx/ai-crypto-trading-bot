@@ -1,0 +1,195 @@
+{
+  "last_run_iso": "2026-05-17T17:45:10Z",
+  "cell_count": 21,
+  "cells": [
+    {
+      "model": "base",
+      "tf": "15m",
+      "baseline_age_days": 0.5675393938888889,
+      "checked_at_iso": "2026-05-17T17:45:10Z",
+      "actual_source": "no_actual",
+      "report": {},
+      "note": "no training_runs/base__15m.parquet"
+    },
+    {
+      "model": "base",
+      "tf": "1d",
+      "baseline_age_days": 0.11705793931712964,
+      "checked_at_iso": "2026-05-17T17:45:10Z",
+      "actual_source": "no_actual",
+      "report": {},
+      "note": "no training_runs/base__1d.parquet"
+    },
+    {
+      "model": "base",
+      "tf": "1h",
+      "baseline_age_days": 0.5636600953703703,
+      "checked_at_iso": "2026-05-17T17:45:10Z",
+      "actual_source": "no_actual",
+      "report": {},
+      "note": "no training_runs/base__1h.parquet"
+    },
+    {
+      "model": "base",
+      "tf": "4h",
+      "baseline_age_days": 0.5743646637962964,
+      "checked_at_iso": "2026-05-17T17:45:10Z",
+      "actual_source": "no_actual",
+      "report": {},
+      "note": "no training_runs/base__4h.parquet"
+    },
+    {
+      "model": "base",
+      "tf": "5m",
+      "baseline_age_days": 0.5820088919444445,
+      "checked_at_iso": "2026-05-17T17:45:10Z",
+      "actual_source": "no_actual",
+      "report": {},
+      "note": "no training_runs/base__5m.parquet"
+    },
+    {
+      "model": "futures",
+      "tf": "15m",
+      "baseline_age_days": 0.5583159891319445,
+      "checked_at_iso": "2026-05-17T17:45:10Z",
+      "actual_source": "no_actual",
+      "report": {},
+      "note": "no training_runs/futures__15m.parquet"
+    },
+    {
+      "model": "futures",
+      "tf": "1d",
+      "baseline_age_days": 0.5456679195370371,
+      "checked_at_iso": "2026-05-17T17:45:10Z",
+      "actual_source": "no_actual",
+      "report": {},
+      "note": "no training_runs/futures__1d.parquet"
+    },
+    {
+      "model": "futures",
+      "tf": "1h",
+      "baseline_age_days": 0.5539514387268518,
+      "checked_at_iso": "2026-05-17T17:45:10Z",
+      "actual_source": "no_actual",
+      "report": {},
+      "note": "no training_runs/futures__1h.parquet"
+    },
+    {
+      "model": "futures",
+      "tf": "4h",
+      "baseline_age_days": 0.8320509279745371,
+      "checked_at_iso": "2026-05-17T17:45:10Z",
+      "actual_source": "no_actual",
+      "report": {},
+      "note": "no training_runs/futures__4h.parquet"
+    },
+    {
+      "model": "futures",
+      "tf": "5m",
+      "baseline_age_days": 2.9247877477199076,
+      "checked_at_iso": "2026-05-17T17:45:10Z",
+      "actual_source": "no_actual",
+      "report": {},
+      "note": "no training_runs/futures__5m.parquet"
+    },
+    {
+      "model": "meta",
+      "tf": "15m",
+      "baseline_age_days": 0.37267603650462966,
+      "checked_at_iso": "2026-05-17T17:45:10Z",
+      "actual_source": "no_actual",
+      "report": {},
+      "note": "no training_runs/meta__15m.parquet"
+    },
+    {
+      "model": "meta",
+      "tf": "1d",
+      "baseline_age_days": 2.8557716088657408,
+      "checked_at_iso": "2026-05-17T17:45:10Z",
+      "actual_source": "no_actual",
+      "report": {},
+      "note": "no training_runs/meta__1d.parquet"
+    },
+    {
+      "model": "meta",
+      "tf": "1h",
+      "baseline_age_days": 0.3825641125578704,
+      "checked_at_iso": "2026-05-17T17:45:10Z",
+      "actual_source": "no_actual",
+      "report": {},
+      "note": "no training_runs/meta__1h.parquet"
+    },
+    {
+      "model": "meta",
+      "tf": "4h",
+      "baseline_age_days": 0.3817668584953704,
+      "checked_at_iso": "2026-05-17T17:45:10Z",
+      "actual_source": "no_actual",
+      "report": {},
+      "note": "no training_runs/meta__4h.parquet"
+    },
+    {
+      "model": "meta",
+      "tf": "5m",
+      "baseline_age_days": 0.3727497554976852,
+      "checked_at_iso": "2026-05-17T17:45:10Z",
+      "actual_source": "no_actual",
+      "report": {},
+      "note": "no training_runs/meta__5m.parquet"
+    },
+    {
+      "model": "scalping",
+      "tf": "1m",
+      "baseline_age_days": 1.8457267308912038,
+      "checked_at_iso": "2026-05-17T17:45:10Z",
+      "actual_source": "no_actual",
+      "report": {},
+      "note": "no training_runs/scalping__1m.parquet"
+    },
+    {
+      "model": "trend",
+      "tf": "15m",
+      "baseline_age_days": 2.940399793622685,
+      "checked_at_iso": "2026-05-17T17:45:10Z",
+      "actual_source": "no_actual",
+      "report": {},
+      "note": "no training_runs/trend__15m.parquet"
+    },
+    {
+      "model": "trend",
+      "tf": "1d",
+      "baseline_age_days": 2.8548150227083333,
+      "checked_at_iso": "2026-05-17T17:45:10Z",
+      "actual_source": "no_actual",
+      "report": {},
+      "note": "no training_runs/trend__1d.parquet"
+    },
+    {
+      "model": "trend",
+      "tf": "1h",
+      "baseline_age_days": 2.796130587060185,
+      "checked_at_iso": "2026-05-17T17:45:10Z",
+      "actual_source": "no_actual",
+      "report": {},
+      "note": "no training_runs/trend__1h.parquet"
+    },
+    {
+      "model": "trend",
+      "tf": "1w",
+      "baseline_age_days": 2.807404667349537,
+      "checked_at_iso": "2026-05-17T17:45:10Z",
+      "actual_source": "no_actual",
+      "report": {},
+      "note": "no training_runs/trend__1w.parquet"
+    },
+    {
+      "model": "trend",
+      "tf": "4h",
+      "baseline_age_days": 2.858983765787037,
+      "checked_at_iso": "2026-05-17T17:45:10Z",
+      "actual_source": "no_actual",
+      "report": {},
+      "note": "no training_runs/trend__4h.parquet"
+    }
+  ]
+}

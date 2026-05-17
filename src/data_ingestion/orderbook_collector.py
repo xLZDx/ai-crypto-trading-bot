@@ -107,7 +107,7 @@ async def stream_loop(
             logger.info("[OB] Stopped by user.")
             return
         except Exception as exc:
-            logger.warning("[OB] Stream error: %s — reconnecting in %.1fs", exc, backoff)
+            logger.warning("[OB] Stream error: %s -- reconnecting in %.1fs", exc, backoff)
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30.0)
 

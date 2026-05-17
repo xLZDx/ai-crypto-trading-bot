@@ -96,7 +96,7 @@ def download_funding_rates(
             df = df[["timestamp", "fundingRate"]].rename(columns={"fundingRate": "funding_rate"})
             df = df.sort_values("timestamp").drop_duplicates("timestamp")
             df.to_csv(out_path, index=False, compression="gzip")
-            logger.info("Saved %d funding rate records for %s → %s", len(df), symbol, out_path)
+            logger.info("Saved %d funding rate records for %s -> %s", len(df), symbol, out_path)
 
         except Exception as exc:
             logger.error("Failed to download funding rates for %s: %s", symbol, exc)

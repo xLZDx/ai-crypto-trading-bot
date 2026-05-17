@@ -85,7 +85,7 @@ def dedup_partition(part_dir: Path, keys: list[str], dry_run: bool = False) -> t
         try:
             frames.append(pd.read_parquet(f))
         except Exception as exc:
-            logger.warning("  read %s failed — skipping file: %s", f, exc)
+            logger.warning("  read %s failed -- skipping file: %s", f, exc)
     if not frames:
         return (0, 0)
     df = pd.concat(frames, ignore_index=True)
@@ -114,7 +114,7 @@ def dedup_partition(part_dir: Path, keys: list[str], dry_run: bool = False) -> t
     try:
         df_dedup.to_parquet(tmp, compression="zstd", index=False)
     except Exception as exc:
-        logger.error("  write %s failed: %s — partition unchanged", tmp, exc)
+        logger.error("  write %s failed: %s -- partition unchanged", tmp, exc)
         if tmp.exists():
             tmp.unlink(missing_ok=True)
         return (rows_before, rows_before)
@@ -128,7 +128,7 @@ def dedup_partition(part_dir: Path, keys: list[str], dry_run: bool = False) -> t
                 f"verify mismatch: wrote {rows_after} rows but file has {len(verify)}"
             )
     except Exception as exc:
-        logger.error("  verify %s failed: %s — partition unchanged", tmp, exc)
+        logger.error("  verify %s failed: %s -- partition unchanged", tmp, exc)
         tmp.unlink(missing_ok=True)
         return (rows_before, rows_before)
 
@@ -142,7 +142,7 @@ def dedup_partition(part_dir: Path, keys: list[str], dry_run: bool = False) -> t
     try:
         tmp.rename(target)
     except Exception as exc:
-        logger.error("  rename failed: %s — leaving %s in place", exc, tmp)
+        logger.error("  rename failed: %s -- leaving %s in place", exc, tmp)
         return (rows_before, rows_after)
 
     return (rows_before, rows_after)
@@ -161,7 +161,7 @@ def main() -> int:
 
     keys = _DEDUP_KEYS.get(args.table)
     if not keys:
-        logger.error("No dedup keys defined for table %s — add to _DEDUP_KEYS",
+        logger.error("No dedup keys defined for table %s -- add to _DEDUP_KEYS",
                      args.table)
         return 1
 
@@ -176,7 +176,7 @@ def main() -> int:
 
     table_dir = pc._table_dir(args.table)
     if not table_dir.exists():
-        logger.warning("No %s dir at %s — nothing to dedup", args.table, table_dir)
+        logger.warning("No %s dir at %s -- nothing to dedup", args.table, table_dir)
         return 0
 
     partitions = list(_walk_partitions(table_dir))
@@ -198,11 +198,11 @@ def main() -> int:
             n_partitions_with_dupes += 1
             n_changed += 1
             if args.dry_run:
-                logger.info("  %s: %d → %d (would drop %d)",
+                logger.info("  %s: %d -> %d (would drop %d)",
                             part.relative_to(table_dir),
                             before, after, before - after)
             else:
-                logger.info("  %s: %d → %d (dropped %d)",
+                logger.info("  %s: %d -> %d (dropped %d)",
                             part.relative_to(table_dir),
                             before, after, before - after)
 

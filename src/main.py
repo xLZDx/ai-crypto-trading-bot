@@ -247,6 +247,22 @@ class MultiAssetTrader:
         self._dyn_thresholds = {sym: 0.01 for sym in symbols}
         self._dyn_threshold_last_refresh = 0.0
 
+        # Phase A — per-TF data cache for strategy_registry TF routing.
+        # Stores {symbol: {tf: (list_of_bars, fetch_epoch)}} so we only
+        # re-fetch a TF when its TTL has expired.  1h data is always the
+        # main `data` from process_kline so we do NOT double-cache it here.
+        self._tf_data_cache: dict[str, dict[str, tuple[list, float]]] = {
+            sym: {} for sym in symbols
+        }
+        _TF_TTL = {"1m": 60, "5m": 300, "15m": 900, "4h": 14400}
+        self._TF_TTL: dict[str, float] = _TF_TTL
+        # Precompute per-strategy TFs once at init so process_kline (hot-path)
+        # never does module-level attribute lookups on every WebSocket tick.
+        from src.engine.strategy_registry import get_strategy_tf as _gtf
+        self._base_tf    = _gtf("Base_ML")          or self.timeframe
+        self._trend_tf   = _gtf("Trend_ML")         or self.timeframe
+        self._fut_tf     = _gtf("Futures_Short_ML") or self.timeframe
+
         # Phase 10B — track signal_strength + entry time per open trade so
         # alpha-decay can close stale positions.
         self._signal_strength_at_entry: dict = {}      # trade_id -> float
@@ -317,6 +333,34 @@ class MultiAssetTrader:
             logger.debug("[gate] dynamic thresholds refreshed: %s", self._dyn_thresholds)
         except Exception as e:
             logger.debug("[gate] dyn-threshold refresh failed: %s", e)
+
+    def _get_tf_data(self, symbol: str, tf: str, tail_n: int = 1000) -> list:
+        """Return OHLCV bars at `tf` for `symbol`, using a TTL cache.
+
+        Falls back to an empty list (not an exception) so callers can
+        gracefully fall back to the canonical-TF prediction.
+        On a transient fetch failure the result is cached for only 60 s
+        (not the full TF TTL) so a recovering parquet store is retried soon.
+        """
+        now = time.time()
+        cached = self._tf_data_cache.get(symbol, {}).get(tf)
+        if cached is not None:
+            bars, fetched_at = cached
+            ttl = self._TF_TTL.get(tf, 3600.0)
+            if now - fetched_at < ttl:
+                return bars
+        try:
+            bars = _feature_reader.load_recent_bars(symbol, tf, tail_n=tail_n) or []
+            if bars:
+                self._tf_data_cache.setdefault(symbol, {})[tf] = (bars, now)
+        except Exception as exc:
+            logger.debug("[%s] _get_tf_data(%s) load failed: %s", symbol, tf, exc)
+            bars = []
+            # Cache empty result for 60 s only — retry after a short back-off
+            # so a transient parquet failure doesn't lock out the 4h model for
+            # its full 4-hour TTL.
+            self._tf_data_cache.setdefault(symbol, {})[tf] = (bars, now - self._TF_TTL.get(tf, 3600.0) + 60.0)
+        return bars
 
     def _strategy_enabled(self, name: str, scope: str = "live") -> bool:
         """Hot-reloads strategy_config.json if it changed, then checks the flag."""
@@ -962,8 +1006,18 @@ class MultiAssetTrader:
         except Exception as e:
             logger.debug(f"[{symbol}] GARCH skipped: {e}")
 
-        ml_pred = self.ml_predictor.predict(data)
-        trend_pred = self.trend_predictor.predict(data)
+        # Phase A — route each ML model to its pinned timeframe (precomputed
+        # in __init__ as self._base_tf / _trend_tf / _fut_tf).
+        # _get_tf_data() fetches+caches bars at that TF.  Falls back to
+        # canonical .predict(data) when the per-TF model isn't on disk or
+        # the data fetch returns empty.  Uses explicit `is not None` so a
+        # valid bearish signal (0) is never discarded by a falsy short-circuit.
+        _base_data  = self._get_tf_data(symbol, self._base_tf)  if self._base_tf  != self.timeframe else data
+        _trend_data = self._get_tf_data(symbol, self._trend_tf) if self._trend_tf != self.timeframe else data
+        _raw_ml    = self.ml_predictor.predict_at(self._base_tf, _base_data)    if _base_data  else None
+        _raw_trend = self.trend_predictor.predict_at(self._trend_tf, _trend_data) if _trend_data else None
+        ml_pred    = _raw_ml    if _raw_ml    is not None else self.ml_predictor.predict(data)
+        trend_pred = _raw_trend if _raw_trend is not None else self.trend_predictor.predict(data)
         rsi_value = self.calculate_rsi(data)
         
         # --- 📈 OU Process (Ornstein-Uhlenbeck) + Feature Store ---
@@ -1204,7 +1258,9 @@ class MultiAssetTrader:
         }
         
         # Build FUTURES state with specific Futures ML Model predictions
-        fut_pred = self.futures_predictor.predict(data)
+        _fut_data = self._get_tf_data(symbol, self._fut_tf) if self._fut_tf != self.timeframe else data
+        _raw_fut  = self.futures_predictor.predict_at(self._fut_tf, _fut_data) if _fut_data else None
+        fut_pred  = _raw_fut if _raw_fut is not None else self.futures_predictor.predict(data)
         if not self.futures_predictor.is_loaded:
             fut_ml_text = "MODEL NOT FOUND"
         elif fut_pred is None:

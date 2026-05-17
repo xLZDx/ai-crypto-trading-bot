@@ -303,7 +303,7 @@ def download_symbol(symbol: str, timeframe: str = "1s",
     months = _filter_months_by_listing(symbol, months, listing_cache)
     skipped_pre = pre_skip - len(months)
 
-    logger.info("[%s/%s] File: %s | Stored: %s → %s | Months to fetch: %d (skipped %d pre-listing)",
+    logger.info("[%s/%s] File: %s | Stored: %s -> %s | Months to fetch: %d (skipped %d pre-listing)",
                 symbol, timeframe, gz.name,
                 first_ts.strftime("%Y-%m") if first_ts else "none",
                 last_ts.strftime("%Y-%m-%d") if last_ts else "none",
@@ -344,7 +344,7 @@ def download_symbol(symbol: str, timeframe: str = "1s",
         _save_listing_cache(listing_cache)
 
     size_gb = round(gz.stat().st_size / 1024**3, 2) if gz.exists() else 0
-    logger.info("[%s/%s] DONE — %d months, %d rows, %d 404s, %.2f GB",
+    logger.info("[%s/%s] DONE -- %d months, %d rows, %d 404s, %.2f GB",
                 symbol, timeframe, downloaded, total_rows, skipped_404, size_gb)
     return {"symbol": symbol, "timeframe": timeframe,
             "months_downloaded": downloaded, "rows_written": total_rows,
@@ -358,7 +358,7 @@ def download_all(symbols: list[str] | None = None, timeframe: str = "1s") -> Non
         symbols = _watchlist()
 
     logger.info("=" * 60)
-    logger.info("Binance Archive Downloader  —  %d symbols  tf=%s  workers=%d",
+    logger.info("Binance Archive Downloader  --  %d symbols  tf=%s  workers=%d",
                 len(symbols), timeframe, MAX_WORKERS)
     logger.info("Archive: %s/{SYM}/%s/", BASE_URL, timeframe)
     logger.info("Output: %s", _output_dir_for(timeframe))
@@ -401,7 +401,7 @@ def download_all_timeframes_parallel(symbols: list[str] | None = None,
         raise ValueError(f"timeframes {invalid} not in {SUPPORTED_TF}")
 
     logger.info("=" * 60)
-    logger.info("Binance Archive Downloader (cross-TF) — %d sym × %d tf × workers=%d",
+    logger.info("Binance Archive Downloader (cross-TF) -- %d sym x %d tf x workers=%d",
                 len(symbols), len(timeframes), MAX_WORKERS)
     logger.info("=" * 60)
 

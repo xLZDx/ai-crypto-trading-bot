@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-05-12T20:32:11.027707+00:00",
+  "generated_at": "2026-05-17T18:27:02.837594+00:00",
   "host": "RAZER",
   "execution": "LOCAL_ONLY",
   "status": "not_started",
-  "epochs_target": 30,
+  "epochs_target": 25,
   "epochs_completed": 0,
   "log": {
     "log_present": false,
@@ -21,56 +21,46 @@
   "model": {
     "present": true,
     "path": "D:\\test 2\\AI trading assistance\\models\\tft_model.pt",
-    "size_bytes": 6812347,
-    "mtime_iso": "2026-05-12T13:11:18.388032+00:00",
-    "age_s": 26450.5
+    "size_bytes": 11086899,
+    "mtime_iso": "2026-05-17T14:41:16.763195+00:00",
+    "age_s": 13546.0
   },
   "checkpoint": {
     "present": true,
     "path": "D:\\test 2\\AI trading assistance\\models\\tft_model.pt.ckpt",
-    "size_bytes": 7810284,
-    "mtime_iso": "2026-05-12T13:11:18.483564+00:00",
-    "age_s": 26450.4
+    "size_bytes": 9198684,
+    "mtime_iso": "2026-05-17T14:41:17.003817+00:00",
+    "age_s": 13545.8
   },
   "meta": {
     "symbols": [
-      "BTC_USDT",
-      "SOL_USDT",
-      "ADA_USDT",
-      "ETH_USDT",
-      "BNB_USDT",
-      "XRP_USDT",
-      "DOGE_USDT",
-      "TRX_USDT",
-      "AVAX_USDT",
-      "SHIB_USDT",
-      "DOT_USDT",
-      "LINK_USDT",
-      "NEAR_USDT",
-      "UNI_USDT",
-      "LTC_USDT",
-      "APT_USDT",
-      "ATOM_USDT",
-      "HBAR_USDT",
-      "ICP_USDT",
-      "SUI_USDT"
+      "SOL_USDT"
     ],
-    "timeframe": "1h",
+    "timeframe": "4h",
     "input_chunk_length": 168,
     "output_chunk_length": 24,
-    "n_epochs": 30,
+    "n_epochs": 25,
+    "epochs_completed": 11,
+    "min_epochs": 3,
+    "patience": 6,
     "model_path": "D:\\test 2\\AI trading assistance\\models\\tft_model.pt",
     "device": "GPU",
-    "last_trained": "2026-05-03T10:37:48.036726+00:00",
+    "last_trained": "2026-05-17T14:41:17.019988+00:00",
+    "started_at_unix": 1779027050.9809492,
+    "finished_at_unix": 1779028876.537256,
+    "duration_s": 1825.56,
+    "per_epoch_s": 111.14,
+    "n_samples": 10062,
+    "n_features": 27,
     "present": true
   },
   "dashboard": {
     "reachable": false,
-    "error": "TimeoutError: timed out"
+    "error": "dashboard_unreachable: UNAUTHORIZED"
   },
   "summary_bullets": [
     "NOT STARTED \u2014 no log activity detected.",
-    "Model file present: 6.8 MB, mtime 2026-05-12T13:11:18.388032+00:00",
-    "Dashboard NOT reachable: TimeoutError: timed out."
+    "Model file present: 11.1 MB, mtime 2026-05-17T14:41:16.763195+00:00",
+    "Dashboard NOT reachable: dashboard_unreachable: UNAUTHORIZED."
   ]
 }

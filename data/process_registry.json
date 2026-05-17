@@ -1,0 +1,1633 @@
+{
+    "roles": {
+        "dashboard": {
+            "pid": 30812,
+            "cmdline": "D:\\test 2\\AI trading assistance\\venv\\Scripts\\python.exe d:\\test 2\\AI trading assistance\\src\\dashboard\\app.py",
+            "host": "Razer",
+            "started_at": "2026-05-16T13:32:00.690147+00:00",
+            "last_heartbeat": "2026-05-17T18:37:26.688858+00:00",
+            "last_heartbeat_ts": 1779043046.6888685,
+            "by": "src.dashboard.app"
+        },
+        "bot": {
+            "pid": 3520,
+            "cmdline": "d:\\test 2\\AI trading assistance\\venv\\Scripts\\python.exe -m src.main",
+            "host": "Razer",
+            "started_at": "2026-05-16T10:11:56.857918+00:00",
+            "last_heartbeat": "2026-05-17T18:37:04.524358+00:00",
+            "last_heartbeat_ts": 1779043024.5243776,
+            "by": "src.main"
+        },
+        "cluster_orch": {
+            "pid": 24060,
+            "cmdline": "D:\\test 2\\AI trading assistance\\venv\\Scripts\\python.exe -m src.training.distributed.orchestrator --port 7700 --host 0.0.0.0",
+            "host": "Razer",
+            "started_at": "2026-05-16T16:36:09.050979+00:00",
+            "last_heartbeat": "2026-05-17T18:36:42.411272+00:00",
+            "last_heartbeat_ts": 1779043002.411293,
+            "by": "src.training.distributed.orchestrator"
+        }
+    },
+    "audit": [
+        {
+            "ts": "2026-05-13T22:01:55.774098+00:00",
+            "event": "claim",
+            "role": "orderbook_writer",
+            "pid": 35220,
+            "reason": "",
+            "by": "src.data_ingestion.orderbook_parquet_writer"
+        },
+        {
+            "ts": "2026-05-13T22:01:58.491351+00:00",
+            "event": "reap",
+            "role": "bot",
+            "pid": 32680,
+            "reason": "alive=False fresh=False",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-13T22:01:58.493009+00:00",
+            "event": "claim",
+            "role": "bot",
+            "pid": 41872,
+            "reason": "",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-13T22:41:02.804508+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 35020,
+            "reason": "alive=False fresh=True",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-13T22:41:02.805450+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 41032,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-13T22:41:03.759361+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 31428,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-13T22:41:03.760662+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 28448,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-13T22:41:12.614739+00:00",
+            "event": "reap",
+            "role": "orderbook_writer",
+            "pid": 35220,
+            "reason": "alive=False fresh=True",
+            "by": "src.data_ingestion.orderbook_parquet_writer"
+        },
+        {
+            "ts": "2026-05-13T22:41:12.616473+00:00",
+            "event": "claim",
+            "role": "orderbook_writer",
+            "pid": 30084,
+            "reason": "",
+            "by": "src.data_ingestion.orderbook_parquet_writer"
+        },
+        {
+            "ts": "2026-05-13T22:41:17.577837+00:00",
+            "event": "reap",
+            "role": "bot",
+            "pid": 41872,
+            "reason": "alive=False fresh=True",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-13T22:41:17.579920+00:00",
+            "event": "claim",
+            "role": "bot",
+            "pid": 30436,
+            "reason": "",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-14T00:48:52.847847+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 41032,
+            "reason": "alive=False fresh=False",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-14T00:48:52.849061+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 38480,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-14T00:48:55.298328+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 28448,
+            "reason": "alive=False fresh=False",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T00:48:55.298559+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 27628,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T00:49:09.031542+00:00",
+            "event": "reap",
+            "role": "orderbook_writer",
+            "pid": 30084,
+            "reason": "alive=False fresh=False",
+            "by": "src.data_ingestion.orderbook_parquet_writer"
+        },
+        {
+            "ts": "2026-05-14T00:49:09.034118+00:00",
+            "event": "claim",
+            "role": "orderbook_writer",
+            "pid": 39692,
+            "reason": "",
+            "by": "src.data_ingestion.orderbook_parquet_writer"
+        },
+        {
+            "ts": "2026-05-14T00:49:36.492303+00:00",
+            "event": "reap",
+            "role": "bot",
+            "pid": 30436,
+            "reason": "alive=False fresh=False",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-14T00:49:36.494429+00:00",
+            "event": "claim",
+            "role": "bot",
+            "pid": 36716,
+            "reason": "",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-14T00:50:53.414019+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 27628,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T00:50:53.414269+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 14316,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T00:52:34.415620+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 14316,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T00:52:34.415982+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 38476,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T01:11:42.072641+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 38476,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T01:11:42.072866+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 42664,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T01:18:43.988056+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 42664,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T01:18:43.989136+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 39284,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T01:19:51.235153+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 39284,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T01:19:51.236417+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 31984,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T01:25:47.206501+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 38480,
+            "reason": "alive=False fresh=False",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-14T01:25:47.207238+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 30116,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-14T01:25:49.154723+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 31984,
+            "reason": "alive=False fresh=False",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T01:25:49.155574+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 21640,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T01:25:55.401995+00:00",
+            "event": "reap",
+            "role": "orderbook_writer",
+            "pid": 39692,
+            "reason": "alive=False fresh=False",
+            "by": "src.data_ingestion.orderbook_parquet_writer"
+        },
+        {
+            "ts": "2026-05-14T01:25:55.403564+00:00",
+            "event": "claim",
+            "role": "orderbook_writer",
+            "pid": 22112,
+            "reason": "",
+            "by": "src.data_ingestion.orderbook_parquet_writer"
+        },
+        {
+            "ts": "2026-05-14T01:25:59.336020+00:00",
+            "event": "reap",
+            "role": "bot",
+            "pid": 36716,
+            "reason": "alive=False fresh=False",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-14T01:25:59.337037+00:00",
+            "event": "claim",
+            "role": "bot",
+            "pid": 22296,
+            "reason": "",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-14T01:27:19.523329+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 21640,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T01:27:19.524083+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 42944,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T09:25:28.951866+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 42944,
+            "reason": "alive=False fresh=False",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T09:25:28.952100+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 14976,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T15:36:12.236196+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 30116,
+            "reason": "alive=False fresh=True",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-14T15:36:12.237072+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 23156,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-14T15:36:14.347665+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 14976,
+            "reason": "alive=False fresh=False",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T15:36:14.347790+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 44184,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T15:36:27.299891+00:00",
+            "event": "reap",
+            "role": "bot",
+            "pid": 22296,
+            "reason": "alive=False fresh=True",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-14T15:36:27.300728+00:00",
+            "event": "claim",
+            "role": "bot",
+            "pid": 28300,
+            "reason": "",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-14T15:43:34.297428+00:00",
+            "event": "claim_blocked",
+            "role": "dashboard",
+            "pid": 5600,
+            "reason": "live owner PID 44184",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T15:45:12.561037+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 44184,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T15:45:12.562069+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 12756,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T15:51:04.542591+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 12756,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T15:51:04.543578+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 43848,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T15:57:41.975266+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 43848,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T15:57:41.975443+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 10568,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T16:03:33.084844+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 23156,
+            "reason": "alive=False fresh=True",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-14T16:03:33.086863+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 6156,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-14T16:03:36.675661+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 10568,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T16:03:36.677546+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 27892,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T16:03:49.285635+00:00",
+            "event": "reap",
+            "role": "bot",
+            "pid": 28300,
+            "reason": "alive=False fresh=True",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-14T16:03:49.287556+00:00",
+            "event": "claim",
+            "role": "bot",
+            "pid": 12612,
+            "reason": "",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-14T16:04:03.840097+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 27892,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T16:04:03.841274+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 9096,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T16:04:46.930528+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 9096,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T16:04:46.933132+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 32348,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T16:05:28.364759+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 32348,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T16:05:28.366962+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 43668,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T16:06:10.101024+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 43668,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T16:06:10.102270+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 44752,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T16:06:52.143760+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 44752,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T16:06:52.145414+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 31156,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T16:12:52.776141+00:00",
+            "event": "reap",
+            "role": "bot",
+            "pid": 12612,
+            "reason": "alive=False fresh=True",
+            "by": "dashboard-reaper"
+        },
+        {
+            "ts": "2026-05-14T16:19:06.137976+00:00",
+            "event": "claim",
+            "role": "bot",
+            "pid": 10568,
+            "reason": "",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-14T16:23:37.423372+00:00",
+            "event": "reap",
+            "role": "bot",
+            "pid": 10568,
+            "reason": "alive=False fresh=True",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-14T16:23:37.424313+00:00",
+            "event": "claim",
+            "role": "bot",
+            "pid": 6576,
+            "reason": "",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-14T17:06:38.492744+00:00",
+            "event": "claim_blocked",
+            "role": "dashboard",
+            "pid": 40312,
+            "reason": "live owner PID 31156",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T17:07:30.868665+00:00",
+            "event": "claim_blocked",
+            "role": "bot",
+            "pid": 20504,
+            "reason": "live owner PID 6576",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-14T17:33:03.125090+00:00",
+            "event": "reap",
+            "role": "bot",
+            "pid": 6576,
+            "reason": "alive=False fresh=True",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-14T17:33:03.126610+00:00",
+            "event": "claim",
+            "role": "bot",
+            "pid": 31048,
+            "reason": "",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-14T17:39:26.470290+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 31156,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T17:39:26.471187+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 41816,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T17:41:04.917247+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 41816,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T17:41:04.918082+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 39496,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T17:41:20.803348+00:00",
+            "event": "reap",
+            "role": "bot",
+            "pid": 31048,
+            "reason": "alive=False fresh=True",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-14T17:41:20.804220+00:00",
+            "event": "claim",
+            "role": "bot",
+            "pid": 37764,
+            "reason": "",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-14T17:45:38.361045+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 39496,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T17:45:38.361159+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 30348,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T18:04:22.836628+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 30348,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T18:04:22.837592+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 44912,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T18:09:05.729698+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 44912,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T18:09:05.730958+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 8636,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T18:12:48.093432+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 8636,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T18:12:48.094991+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 42968,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T18:37:40.837489+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 6156,
+            "reason": "alive=False fresh=True",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-14T18:37:40.838266+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 2384,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-14T18:37:50.592224+00:00",
+            "event": "reap",
+            "role": "bot",
+            "pid": 37764,
+            "reason": "alive=False fresh=True",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-14T18:37:50.593754+00:00",
+            "event": "claim",
+            "role": "bot",
+            "pid": 8020,
+            "reason": "",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-14T18:49:59.727454+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 42968,
+            "reason": "alive=False fresh=False",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T18:49:59.728333+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 32548,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T21:17:34.518833+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 32548,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-14T21:17:34.520471+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 49968,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-15T00:09:45.631044+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 2384,
+            "reason": "alive=False fresh=True",
+            "by": "dashboard-reaper"
+        },
+        {
+            "ts": "2026-05-15T00:56:05.358194+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 45884,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T00:56:06.993114+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 49968,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-15T00:56:06.993919+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 47088,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-15T00:56:13.433577+00:00",
+            "event": "reap",
+            "role": "orderbook_writer",
+            "pid": 22112,
+            "reason": "alive=False fresh=True",
+            "by": "src.data_ingestion.orderbook_parquet_writer"
+        },
+        {
+            "ts": "2026-05-15T00:56:13.441445+00:00",
+            "event": "claim",
+            "role": "orderbook_writer",
+            "pid": 20620,
+            "reason": "",
+            "by": "src.data_ingestion.orderbook_parquet_writer"
+        },
+        {
+            "ts": "2026-05-15T00:56:18.194762+00:00",
+            "event": "reap",
+            "role": "bot",
+            "pid": 8020,
+            "reason": "alive=False fresh=True",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-15T00:56:18.196358+00:00",
+            "event": "claim",
+            "role": "bot",
+            "pid": 37904,
+            "reason": "",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-15T00:57:22.168179+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 45884,
+            "reason": "alive=False fresh=True",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T00:57:22.169388+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 27892,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T00:59:07.730505+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 27892,
+            "reason": "alive=False fresh=True",
+            "by": "dashboard-reaper"
+        },
+        {
+            "ts": "2026-05-15T00:59:32.024875+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 40288,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T01:01:07.807056+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 40288,
+            "reason": "alive=False fresh=True",
+            "by": "dashboard-reaper"
+        },
+        {
+            "ts": "2026-05-15T01:01:16.441945+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 47236,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T01:01:20.383392+00:00",
+            "event": "claim_blocked",
+            "role": "dashboard",
+            "pid": 21164,
+            "reason": "live owner PID 47088",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-15T01:03:03.401948+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 47088,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-15T01:03:03.402874+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 26396,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-15T01:03:16.901028+00:00",
+            "event": "reap",
+            "role": "bot",
+            "pid": 37904,
+            "reason": "alive=False fresh=True",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-15T01:03:16.903047+00:00",
+            "event": "claim",
+            "role": "bot",
+            "pid": 35712,
+            "reason": "",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-15T01:03:45.882618+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 47236,
+            "reason": "alive=False fresh=True",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T01:03:45.883366+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 49724,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T01:03:47.767518+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 26396,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-15T01:03:47.768387+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 40040,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-15T01:03:54.259962+00:00",
+            "event": "reap",
+            "role": "orderbook_writer",
+            "pid": 20620,
+            "reason": "alive=False fresh=True",
+            "by": "src.data_ingestion.orderbook_parquet_writer"
+        },
+        {
+            "ts": "2026-05-15T01:03:54.261694+00:00",
+            "event": "claim",
+            "role": "orderbook_writer",
+            "pid": 46016,
+            "reason": "",
+            "by": "src.data_ingestion.orderbook_parquet_writer"
+        },
+        {
+            "ts": "2026-05-15T01:03:56.783722+00:00",
+            "event": "reap",
+            "role": "bot",
+            "pid": 35712,
+            "reason": "alive=False fresh=True",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-15T01:03:56.784457+00:00",
+            "event": "claim",
+            "role": "bot",
+            "pid": 25748,
+            "reason": "",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-15T01:07:14.715826+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 49724,
+            "reason": "alive=False fresh=True",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T01:07:14.717548+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 34288,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T01:07:19.864604+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 40040,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-15T01:07:19.866345+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 42132,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-15T01:08:31.586634+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 42132,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-15T01:08:31.587733+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 22264,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-15T01:10:18.118029+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 34288,
+            "reason": "alive=False fresh=True",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T01:10:18.119261+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 42788,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T01:10:19.713942+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 22264,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-15T01:10:19.715313+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 40724,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-15T01:10:26.188147+00:00",
+            "event": "reap",
+            "role": "orderbook_writer",
+            "pid": 46016,
+            "reason": "alive=False fresh=True",
+            "by": "src.data_ingestion.orderbook_parquet_writer"
+        },
+        {
+            "ts": "2026-05-15T01:10:26.189509+00:00",
+            "event": "claim",
+            "role": "orderbook_writer",
+            "pid": 36368,
+            "reason": "",
+            "by": "src.data_ingestion.orderbook_parquet_writer"
+        },
+        {
+            "ts": "2026-05-15T01:10:28.838944+00:00",
+            "event": "reap",
+            "role": "bot",
+            "pid": 25748,
+            "reason": "alive=False fresh=True",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-15T01:10:28.840023+00:00",
+            "event": "claim",
+            "role": "bot",
+            "pid": 47272,
+            "reason": "",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-15T01:11:47.168225+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 42788,
+            "reason": "alive=False fresh=True",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T01:11:47.169352+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 39412,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T01:21:02.671613+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 39412,
+            "reason": "alive=False fresh=True",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T01:21:02.672809+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 43220,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T01:22:20.523364+00:00",
+            "event": "reap",
+            "role": "orderbook_writer",
+            "pid": 36368,
+            "reason": "alive=False fresh=True",
+            "by": "dashboard-reaper"
+        },
+        {
+            "ts": "2026-05-15T08:14:18.269920+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 43220,
+            "reason": "alive=False fresh=True",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T08:14:18.270932+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 38044,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T08:45:34.165168+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 38044,
+            "reason": "alive=False fresh=True",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T08:45:34.166198+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 30548,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T09:12:20.831282+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 30548,
+            "reason": "alive=False fresh=True",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T09:12:20.833451+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 41332,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T09:20:31.687920+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 41332,
+            "reason": "alive=False fresh=True",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T09:20:31.690140+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 37896,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T15:26:58.136927+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 37896,
+            "reason": "alive=False fresh=True",
+            "by": "dashboard-reaper"
+        },
+        {
+            "ts": "2026-05-15T15:33:36.175278+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 38452,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T15:48:17.307462+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 40724,
+            "reason": "alive=False fresh=False",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-15T15:48:17.307669+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 46624,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-15T15:49:17.681475+00:00",
+            "event": "reap",
+            "role": "bot",
+            "pid": 47272,
+            "reason": "alive=False fresh=False",
+            "by": "dashboard-reaper"
+        },
+        {
+            "ts": "2026-05-15T15:49:17.682057+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 38452,
+            "reason": "alive=False fresh=True",
+            "by": "dashboard-reaper"
+        },
+        {
+            "ts": "2026-05-15T15:49:26.741832+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 22708,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T16:31:49.226721+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 22708,
+            "reason": "alive=False fresh=False",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T16:31:49.227341+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 24940,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T16:31:50.818369+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 46624,
+            "reason": "alive=False fresh=False",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-15T16:31:50.818486+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 27396,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-15T16:31:56.497995+00:00",
+            "event": "claim",
+            "role": "orderbook_writer",
+            "pid": 7592,
+            "reason": "",
+            "by": "src.data_ingestion.orderbook_parquet_writer"
+        },
+        {
+            "ts": "2026-05-15T16:32:06.549104+00:00",
+            "event": "claim",
+            "role": "bot",
+            "pid": 25056,
+            "reason": "",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-15T16:42:51.638381+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 24940,
+            "reason": "alive=False fresh=True",
+            "by": "dashboard-reaper"
+        },
+        {
+            "ts": "2026-05-15T16:42:59.796668+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 35256,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T18:20:45.379903+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 27396,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-15T18:20:45.383399+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 34564,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-15T21:09:27.043108+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 35256,
+            "reason": "alive=False fresh=False",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T21:09:27.043863+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 16584,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T21:09:28.752187+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 34564,
+            "reason": "alive=False fresh=False",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-15T21:09:28.752293+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 9152,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-15T21:09:36.908003+00:00",
+            "event": "reap",
+            "role": "bot",
+            "pid": 25056,
+            "reason": "alive=False fresh=False",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-15T21:09:36.908767+00:00",
+            "event": "claim",
+            "role": "bot",
+            "pid": 24296,
+            "reason": "",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-15T21:10:28.915762+00:00",
+            "event": "reap",
+            "role": "orderbook_writer",
+            "pid": 7592,
+            "reason": "alive=False fresh=False",
+            "by": "dashboard-reaper"
+        },
+        {
+            "ts": "2026-05-15T21:10:46.249947+00:00",
+            "event": "claim",
+            "role": "orderbook_writer",
+            "pid": 9144,
+            "reason": "",
+            "by": "src.data_ingestion.orderbook_parquet_writer"
+        },
+        {
+            "ts": "2026-05-15T21:47:24.034042+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 16584,
+            "reason": "alive=False fresh=True",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T21:47:24.035008+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 16868,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T22:14:03.684196+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 16868,
+            "reason": "alive=False fresh=True",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-15T22:14:03.685371+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 9092,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-16T00:12:35.914796+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 9092,
+            "reason": "alive=False fresh=True",
+            "by": "dashboard-reaper"
+        },
+        {
+            "ts": "2026-05-16T00:12:37.357819+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 33500,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-16T00:19:13.379197+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 33500,
+            "reason": "alive=False fresh=True",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-16T00:19:13.379988+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 32208,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-16T00:21:36.282379+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 32208,
+            "reason": "alive=False fresh=True",
+            "by": "dashboard-reaper"
+        },
+        {
+            "ts": "2026-05-16T00:27:17.608100+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 28916,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-16T04:16:40.878647+00:00",
+            "event": "reap",
+            "role": "orderbook_writer",
+            "pid": 9144,
+            "reason": "alive=False fresh=True",
+            "by": "dashboard-reaper"
+        },
+        {
+            "ts": "2026-05-16T10:10:36.120397+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 28916,
+            "reason": "alive=False fresh=False",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-16T10:10:36.120948+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 16568,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        },
+        {
+            "ts": "2026-05-16T10:11:50.859000+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 9152,
+            "reason": "alive=False fresh=False",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-16T10:11:50.859111+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 21568,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-16T10:11:56.857272+00:00",
+            "event": "reap",
+            "role": "bot",
+            "pid": 24296,
+            "reason": "alive=False fresh=False",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-16T10:11:56.857928+00:00",
+            "event": "claim",
+            "role": "bot",
+            "pid": 3520,
+            "reason": "",
+            "by": "src.main"
+        },
+        {
+            "ts": "2026-05-16T13:32:00.689063+00:00",
+            "event": "reap",
+            "role": "dashboard",
+            "pid": 21568,
+            "reason": "alive=False fresh=True",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-16T13:32:00.690172+00:00",
+            "event": "claim",
+            "role": "dashboard",
+            "pid": 30812,
+            "reason": "",
+            "by": "src.dashboard.app"
+        },
+        {
+            "ts": "2026-05-16T16:36:07.300948+00:00",
+            "event": "reap",
+            "role": "cluster_orch",
+            "pid": 16568,
+            "reason": "alive=False fresh=True",
+            "by": "dashboard-reaper"
+        },
+        {
+            "ts": "2026-05-16T16:36:09.051013+00:00",
+            "event": "claim",
+            "role": "cluster_orch",
+            "pid": 24060,
+            "reason": "",
+            "by": "src.training.distributed.orchestrator"
+        }
+    ]
+}

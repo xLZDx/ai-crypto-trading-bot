@@ -147,7 +147,7 @@ class MasterAgent:
         sweep_coordinator isn't running yet."""
         venv_py = PROJECT_ROOT / "venv" / "Scripts" / "python.exe"
         if not venv_py.exists():
-            logger.warning("venv python not found — skipping spawn of %s", name)
+            logger.warning("venv python not found -- skipping spawn of %s", name)
             return None
         cmd = [str(venv_py), "-u", "-m", "src.training.distributed.worker",
                "--master", CLUSTER_BASE_URL,
@@ -191,7 +191,7 @@ class MasterAgent:
     def _ensure_cluster_orchestrator(self) -> None:
         if self._cluster_orchestrator_alive():
             return
-        logger.warning("[master_agent] cluster_orchestrator DEAD — respawning")
+        logger.warning("[master_agent] cluster_orchestrator DEAD -- respawning")
         venv_py = PROJECT_ROOT / "venv" / "Scripts" / "python.exe"
         if not venv_py.exists():
             return
@@ -269,7 +269,7 @@ class MasterAgent:
                                        task_id=tid)
                 else:
                     logger.info("[master_agent] %s phantom task_id=%s observed for %ds "
-                                "(< %ds confirm window) — waiting",
+                                "(< %ds confirm window) -- waiting",
                                 worker.get("name"), tid[:11],
                                 int(now - first_seen), PHANTOM_CONFIRM_S)
             else:
@@ -292,7 +292,7 @@ class MasterAgent:
             # Local: kill + respawn
             pids = self._find_local_python_pids(name, lane)
             logger.warning("[master_agent] LOCAL ZOMBIE: %s (%s) reason=%s task_id=%s "
-                           "→ killing pids=%s + respawn",
+                           "-> killing pids=%s + respawn",
                            name, node_id, reason, task_id[:11], pids)
             self._kill_pids(pids)
             time.sleep(2)
@@ -334,11 +334,11 @@ class MasterAgent:
                                    ip, port, exc)
             if triggered:
                 logger.warning("[master_agent] REMOTE RESTART: %s (host=%s, %s:%d) "
-                               "reason=%s task_id=%s — worker will re-exec in 1s",
+                               "reason=%s task_id=%s -- worker will re-exec in 1s",
                                name, host, ip, port, reason, task_id[:11])
             else:
                 logger.error("[master_agent] REMOTE ZOMBIE on host=%s (%s) lane=%s "
-                             "reason=%s task_id=%s — /restart unavailable, "
+                             "reason=%s task_id=%s -- /restart unavailable, "
                              "operator must restart this worker manually.",
                              host, name, lane, reason, task_id[:11])
             # Always emit the service.alerts topic entry so the

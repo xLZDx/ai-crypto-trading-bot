@@ -48,7 +48,7 @@ def configure(verbose: bool = True) -> dict:
         else:
             result['gpu'] = 'CPU only'
             if verbose:
-                logger.info("[HW] No CUDA GPU — running on CPU (%d threads)", n_cpu)
+                logger.info("[HW] No CUDA GPU -- running on CPU (%d threads)", n_cpu)
     except Exception as e:
         logger.debug("GPU config skipped: %s", e)
 

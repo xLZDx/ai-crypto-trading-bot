@@ -5,6 +5,7 @@ import logging
 import numpy as np
 import pandas as pd
 import gc
+from src.data_ingestion.ohlcv_parquet_loader import load_ohlcv
 from sklearn.ensemble import HistGradientBoostingClassifier  # kept for type compat
 from src.utils.gpu_classifier import make_classifier  # 2026-05-10 GPU migration
 try:
@@ -131,9 +132,15 @@ def prepare_scalping_data_from_df(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def prepare_scalping_data(filepath, timeframe: str = '1m', symbol: str | None = None):
-    log.info("Loading data for Scalping Pipeline from %s...", filepath)
-    df = pd.read_csv(filepath)
-    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    if symbol:
+        log.info("Loading data for Scalping Pipeline: %s/%s from parquet...", symbol, timeframe)
+        df = load_ohlcv(symbol, timeframe)
+        if df.empty:
+            raise FileNotFoundError(f"No OHLCV data for {symbol}/{timeframe}")
+    else:
+        log.info("Loading data for Scalping Pipeline from %s...", filepath)
+        df = pd.read_csv(filepath)
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
     df = df.sort_values('timestamp')
     # Phase 4 rollout — F1 data-integrity gate.
     try:
@@ -152,54 +159,25 @@ def prepare_scalping_data(filepath, timeframe: str = '1m', symbol: str | None = 
 
 
 def _process_single_symbol(sym):
-    full_data_path = os.path.join(base_dir, 'data', 'raw', f'{sym}_1m.csv.gz')
-    archive_path = os.path.join(base_dir, 'data', 'raw', f'{sym}_spot_1m.csv.gz')
-    path_1s = os.path.join(base_dir, 'data', 'raw', f'{sym}_spot_1s.csv.gz')
-    path_1s_v2 = os.path.join(base_dir, 'data', 'raw', f'{sym}_1s.csv.gz')
-
-    if not os.path.exists(full_data_path) and os.path.exists(archive_path):
-        full_data_path = archive_path
-
-    df_1s_resampled = None
-    for p1s in [path_1s, path_1s_v2]:
-        if os.path.exists(p1s):
-            try:
-                log.info("  [%s] Found 1s data — resampling to 1m...", sym)
-                df_1s_resampled = resample_1s_to_1m(p1s)
-                if df_1s_resampled is not None and len(df_1s_resampled) > 0:
-                    break
-                df_1s_resampled = None
-            except Exception as e:
-                log.warning("  [%s] 1s resample failed: %s", sym, e)
-
-    if not os.path.exists(full_data_path):
-        if df_1s_resampled is None:
-            log.warning("[%s] Data not found. Auto-downloading...", sym)
-            from src.data_ingestion.historical_backfill import backfill_history
-            backfill_history(symbol=sym.replace('_', '/'), timeframe='1m', days=70)
-
+    # 1s files are archived to Google Drive — not available locally.
+    # Scalping uses 1m parquet data only.
     df_combined = None
-    if os.path.exists(full_data_path):
+    try:
+        df_1m = prepare_scalping_data(None, timeframe='1m', symbol=sym)
+    except FileNotFoundError:
+        log.warning("[%s] 1m data not found. Auto-downloading...", sym)
+        from src.data_ingestion.historical_backfill import backfill_history
+        backfill_history(symbol=sym.replace('_', '/'), timeframe='1m', days=70)
         try:
-            df_1m = prepare_scalping_data(full_data_path, timeframe='1m', symbol=sym)
+            df_1m = prepare_scalping_data(None, timeframe='1m', symbol=sym)
         except Exception as e:
-            log.warning("  [%s] Failed 1m prepare: %s", sym, e)
+            log.warning("  [%s] Failed 1m prepare after download: %s", sym, e)
             df_1m = None
+    except Exception as e:
+        log.warning("  [%s] Failed 1m prepare: %s", sym, e)
+        df_1m = None
 
-        if df_1m is not None and df_1s_resampled is not None:
-            try:
-                df_1s_feat = prepare_scalping_data_from_df(df_1s_resampled)
-                df_combined = df_1s_feat if len(df_1s_feat) >= len(df_1m) else df_1m
-            except Exception:
-                df_combined = df_1m
-        elif df_1m is not None:
-            df_combined = df_1m
-
-    if df_combined is None and df_1s_resampled is not None:
-        try:
-            df_combined = prepare_scalping_data_from_df(df_1s_resampled)
-        except Exception as e:
-            log.warning("  [%s] 1s-only feature engineering failed: %s", sym, e)
+    df_combined = df_1m
 
     if df_combined is not None:
         df_tail = df_combined.tail(500000).copy()
@@ -228,7 +206,7 @@ def train_scalping_model(timeframe: str = '1m'):
         log.info("[CIO overrides] scalping/%s: %s (NOT auto-merged into params yet)",
                  timeframe, cio)
     if timeframe != '1m':
-        log.warning("Scalping requested at %s — coercing to 1m (multi-TF "
+        log.warning("Scalping requested at %s -- coercing to 1m (multi-TF "
                     "scalping not yet supported).", timeframe)
         timeframe = '1m'
     wl_path = os.path.join(base_dir, 'data', 'watchlist.json')
@@ -294,7 +272,7 @@ def train_scalping_model(timeframe: str = '1m'):
         if not _SMOTE_AVAILABLE:
             return Xtr, ytr, compute_sample_weight('balanced', ytr)
         if len(Xtr) > SMOTE_MAX_ROWS:
-            log.info("SMOTE skipped — fold has %d rows > SMOTE_MAX_ROWS=%d; "
+            log.info("SMOTE skipped -- fold has %d rows > SMOTE_MAX_ROWS=%d; "
                      "using class_weight + sample_weight only",
                      len(Xtr), SMOTE_MAX_ROWS)
             return Xtr, ytr, compute_sample_weight('balanced', ytr)
@@ -309,7 +287,7 @@ def train_scalping_model(timeframe: str = '1m'):
             # After SMOTE the classes are 1:1 — no need for sample_weight.
             return X_bal, y_bal, None
         except Exception as exc:
-            log.warning("SMOTE failed (%s) — falling back to sample_weight only", exc)
+            log.warning("SMOTE failed (%s) -- falling back to sample_weight only", exc)
             return Xtr, ytr, compute_sample_weight('balanced', ytr)
 
     # ── CIO overrides MERGE (X1.3, 2026-05-13) — schema-bounded ────────────
@@ -331,6 +309,7 @@ def train_scalping_model(timeframe: str = '1m'):
     pct_embargo = (2.0 * 5) / len(X)
     cv = PurgedKFold(n_splits=5, t1=t1_series, pct_embargo=pct_embargo)
     fold_accs = []
+    in_sample_fold_accs = []  # P3
     for i, (tr, te) in enumerate(cv.split(X)):
         clf = make_classifier(
             random_state=42,
@@ -346,10 +325,25 @@ def train_scalping_model(timeframe: str = '1m'):
         else:
             clf.fit(X_tr_bal, y_tr_bal, sample_weight=w_tr)
         fold_accs.append(accuracy_score(y.iloc[te], clf.predict(X.iloc[te])))
+        # In-sample on original (unbalanced) train indices — consistent with test fold measurement
+        in_sample_fold_accs.append(accuracy_score(y.iloc[tr], clf.predict(X.iloc[tr])))
         log.info("Scalping walk-forward fold %d: %.2f%%", i + 1, fold_accs[-1] * 100)
 
-    log.info("Scalping walk-forward mean: %.2f%% ± %.2f%%",
+    log.info("Scalping walk-forward mean: %.2f%% +/- %.2f%%",
              np.mean(fold_accs) * 100, np.std(fold_accs) * 100)
+
+    # P3: overfit ratio
+    _wf_mean = float(np.mean(fold_accs))
+    _in_sample_mean = float(np.mean(in_sample_fold_accs)) if in_sample_fold_accs else None
+    _overfit_ratio: float | None = None
+    if _in_sample_mean is not None and _in_sample_mean > 0:
+        _overfit_ratio = (_in_sample_mean - _wf_mean) / _in_sample_mean
+        if _overfit_ratio > 0.20:
+            log.error("[scalping] overfit_ratio=%.3f > 0.20 (in_sample=%.2f%% wf=%.2f%%) -- model is memorising",
+                      _overfit_ratio, _in_sample_mean * 100, _wf_mean * 100)
+        elif _overfit_ratio > 0.10:
+            log.warning("[scalping] overfit_ratio=%.3f > 0.10 (in_sample=%.2f%% wf=%.2f%%)",
+                        _overfit_ratio, _in_sample_mean * 100, _wf_mean * 100)
 
     n = len(X)
     calib_split = int(n * 0.80)
@@ -386,7 +380,7 @@ def train_scalping_model(timeframe: str = '1m'):
     # boundary samples.
     unique_preds = set(np.unique(predictions).tolist())
     if len(unique_preds) < 2 and _SMOTE_AVAILABLE and len(X_safe) <= SMOTE_MAX_ROWS:
-        log.warning("Single-class collapse detected (preds=%s) — retrying with stronger SMOTE",
+        log.warning("Single-class collapse detected (preds=%s) -- retrying with stronger SMOTE",
                     unique_preds)
         sm_strong = SMOTE(random_state=42,
                           k_neighbors=max(1, min(3, int(min(y_safe.value_counts()) - 1))),
@@ -402,12 +396,12 @@ def train_scalping_model(timeframe: str = '1m'):
             calibrated2.fit(X.iloc[calib_split:], y.iloc[calib_split:])
             preds2 = calibrated2.predict(X_test)
             if len(set(np.unique(preds2).tolist())) >= 2:
-                log.info("Self-healing succeeded on retry — both classes now predicted")
+                log.info("Self-healing succeeded on retry -- both classes now predicted")
                 base_clf = base_clf2
                 calibrated = calibrated2
                 predictions = preds2
         except Exception as exc:
-            log.warning("Self-heal retry failed: %s — keeping first-pass model", exc)
+            log.warning("Self-heal retry failed: %s -- keeping first-pass model", exc)
 
     accuracy = accuracy_score(y_test, predictions)
     report = classification_report(y_test, predictions, output_dict=True, zero_division=0)
@@ -466,6 +460,9 @@ def train_scalping_model(timeframe: str = '1m'):
         "cio_overrides_applied": dict(_scalp_applied) if _scalp_applied else None,  # X1.3
         "n_iterations": n_iter,
         "walk_forward_mean_acc": round(float(np.mean(fold_accs)) * 100, 2),
+        "wf_fold_scores": [round(v, 6) for v in fold_accs],
+        "in_sample_mean_acc": round(_in_sample_mean * 100, 2) if _in_sample_mean else None,
+        "overfit_ratio": round(_overfit_ratio, 6) if _overfit_ratio is not None else None,
         "target": "triple_barrier_long_win_1m",
         "symbols": symbols, "timeframe": timeframe,
         "smote_used": bool(_SMOTE_AVAILABLE),

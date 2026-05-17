@@ -221,6 +221,40 @@ _TABLES: dict[str, dict[str, Any]] = {
             "funding_collected": "f",
         },
     },
+
+    # ── MARKET CONTEXT (external signals for ML features) ─────────────────
+
+    "open_interest": {
+        # Binance Futures 1h OI. Written by open_interest_downloader.py.
+        # Trainer joins on exact timestamp for 1h models only (no resampling).
+        "db": "hot", "partition": ("symbol", "yyyymm"),
+        "cols": {
+            "ts": "ts", "symbol": "s",
+            "oi_base": "f",       # OI in base asset (e.g. BTC)
+            "oi_usdt": "f",       # OI in USDT
+        },
+    },
+    "fear_greed": {
+        # Alternative.me daily Fear & Greed index (0-100). Global, no symbol.
+        # Trainer joins on exact date for 1d models only (no forward-fill).
+        "db": "hot", "partition": ("yyyymm",),
+        "cols": {
+            "ts": "ts",
+            "fear_greed": "i",    # 0=Extreme Fear, 100=Extreme Greed
+            "fg_label": "s",      # text label
+        },
+    },
+    "liquidations": {
+        # Per-symbol hourly liquidation volume. Source: Coinglass (with key)
+        # or Bybit/OKX free APIs. Trainer joins on exact timestamp for 1h only.
+        "db": "hot", "partition": ("symbol", "yyyymm"),
+        "cols": {
+            "ts": "ts", "symbol": "s",
+            "liq_long_usd": "f",  # long liquidations (USD)
+            "liq_short_usd": "f", # short liquidations (USD)
+            "liq_total_usd": "f", # total
+        },
+    },
 }
 
 
@@ -346,7 +380,7 @@ class ParquetClient:
             (self.base_dir / "hot").mkdir(parents=True, exist_ok=True)
             (self.base_dir / "cold").mkdir(parents=True, exist_ok=True)
         except Exception as exc:
-            logger.warning("ParquetClient: cannot create %s — %s", self.base_dir, exc)
+            logger.warning("ParquetClient: cannot create %s -- %s", self.base_dir, exc)
 
     def is_available(self, force: bool = False) -> bool:
         # The store is "available" iff we can reach the data dir AND DuckDB
@@ -356,14 +390,14 @@ class ParquetClient:
         try:
             import duckdb  # noqa: F401
         except Exception as exc:
-            logger.warning("ParquetClient: duckdb missing — %s", exc)
+            logger.warning("ParquetClient: duckdb missing -- %s", exc)
             self._available = False
             return False
         try:
             self.base_dir.mkdir(parents=True, exist_ok=True)
             self._available = True
         except Exception as exc:
-            logger.warning("ParquetClient: data dir not writable — %s", exc)
+            logger.warning("ParquetClient: data dir not writable -- %s", exc)
             self._available = False
         return self._available
 
@@ -419,7 +453,7 @@ class ParquetClient:
     def _enqueue(self, table: str, rows: list[dict]) -> bool:
         spec = _TABLES.get(table)
         if spec is None:
-            logger.debug("ParquetClient: unknown table %s — dropping %d rows",
+            logger.debug("ParquetClient: unknown table %s -- dropping %d rows",
                          table, len(rows))
             return False
         cols = spec["cols"]
@@ -465,7 +499,7 @@ class ParquetClient:
             import pyarrow as pa
             import pyarrow.parquet as pq
         except Exception as exc:
-            logger.warning("ParquetClient: pyarrow missing — %s", exc)
+            logger.warning("ParquetClient: pyarrow missing -- %s", exc)
             return False
         for dpath, grows in groups.items():
             try:
@@ -477,7 +511,7 @@ class ParquetClient:
                 pq.write_table(table_arrow, fp.as_posix(),
                                compression="zstd", use_dictionary=True)
             except Exception as exc:
-                logger.warning("ParquetClient: write %s failed — %s", dpath, exc)
+                logger.warning("ParquetClient: write %s failed -- %s", dpath, exc)
                 ok = False
         return ok
 
@@ -553,7 +587,7 @@ class ParquetClient:
                     res = con.execute(rewritten, list(params)).fetch_arrow_table()
             return res.to_pylist()
         except Exception as exc:
-            logger.warning("ParquetClient: query failed — %s | SQL: %s",
+            logger.warning("ParquetClient: query failed -- %s | SQL: %s",
                            exc, rewritten[:200])
             return []
 
@@ -576,7 +610,7 @@ class ParquetClient:
                     return con.execute(rewritten).df()
                 return con.execute(rewritten, list(params)).df()
         except Exception as exc:
-            logger.warning("ParquetClient: query_df failed — %s", exc)
+            logger.warning("ParquetClient: query_df failed -- %s", exc)
             return pd.DataFrame()
 
     def exec_ddl(self, sql: str) -> bool:

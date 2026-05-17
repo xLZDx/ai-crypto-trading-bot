@@ -278,7 +278,7 @@ def test_plan_files():
 
 def main() -> int:
     print("=" * 60)
-    print("Phase 0 — Institutional Upgrade Foundation Tests")
+    print("Phase 0 -- Institutional Upgrade Foundation Tests")
     print("=" * 60)
     test_requirements()
     test_plan_files()

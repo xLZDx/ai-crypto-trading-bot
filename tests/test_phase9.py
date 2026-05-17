@@ -132,7 +132,7 @@ def test_new_connectors():
 # ─── main.py wiring ────────────────────────────────────────────────────────
 
 def test_main_py_wiring():
-    print("\n[main.py — gate wiring]")
+    print("\n[main.py -- gate wiring]")
     src = (PROJECT_ROOT / "src" / "main.py").read_text(encoding="utf-8")
     check("imports InstitutionalGate",
           "from src.engine.institutional_gate import InstitutionalGate" in src)
@@ -151,7 +151,7 @@ def test_main_py_wiring():
 # ─── Dashboard new routes ─────────────────────────────────────────────────
 
 def test_dashboard_new_routes():
-    print("\n[Dashboard — new Phase 9 routes]")
+    print("\n[Dashboard -- new Phase 9 routes]")
     src = (PROJECT_ROOT / "src" / "dashboard" / "app.py").read_text(encoding="utf-8")
     for route in ['/api/balance/real', '/api/balance/virtual',
                   '/api/news', '/api/oft_signal/',
@@ -163,7 +163,7 @@ def test_dashboard_new_routes():
 # ─── Mode switcher in template ────────────────────────────────────────────
 
 def test_mode_switcher():
-    print("\n[Dashboard — mode switcher]")
+    print("\n[Dashboard -- mode switcher]")
     tpl = (PROJECT_ROOT / "src" / "dashboard" / "templates" / "index.html").read_text(encoding="utf-8")
     check("mode-switcher div present", 'id="mode-switcher"' in tpl)
     check("setMode() JS function defined", "function setMode(" in tpl or "window.setMode" in tpl)
@@ -207,7 +207,7 @@ def test_telegram_persistor():
 
 def main() -> int:
     print("=" * 60)
-    print("Phase 9 — Integration + Analytics + Connectors + Joint Training")
+    print("Phase 9 -- Integration + Analytics + Connectors + Joint Training")
     print("=" * 60)
     test_institutional_gate()
     test_analytics()

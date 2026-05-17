@@ -122,11 +122,11 @@ def fetch_subreddit_pages(sub: str,
         try:
             r = requests.get(url, headers=headers, params=params, timeout=30)
             if r.status_code == 429:
-                logger.info("reddit r/%s 429 — sleeping 30s", sub)
+                logger.info("reddit r/%s 429 -- sleeping 30s", sub)
                 time.sleep(30)
                 continue
             if r.status_code == 403:
-                logger.warning("reddit r/%s blocked (403) — quarantined or banned", sub)
+                logger.warning("reddit r/%s blocked (403) -- quarantined or banned", sub)
                 break
             if r.status_code != 200:
                 logger.warning("reddit r/%s HTTP %d", sub, r.status_code)
@@ -302,7 +302,7 @@ if __name__ == "__main__":
                         format="%(asctime)s %(levelname)s %(message)s")
     ap = argparse.ArgumentParser(description="Reddit historical news backfill")
     ap.add_argument("--pages", type=int, default=10,
-                    help="Pages per subreddit (×100 posts). Reddit cap ≈10.")
+                    help="Pages per subreddit (x100 posts). Reddit cap ~=10.")
     args = ap.parse_args()
     def _cb(ev): sys.stderr.write(json.dumps(ev) + "\n")
     print(json.dumps(backfill(pages_per_sub=args.pages, progress=_cb),

@@ -89,7 +89,7 @@ def _get(url: str, timeout: int = 15) -> list:
             r = requests.get(url, timeout=timeout)
             if r.status_code in _RETRY_CODES:
                 wait = int(r.headers.get("Retry-After", delay))
-                logger.warning("Rate-limited (%s). Waiting %ss …", r.status_code, wait)
+                logger.warning("Rate-limited (%s). Waiting %ss ...", r.status_code, wait)
                 time.sleep(wait)
                 delay = min(delay * 2, 120)
                 continue
@@ -173,7 +173,7 @@ def backfill(symbol: str, timeframe: str, history_days: int, limit: int) -> int:
     """
     path = _gz_path(symbol, timeframe)
     if path.exists():
-        logger.debug("[%s/%s] file exists — using sync() instead", symbol, timeframe)
+        logger.debug("[%s/%s] file exists -- using sync() instead", symbol, timeframe)
         return 0
 
     RAW_DIR.mkdir(parents=True, exist_ok=True)
@@ -181,7 +181,7 @@ def backfill(symbol: str, timeframe: str, history_days: int, limit: int) -> int:
     now_ms   = int(datetime.now(timezone.utc).timestamp() * 1000)
     total    = 0
 
-    logger.info("[%s/%s] Backfilling %d days …", symbol, timeframe, history_days)
+    logger.info("[%s/%s] Backfilling %d days ...", symbol, timeframe, history_days)
     with gzip.open(path, "wt", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(_CSV_HEADER)
@@ -203,7 +203,7 @@ def backfill(symbol: str, timeframe: str, history_days: int, limit: int) -> int:
                 break
             time.sleep(0.15)
 
-    logger.info("[%s/%s] Backfill done — %d candles", symbol, timeframe, total)
+    logger.info("[%s/%s] Backfill done -- %d candles", symbol, timeframe, total)
     return total
 
 
@@ -342,7 +342,7 @@ def _launch_simulator_training() -> None:
         else:
             logger.debug("[SimTraining] Dashboard not running (%s)", r.status_code)
     except Exception:
-        logger.debug("[SimTraining] Dashboard not reachable — skipping sim trigger")
+        logger.debug("[SimTraining] Dashboard not reachable -- skipping sim trigger")
 
 
 # ── Watchlist daemon ──────────────────────────────────────────────────────────
@@ -403,7 +403,7 @@ class WatchlistDownloader:
             logger.info("Coins removed from watchlist (data kept): %s", removed)
 
         if new_coins:
-            logger.info("New coins detected: %s — starting immediate download", new_coins)
+            logger.info("New coins detected: %s -- starting immediate download", new_coins)
             self._download_new(new_coins)
 
         # Ongoing syncs for existing symbols
@@ -433,14 +433,14 @@ class WatchlistDownloader:
 
     def _full_download(self, symbol: str) -> dict[str, int]:
         """Backfill + sync all TFs for one symbol, initialise sync timers."""
-        logger.info("[%s] Starting full download (1s / 1m / 1M) …", symbol)
+        logger.info("[%s] Starting full download (1s / 1m / 1M) ...", symbol)
         counts = download_all_tfs(symbol)
         now = time.time()
         self._last_sync.setdefault(symbol, {})
         for tf in TF_CONFIG:
             self._last_sync[symbol][tf] = now
         total = sum(counts.values())
-        logger.info("[%s] Full download done — %d candles across 3 TFs", symbol, total)
+        logger.info("[%s] Full download done -- %d candles across 3 TFs", symbol, total)
         return counts
 
     def _schedule_due_syncs(self, symbols: set[str]) -> None:
@@ -486,10 +486,10 @@ class WatchlistDownloader:
         t.start()
 
     def _do_training(self) -> None:
-        logger.info("Triggering ML training pipeline …")
+        logger.info("Triggering ML training pipeline ...")
         _launch_training()
         time.sleep(5)
-        logger.info("Triggering simulator training …")
+        logger.info("Triggering simulator training ...")
         _launch_simulator_training()
 
 
@@ -507,7 +507,7 @@ def main() -> None:
     try:
         d.run()
     except KeyboardInterrupt:
-        logger.info("Interrupted — stopping.")
+        logger.info("Interrupted -- stopping.")
         d.stop()
 
 

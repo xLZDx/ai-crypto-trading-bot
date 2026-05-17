@@ -200,7 +200,7 @@ def run(symbols: list[str] | None = None,
     symbols = symbols or _watchlist()
     timeframes = timeframes or DEFAULT_TFS
     logger.info("=" * 60)
-    logger.info("[binance_sync] %d symbols × %d timeframes", len(symbols), len(timeframes))
+    logger.info("[binance_sync] %d symbols x %d timeframes", len(symbols), len(timeframes))
     logger.info("=" * 60)
     summary = {}
     if not skip_archive:

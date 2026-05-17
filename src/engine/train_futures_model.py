@@ -4,6 +4,7 @@ import json
 import logging
 import numpy as np
 import pandas as pd
+from src.data_ingestion.ohlcv_parquet_loader import load_ohlcv
 from sklearn.ensemble import HistGradientBoostingClassifier  # kept for type compat
 from sklearn.calibration import CalibratedClassifierCV
 from src.utils.gpu_classifier import make_classifier  # 2026-05-10 GPU migration
@@ -50,10 +51,16 @@ FEATURE_COLUMNS = [
 
 
 def prepare_futures_data(filepath, timeframe: str = '1h', symbol: str | None = None):
-    log.info("Loading data for Futures (Shorting) Pipeline from %s...", filepath)
-    df = pd.read_csv(filepath)
-    df['timestamp'] = pd.to_datetime(df['timestamp'])
-    df = df.sort_values('timestamp').reset_index(drop=True)
+    if symbol:
+        log.info("Loading data for Futures Pipeline: %s/%s from parquet...", symbol, timeframe)
+        df = load_ohlcv(symbol, timeframe)
+        if df.empty:
+            raise FileNotFoundError(f"No OHLCV data for {symbol}/{timeframe}")
+    else:
+        log.info("Loading data for Futures (Shorting) Pipeline from %s...", filepath)
+        df = pd.read_csv(filepath)
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df = df.sort_values('timestamp').reset_index(drop=True)
 
     # Phase 4 rollout — F1 data-integrity gate (schema + bounds + freshness).
     try:
@@ -110,8 +117,10 @@ def prepare_futures_data(filepath, timeframe: str = '1h', symbol: str | None = N
         if 'news_sentiment' not in df.columns:
             df['news_sentiment'] = 0.0
 
-    # Triple barrier for SHORTS: dynamic ATR-based barriers
-    labels, t1_times = triple_barrier_labels_vectorized(df, pt_multiplier=2.0, sl_multiplier=2.0, max_bars=12)
+    # Triple barrier for SHORTS: dynamic ATR-based barriers (asymmetric pt=4, sl=2)
+    # Wizard 2026-05-16: symmetric 2:2 produced AUC noise floor on futures.
+    # For SHORTS: pt=4*ATR profit target (price drop), sl=2*ATR loss cap (price rise).
+    labels, t1_times = triple_barrier_labels_vectorized(df, pt_multiplier=4.0, sl_multiplier=2.0, max_bars=12)
     df['target_raw'] = labels
     df['t1_timestamp'] = t1_times
     
@@ -146,21 +155,21 @@ def train_futures_model(timeframe: str = '1h'):
 
     all_data = []
     for sym in symbols:
-        full_data_path = os.path.join(base_dir, 'data', 'raw', f'{sym}_{timeframe}.csv.gz')
-        archive_path = os.path.join(base_dir, 'data', 'raw', f'{sym}_spot_{timeframe}.csv.gz')
-        if not os.path.exists(full_data_path) and os.path.exists(archive_path):
-            full_data_path = archive_path
-        if not os.path.exists(full_data_path):
+        log.info("Processing %s...", sym)
+        try:
+            df = prepare_futures_data(None, timeframe=timeframe, symbol=sym)
+            all_data.append(df)
+        except FileNotFoundError:
             log.warning("Data for %s not found. Auto-downloading...", sym)
             from src.data_ingestion.historical_backfill import backfill_history
             backfill_history(symbol=sym.replace('_', '/'), timeframe=timeframe, days=6 * 365)
-
-        if os.path.exists(full_data_path):
             try:
-                df = prepare_futures_data(full_data_path, timeframe=timeframe, symbol=sym)
+                df = prepare_futures_data(None, timeframe=timeframe, symbol=sym)
                 all_data.append(df)
             except Exception as e:
-                log.error("Failed to prepare %s: %s", sym, e)
+                log.error("Failed to prepare %s after download: %s", sym, e)
+        except Exception as e:
+            log.error("Failed to prepare %s: %s", sym, e)
 
     if not all_data:
         log.error("No data found.")
@@ -200,6 +209,7 @@ def train_futures_model(timeframe: str = '1h'):
     pct_embargo = (2.0 * 12) / len(X)
     cv = PurgedKFold(n_splits=5, t1=t1_series, pct_embargo=pct_embargo)
     fold_accs = []
+    in_sample_fold_accs = []  # P3
     for i, (tr, te) in enumerate(cv.split(X)):
         clf = make_classifier(
             random_state=42,
@@ -213,10 +223,24 @@ def train_futures_model(timeframe: str = '1h'):
         weights = compute_sample_weight('balanced', y.iloc[tr])
         clf.fit(X.iloc[tr], y.iloc[tr], sample_weight=weights)
         fold_accs.append(accuracy_score(y.iloc[te], clf.predict(X.iloc[te])))
+        in_sample_fold_accs.append(accuracy_score(y.iloc[tr], clf.predict(X.iloc[tr])))
         log.info("Futures walk-forward fold %d: %.2f%%", i + 1, fold_accs[-1] * 100)
 
-    log.info("Futures walk-forward mean: %.2f%% ± %.2f%%",
+    log.info("Futures walk-forward mean: %.2f%% +/- %.2f%%",
              np.mean(fold_accs) * 100, np.std(fold_accs) * 100)
+
+    # P3: overfit ratio
+    _wf_mean = float(np.mean(fold_accs))
+    _in_sample_mean = float(np.mean(in_sample_fold_accs)) if in_sample_fold_accs else None
+    _overfit_ratio: float | None = None
+    if _in_sample_mean is not None and _in_sample_mean > 0:
+        _overfit_ratio = (_in_sample_mean - _wf_mean) / _in_sample_mean
+        if _overfit_ratio > 0.20:
+            log.error("[futures] overfit_ratio=%.3f > 0.20 (in_sample=%.2f%% wf=%.2f%%) -- model is memorising",
+                      _overfit_ratio, _in_sample_mean * 100, _wf_mean * 100)
+        elif _overfit_ratio > 0.10:
+            log.warning("[futures] overfit_ratio=%.3f > 0.10 (in_sample=%.2f%% wf=%.2f%%)",
+                        _overfit_ratio, _in_sample_mean * 100, _wf_mean * 100)
 
     n = len(X)
     calib_split = int(n * 0.80)
@@ -284,6 +308,9 @@ def train_futures_model(timeframe: str = '1h'):
         "cio_overrides_applied": dict(_fut_applied) if _fut_applied else None,  # X1.3
         "n_iterations": n_iter,
         "walk_forward_mean_acc": round(float(np.mean(fold_accs)) * 100, 2),
+        "wf_fold_scores": [round(v, 6) for v in fold_accs],
+        "in_sample_mean_acc": round(_in_sample_mean * 100, 2) if _in_sample_mean else None,
+        "overfit_ratio": round(_overfit_ratio, 6) if _overfit_ratio is not None else None,
         "target": "triple_barrier_short_win",
         "symbols": symbols, "timeframe": timeframe,
         "last_trained": datetime.now(timezone.utc).isoformat()

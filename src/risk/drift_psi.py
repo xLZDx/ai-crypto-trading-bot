@@ -93,6 +93,7 @@ class DriftFinding:
     wasserstein_rel: float
     severity: str  # "ok" | "warn" | "pause"
     is_hard_feature: bool = False
+    is_enforce_feature: bool = False  # P2: True → immediate halt; False → confirm-tier (3 consecutive)
     note: str = ""
 
 
@@ -116,6 +117,7 @@ class DriftReport:
                 {"feature": f.feature, "psi": round(f.psi, 4),
                  "wasserstein_rel": round(f.wasserstein_rel, 4),
                  "severity": f.severity, "is_hard": f.is_hard_feature,
+                 "is_enforce": f.is_enforce_feature,
                  "note": f.note}
                 for f in self.findings
             ],
@@ -137,6 +139,24 @@ def _hard_features() -> frozenset[str]:
         extra_set = {x.strip() for x in extras.split(",") if x.strip()}
         return DRIFT_HARD_FEATURES | extra_set
     return DRIFT_HARD_FEATURES
+
+
+def _enforce_features() -> frozenset[str]:
+    """Return the enforce-tier subset of hard features.
+
+    Features in this set trigger an immediate halt on first PSI >= 0.25 poll.
+    Features in DRIFT_HARD_FEATURES but NOT here require 3 consecutive polls
+    (confirm-tier) before halting.
+
+    Source: DRIFT_ENFORCE_FEATURES env var (comma-separated), intersected with
+    the current hard-feature set. Falls back to empty frozenset if unset,
+    preserving the existing warn-only behaviour.
+    """
+    raw = (os.environ.get("DRIFT_ENFORCE_FEATURES") or "").strip()
+    if not raw:
+        return frozenset()
+    candidates = {x.strip() for x in raw.split(",") if x.strip()}
+    return candidates & _hard_features()
 
 
 def compute_psi(
@@ -256,6 +276,7 @@ def check_drift(
         return rep
 
     hard_set = set(hard_features) if hard_features is not None else _hard_features()
+    enforce_set = _enforce_features()
 
     for feat, stats in baseline.items():
         if feat not in actual_df.columns:
@@ -270,6 +291,7 @@ def check_drift(
         psi = compute_psi(props, edges, series.values)
         wd = compute_wasserstein_relative(edges, props, series.values)
         is_hard = feat in hard_set
+        is_enforce = feat in enforce_set
         if psi >= PSI_PAUSE_THRESHOLD:
             severity = "pause" if is_hard else "warn"
         elif psi >= PSI_WARN_THRESHOLD or wd >= WASSERSTEIN_WARN_THRESHOLD:
@@ -279,6 +301,7 @@ def check_drift(
         rep.findings.append(DriftFinding(
             feature=feat, psi=psi, wasserstein_rel=wd,
             severity=severity, is_hard_feature=is_hard,
+            is_enforce_feature=is_enforce,
         ))
 
     # Aggregate decision.
@@ -306,4 +329,5 @@ __all__ = [
     "DRIFT_HARD_FEATURES", "DriftFinding", "DriftReport", "DriftPauseError",
     "PSI_WARN_THRESHOLD", "PSI_PAUSE_THRESHOLD",
     "compute_psi", "compute_wasserstein_relative", "check_drift",
+    "_enforce_features",
 ]

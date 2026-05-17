@@ -65,6 +65,9 @@ class TrainingResult:
     wf_total_trades: int   | None = None
     wf_acc:          float | None = None
     auc_roc:         float | None = None
+    # P3+P4: overfitting ratio + per-fold walk-forward scores
+    overfit_ratio:   float | None = None  # (in_sample_acc - wf_acc) / in_sample_acc
+    wf_fold_scores:  list[float] | None = None  # per-fold WF accuracies in time order
     # ── Failure modes ──
     error:     str | None = None
     cancelled: bool = False
@@ -100,7 +103,7 @@ def append_run(result: TrainingResult) -> None:
             existing = pd.read_parquet(path)
             combined = pd.concat([existing, row], ignore_index=True)
         except Exception as e:
-            logger.warning("KPI gate: failed to read existing runs at %s: %s — overwriting", path, e)
+            logger.warning("KPI gate: failed to read existing runs at %s: %s -- overwriting", path, e)
             combined = row
     else:
         combined = row
@@ -271,7 +274,7 @@ def evaluate_run(result: TrainingResult) -> dict:
     }
     _save_retired(data)
     logger.error(
-        "[KPI gate] AUTO-RETIRED %s — %d consecutive misses on %s",
+        "[KPI gate] AUTO-RETIRED %s -- %d consecutive misses on %s",
         key, CONSECUTIVE_MISS_LIMIT, all_missed,
     )
     return {'persisted': True, 'retired_now': True,
@@ -284,11 +287,18 @@ def _check_thresholds(run: TrainingResult, thresholds: dict[str, float]) -> list
     """Return list of field names where `run` failed the threshold.
 
     Special cases:
-      - `wf_max_dd` is a MAX threshold (run must be <=, not >=).
+      - `wf_max_dd` and `overfit_ratio` are MAX thresholds (run must be <=).
       - All other fields are MIN thresholds (run must be >=).
+      - `wf_fold_scores` triggers a slope gate when >= 3 folds are present:
+        fail if relative slope < -0.02 AND last_fold < first_fold.
     """
     missed: list[str] = []
+
+    # Standard scalar thresholds
+    _MAX_FIELDS = {"wf_max_dd", "overfit_ratio"}
     for field_name, floor in thresholds.items():
+        if field_name == "wf_fold_scores":
+            continue  # handled separately below
         actual = getattr(run, field_name, None)
         if actual is None:
             missed.append(f"{field_name}:missing")
@@ -299,13 +309,37 @@ def _check_thresholds(run: TrainingResult, thresholds: dict[str, float]) -> list
         except (TypeError, ValueError):
             missed.append(f"{field_name}:not_numeric")
             continue
-        if field_name == 'wf_max_dd':
-            # Drawdown is a MAX (smaller is better)
+        if field_name in _MAX_FIELDS:
             if actual_f > floor_f:
                 missed.append(f"{field_name}:{actual_f:.3f}>{floor_f:.3f}")
         else:
             if actual_f < floor_f:
                 missed.append(f"{field_name}:{actual_f:.3f}<{floor_f:.3f}")
+
+    # P4: per-fold slope gate — detect models whose accuracy is declining
+    # across the time-ordered fold sequence (a pattern aggregate stats hide).
+    scores = run.wf_fold_scores
+    if scores is not None and len(scores) >= 3:
+        try:
+            import numpy as np
+            arr = [float(s) for s in scores]
+            mean_acc = sum(arr) / len(arr)
+            if mean_acc > 0:
+                xs = list(range(len(arr)))
+                slope = float(np.polyfit(xs, arr, 1)[0])
+                relative_slope = slope / mean_acc
+                # Both conditions must hold: slope is meaningfully negative
+                # AND the last fold is worse than the first (sanity gate
+                # against a noisy mid-series dip with a V-shaped recovery).
+                if relative_slope < -0.02 and arr[-1] < arr[0]:
+                    missed.append(
+                        f"wf_fold_slope:negative"
+                        f"(slope/mean={relative_slope:.4f},"
+                        f"first={arr[0]:.3f},last={arr[-1]:.3f})"
+                    )
+        except Exception:
+            pass  # numpy unavailable or malformed — skip silently
+
     return missed
 
 
@@ -324,6 +358,15 @@ def evaluate_from_meta_json(model_key: str, tf: str, meta_json_path: str) -> dic
         return {'persisted': False, 'retired_now': False,
                 'reasons': [f'meta JSON unreadable: {e}']}
 
+    # P4: wf_fold_scores — stored as list[float] in meta
+    _wf_fold_raw = meta.get('wf_fold_scores')
+    _wf_fold_scores: list[float] | None = None
+    if isinstance(_wf_fold_raw, list):
+        try:
+            _wf_fold_scores = [float(v) for v in _wf_fold_raw]
+        except (TypeError, ValueError):
+            pass
+
     result = TrainingResult(
         model_key=model_key,
         tf=tf,
@@ -341,5 +384,7 @@ def evaluate_from_meta_json(model_key: str, tf: str, meta_json_path: str) -> dic
         wf_total_trades=meta.get('wf_total_trades') or meta.get('walk_forward_total_trades'),
         wf_acc=meta.get('wf_acc') or meta.get('walk_forward_mean_acc'),
         auc_roc=meta.get('auc_roc'),
+        overfit_ratio=meta.get('overfit_ratio'),
+        wf_fold_scores=_wf_fold_scores,
     )
     return evaluate_run(result)

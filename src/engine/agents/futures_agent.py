@@ -74,7 +74,7 @@ class FuturesAgent(BaseAgent):
     def _on_regime(self, msg) -> None:
         regime = (msg.payload or {}).get("regime", 0)
         if regime == 2:
-            logger.info("[FuturesAgent] VOLATILE — only funding arb allowed.")
+            logger.info("[FuturesAgent] VOLATILE -- only funding arb allowed.")
 
     def _on_signal(self, msg) -> None:
         payload = msg.payload or {}
@@ -93,7 +93,7 @@ class FuturesAgent(BaseAgent):
         funding_signal = float(raw_signals.get("signal_funding", 0))
 
         if regime == 2 and abs(funding_signal) < 0.5:
-            logger.debug("[FuturesAgent] Skipping %s — VOLATILE, no funding signal.", sym)
+            logger.debug("[FuturesAgent] Skipping %s -- VOLATILE, no funding signal.", sym)
             return
 
         if direction == 0 or confidence < CONFIDENCE_THRESHOLD:
@@ -102,7 +102,7 @@ class FuturesAgent(BaseAgent):
         # Liquidity sweep guard
         liq_prox = float(raw_signals.get("liq_proximity", 0))
         if liq_prox > 0.90:
-            logger.info("[FuturesAgent] %s BLOCKED — near liquidation cluster (%.2f).", sym, liq_prox)
+            logger.info("[FuturesAgent] %s BLOCKED -- near liquidation cluster (%.2f).", sym, liq_prox)
             return
 
         # ── G3: Live funding gate (fail-closed) ───────────────────────────
@@ -111,7 +111,7 @@ class FuturesAgent(BaseAgent):
         live_rate = fetch_funding_rate(sym)
         if live_rate is None:
             logger.warning(
-                "[FuturesAgent] %s BLOCKED — live funding rate unavailable (fail-closed).", sym
+                "[FuturesAgent] %s BLOCKED -- live funding rate unavailable (fail-closed).", sym
             )
             return
 
@@ -122,7 +122,7 @@ class FuturesAgent(BaseAgent):
                           (live_rate < -_MAX_ADVERSE_FUNDING and direction < 0)
         if adverse_funding:
             logger.info(
-                "[FuturesAgent] %s BLOCKED — adverse funding %.4f%% exceeds threshold (dir=%+d).",
+                "[FuturesAgent] %s BLOCKED -- adverse funding %.4f%% exceeds threshold (dir=%+d).",
                 sym, live_rate * 100, direction,
             )
             return
@@ -145,7 +145,7 @@ class FuturesAgent(BaseAgent):
                 liq_dist = abs(liq_price - entry_price) / entry_price
                 if liq_dist < _MIN_LIQ_DISTANCE:
                     logger.warning(
-                        "[FuturesAgent] %s BLOCKED — liq %.2f within %.1f%% of entry %.2f "
+                        "[FuturesAgent] %s BLOCKED -- liq %.2f within %.1f%% of entry %.2f "
                         "(min %.0f%% required).",
                         sym, liq_price, liq_dist * 100, entry_price, _MIN_LIQ_DISTANCE * 100,
                     )

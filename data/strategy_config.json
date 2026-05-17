@@ -1,47 +1,47 @@
 {
   "RSI_MeanReversion": {
-    "live": true,
-    "backtest": true
+    "live": false,
+    "backtest": false
   },
   "MACD_Momentum": {
-    "live": true,
-    "backtest": true
+    "live": false,
+    "backtest": false
   },
   "BB_Reversion": {
-    "live": true,
-    "backtest": true
+    "live": false,
+    "backtest": false
   },
   "Ensemble_A": {
-    "live": true,
-    "backtest": true
+    "live": false,
+    "backtest": false
   },
   "VWAP_Reversion": {
-    "live": true,
-    "backtest": true
+    "live": false,
+    "backtest": false
   },
   "Donchian_Breakout": {
-    "live": true,
-    "backtest": true
+    "live": false,
+    "backtest": false
   },
   "Keltner_Breakout": {
-    "live": true,
-    "backtest": true
+    "live": false,
+    "backtest": false
   },
   "Funding_Arb": {
-    "live": true,
-    "backtest": true
+    "live": false,
+    "backtest": false
   },
   "OFI_Momentum": {
-    "live": true,
-    "backtest": true
+    "live": false,
+    "backtest": false
   },
   "Volatility_Breakout": {
-    "live": true,
-    "backtest": true
+    "live": false,
+    "backtest": false
   },
   "Ensemble_B": {
-    "live": true,
-    "backtest": true
+    "live": false,
+    "backtest": false
   },
   "ElliottWave_ML": {
     "live": true,
@@ -56,12 +56,12 @@
     "backtest": true
   },
   "Futures_Short_ML": {
-    "live": true,
-    "backtest": true
+    "live": false,
+    "backtest": false
   },
   "Scalping_ML": {
-    "live": true,
-    "backtest": true
+    "live": false,
+    "backtest": false
   },
   "TFT_MarketMaker": {
     "live": true,
@@ -88,23 +88,23 @@
     "backtest": true
   },
   "OU_MeanReversion_Filter": {
-    "live": true,
-    "backtest": true
+    "live": false,
+    "backtest": false
   },
   "Ichimoku_Cloud": {
-    "live": true,
-    "backtest": true
+    "live": false,
+    "backtest": false
   },
   "Supertrend": {
-    "live": true,
-    "backtest": true
+    "live": false,
+    "backtest": false
   },
   "MACD_Divergence": {
-    "live": true,
-    "backtest": true
+    "live": false,
+    "backtest": false
   },
   "OU_Entry": {
-    "live": true,
-    "backtest": true
+    "live": false,
+    "backtest": false
   }
 }

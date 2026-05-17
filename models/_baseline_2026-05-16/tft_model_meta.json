@@ -1,0 +1,21 @@
+{
+  "symbols": [
+    "BTC_USDT"
+  ],
+  "timeframe": "1h",
+  "input_chunk_length": 168,
+  "output_chunk_length": 24,
+  "n_epochs": 1,
+  "epochs_completed": 1,
+  "min_epochs": 1,
+  "patience": 2,
+  "model_path": "D:\\test 2\\AI trading assistance\\models\\tft_model.pt",
+  "device": "GPU",
+  "last_trained": "2026-05-16T00:44:21.584252+00:00",
+  "started_at_unix": 1778891306.245915,
+  "finished_at_unix": 1778892261.041156,
+  "duration_s": 954.8,
+  "per_epoch_s": 680.38,
+  "n_samples": 61324,
+  "n_features": 27
+}

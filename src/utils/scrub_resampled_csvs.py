@@ -105,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
     total_dropped = sum(r["dropped"] for r in results)
     total_rows = sum(r["rows"] for r in results)
     scrubbed = sum(1 for r in results if r["status"] in ("scrubbed", "would-scrub"))
-    print(f"\n[scrub] done — {len(results)} files, {scrubbed} needed scrubbing, "
+    print(f"\n[scrub] done -- {len(results)} files, {scrubbed} needed scrubbing, "
           f"{total_dropped} gap rows removed ({total_rows} rows kept), "
           f"elapsed {time.time() - started:.1f}s")
     return 0

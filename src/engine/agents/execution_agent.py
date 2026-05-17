@@ -67,7 +67,7 @@ class ExecutionAgent(BaseAgent):
             # Simulation mode — just record the position
             current_price = self._get_last_price(sym)
             if current_price is None:
-                logger.warning("[ExecutionAgent] Cannot open %s — no price.", sym)
+                logger.warning("[ExecutionAgent] Cannot open %s -- no price.", sym)
                 return
 
             self._open_positions[sym] = {
@@ -102,7 +102,7 @@ class ExecutionAgent(BaseAgent):
         pos = self._open_positions.pop(sym)
         current_price = self._get_last_price(sym)
         if current_price is None:
-            logger.warning("[ExecutionAgent] Cannot close %s — no price.", sym)
+            logger.warning("[ExecutionAgent] Cannot close %s -- no price.", sym)
             return
 
         entry = pos["entry_price"]

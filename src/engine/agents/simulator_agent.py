@@ -284,7 +284,7 @@ class SimulatorAgent(BaseAgent):
                 if not stop_flag[0]:
                     self._state = RUNNING  # allow _run_cycle to start next
                 logger.info(
-                    "[SimulatorAgent] Scenario %s/%s complete — %d bars",
+                    "[SimulatorAgent] Scenario %s/%s complete -- %d bars",
                     symbol, timeframe, replay.bars_emitted,
                 )
 

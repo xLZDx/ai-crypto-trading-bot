@@ -489,7 +489,7 @@ class ProcessManager:
                             and snap.pid and snap.status != HEALTH_OK):
                         logger.critical(
                             "[process_manager] AUTO_KILL: role=%s pid=%s "
-                            "bad_count=%d status=%s — killing.",
+                            "bad_count=%d status=%s -- killing.",
                             snap.role, snap.pid, snap.bad_count, snap.status,
                         )
                         self.kill(snap.pid)

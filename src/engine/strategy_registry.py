@@ -135,12 +135,17 @@ REGISTRY: dict[str, dict[str, Any]] = {
     },
 
     # ── ML model signals ──────────────────────────────────────────────────────
+    # Phase A: `timeframe` pins which per-TF model variant the live bot uses.
+    # MultiTFPredictor.predict_at(timeframe, data) routes to that variant;
+    # falls back to canonical (1h) when the per-TF artifact is not on disk.
     "ElliottWave_ML": {
         "label": "Elliott Wave + Base ML",
         "description": "Live: Elliott Wave pivots + RF model. BT: momentum proxy (5-bar mom + SMA50 + ML)",
         "group": "ML",
         "signal_col": "signal_elliott_proxy",
         "models": ["btc_rf_model.joblib"],
+        "timeframe": "1h",
+        "model_key": "base",
         "can_live": True,
         "can_backtest": True,
     },
@@ -150,24 +155,30 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "group": "ML",
         "signal_col": "signal_base_ml",
         "models": ["btc_rf_model.joblib"],
+        "timeframe": "1h",
+        "model_key": "base",
         "can_live": True,
         "can_backtest": True,
     },
     "Trend_ML": {
         "label": "Trend RF Model",
-        "description": "RF model on Donchian+Keltner+ADX trend features",
+        "description": "RF model on Donchian+Keltner+ADX trend features; 4h TF captures real trend signals",
         "group": "ML",
         "signal_col": "signal_trend_ml",
         "models": ["trend_model.joblib"],
+        "timeframe": "4h",
+        "model_key": "trend",
         "can_live": True,
         "can_backtest": True,
     },
     "Futures_Short_ML": {
         "label": "Futures Short RF Model",
-        "description": "RF model for futures shorting opportunities",
+        "description": "RF model for futures shorting; 4h TF for overbought/regime-flip context",
         "group": "ML",
         "signal_col": "signal_futures_ml",
         "models": ["futures_short_model.joblib"],
+        "timeframe": "4h",
+        "model_key": "futures",
         "can_live": True,
         "can_backtest": True,
     },
@@ -177,6 +188,8 @@ REGISTRY: dict[str, dict[str, Any]] = {
         "group": "ML",
         "signal_col": "signal_scalping",
         "models": ["scalping_model.joblib"],
+        "timeframe": "1m",
+        "model_key": "scalping",
         "can_live": True,
         "can_backtest": True,
     },
@@ -310,7 +323,7 @@ def load_config() -> dict[str, dict[str, bool]]:
                 _write_config(merged)
             return merged
     except Exception as e:
-        logger.warning("Could not load strategy_config.json: %s — using defaults", e)
+        logger.warning("Could not load strategy_config.json: %s -- using defaults", e)
     return dict(_DEFAULTS)
 
 
@@ -453,6 +466,16 @@ def is_enabled_backtest(name: str) -> bool:
     if bucket_for(name) in disabled_buckets():
         return False
     return load_config().get(name, {}).get("backtest", False)
+
+
+def get_strategy_tf(name: str) -> str | None:
+    """Return the pinned inference timeframe for a strategy, or None if not set."""
+    return REGISTRY.get(name, {}).get("timeframe")
+
+
+def get_strategy_model_key(name: str) -> str | None:
+    """Return the model_key (base/trend/futures/scalping) for a strategy, or None."""
+    return REGISTRY.get(name, {}).get("model_key")
 
 
 def enabled_backtest_signal_cols() -> list[tuple[str, str, str]]:

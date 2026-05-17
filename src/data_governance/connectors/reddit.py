@@ -37,7 +37,7 @@ class RedditConnector(DataSourceConnector):
         try:
             import praw
         except ImportError:
-            logger.info("[reddit] praw not installed — skipping. "
+            logger.info("[reddit] praw not installed -- skipping. "
                         "Run: pip install --no-cache-dir praw")
             return 0
         try:

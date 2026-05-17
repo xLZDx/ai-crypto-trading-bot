@@ -1731,11 +1731,11 @@ document.addEventListener('DOMContentLoaded', function() {
           <div class="tbl-wrap scroll-table">
             <table id="tbl-ov-open">
               <thead><tr>
-                <th onclick="sortTbl(this)">Pair</th><th onclick="sortTbl(this)">Market</th><th onclick="sortTbl(this)">Strategy</th><th onclick="sortTbl(this)">Side</th>
+                <th onclick="sortTbl(this)">Pair</th><th onclick="sortTbl(this)">Market</th><th onclick="sortTbl(this)">Model</th><th onclick="sortTbl(this)">Strategy</th><th onclick="sortTbl(this)">Side</th>
                 <th onclick="sortTbl(this)">Entry</th><th onclick="sortTbl(this)">Current</th><th onclick="sortTbl(this)">Live PnL</th><th onclick="sortTbl(this)">Opened</th>
               </tr></thead>
               <tbody id="ov-open-tbody">
-                <tr><td colspan="8" style="text-align:center;color:#475569;padding:14px">⏳ Loading positions…</td></tr>
+                <tr><td colspan="9" style="text-align:center;color:#475569;padding:14px">⏳ Loading positions…</td></tr>
               </tbody>
             </table>
           </div>
@@ -1757,11 +1757,11 @@ document.addEventListener('DOMContentLoaded', function() {
           <div class="tbl-wrap scroll-table">
             <table id="tbl-ov-closed">
               <thead><tr>
-                <th onclick="sortTbl(this)">Pair</th><th onclick="sortTbl(this)">Market</th><th onclick="sortTbl(this)">Strategy</th><th onclick="sortTbl(this)">Side</th>
+                <th onclick="sortTbl(this)">Pair</th><th onclick="sortTbl(this)">Market</th><th onclick="sortTbl(this)">Model</th><th onclick="sortTbl(this)">Strategy</th><th onclick="sortTbl(this)">Side</th>
                 <th onclick="sortTbl(this)">Entry</th><th onclick="sortTbl(this)">Exit</th><th onclick="sortTbl(this)">PnL</th><th onclick="sortTbl(this)">Closed</th>
               </tr></thead>
               <tbody id="ov-closed-tbody">
-                <tr><td colspan="8" style="text-align:center;color:#475569;padding:14px">⏳ Loading trades…</td></tr>
+                <tr><td colspan="9" style="text-align:center;color:#475569;padding:14px">⏳ Loading trades…</td></tr>
               </tbody>
             </table>
           </div>
@@ -2468,12 +2468,12 @@ document.addEventListener('DOMContentLoaded', function() {
             <div class="tbl-wrap scroll-table">
               <table id="tbl-open-trades">
                 <thead><tr>
-                  <th onclick="sortTbl(this)">ID / Pair</th><th onclick="sortTbl(this)">Market</th><th onclick="sortTbl(this)">Strategy</th><th onclick="sortTbl(this)">Side</th>
+                  <th onclick="sortTbl(this)">ID / Pair</th><th onclick="sortTbl(this)">Market</th><th onclick="sortTbl(this)">Model</th><th onclick="sortTbl(this)">Strategy</th><th onclick="sortTbl(this)">Side</th>
                   <th onclick="sortTbl(this)">Entry</th><th onclick="sortTbl(this)">Current</th>
                   <th onclick="sortTbl(this)">Live PnL</th><th onclick="sortTbl(this)">PnL %</th><th onclick="sortTbl(this)">Opened</th>
                 </tr></thead>
                 <tbody id="open-trades-tbody">
-                  <tr><td colspan="9" style="text-align:center;color:#475569;padding:14px">No open positions</td></tr>
+                  <tr><td colspan="10" style="text-align:center;color:#475569;padding:14px">No open positions</td></tr>
                 </tbody>
               </table>
             </div>
@@ -2495,12 +2495,12 @@ document.addEventListener('DOMContentLoaded', function() {
             <div class="tbl-wrap scroll-table">
               <table id="tbl-closed-trades">
                 <thead><tr>
-                  <th onclick="sortTbl(this)">ID / Pair</th><th onclick="sortTbl(this)">Market</th><th onclick="sortTbl(this)">Strategy</th><th onclick="sortTbl(this)">Side</th>
+                  <th onclick="sortTbl(this)">ID / Pair</th><th onclick="sortTbl(this)">Market</th><th onclick="sortTbl(this)">Model</th><th onclick="sortTbl(this)">Strategy</th><th onclick="sortTbl(this)">Side</th>
                   <th onclick="sortTbl(this)">Entry</th><th onclick="sortTbl(this)">Exit</th>
                   <th onclick="sortTbl(this)">Closed PnL</th><th onclick="sortTbl(this)">PnL %</th><th onclick="sortTbl(this)">Closed</th>
                 </tr></thead>
                 <tbody id="closed-trades-tbody">
-                  <tr><td colspan="9" style="text-align:center;color:#475569;padding:14px">No closed trades</td></tr>
+                  <tr><td colspan="10" style="text-align:center;color:#475569;padding:14px">No closed trades</td></tr>
                 </tbody>
               </table>
             </div>
@@ -3014,6 +3014,58 @@ document.addEventListener('DOMContentLoaded', function() {
         </div>
       </div>
 
+      <!-- ── PC Load Balancer (2026-05-15) ─────────────────────────── -->
+      <div class="ms-section ms-open" id="loadbal-section" style="margin-top:12px">
+        <div class="ms-section-hdr" onclick="(()=>{ const b=document.getElementById('loadbal-section-body'),s=document.getElementById('loadbal-section'); if(!b)return; const o=s.classList.toggle('ms-open'); b.classList.toggle('ms-collapsed',!o); })()">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:.72rem;font-weight:700;color:#e2e8f0;text-transform:uppercase;letter-spacing:.06em">⚖ PC Load Balancer</span>
+            <span class="chip" id="loadbal-state-chip" style="font-size:.58rem;color:#64748b">—</span>
+            <span class="chip" id="loadbal-trade-chip" style="font-size:.55rem;color:#64748b">trade mode: —</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <button onclick="event.stopPropagation(); loadbalRefresh()"
+                    style="padding:4px 11px;font-size:.6rem;border-radius:5px;cursor:pointer;background:rgba(59,130,246,.2);color:#93c5fd;border:1px solid rgba(59,130,246,.4);font-weight:700"
+                    title="Refresh recommended priorities. Pure read — does not change anything.">↻ Refresh</button>
+            <span class="ms-chevron-main">▼</span>
+          </div>
+        </div>
+        <div class="ms-section-body" id="loadbal-section-body">
+          <div style="font-size:.62rem;color:#94a3b8;line-height:1.6;margin-bottom:10px">
+            Gives the dashboard a process-priority advantage so the UI stays responsive while training is running.
+            Trains/cluster siblings drop to <code>BELOW_NORMAL</code>; the bot is <b>exempt from demotion</b> when
+            <code>control.json</code>'s <code>trade_mode</code> is live (real / mainnet). Persistent — once enabled,
+            re-applies every 30 s and on dashboard restart.
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;align-items:center">
+            <button id="loadbal-enable-btn" onclick="loadbalEnable(true)"
+                    class="btn btn-sm" style="background:rgba(52,211,153,.2);color:#34d399;border:1px solid rgba(52,211,153,.45);font-weight:700">▶ Enable</button>
+            <button onclick="loadbalEnable(false)"
+                    class="btn btn-sm" style="background:rgba(148,163,184,.2);color:#94a3b8;border:1px solid rgba(148,163,184,.4)">⏸ Disable</button>
+            <button onclick="loadbalApply(false)"
+                    class="btn btn-sm" style="background:rgba(59,130,246,.2);color:#93c5fd;border:1px solid rgba(59,130,246,.4)">⚡ Apply now</button>
+            <button onclick="loadbalApply(true)"
+                    class="btn btn-sm" style="background:rgba(251,191,36,.18);color:#fbbf24;border:1px solid rgba(251,191,36,.4)" title="Show what would change without actually setting priorities">👁 Dry run</button>
+            <span id="loadbal-last-result" style="font-size:.6rem;color:#64748b"></span>
+          </div>
+          <table id="loadbal-table" style="width:100%;border-collapse:collapse;font-size:.65rem">
+            <thead style="background:rgba(15,23,42,.6);color:#94a3b8;text-align:left">
+              <tr>
+                <th style="padding:6px">PID</th>
+                <th style="padding:6px">Process</th>
+                <th style="padding:6px">Role</th>
+                <th style="padding:6px">Detected via</th>
+                <th style="padding:6px">Current</th>
+                <th style="padding:6px">Recommended</th>
+                <th style="padding:6px">Note</th>
+              </tr>
+            </thead>
+            <tbody id="loadbal-tbody">
+              <tr><td colspan="7" style="padding:14px;text-align:center;color:#64748b">Click <b>↻ Refresh</b> to fetch the current priority plan.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <!-- ── Training Cluster ──────────────────────────────────────── -->
       <div class="ms-section" id="cluster-section" style="margin-top:12px">
         <div class="ms-section-hdr" onclick="(()=>{ const b=document.getElementById('cluster-section-body'),s=document.getElementById('cluster-section'); if(!b)return; const o=s.classList.toggle('ms-open'); b.classList.toggle('ms-collapsed',!o); })()">
@@ -3489,7 +3541,7 @@ document.addEventListener('DOMContentLoaded', function() {
       <div class="card" id="card-analytics-winning-hp">
         <div class="card-header"><span class="card-title">🏆 Winning Hyperparameters</span></div>
         <div class="card-body">
-          <div id="an-winning" style="font-size:.65rem;color:#94a3b8">Pick a model + TF to see which hyperparameters produced the best score.</div>
+          <div id="an-winning" style="font-size:.65rem;color:#94a3b8">Loading winning hyperparameters…</div>
         </div>
       </div>
 
@@ -3513,6 +3565,180 @@ document.addEventListener('DOMContentLoaded', function() {
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
 const API_KEY = '{{ api_key }}';
 const hdrs = () => ({ 'Content-Type': 'application/json', ...(API_KEY ? {'X-API-Key': API_KEY} : {}) });
+
+// ─── UNIFIED COLUMN FILTERS + JOB REGISTRY HELPERS (2026-05-15) ──────────────
+// Goals:
+//   1. Every <table> on every tab gets per-column filter inputs in its
+//      <thead> that persist across refresh / retrain / sort / tab-switch.
+//   2. Every long-running button registers a job in the backend so progress
+//      survives page reload + tab switches.
+//
+// Why this lives at the top: many render functions later in the file call
+// `installColumnFilters` directly after building rows. Keeping the helper
+// here means none of them need a forward-declaration guard.
+
+// localStorage key kept only so the post-removal stub below can purge
+// any stale filter state that survived a hard refresh.
+const _FILTER_STATE_KEY = 'tableFilters_v1';
+
+// Per-column filter inputs were removed 2026-05-15 at operator request:
+// "remove filter line from all tabs and cards, just leave the sorting
+// controls on headers". Filters added meaningful visual noise without
+// commensurate benefit; sort already gives the cross-cutting view.
+//
+// Stubs below preserve the call sites in older render functions so we
+// don't have to chase every refreshTableFilters() invocation through
+// 10K lines. They sweep any leftover filter row from a previous session
+// (in case localStorage state survived) and clear stored filter state.
+function installColumnFilters(tableId /*, opts */) {
+  const table = document.getElementById(tableId);
+  if (!table) return;
+  const thead = table.tHead;
+  if (!thead) return;
+  const old = thead.querySelector('tr.col-filter-row');
+  if (old) old.remove();
+  // Ensure no rows are hidden by a stale filter.
+  const tbody = table.tBodies && table.tBodies[0];
+  if (tbody) {
+    Array.from(tbody.rows).forEach(r => { r.style.display = ''; });
+  }
+}
+function refreshTableFilters(tableId /*, opts */) {
+  // Defer to next tick to run after the just-set innerHTML is committed.
+  setTimeout(() => installColumnFilters(tableId), 0);
+}
+function _autoInstallFiltersOnAllTables() {
+  document.querySelectorAll('table').forEach(t => {
+    if (t.id) installColumnFilters(t.id);
+  });
+}
+document.addEventListener('DOMContentLoaded', () => {
+  // One-shot sweep; the operator wanted filters gone, no recurring scan.
+  _autoInstallFiltersOnAllTables();
+  try { localStorage.removeItem(_FILTER_STATE_KEY); } catch (_) {}
+});
+
+// ─── UNIFIED JOB REGISTRY HELPER ─────────────────────────────────────────────
+// runJob(cardId, label, asyncFn[, opts])
+//   - Registers a backend job (via /api/jobs/register).
+//   - Calls asyncFn(logFn, jobId) where logFn(msg) appends a progress line.
+//   - On resolve: marks the job complete with the resolved value as result.
+//   - On reject:  marks the job failed with the error.
+//   - Returns the asyncFn's return value (so callers can still chain).
+//
+// This is the single entry point every long-running button should use so
+// that progress survives tab switches and page reload — the dashboard then
+// polls /api/jobs?card_id=X on tab/card mount to rehydrate the UI.
+async function runJob(cardId, label, asyncFn, opts) {
+  let jobId = null;
+  const log = async (msg) => {
+    if (!jobId) return;
+    try {
+      await fetch(`/api/jobs/${encodeURIComponent(jobId)}/log`, {
+        method: 'POST', headers: hdrs(),
+        body: JSON.stringify({msg: String(msg)}),
+      });
+    } catch (_) { /* don't break the caller on a transient log POST */ }
+  };
+  try {
+    const r = await fetch('/api/jobs/register', {
+      method: 'POST', headers: hdrs(),
+      body: JSON.stringify({
+        card_id: cardId,
+        label: label,
+        kind: (opts && opts.kind) || 'generic',
+        initial_log: (opts && opts.initialLog) || `Starting: ${label}`,
+      }),
+    });
+    const j = await r.json();
+    if (j && j.ok) jobId = j.job_id;
+  } catch (_) { /* fall through: caller still runs */ }
+  try {
+    const result = await asyncFn(log, jobId);
+    if (jobId) {
+      fetch(`/api/jobs/${encodeURIComponent(jobId)}/complete`, {
+        method: 'POST', headers: hdrs(),
+        body: JSON.stringify({result: result, log: 'done'}),
+      }).catch(() => {});
+    }
+    return result;
+  } catch (e) {
+    const msg = (e && (e.message || e.toString())) || 'unknown error';
+    if (jobId) {
+      fetch(`/api/jobs/${encodeURIComponent(jobId)}/fail`, {
+        method: 'POST', headers: hdrs(),
+        body: JSON.stringify({error: msg}),
+      }).catch(() => {});
+    }
+    throw e;
+  }
+}
+
+// Poll the backend for in-flight jobs on a card; calls renderFn(jobs)
+// with the latest list every `intervalMs`. Returns a cancel function.
+// Used by render functions to keep the UI showing live progress even
+// when no client-side async chain is active (e.g. after a reload).
+const _jobPollers = {};
+function pollCardJobs(cardId, renderFn, intervalMs) {
+  if (_jobPollers[cardId]) clearInterval(_jobPollers[cardId]);
+  intervalMs = intervalMs || 3000;
+  const tick = async () => {
+    try {
+      const r = await fetch(`/api/jobs?card_id=${encodeURIComponent(cardId)}&limit=10`,
+                            { headers: hdrs() });
+      if (!r.ok) return;
+      const j = await r.json();
+      if (j && j.ok) renderFn(j.jobs || [], j.running_count || 0);
+    } catch (_) { /* ignore transient */ }
+  };
+  tick();
+  _jobPollers[cardId] = setInterval(tick, intervalMs);
+  return () => {
+    if (_jobPollers[cardId]) { clearInterval(_jobPollers[cardId]); delete _jobPollers[cardId]; }
+  };
+}
+
+// One-shot fetch of jobs for a card. Used in tab-switch handlers to
+// rehydrate UI without starting a persistent poller.
+async function fetchCardJobs(cardId) {
+  try {
+    const r = await fetch(`/api/jobs?card_id=${encodeURIComponent(cardId)}&limit=5`,
+                          { headers: hdrs() });
+    if (!r.ok) return { jobs: [], running_count: 0 };
+    const j = await r.json();
+    return j && j.ok ? j : { jobs: [], running_count: 0 };
+  } catch (_) { return { jobs: [], running_count: 0 }; }
+}
+
+// Render a compact in-flight progress strip into a target element. Used by
+// cards that have a known "output" element (auto-orch-output, etc.). Shows
+// the most recent log line, status pill, and elapsed time.
+function renderJobStrip(targetEl, jobs) {
+  if (!targetEl) return;
+  if (!jobs || !jobs.length) return;
+  const running = jobs.filter(j => !['done','error','cancelled'].includes(j.status));
+  const job = running[0] || jobs[0];
+  if (!job) return;
+  const lastLog = (job.log && job.log.length) ? job.log[job.log.length - 1] : null;
+  const elapsed = job.finished_at
+    ? Math.round((job.finished_at - (job.started_at || job.created_at)))
+    : Math.round((Date.now()/1000 - (job.started_at || job.created_at)));
+  const pillColors = {
+    running:   ['#fbbf24','rgba(251,191,36,.18)'],
+    queued:    ['#93c5fd','rgba(59,130,246,.18)'],
+    done:      ['#34d399','rgba(52,211,153,.18)'],
+    error:     ['#fb7185','rgba(251,113,133,.18)'],
+    cancelled: ['#94a3b8','rgba(148,163,184,.18)'],
+  };
+  const [fg, bg] = pillColors[job.status] || ['#94a3b8','rgba(148,163,184,.18)'];
+  targetEl.innerHTML =
+    `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:4px 0">
+      <span style="background:${bg};color:${fg};padding:1px 6px;border-radius:4px;font-size:.55rem;font-weight:700;border:1px solid ${fg}66">${job.status.toUpperCase()}</span>
+      <span style="color:#cbd5e1;font-size:.6rem">${job.label || job.kind}</span>
+      <span style="color:#64748b;font-size:.55rem">${elapsed}s elapsed</span>
+      ${lastLog ? `<span style="color:#94a3b8;font-size:.55rem">· ${(lastLog.msg||'').slice(0,90)}</span>` : ''}
+    </div>`;
+}
 
 // Only scroll to bottom if the user is already near the bottom (not manually scrolled up)
 function smartScroll(el) {
@@ -3593,6 +3819,8 @@ function switchTab(name) {
   if (name === 'watchlist') renderWatchlist();
   if (name === 'model_comparison') {
     loadModelComparison();
+    if (typeof rehydrateAutoOrchCard === 'function') rehydrateAutoOrchCard();
+    if (typeof rehydrateBakeOffCard === 'function') rehydrateBakeOffCard();
   }
   if (name === 'strategy') {
     renderStrategyTab(botState);
@@ -3618,6 +3846,7 @@ function switchTab(name) {
     dbPollStatus();
     if (typeof clusterPoll === 'function') clusterPoll();
     if (typeof renderLocalTrainingProgress === 'function') renderLocalTrainingProgress();
+    if (typeof loadbalRefresh === 'function') loadbalRefresh();
   }
   if (name === 'simulator') { simPoll(); simLoadStrategyStats(); }
   if (name === 'institutional') {
@@ -4149,6 +4378,43 @@ async function closeAllOrders() {
   if (btn) { btn.disabled = false; btn.textContent = '✕ Close All Open'; }
 }
 
+// Derive the ML model that drove a trade from its strategy / market.
+// Operator request (2026-05-15): show the model name alongside the
+// strategy in every trade table so it's obvious which ML cell produced
+// the signal. The trade dict has no `model` field today — so we infer
+// from strategy and market. Future-proof: if a `model`/`model_key`
+// field appears on the trade, we use it verbatim.
+function deriveTradeModel(t) {
+  if (!t) return '--';
+  if (t.model_key) return String(t.model_key);
+  if (t.model)     return String(t.model);
+  const strat = String(t.strategy || '').toLowerCase();
+  const market = String(t.market   || '').toLowerCase();
+  if (strat.includes('scalp'))    return 'scalping';
+  if (strat.includes('trend'))    return 'trend';
+  if (strat.includes('regime'))   return 'regime';
+  if (strat.includes('meta'))     return 'meta';
+  if (strat.includes('futures'))  return 'futures';
+  if (strat.includes('breakout')) return 'trend';
+  if (strat.includes('mean')   || strat.includes('rev')) return 'base';
+  if (market === 'futures')   return 'futures';
+  if (market === 'scalping' || market === 'spot_scalping') return 'scalping';
+  return 'base';
+}
+
+function modelChip(model) {
+  const colors = {
+    scalping: ['#fbbf24','rgba(251,191,36,.16)'],
+    trend:    ['#34d399','rgba(52,211,153,.16)'],
+    futures:  ['#fb7185','rgba(251,113,133,.16)'],
+    meta:     ['#a78bfa','rgba(167,139,250,.16)'],
+    regime:   ['#93c5fd','rgba(59,130,246,.16)'],
+    base:     ['#94a3b8','rgba(148,163,184,.16)'],
+  };
+  const [fg, bg] = colors[model] || colors.base;
+  return `<span style="background:${bg};color:${fg};padding:1px 6px;border-radius:4px;font-size:.55rem;font-weight:700;border:1px solid ${fg}44">${model}</span>`;
+}
+
 function renderTrades() {
   const prices = botState.prices || {};
   const filterMkt = t => {
@@ -4171,7 +4437,7 @@ function renderTrades() {
     const _openWrap = openTbody.closest('.scroll-table');
     const _openScroll = _openWrap ? _openWrap.scrollTop : 0;
     openTbody.innerHTML = open.length === 0
-      ? '<tr><td colspan="9" style="text-align:center;color:#475569;padding:14px">No open positions</td></tr>'
+      ? '<tr><td colspan="10" style="text-align:center;color:#475569;padding:14px">No open positions</td></tr>'
       : open.map(t => {
         const ep = t.buy_price||t.entry_price||0;
         const cp = prices[t.symbol]||t.current_price||0;
@@ -4186,9 +4452,11 @@ function renderTrades() {
         const pctStr = pct!=null ? (pct>=0?'+':'')+fmt(pct,2)+'%' : '--';
         const sc = (t.side||'LONG')==='LONG' ? 'positive' : 'negative';
         const openedAt = (t.buy_time||t.opened_at||'').split(' ')[0]||'--';
+        const model = deriveTradeModel(t);
         return `<tr>
           <td><div style="font-family:'JetBrains Mono';font-size:.58rem;color:#475569">${String(t.id||'').slice(0,10)}</div><div style="font-weight:700;color:#fff">${t.symbol}</div></td>
           <td>${mktBadge(t.market)}</td>
+          <td>${modelChip(model)}</td>
           <td><span class="chip">${t.strategy||'--'}</span></td>
           <td><span class="${sc}" style="font-weight:800;font-size:.65rem">${t.side||'LONG'}</span></td>
           <td style="font-family:'JetBrains Mono';font-size:.7rem">${ep ? fmtK(ep) : '--'}</td>
@@ -4206,7 +4474,7 @@ function renderTrades() {
     const _closedWrap = closedTbody.closest('.scroll-table');
     const _closedScroll = _closedWrap ? _closedWrap.scrollTop : 0;
     closedTbody.innerHTML = closed.length === 0
-      ? '<tr><td colspan="9" style="text-align:center;color:#475569;padding:14px">No closed trades</td></tr>'
+      ? '<tr><td colspan="10" style="text-align:center;color:#475569;padding:14px">No closed trades</td></tr>'
       : closed.slice(0,100).map(t => {
         const pnl = t.pnl_usdt || 0;
         const pnlCls = pnl > 0 ? 'positive' : pnl < 0 ? 'negative' : 'muted';
@@ -4217,9 +4485,11 @@ function renderTrades() {
         const pct = t.pnl_percent != null ? +t.pnl_percent
                   : (entryP&&exitP&&t.amount_coin) ? ((exitP-entryP)/entryP*100*((t.side||'LONG')==='LONG'?1:-1)) : null;
         const pctStr = pct!=null ? (pct>=0?'+':'')+fmt(pct,2)+'%' : '--';
+        const model = deriveTradeModel(t);
         return `<tr>
           <td><div style="font-family:'JetBrains Mono';font-size:.58rem;color:#475569">${String(t.id||'').slice(0,10)}</div><div style="font-weight:700;color:#fff">${t.symbol}</div></td>
           <td>${mktBadge(t.market)}</td>
+          <td>${modelChip(model)}</td>
           <td><span class="chip">${t.strategy||'--'}</span></td>
           <td><span class="${sc}" style="font-weight:800;font-size:.65rem">${t.side||'LONG'}</span></td>
           <td style="font-family:'JetBrains Mono';font-size:.7rem">${entryP ? fmtK(entryP) : '--'}</td>
@@ -4246,7 +4516,7 @@ function renderOverviewOrders() {
   const openTbody = $('ov-open-tbody');
   if (openTbody) {
     openTbody.innerHTML = open.length === 0
-      ? '<tr><td colspan="8" style="text-align:center;color:#475569;padding:14px">No open positions</td></tr>'
+      ? '<tr><td colspan="9" style="text-align:center;color:#475569;padding:14px">No open positions</td></tr>'
       : open.map(t => {
         const ep = t.buy_price||t.entry_price||0;
         const cp = prices[t.symbol]||t.current_price||0;
@@ -4257,9 +4527,11 @@ function renderOverviewOrders() {
         const lpCls = lp>0?'positive':lp<0?'negative':'muted';
         const sc = (t.side||'LONG')==='LONG' ? 'positive' : 'negative';
         const openedAt = (t.buy_time||t.opened_at||'').split(' ')[0]||'--';
+        const model = deriveTradeModel(t);
         return `<tr>
           <td style="font-weight:700;color:#fff">${t.symbol}</td>
           <td>${mktBadge(t.market)}</td>
+          <td>${modelChip(model)}</td>
           <td><span class="chip">${t.strategy||'--'}</span></td>
           <td><span class="${sc}" style="font-weight:800;font-size:.65rem">${t.side||'LONG'}</span></td>
           <td style="font-family:'JetBrains Mono';font-size:.7rem">${ep ? fmtK(ep) : '--'}</td>
@@ -4273,7 +4545,7 @@ function renderOverviewOrders() {
   const closedTbody = $('ov-closed-tbody');
   if (closedTbody) {
     closedTbody.innerHTML = closed.length === 0
-      ? '<tr><td colspan="8" style="text-align:center;color:#475569;padding:14px">No closed trades yet</td></tr>'
+      ? '<tr><td colspan="9" style="text-align:center;color:#475569;padding:14px">No closed trades yet</td></tr>'
       : closed.slice(0, 15).map(t => {
         const pnl = t.pnl_usdt || 0;
         const pnlCls = pnl>0?'positive':pnl<0?'negative':'muted';
@@ -4281,9 +4553,11 @@ function renderOverviewOrders() {
         const entryP = t.buy_price||t.entry_price;
         const exitP  = t.sell_price||t.exit_price;
         const closedAt = (t.sell_time||t.closed_at||'').split(' ')[0]||'--';
+        const model = deriveTradeModel(t);
         return `<tr>
           <td style="font-weight:700;color:#fff">${t.symbol}</td>
           <td>${mktBadge(t.market)}</td>
+          <td>${modelChip(model)}</td>
           <td><span class="chip">${t.strategy||'--'}</span></td>
           <td><span class="${sc}" style="font-weight:800;font-size:.65rem">${t.side||'LONG'}</span></td>
           <td style="font-family:'JetBrains Mono';font-size:.7rem">${entryP ? fmtK(entryP) : '--'}</td>
@@ -4586,8 +4860,11 @@ async function anLoad() {
         <td style="padding:6px">${baselinePill}</td>
       </tr>`;
     }).join('');
-    // After each load, refresh the winning-hp panel if a specific cell is picked.
-    if (model && tf) anLoadWinningHp();
+    // Re-attach per-column filter row + apply saved filters now that the
+    // tbody was replaced. installColumnFilters is idempotent.
+    refreshTableFilters('an-runs-table');
+    // After each load, refresh the winning-hp panel.
+    anLoadWinningHp();
   } catch (e) {
     summary.innerHTML = `<span style="color:#fb7185">Fetch error: ${esc(e.message||e)}</span>`;
   }
@@ -4612,14 +4889,33 @@ async function anPromote(runId, model, tf) {
                `Future Δ Score / Δ Acc / Δ AUC columns will be calculated\n` +
                `against THIS run's metrics. Use when you've confirmed this\n` +
                `run is a known-good reference (e.g., post-fix, known data).`)) return;
+  // Visible inline feedback so the operator sees the action took effect
+  // immediately — pre-fix the only signal was an anLoad() reload that
+  // scrolled the table back to the top and looked like nothing happened.
+  const summary = document.getElementById('an-summary');
+  const origSummary = summary ? summary.innerHTML : '';
+  if (summary) summary.innerHTML = `<span style="color:#fbbf24">Promoting ${esc(cellLabel)}…</span>`;
   try {
     const r = await fetch('/api/analytics/baseline', {
       method: 'POST', headers: hdrs(), body: JSON.stringify({run_id: runId}),
     });
-    const j = await r.json();
-    if (!j.ok) { alert('Promote failed: ' + (j.error || 'unknown')); return; }
-    anLoad();
+    let j = null;
+    try { j = await r.json(); } catch (_) { j = null; }
+    if (!r.ok || !j || !j.ok) {
+      const err = (j && j.error) || `HTTP ${r.status}`;
+      if (summary) summary.innerHTML = `<span style="color:#fb7185">Promote failed: ${esc(err)}</span>`;
+      alert(`Promote failed: ${err}\n\nrun_id=${runId}\ncell=${cellLabel}`);
+      return;
+    }
+    if (summary) {
+      summary.innerHTML = `<span style="color:#34d399">✓ Baseline updated for ${esc(cellLabel)} → ${esc(j.promoted || runId)}. Reloading…</span>`;
+    }
+    // Reload table; the row should now show the green BASELINE pill.
+    await anLoad();
+    // Also refresh winning-HP card since baseline change affects deltas.
+    try { anLoadWinningHp(); } catch (_) {}
   } catch (e) {
+    if (summary) summary.innerHTML = `<span style="color:#fb7185">Promote error: ${esc(e.message || e)}</span>`;
     alert('Promote error: ' + (e.message || e));
   }
 }
@@ -4656,24 +4952,65 @@ async function anLoadWinningHp() {
   const model = document.getElementById('an-model').value;
   const tf    = document.getElementById('an-tf').value;
   const out = document.getElementById('an-winning');
-  if (!model || !tf) {
-    out.textContent = 'Pick a specific model + TF to see winning hyperparameters.';
-    return;
-  }
+  if (!out) return;
+  out.textContent = 'Loading winning hyperparameters…';
   try {
-    const r = await fetch(`/api/analytics/winning_hp?model=${encodeURIComponent(model)}&tf=${encodeURIComponent(tf)}`,
-                         { headers: hdrs() });
+    const qs = (model && tf)
+      ? `?model=${encodeURIComponent(model)}&tf=${encodeURIComponent(tf)}`
+      : '';
+    const r = await fetch(`/api/analytics/winning_hp${qs}`, { headers: hdrs() });
     const j = await r.json();
     if (!j.ok) { out.innerHTML = `<span style="color:#fb7185">Error: ${esc(j.error||'?')}</span>`; return; }
-    if (!j.winning) {
-      out.textContent = `No HP recorded for ${model} @ ${tf} yet.`;
+    // Single-cell mode: a specific model+tf was selected.
+    if (j.winning) {
+      const w = j.winning;
+      const hpStr = JSON.stringify(w.best_hp || {}, null, 2);
+      out.innerHTML = `
+        <div style="margin-bottom:6px;color:#cbd5e1">Showing winners for <b>${esc(j.model)}</b> @ <b>${esc(j.tf)}</b>. Clear the model/TF filter above to see overview.</div>
+        <div><b>Best run:</b> ${esc(w.best_run_id)} · score=<b style="color:#fbbf24">${(w.best_score||0).toFixed(2)}</b> (over ${w.n_runs_considered} runs)</div>
+        <pre style="background:rgba(5,8,22,.7);border:1px solid rgba(148,163,184,.15);border-radius:6px;padding:8px;margin-top:8px;font-size:.6rem;color:#e2e8f0;overflow-x:auto">${esc(hpStr)}</pre>`;
       return;
     }
-    const w = j.winning;
-    const hpStr = JSON.stringify(w.best_hp || {}, null, 2);
-    out.innerHTML = `
-      <div><b>Best run:</b> ${esc(w.best_run_id)} · score=<b style="color:#fbbf24">${(w.best_score||0).toFixed(2)}</b> (over ${w.n_runs_considered} runs)</div>
-      <pre style="background:rgba(5,8,22,.7);border:1px solid rgba(148,163,184,.15);border-radius:6px;padding:8px;margin-top:8px;font-size:.6rem;color:#e2e8f0;overflow-x:auto">${esc(hpStr)}</pre>`;
+    if (j.mode === 'overview') {
+      const leaders = j.leaders || [];
+      if (!leaders.length) {
+        out.innerHTML = `<em>No (model, tf) cell has a recorded winning hyperparameter set yet. Run training so meta JSONs get an <code>hp</code> field, then click <b>Backfill from metas</b> in Run History.</em>`;
+        return;
+      }
+      const fmt = v => v == null ? '—' : Number(v).toFixed(2);
+      const rows = leaders.map((L, idx) => {
+        const hpStr = JSON.stringify(L.best_hp || {}, null, 2);
+        return `<tr style="border-bottom:1px solid rgba(148,163,184,.08)">
+          <td style="padding:6px;color:#fbbf24;font-weight:700">#${idx+1}</td>
+          <td style="padding:6px;color:#e2e8f0"><b>${esc(L.model)}</b> @ ${esc(L.tf)}</td>
+          <td style="padding:6px;text-align:right;color:#fbbf24;font-weight:700">${fmt(L.best_score)}</td>
+          <td style="padding:6px;color:#94a3b8;font-size:.55rem;font-family:'JetBrains Mono'">${esc((L.best_run_id||'').slice(0,22))}…</td>
+          <td style="padding:6px"><details><summary style="cursor:pointer;color:#93c5fd;font-size:.6rem">Show HP</summary>
+            <pre style="background:rgba(5,8,22,.7);border:1px solid rgba(148,163,184,.15);border-radius:6px;padding:6px;margin-top:4px;font-size:.55rem;color:#e2e8f0;overflow-x:auto;max-width:520px">${esc(hpStr)}</pre>
+          </details></td>
+        </tr>`;
+      }).join('');
+      out.innerHTML = `
+        <div style="margin-bottom:8px;color:#cbd5e1">Top ${leaders.length} winning runs across <b>${j.cells_with_runs}</b> cells with training data. Pick a model + TF above to drill into a single cell.</div>
+        <table id="an-winning-table" style="width:100%;border-collapse:collapse;font-size:.65rem">
+          <thead style="background:rgba(15,23,42,.6);color:#94a3b8;text-align:left">
+            <tr>
+              <th style="padding:6px">Rank</th>
+              <th style="padding:6px">Cell</th>
+              <th style="padding:6px;text-align:right">Score</th>
+              <th style="padding:6px">Run ID</th>
+              <th style="padding:6px">HP</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+      refreshTableFilters('an-winning-table');
+      return;
+    }
+    // Single-cell mode but no runs.
+    out.textContent = (model && tf)
+      ? `No HP recorded for ${model} @ ${tf} yet — run training, then Backfill from metas.`
+      : 'No winning HP data yet.';
   } catch (e) {
     out.innerHTML = `<span style="color:#fb7185">Fetch error: ${esc(e.message||e)}</span>`;
   }
@@ -4849,7 +5186,13 @@ function anSortSuggestions(col) {
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('[data-tab="analytics"]').forEach(btn => {
     btn.addEventListener('click', () => setTimeout(() => {
-      if (activeTab === 'analytics') anLoad();
+      if (activeTab === 'analytics') {
+        anLoad();
+        // 2026-05-15: Winning HP card was always empty because it only
+        // populated after a model+tf was picked. Load the overview
+        // (top-5 across cells) so the card has useful content on first view.
+        anLoadWinningHp();
+      }
     }, 100));
   });
   // Phase G — auto-load Winning HP when model or tf changes.
@@ -4895,6 +5238,12 @@ function _restoreMCCards() {
   if (cio && s.cioStatusHtml) cio.innerHTML = s.cioStatusHtml;
 }
 document.addEventListener('DOMContentLoaded', () => setTimeout(_restoreMCCards, 100));
+// Rehydrate live job state on page load so mid-run orchestration shows
+// progress even after a browser reload. See runJob/pollCardJobs above.
+document.addEventListener('DOMContentLoaded', () => setTimeout(() => {
+  if (typeof rehydrateAutoOrchCard === 'function') rehydrateAutoOrchCard();
+  if (typeof rehydrateBakeOffCard === 'function') rehydrateBakeOffCard();
+}, 250));
 
 // ─── Process Registry card (Phase X1.1, 2026-05-13) ────────────────────────
 async function loadProcessRegistry() {
@@ -5568,7 +5917,10 @@ async function runAutoOrchestrate() {
   const btn  = document.getElementById('auto-orch-btn');
   const out  = document.getElementById('auto-orch-output');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Working…'; }
-  const log = msg => {
+  // Local log helper: writes to DOM, localStorage, AND backend job log.
+  // The backend log persists across tab switches and page reloads via the
+  // unified job registry — see runJob() in CONFIG block.
+  const domLog = (msg) => {
     if (out) {
       out.textContent += `\n${new Date().toLocaleTimeString()}  ${msg}`;
       _saveMCState({autoOrchOutput: out.textContent});
@@ -5576,31 +5928,71 @@ async function runAutoOrchestrate() {
   };
   if (out) { out.textContent = 'Auto-orchestration starting...'; _saveMCState({autoOrchOutput: out.textContent}); }
   try {
-    // Step 1 — bake-off ranks every (model, tf) cell, suggests retire list.
-    log('▶ Running bake-off (wf_sharpe metric)...');
-    const bake = await fetch('/api/bake_off?metric=wf_sharpe&retire_pct=0.20',
-                             { headers: hdrs() });
-    if (!bake.ok) throw new Error(`bake-off HTTP ${bake.status}`);
-    const bj = await bake.json();
-    log(`✓ Bake-off ranked ${bj.ranked?.length || 0} cells; ` +
-        `KEEP=${bj.cut_list?.keep?.length || 0} ` +
-        `REVIEW=${bj.cut_list?.review?.length || 0} ` +
-        `RETIRE=${bj.cut_list?.retire?.length || 0}`);
+    await runJob('auto-orch', 'Auto-orchestration (bake-off + CIO)', async (logRemote) => {
+      const log = (msg) => { domLog(msg); logRemote(msg); };
+      // Step 1 — bake-off ranks every (model, tf) cell, suggests retire list.
+      log('▶ Running bake-off (wf_sharpe metric)...');
+      const bake = await fetch('/api/bake_off?metric=wf_sharpe&retire_pct=0.20',
+                               { headers: hdrs() });
+      if (!bake.ok) throw new Error(`bake-off HTTP ${bake.status}`);
+      const bj = await bake.json();
+      log(`✓ Bake-off ranked ${bj.ranked?.length || 0} cells; ` +
+          `KEEP=${bj.cut_list?.keep?.length || 0} ` +
+          `REVIEW=${bj.cut_list?.review?.length || 0} ` +
+          `RETIRE=${bj.cut_list?.retire?.length || 0}`);
 
-    // Step 2 — start a CIO study for the meta model (cheap baseline).
-    log('▶ Starting CIO Optuna study (meta, 20 trials, smoke-test)...');
-    const cio = await fetch('/api/cio/start',
-      {method:'POST', headers: hdrs(),
-       body: JSON.stringify({model_key:'meta', n_trials:20, live_mode:false})});
-    if (!cio.ok) throw new Error(`cio/start HTTP ${cio.status}`);
-    log('✓ CIO study launched — track in CIO Agent panel below');
-    log('▶ Next: review proposals + click "Apply best" in CIO panel');
-    log('—— auto-orchestration complete ——');
+      // Step 2 — start a CIO study for the meta model (cheap baseline).
+      log('▶ Starting CIO Optuna study (meta, 20 trials, smoke-test)...');
+      const cio = await fetch('/api/cio/start',
+        {method:'POST', headers: hdrs(),
+         body: JSON.stringify({model_key:'meta', n_trials:20, live_mode:false})});
+      if (!cio.ok) throw new Error(`cio/start HTTP ${cio.status}`);
+      log('✓ CIO study launched — track in CIO Agent panel below');
+      log('▶ Next: review proposals + click "Apply best" in CIO panel');
+      log('—— auto-orchestration complete ——');
+      return { bake_off: bj };
+    }, { kind: 'orchestration' });
   } catch (e) {
-    log(`✗ Auto-orchestrate failed: ${e.message || e}`);
+    domLog(`✗ Auto-orchestrate failed: ${e.message || e}`);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '🤖 Auto-orchestrate'; }
   }
+}
+
+// Live progress strip directly above the auto-orch-output <pre>. On
+// every tab switch into model_comparison AND on page-reload, fetches
+// the current job state from the backend and renders the latest line.
+// If a job is mid-run, polls every 3s until terminal.
+let _autoOrchPoller = null;
+function rehydrateAutoOrchCard() {
+  let strip = document.getElementById('auto-orch-job-strip');
+  const out = document.getElementById('auto-orch-output');
+  if (!strip && out && out.parentElement) {
+    strip = document.createElement('div');
+    strip.id = 'auto-orch-job-strip';
+    strip.style.cssText = 'padding:0 16px 6px;font-size:.6rem';
+    out.parentElement.insertBefore(strip, out);
+  }
+  if (_autoOrchPoller) { _autoOrchPoller(); _autoOrchPoller = null; }
+  _autoOrchPoller = pollCardJobs('auto-orch', (jobs) => {
+    renderJobStrip(strip, jobs);
+    // If a remote job is in progress and our DOM output is empty/old,
+    // rehydrate from its log so the operator sees real progress even
+    // after a page reload mid-run.
+    const running = (jobs || []).find(j => !['done','error','cancelled'].includes(j.status));
+    if (running && out) {
+      const remoteLog = (running.log || []).map(e =>
+        `${new Date((e.ts||0)*1000).toLocaleTimeString()}  ${e.msg}`
+      ).join('\n');
+      const currentText = (out.textContent || '').trim();
+      const placeholder = currentText === 'Click "Run orchestration" to start.' ||
+                          currentText === 'Auto-orchestration starting...' ||
+                          currentText === '';
+      if (placeholder || (remoteLog && remoteLog.length > currentText.length)) {
+        out.textContent = remoteLog;
+      }
+    }
+  }, 3000);
 }
 
 // ─── STRATEGY TAB DATA LOAD ───────────────────────────────────────────────────
@@ -5735,6 +6127,7 @@ function renderModelComparison() {
       '</tr>';
   }).join('');
   tbody.innerHTML = html;
+  refreshTableFilters('model-comparison-table');
 }
 
 // ─── Phase 3.6 — Strong / Weak analytics card ──────────────────────────────
@@ -5863,14 +6256,28 @@ async function loadBakeOff() {
   const rpct   = document.getElementById('bake-retire-pct').value || '0.20';
   const area   = document.getElementById('bake-off-area');
   if (area) area.innerHTML = '<div style="color:#fbbf24">⏳ Running bake-off… (reading data/training_runs/*.parquet)</div>';
+  // Job-registry-wrapped so progress survives tab switches. The DOM
+  // render still happens inline below — runJob only adds remote logging.
+  let _bakeJobLog = (_) => {};
   try {
-    // 2026-05-13: the bulk hdrs() patcher accidentally injected its options
-    // dict as the SECOND argument to encodeURIComponent(metric, …) instead
-    // of into fetch(). encodeURIComponent ignores extra args silently so
-    // this didn't crash, but the second `{ headers: hdrs() }` on fetch was
-    // load-bearing — leave it intact.
+    const _bakeReg = await fetch('/api/jobs/register', {
+      method: 'POST', headers: hdrs(),
+      body: JSON.stringify({card_id:'bake-off', label:`Bake-off (${metric})`, kind:'bakeoff',
+                            initial_log:`metric=${metric} retire_pct=${rpct}`}),
+    }).then(r => r.json()).catch(() => null);
+    const _bakeJobId = (_bakeReg && _bakeReg.ok) ? _bakeReg.job_id : null;
+    _bakeJobLog = (msg) => {
+      if (!_bakeJobId) return;
+      fetch(`/api/jobs/${encodeURIComponent(_bakeJobId)}/log`, {
+        method: 'POST', headers: hdrs(), body: JSON.stringify({msg: String(msg)}),
+      }).catch(() => {});
+    };
+    window._bakeOffActiveJobId = _bakeJobId;
+  } catch (_) {}
+  try {
     const url = '/api/bake_off?metric=' + encodeURIComponent(metric) +
                 '&retire_pct=' + encodeURIComponent(rpct) + '&top=50';
+    _bakeJobLog(`Fetching ${url}`);
     const r = await fetch(url, { headers: hdrs() });
     const j = await r.json();
     if (!j.ok) {
@@ -5914,8 +6321,9 @@ async function loadBakeOff() {
     html += '  <div style="background:#3a1a1a;padding:8px;border-radius:4px"><b style="color:#f55">✗ RETIRE (' + cuts.retire.length + ')</b><br>' +
               (cuts.retire.slice(0,15).join('<br>') || '<i>none</i>') + '</div>';
     html += '</div>';
-    // Ranked rows table
-    html += '<table style="width:100%;border-collapse:collapse;font-size:11px">';
+    // Ranked rows table (id allows _autoInstallFiltersOnAllTables to add
+    // a per-column filter row after render — see CONFIG block).
+    html += '<table id="bake-off-table" style="width:100%;border-collapse:collapse;font-size:11px">';
     html += '<thead style="background:#222"><tr>' +
             '<th style="padding:4px;text-align:left">Rank</th>' +
             '<th style="padding:4px;text-align:left">Model__TF</th>' +
@@ -5944,9 +6352,42 @@ async function loadBakeOff() {
     html += '</tbody></table>';
     area.innerHTML = html;
     _saveMCState({bakeOffHtml: area.innerHTML});
+    refreshTableFilters('bake-off-table');
+    _bakeJobLog(`Bake-off complete: ${(j.rows||[]).length} rows ranked`);
+    if (window._bakeOffActiveJobId) {
+      fetch(`/api/jobs/${encodeURIComponent(window._bakeOffActiveJobId)}/complete`, {
+        method: 'POST', headers: hdrs(),
+        body: JSON.stringify({result: {ranked: (j.rows||[]).length, cut_list: cuts}}),
+      }).catch(() => {});
+      window._bakeOffActiveJobId = null;
+    }
   } catch (e) {
     area.innerHTML = '<span style="color:#f55">Fetch error: ' + e + '</span>';
+    if (window._bakeOffActiveJobId) {
+      fetch(`/api/jobs/${encodeURIComponent(window._bakeOffActiveJobId)}/fail`, {
+        method: 'POST', headers: hdrs(),
+        body: JSON.stringify({error: String(e.message || e)}),
+      }).catch(() => {});
+      window._bakeOffActiveJobId = null;
+    }
   }
+}
+
+// Mirrors rehydrateAutoOrchCard: on tab switch / page load, fetch current
+// bake-off job state and inject a status strip above the result area.
+let _bakeOffPoller = null;
+function rehydrateBakeOffCard() {
+  const area = document.getElementById('bake-off-area');
+  if (!area || !area.parentElement) return;
+  let strip = document.getElementById('bake-off-job-strip');
+  if (!strip) {
+    strip = document.createElement('div');
+    strip.id = 'bake-off-job-strip';
+    strip.style.cssText = 'padding:0 4px 6px;font-size:.6rem';
+    area.parentElement.insertBefore(strip, area);
+  }
+  if (_bakeOffPoller) { _bakeOffPoller(); _bakeOffPoller = null; }
+  _bakeOffPoller = pollCardJobs('bake-off', (jobs) => renderJobStrip(strip, jobs), 3000);
 }
 
 // ─── Kill Switch tile + modal handlers (Sprint 0 §S0-3) ──────────────────
@@ -6704,6 +7145,27 @@ function _renderTrainingTable() {
         timingSub = `<div style="margin-top:2px;font-size:.5rem;color:#fbbf24;font-family:'JetBrains Mono'" title="${esc(tip)}">${elFmt}${etaPart}</div>`;
       }
     }
+    // 2026-05-15 — operator request: "On model training screen add the
+    // epoch number to the status and estimated time to show what epoch is
+    // currently running". When _trainingProgress (populated by
+    // pollTrainingJobs from /api/training/progress) has a live entry for
+    // this (model, tf), append "epoch N/M · per-epoch X" to the status.
+    try {
+      const _progKey = `${m.key||''}@${m.timeframe||''}`;
+      const _prog = (typeof _trainingProgress !== 'undefined') ? _trainingProgress[_progKey] : null;
+      if (_prog && _prog.status === 'running' && _prog.n_epochs > 0) {
+        const cur = _prog.current_epoch || 0;
+        const tot = _prog.n_epochs;
+        const perEpFmt = _trFmtDuration(_prog.mean_epoch_duration_s);
+        const epochEtaFmt = _trFmtDuration(_prog.eta_s);
+        const epochElFmt  = _trFmtDuration(_prog.elapsed_s);
+        const parts = [`epoch ${cur}/${tot}`];
+        if (perEpFmt) parts.push(`~${perEpFmt}/epoch`);
+        if (epochEtaFmt && _prog.eta_s > 0) parts.push(`ETA ${epochEtaFmt}`);
+        const epochTip = `Live per-epoch progress · started ${new Date((_prog.started_at||0)*1000).toLocaleString()} · elapsed ${epochElFmt||'?'}`;
+        timingSub += `<div style="margin-top:2px;font-size:.5rem;color:#93c5fd;font-family:'JetBrains Mono'" title="${esc(epochTip)}">${parts.join(' · ')}</div>`;
+      }
+    } catch (_) {}
     // Description: short blurb sourced from _MODEL_DESCRIPTIONS
     const desc = (typeof _MODEL_DESCRIPTIONS !== 'undefined') ? (_MODEL_DESCRIPTIONS[m.key] || '') : '';
     // Phase 98 — ETA Train + ETA BT cells. Color tint reflects runtime
@@ -7052,9 +7514,31 @@ function _trMarkPending(msg) {
 }
 
 let _trJobsTimer = null;
+// 2026-05-15 — live per-epoch progress, keyed by "<model>@<tf>".
+// Populated in pollTrainingJobs() from /api/training/progress.
+// Consumed in _renderTrainingTable() to inject "epoch N/M" under the Status pill.
+let _trainingProgress = {};
+
 async function pollTrainingJobs() {
   try {
-    const r = await fetch('/api/training/jobs?limit=10', { headers: hdrs() });
+    // 2026-05-15 — parallel-fetch jobs + per-epoch progress so the same
+    // poll tick refreshes both. Progress is best-effort: if it fails the
+    // jobs poll keeps working.
+    const [r, rp] = await Promise.all([
+      fetch('/api/training/jobs?limit=10', { headers: hdrs() }),
+      fetch('/api/training/progress?include_terminal=0&limit=50', { headers: hdrs() })
+        .catch(() => null),
+    ]);
+    if (rp && rp.ok) {
+      try {
+        const pj = await rp.json();
+        const next = {};
+        for (const t of (pj.tasks || [])) {
+          if (t && t.model && t.tf) next[`${t.model}@${t.tf}`] = t;
+        }
+        _trainingProgress = next;
+      } catch (_) { /* keep prior _trainingProgress */ }
+    }
     const d = await r.json();
     const jobs = d.jobs || [];
     const active = jobs.filter(j => j.status === 'queued' || j.status === 'running' || j.status === 'starting');
@@ -8723,6 +9207,115 @@ async function pollState() {
     renderOverviewOrders();
     renderStrategyTab(botState);
   } catch {}
+}
+
+// ─── PC Load Balancer card (2026-05-15) ───────────────────────────────────
+async function loadbalRefresh() {
+  const tbody = document.getElementById('loadbal-tbody');
+  const stateChip = document.getElementById('loadbal-state-chip');
+  const tradeChip = document.getElementById('loadbal-trade-chip');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="7" style="padding:10px;text-align:center;color:#94a3b8">Loading…</td></tr>';
+  try {
+    const r = await fetch('/api/system/load_balancer/status', { headers: hdrs() });
+    const j = await r.json();
+    if (!j.ok) {
+      if (tbody) tbody.innerHTML = `<tr><td colspan="7" style="padding:10px;color:#fb7185">Error: ${esc(j.error||'?')}</td></tr>`;
+      return;
+    }
+    if (stateChip) {
+      stateChip.textContent = j.enabled ? 'ENABLED' : 'disabled';
+      stateChip.style.color = j.enabled ? '#34d399' : '#94a3b8';
+      stateChip.style.background = j.enabled ? 'rgba(52,211,153,.18)' : 'rgba(148,163,184,.15)';
+    }
+    if (tradeChip) {
+      const mode = j.trade_mode || '?';
+      const live = !!j.live_trading;
+      tradeChip.textContent = `trade mode: ${mode}${live ? ' · LIVE 🔒' : ''}`;
+      tradeChip.style.color = live ? '#fbbf24' : '#94a3b8';
+    }
+    const plans = j.plans || [];
+    if (!plans.length) {
+      if (tbody) tbody.innerHTML = '<tr><td colspan="7" style="padding:10px;color:#64748b">No managed processes detected. Bot / dashboard / cluster_orch must be running.</td></tr>';
+      refreshTableFilters('loadbal-table');
+      return;
+    }
+    if (tbody) {
+      tbody.innerHTML = plans.map(p => {
+        const same = p.current_label === p.recommended_label;
+        const recColor = p.exempt_from_demotion ? '#fbbf24'
+                       : same ? '#94a3b8'
+                       : p.recommended_label === 'ABOVE_NORMAL' || p.recommended_label === 'HIGH' ? '#34d399'
+                       : '#fb7185';
+        const note = p.exempt_from_demotion
+          ? '<span style="color:#fbbf24">live-trade exempt — never demoted</span>'
+          : same ? '<span style="color:#64748b">no change needed</span>'
+          : `<span style="color:${recColor}">will change on apply</span>`;
+        return `<tr style="border-bottom:1px solid rgba(148,163,184,.08)">
+          <td style="padding:6px;font-family:'JetBrains Mono';color:#cbd5e1">${p.pid}</td>
+          <td style="padding:6px;color:#e2e8f0">${esc(p.name||'?')}</td>
+          <td style="padding:6px;color:#93c5fd"><b>${esc(p.role||'?')}</b></td>
+          <td style="padding:6px;color:#64748b;font-size:.58rem">${esc(p.reason||'')}</td>
+          <td style="padding:6px;color:#94a3b8">${esc(p.current_label||'?')}</td>
+          <td style="padding:6px;color:${recColor};font-weight:700">${esc(p.recommended_label||'?')}</td>
+          <td style="padding:6px;font-size:.6rem">${note}</td>
+        </tr>`;
+      }).join('');
+    }
+    refreshTableFilters('loadbal-table');
+  } catch (e) {
+    if (tbody) tbody.innerHTML = `<tr><td colspan="7" style="padding:10px;color:#fb7185">Fetch error: ${esc(e.message||e)}</td></tr>`;
+  }
+}
+
+async function loadbalEnable(enabled) {
+  const result = document.getElementById('loadbal-last-result');
+  if (result) { result.textContent = enabled ? 'Enabling…' : 'Disabling…'; result.style.color = '#fbbf24'; }
+  try {
+    const r = await fetch('/api/system/load_balancer/enable', {
+      method: 'POST', headers: hdrs(),
+      body: JSON.stringify({enabled: !!enabled}),
+    });
+    const j = await r.json();
+    if (!j.ok) {
+      if (result) { result.textContent = `Failed: ${j.error||'?'}`; result.style.color = '#fb7185'; }
+      return;
+    }
+    if (result) {
+      const s = j.summary || {};
+      result.textContent = enabled
+        ? `✓ Enabled. Changed ${(s.changed||[]).length}, unchanged ${(s.unchanged||[]).length}, failed ${(s.failed||[]).length}.`
+        : '✓ Disabled.';
+      result.style.color = '#34d399';
+    }
+    loadbalRefresh();
+  } catch (e) {
+    if (result) { result.textContent = `Error: ${e.message||e}`; result.style.color = '#fb7185'; }
+  }
+}
+
+async function loadbalApply(dryRun) {
+  const result = document.getElementById('loadbal-last-result');
+  if (result) { result.textContent = dryRun ? 'Computing dry run…' : 'Applying…'; result.style.color = '#fbbf24'; }
+  try {
+    const r = await fetch('/api/system/load_balancer/apply', {
+      method: 'POST', headers: hdrs(),
+      body: JSON.stringify({dry_run: !!dryRun}),
+    });
+    const j = await r.json();
+    if (!j.ok) {
+      if (result) { result.textContent = `Failed: ${j.error||'?'}`; result.style.color = '#fb7185'; }
+      return;
+    }
+    const s = j.summary || {};
+    if (result) {
+      const verb = dryRun ? 'Would change' : 'Changed';
+      result.textContent = `${verb} ${(s.changed||[]).length}, unchanged ${(s.unchanged||[]).length}, failed ${(s.failed||[]).length}. live=${s.live_trading}`;
+      result.style.color = '#34d399';
+    }
+    loadbalRefresh();
+  } catch (e) {
+    if (result) { result.textContent = `Error: ${e.message||e}`; result.style.color = '#fb7185'; }
+  }
 }
 
 async function pollTrades() {

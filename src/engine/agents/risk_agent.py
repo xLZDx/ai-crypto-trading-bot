@@ -106,7 +106,7 @@ class RiskAgent(BaseAgent):
             if blocked:
                 snap = self._beta_filter.snapshot()
                 logger.warning(
-                    "[β-Neutrality] blocked %s %s %.0f — would push |β|>%.2f (current %+.2f)",
+                    "[?-Neutrality] blocked %s %s %.0f -- would push |?|>%.2f (current %+.2f)",
                     side, symbol, notional, self._beta_filter.max_beta_exposure,
                     snap.aggregate_beta,
                 )
@@ -118,7 +118,7 @@ class RiskAgent(BaseAgent):
             # silent-failure review flagged the original logger.debug as a
             # latent revenue-loss risk masked by a NaN-input bug in the
             # filter.
-            logger.warning("[β-Neutrality] check failed (FAIL-OPEN — trade allowed): %s", exc)
+            logger.warning("[?-Neutrality] check failed (FAIL-OPEN -- trade allowed): %s", exc)
             return True
 
     def _setup_subscriptions(self):
@@ -153,7 +153,7 @@ class RiskAgent(BaseAgent):
     def _hard_kill(self, reason: str) -> None:
         """Publish flatten-all event and open the circuit breaker permanently."""
         self._circuit_open = True
-        logger.critical("[RiskAgent] HARD KILL SWITCH ACTIVATED — reason: %s", reason)
+        logger.critical("[RiskAgent] HARD KILL SWITCH ACTIVATED -- reason: %s", reason)
         self.publish("risk_kill_switch", {
             "action": "flatten_all",
             "reason": reason,
@@ -179,7 +179,7 @@ class RiskAgent(BaseAgent):
             self._hard_kill(f"cumulative_drawdown_{drawdown_pct:.1f}pct")
         elif self._circuit_open and drawdown_pct < MAX_DRAWDOWN_PCT * 0.5:
             self._circuit_open = False
-            logger.info("[RiskAgent] Drawdown recovered to %.1f%% — circuit CLOSED.", drawdown_pct)
+            logger.info("[RiskAgent] Drawdown recovered to %.1f%% -- circuit CLOSED.", drawdown_pct)
 
         # Daily drawdown limit — hard stop if single-day loss exceeds threshold
         daily_loss_pct = (self._daily_start_capital - self.capital) / max(self._daily_start_capital, 1) * 100
@@ -205,31 +205,31 @@ class RiskAgent(BaseAgent):
             age_sec = (datetime.now(timezone.utc) - self._last_bar_ts).total_seconds()
             if age_sec > DATA_STALE_SEC:
                 logger.warning(
-                    "[RiskAgent] %s BLOCKED — data feed stale (last bar %.0fs ago).", sym, age_sec
+                    "[RiskAgent] %s BLOCKED -- data feed stale (last bar %.0fs ago).", sym, age_sec
                 )
                 return
 
         # ── 0b. API latency spike ─────────────────────────────────────────
         if self.last_api_latency_ms > API_LATENCY_LIMIT_MS:
             logger.warning(
-                "[RiskAgent] %s BLOCKED — API latency spike %.0f ms > %d ms limit.",
+                "[RiskAgent] %s BLOCKED -- API latency spike %.0f ms > %d ms limit.",
                 sym, self.last_api_latency_ms, API_LATENCY_LIMIT_MS,
             )
             return
 
         # ── 1. Circuit breaker ────────────────────────────────────────────
         if self._circuit_open:
-            logger.info("[RiskAgent] %s BLOCKED — circuit open (max drawdown).", sym)
+            logger.info("[RiskAgent] %s BLOCKED -- circuit open (max drawdown).", sym)
             return
 
         if self._kelly.circuit_breaker(self._consecutive_losses, MAX_CONSECUTIVE_LOSSES):
-            logger.warning("[RiskAgent] %s BLOCKED — %d consecutive losses.",
+            logger.warning("[RiskAgent] %s BLOCKED -- %d consecutive losses.",
                            sym, self._consecutive_losses)
             return
 
         # ── 2. Liquidity sweep guard ──────────────────────────────────────
         if liq_proximity > LIQ_PROXIMITY_BLOCK:
-            logger.info("[RiskAgent] %s BLOCKED — liquidity proximity %.2f too high.", sym, liq_proximity)
+            logger.info("[RiskAgent] %s BLOCKED -- liquidity proximity %.2f too high.", sym, liq_proximity)
             return
 
         # ── 3. LLM macro veto ────────────────────────────────────────────

@@ -165,7 +165,7 @@ def ingest_file(path: Path, symbol: str, timeframe: str, client,
     if not force and since is None:
         log_entry = _get_ingestion_log(client, path.name)
         if log_entry and log_entry.get("file_size_bytes") == file_size:
-            logger.info("[%s/%s] %s already ingested (%d rows, %d MB) — skipping.",
+            logger.info("[%s/%s] %s already ingested (%d rows, %d MB) -- skipping.",
                         symbol, timeframe, path.name,
                         log_entry["rows_written"], round(file_size / 1e6))
             return 0
@@ -174,7 +174,7 @@ def ingest_file(path: Path, symbol: str, timeframe: str, client,
             try:
                 last_ts_str = str(log_entry["last_bar_ts"])
                 since = datetime.fromisoformat(last_ts_str.replace("Z", "+00:00"))
-                logger.info("[%s/%s] File grew since last ingest — appending from %s",
+                logger.info("[%s/%s] File grew since last ingest -- appending from %s",
                             symbol, timeframe, since.strftime("%Y-%m-%d %H:%M"))
             except Exception:
                 pass
@@ -218,18 +218,18 @@ def ingest_file(path: Path, symbol: str, timeframe: str, client,
             if client.write_ilp(lines):
                 written += len(lines)
             else:
-                logger.warning("ILP write failed at row %d — retrying once", written)
+                logger.warning("ILP write failed at row %d -- retrying once", written)
                 time.sleep(1)
                 client.write_ilp(lines)
             lines = []
             if written % LOG_EVERY < BATCH_SIZE:
-                logger.info("  … %d rows written", written)
+                logger.info("  ... %d rows written", written)
 
     if lines:
         if client.write_ilp(lines):
             written += len(lines)
 
-    logger.info("[%s/%s] Done — %d rows written, %d skipped", symbol, timeframe, written, skipped)
+    logger.info("[%s/%s] Done -- %d rows written, %d skipped", symbol, timeframe, written, skipped)
 
     # ── Record to index ───────────────────────────────────────────────────────
     if written > 0:
@@ -318,7 +318,7 @@ def run(
 
     client = get_client()
     if not client.is_available():
-        logger.error("ParquetClient unavailable — DuckDB missing or data dir not writable")
+        logger.error("ParquetClient unavailable -- DuckDB missing or data dir not writable")
         return
 
     # Schema is implicit (directory layout) for the file-based store —
@@ -338,10 +338,10 @@ def run(
         summary = ingest_symbol(sym, timeframes, client, since, force=force)
         rows = sum(summary.values())
         total += rows
-        logger.info("✓ %s — %d rows written", sym, rows)
+        logger.info("OK  %s -- %d rows written", sym, rows)
 
     logger.info("=" * 60)
-    logger.info("DONE — %d total rows written", total)
+    logger.info("DONE -- %d total rows written", total)
     logger.info("=" * 60)
 
 

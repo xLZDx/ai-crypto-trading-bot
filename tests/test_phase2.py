@@ -202,7 +202,7 @@ def test_oft_trainer():
 # ─── Regime classifier (BayesianGaussianMixture) ────────────────────────────
 
 def test_regime_classifier():
-    print("\n[Regime Classifier — BayesianGaussianMixture]")
+    print("\n[Regime Classifier -- BayesianGaussianMixture]")
     src_path = PROJECT_ROOT / "src" / "analysis" / "regime_classifier.py"
     src = src_path.read_text(encoding="utf-8")
     check("uses BayesianGaussianMixture",
@@ -220,7 +220,7 @@ def test_regime_classifier():
 # ─── Inference engine OFT path ───────────────────────────────────────────────
 
 def test_inference_engine_oft():
-    print("\n[Inference Engine — OFT path]")
+    print("\n[Inference Engine -- OFT path]")
     src_path = PROJECT_ROOT / "src" / "engine" / "inference_engine.py"
     src = src_path.read_text(encoding="utf-8")
     check("_load_oft_model() defined", "_load_oft_model" in src)
@@ -236,7 +236,7 @@ def test_inference_engine_oft():
 
 def main() -> int:
     print("=" * 60)
-    print("Phase 2 — Level 2 Alpha Engine Tests")
+    print("Phase 2 -- Level 2 Alpha Engine Tests")
     print("=" * 60)
     test_event_time_labeler()
     test_order_flow_transformer()

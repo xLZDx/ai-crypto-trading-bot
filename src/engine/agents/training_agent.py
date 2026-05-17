@@ -204,7 +204,7 @@ class ContinuousTrainerAgent(BaseAgent):
 
             self._record_event("ScalpingML", len(X_tr), loss, loss * 0.95, acc)
             logger.info(
-                "[Trainer] ScalpingML retrained on %d bars — acc=%.3f", len(X_tr), acc
+                "[Trainer] ScalpingML retrained on %d bars -- acc=%.3f", len(X_tr), acc
             )
         except Exception as exc:
             logger.error("[Trainer] ScalpingML error: %s", exc, exc_info=True)
@@ -289,10 +289,10 @@ class ContinuousTrainerAgent(BaseAgent):
                     mae = 0.0
 
                 self._record_event("TFT_MM", len(train_s), mae, mae, 1.0 - min(mae / 1000, 1.0))
-                logger.info("[Trainer] TFT fine-tuned on %d bars — MAE=%.4f", len(train_s), mae)
+                logger.info("[Trainer] TFT fine-tuned on %d bars -- MAE=%.4f", len(train_s), mae)
 
             except ImportError:
-                logger.warning("[Trainer] darts not available — TFT training skipped")
+                logger.warning("[Trainer] darts not available -- TFT training skipped")
 
         except Exception as exc:
             logger.error("[Trainer] TFT error: %s", exc, exc_info=True)
@@ -340,7 +340,7 @@ class ContinuousTrainerAgent(BaseAgent):
             acc = 1.0 if params.get("signal", 0) != 0 else 0.5
             self._record_event("OU_Filter", len(df), 0.0, 0.0, acc)
             logger.info(
-                "[Trainer] OU recalibrated for %s — theta=%.4f mu=%.2f signal=%s",
+                "[Trainer] OU recalibrated for %s -- theta=%.4f mu=%.2f signal=%s",
                 symbol, params.get("theta", 0), params.get("mu", 0), params.get("signal", 0)
             )
 

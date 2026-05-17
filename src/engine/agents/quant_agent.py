@@ -95,7 +95,7 @@ class QuantAgent(BaseAgent):
                 "timestamp": datetime.now(timezone.utc).isoformat()
             })
         else:
-            logger.info("[QuantAgent] Live Sharpe=%.3f — within acceptable range.", live_sharpe)
+            logger.info("[QuantAgent] Live Sharpe=%.3f -- within acceptable range.", live_sharpe)
             self.publish("perf", {
                 "status": "healthy",
                 "live_sharpe": live_sharpe,

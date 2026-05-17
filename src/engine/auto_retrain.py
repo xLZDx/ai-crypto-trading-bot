@@ -90,6 +90,27 @@ def _avg(d: dict) -> float | None:
     return round(sum(vals)/len(vals), 4) if vals else None
 
 
+def _per_strategy_regressions(
+    before: dict[str, float],
+    after: dict[str, float],
+    tolerance: float,
+) -> list[str]:
+    """Return list of strategy names that individually regressed below
+    old × (1 - tolerance) in WF Sharpe. New strategies (in after but not
+    before) are excluded — no baseline to compare against."""
+    regressed: list[str] = []
+    for strategy, old_val in before.items():
+        if old_val is None:
+            continue
+        new_val = after.get(strategy)
+        if new_val is None:
+            continue
+        threshold = old_val * (1 - tolerance) if old_val > 0 else old_val - tolerance
+        if new_val < threshold:
+            regressed.append(strategy)
+    return regressed
+
+
 def _backup_models(label: str) -> Path | None:
     """Copy models/*.json (just metadata, not weights — those are big and
     we keep them in-place so partial-rollback semantics stay simple).
@@ -106,7 +127,7 @@ def _backup_models(label: str) -> Path | None:
             n += 1
         except Exception as exc:
             logger.warning("backup %s failed: %s", p.name, exc)
-    logger.info("backed up %d meta files → %s", n, out_dir)
+    logger.info("backed up %d meta files -> %s", n, out_dir)
     return out_dir
 
 
@@ -129,16 +150,29 @@ def _write_status(snap: dict) -> None:
     write_json(str(STATUS_PATH), snap)
 
 
-def _record_regression(before: dict, after: dict, verdict: str) -> Path:
+def _record_regression(
+    before: dict,
+    after: dict,
+    verdict: str,
+    regressed_strategies: list[str] | None = None,
+    new_strategies: list[str] | None = None,
+) -> Path:
     REGRESSION_DIR.mkdir(parents=True, exist_ok=True)
     path = REGRESSION_DIR / f"{int(time.time())}.json"
+    per_delta = {
+        s: round((after.get(s) or 0) - (before.get(s) or 0), 4)
+        for s in set(list(before.keys()) + list(after.keys()))
+    }
     path.write_text(json.dumps({
         "ts": _now_iso(),
         "verdict": verdict,
-        "before_avg":   _avg(before),
-        "after_avg":    _avg(after),
+        "before_avg":          _avg(before),
+        "after_avg":           _avg(after),
         "before_per_strategy": before,
         "after_per_strategy":  after,
+        "per_strategy_delta":  per_delta,
+        "regressed_strategies": regressed_strategies or [],
+        "new_strategies":       new_strategies or [],
     }, indent=2, default=str), encoding="utf-8")
     return path
 
@@ -187,21 +221,40 @@ def run_auto_retrain(*,
     a_old = _avg(before)
     a_new = _avg(after)
 
+    # P5: per-strategy regression check — a single strategy regressing
+    # fails the verdict even if the system-wide average holds.
+    new_strategies = [s for s in after if s not in before]
+    regressed = _per_strategy_regressions(before, after, tolerance) if before else []
+    per_delta = {
+        s: round((after.get(s) or 0) - (before.get(s) or 0), 4)
+        for s in set(list(before.keys()) + list(after.keys()))
+    }
+
     if a_old is None:
         verdict = "no_baseline"
         delta = None
     else:
         delta = round((a_new or 0) - (a_old or 0), 4)
         threshold = (a_old or 0) * (1 - tolerance) if (a_old or 0) > 0 else (a_old or 0) - tolerance
-        verdict = "accepted" if (a_new or 0) >= threshold else "regression"
+        if regressed:
+            verdict = "regression"
+        elif (a_new or 0) >= threshold:
+            verdict = "accepted"
+        else:
+            verdict = "regression"
 
     out = {
         "ok": verdict in ("accepted", "no_baseline"),
-        "verdict":     verdict,
-        "before_avg":  a_old,
-        "after_avg":   a_new,
-        "delta":       delta,
-        "tolerance":   tolerance,
+        "verdict":               verdict,
+        "before_avg":            a_old,
+        "after_avg":             a_new,
+        "delta":                 delta,
+        "tolerance":             tolerance,
+        "per_strategy_before":   before,
+        "per_strategy_after":    after,
+        "per_strategy_delta":    per_delta,
+        "regressed_strategies":  regressed,
+        "new_strategies":        new_strategies,
         "backup_dir":  str(backup_dir) if backup_dir else None,
         "started_at":  started_iso,
         "finished_at": _now_iso(),
@@ -209,8 +262,13 @@ def run_auto_retrain(*,
     }
 
     if verdict == "regression":
-        report = _record_regression(before, after, verdict)
+        report = _record_regression(before, after, verdict,
+                                    regressed_strategies=regressed,
+                                    new_strategies=new_strategies)
         out["regression_report"] = str(report)
+        if regressed:
+            _emit("auto_retrain", "per-strategy regression",
+                  regressed=regressed, delta=delta, report=str(report))
         if rollback and backup_dir:
             n = _restore_meta_from_backup(backup_dir)
             out["rollback_restored"] = n
@@ -232,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Auto-retrain wrapper with regression guard")
     ap.add_argument("--tolerance", type=float, default=0.05,
                     help="Max acceptable WF Sharpe degradation (fraction). "
-                         "0.05 means new must be >= old × 0.95.")
+                         "0.05 means new must be >= old x 0.95.")
     ap.add_argument("--rollback", action="store_true",
                     help="If new WF Sharpe is below tolerance, restore "
                          "previous _meta.json files from backup.")

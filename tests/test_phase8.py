@@ -235,7 +235,7 @@ def test_orchestrator():
 
 def main() -> int:
     print("=" * 60)
-    print("Phase 8 — Data Governance + Rate Limiting + Sync")
+    print("Phase 8 -- Data Governance + Rate Limiting + Sync")
     print("=" * 60)
     test_rate_limiter()
     test_archive_improvements()

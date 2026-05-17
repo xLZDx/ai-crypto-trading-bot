@@ -68,7 +68,7 @@ def triple_barrier_labels_vectorized(
     # n>0 by this point, so this only fires on genuine all-NaN columns.
     if np.isnan(atr).all():
         raise ValueError(
-            f"ATR column '{atr_col}' is entirely NaN — cannot compute barriers. "
+            f"ATR column '{atr_col}' is entirely NaN -- cannot compute barriers. "
             "Verify feature engineering produced atr_14 before calling this."
         )
     # Patch any remaining NaN spots with median to avoid downstream propagation.

@@ -297,10 +297,10 @@ def _handle_hard(rep: DataQualityReport, mode: str) -> None:
     msg = (f"[data_quality][{rep.symbol}/{rep.timeframe}] HARD failures: "
            f"{'; '.join(rep.hard_errors)}")
     if mode == _MODE_WARN:
-        logger.critical("%s — %s=warn, allowing training anyway.", msg, _MODE_ENV)
+        logger.critical("%s -- %s=warn, allowing training anyway.", msg, _MODE_ENV)
         return
     # enforce
-    logger.critical("%s — aborting (set %s=warn to override)", msg, _MODE_ENV)
+    logger.critical("%s -- aborting (set %s=warn to override)", msg, _MODE_ENV)
     raise DataQualityError(msg)
 
 

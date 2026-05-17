@@ -118,7 +118,7 @@ try:
     app = _build_app()
 except Exception as exc:
     # If FastAPI is not installed, app stays None — tests can still import the module.
-    logger.warning("FastAPI not available — control_api app not built: %s", exc)
+    logger.warning("FastAPI not available -- control_api app not built: %s", exc)
     app = None
 
 

@@ -45,7 +45,7 @@ class DataAgent(BaseAgent):
     def _on_perf_alert(self, msg) -> None:
         payload = msg.payload or {}
         if payload.get("trigger_retrain"):
-            logger.info("[DataAgent] Performance alert received — scheduling retrain check.")
+            logger.info("[DataAgent] Performance alert received -- scheduling retrain check.")
             self._check_retrain(forced=True)
 
     def _run_cycle(self) -> None:
@@ -109,7 +109,7 @@ class DataAgent(BaseAgent):
                 pass
 
         if low_acc_models or forced:
-            logger.warning("[DataAgent] Low accuracy models detected: %s — triggering retrain.",
+            logger.warning("[DataAgent] Low accuracy models detected: %s -- triggering retrain.",
                            low_acc_models)
             self._last_retrain = now
             self.publish("retrain", {

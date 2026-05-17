@@ -1,0 +1,434 @@
+{
+  "metric": "wf_sharpe",
+  "retire_below_pct": 0.2,
+  "top_n": 50,
+  "rows": [
+    {
+      "model": "base",
+      "tf": "5m",
+      "rank": 1,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "base",
+      "tf": "15m",
+      "rank": 2,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "base",
+      "tf": "1h",
+      "rank": 3,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "base",
+      "tf": "4h",
+      "rank": 4,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "base",
+      "tf": "1d",
+      "rank": 5,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "base",
+      "tf": "1w",
+      "rank": 6,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "trend",
+      "tf": "15m",
+      "rank": 7,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "trend",
+      "tf": "1h",
+      "rank": 8,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "trend",
+      "tf": "4h",
+      "rank": 9,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "trend",
+      "tf": "1d",
+      "rank": 10,
+      "n_runs": 1,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=1)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "trend",
+      "tf": "1w",
+      "rank": 11,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "futures",
+      "tf": "5m",
+      "rank": 12,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "futures",
+      "tf": "15m",
+      "rank": 13,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "futures",
+      "tf": "1h",
+      "rank": 14,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "futures",
+      "tf": "4h",
+      "rank": 15,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "futures",
+      "tf": "1d",
+      "rank": 16,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "futures",
+      "tf": "1w",
+      "rank": 17,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "scalping",
+      "tf": "1m",
+      "rank": 18,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "scalping",
+      "tf": "5m",
+      "rank": 19,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "meta",
+      "tf": "5m",
+      "rank": 20,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "meta",
+      "tf": "15m",
+      "rank": 21,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "meta",
+      "tf": "1h",
+      "rank": 22,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "meta",
+      "tf": "4h",
+      "rank": 23,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "tft",
+      "tf": "15m",
+      "rank": 24,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "tft",
+      "tf": "1h",
+      "rank": 25,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "tft",
+      "tf": "4h",
+      "rank": 26,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "tft",
+      "tf": "1d",
+      "rank": 27,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "regime",
+      "tf": "1h",
+      "rank": 28,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "oft",
+      "tf": "1m",
+      "rank": 29,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    },
+    {
+      "model": "oft",
+      "tf": "5m",
+      "rank": 30,
+      "n_runs": 0,
+      "metric": "wf_sharpe",
+      "metric_value": null,
+      "recommendation": "review",
+      "reasons": [
+        "no successful runs (n_runs=0)"
+      ],
+      "retired_by_kpi_gate": false
+    }
+  ],
+  "cut_list": {
+    "keep": [],
+    "review": [
+      "base__5m",
+      "base__15m",
+      "base__1h",
+      "base__4h",
+      "base__1d",
+      "base__1w",
+      "trend__15m",
+      "trend__1h",
+      "trend__4h",
+      "trend__1d",
+      "trend__1w",
+      "futures__5m",
+      "futures__15m",
+      "futures__1h",
+      "futures__4h",
+      "futures__1d",
+      "futures__1w",
+      "scalping__1m",
+      "scalping__5m",
+      "meta__5m",
+      "meta__15m",
+      "meta__1h",
+      "meta__4h",
+      "tft__15m",
+      "tft__1h",
+      "tft__4h",
+      "tft__1d",
+      "regime__1h",
+      "oft__1m",
+      "oft__5m"
+    ],
+    "retire": []
+  },
+  "generated_at": "2026-05-14T23:53:03.092030+00:00"
+}

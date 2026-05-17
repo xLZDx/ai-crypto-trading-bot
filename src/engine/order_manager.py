@@ -159,7 +159,7 @@ class OrderManager:
                 return book_market_order(symbol, side, amount_coin, price,
                                          market="spot")
             except Exception as exc:
-                logging.error(f"❌ paper SPOT {side} {symbol} failed: {exc}")
+                logging.error(f"FAIL  paper SPOT {side} {symbol} failed: {exc}")
                 return None
         self._sync_clocks()
         try:
@@ -170,10 +170,10 @@ class OrderManager:
                 order = self.exchange.create_market_buy_order(symbol, float(amount_coin))
             else:
                 order = self.exchange.create_market_sell_order(symbol, float(amount_coin))
-            logging.info(f"✅ SPOT {side.upper()} {amount_coin} {symbol} executed. ID: {order.get('id')}")
+            logging.info(f"OK  SPOT {side.upper()} {amount_coin} {symbol} executed. ID: {order.get('id')}")
             return order
         except Exception as e:
-            logging.error(f"❌ Error in Spot order {side} on {symbol}: {e}")
+            logging.error(f"FAIL  Error in Spot order {side} on {symbol}: {e}")
             return None
 
     @staticmethod
@@ -256,14 +256,14 @@ class OrderManager:
                 return book_market_order(symbol, side, amount_coin, price,
                                          market="futures")
             except Exception as exc:
-                logging.error(f"❌ paper FUTURES {side} {symbol} failed: {exc}")
+                logging.error(f"FAIL  paper FUTURES {side} {symbol} failed: {exc}")
                 return None
         self._sync_clocks()
         try:
             self.futures_exchange.load_markets()
             futures_symbol = self.to_futures_symbol(symbol)
             if futures_symbol not in self.futures_exchange.markets:
-                logging.warning(f"No perpetual futures market for {symbol} ({futures_symbol}) — skipping futures order")
+                logging.warning(f"No perpetual futures market for {symbol} ({futures_symbol}) -- skipping futures order")
                 return None
             amount_coin = self.futures_exchange.amount_to_precision(futures_symbol, amount_coin)
             params = {'reduceOnly': True} if reduce_only else {}
@@ -272,7 +272,7 @@ class OrderManager:
                 order = self.futures_exchange.create_market_buy_order(futures_symbol, float(amount_coin), params)
             else:
                 order = self.futures_exchange.create_market_sell_order(futures_symbol, float(amount_coin), params)
-            logging.info(f"✅ FUTURES {side.upper()} {amount_coin} {symbol} (Reduce: {reduce_only}) executed. ID: {order.get('id')}")
+            logging.info(f"OK  FUTURES {side.upper()} {amount_coin} {symbol} (Reduce: {reduce_only}) executed. ID: {order.get('id')}")
             return order
         except Exception as e:
             err_str = str(e)
@@ -281,11 +281,11 @@ class OrderManager:
             # close-path can short-circuit retries and force-close locally.
             if reduce_only and ('-2022' in err_str or 'ReduceOnly Order is rejected' in err_str):
                 logging.warning(
-                    f"FUTURES {side.upper()} {symbol} reduceOnly rejected (-2022) — "
+                    f"FUTURES {side.upper()} {symbol} reduceOnly rejected (-2022) -- "
                     f"exchange has no open position to close."
                 )
                 return {'reduce_only_rejected': True, 'error_code': -2022}
-            logging.error(f"❌ Error in Futures order {side} on {symbol}: {e}")
+            logging.error(f"FAIL  Error in Futures order {side} on {symbol}: {e}")
             return None
 
     def execute_limit_futures_order(self, symbol, side, amount_coin, price, reduce_only=False):
@@ -297,7 +297,7 @@ class OrderManager:
             self.futures_exchange.load_markets()
             futures_symbol = self.to_futures_symbol(symbol)
             if futures_symbol not in self.futures_exchange.markets:
-                logging.warning(f"No perpetual futures market for {symbol} ({futures_symbol}) — skipping limit futures order")
+                logging.warning(f"No perpetual futures market for {symbol} ({futures_symbol}) -- skipping limit futures order")
                 return None
             amount_coin = self.futures_exchange.amount_to_precision(futures_symbol, amount_coin)
             price_str = self.futures_exchange.price_to_precision(futures_symbol, price)
@@ -307,10 +307,10 @@ class OrderManager:
                 symbol=futures_symbol, type='limit', side=side.lower(), 
                 amount=float(amount_coin), price=float(price_str), params=params
             )
-            logging.info(f"📋 FUTURES LIMIT {side.upper()} {amount_coin} @ {price_str} executed. ID: {order.get('id')}")
+            logging.info(f"? FUTURES LIMIT {side.upper()} {amount_coin} @ {price_str} executed. ID: {order.get('id')}")
             return order
         except Exception as e:
-            logging.error(f"❌ Error in Limit order {side} on {symbol}: {e}")
+            logging.error(f"FAIL  Error in Limit order {side} on {symbol}: {e}")
             return None
             
     def cancel_all_orders(self, symbol):

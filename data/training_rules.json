@@ -1,302 +1,327 @@
 {
-    "_doc": "Training rules registry â€” single source of truth for which (model Ã— TF) combos make sense to train. Edit and any new sweep picks it up. Operator override: add 'force_train' or 'force_skip' lists per sweep via /api/cluster/sweep payload.",
-    "_version": "v4_b0_2026_05_09",
-    "_updated_at": "2026-05-09T20:55:00Z",
-    "models": {
-        "base": {
-            "type": "tabular_histgbt",
-            "label": "Base RF (directional buy)",
-            "description": "RF on Triple-Barrier long labels â€” primary directional buy signal",
-            "applicable_tfs": [
-                "5m",
-                "15m",
-                "1h",
-                "4h",
-                "1d"
-            ],
-            "experimental_tfs": [
-                "1w"
-            ],
-            "skip_tfs": [
-                "1m",
-                "1mo"
-            ],
-            "skip_reason": "1m too noisy for RF directional; 1mo too few samples (~70/symbol)",
-            "params": {
-                "n_estimators": 100,
-                "max_depth": 8,
-                "class_weight": "balanced"
-            },
-            "resource_kind": "cpu",
-            "est_minutes_per_run": 30,
-            "depends_on": [],
-            "kpi_threshold": {
-                "wf_acc": 50.0,
-                "wf_win_rate": 35.0,
-                "wf_total_trades": 30
-            }
-        },
-        "trend": {
-            "type": "tabular_histgbt",
-            "label": "Trend RF (trend-follower)",
-            "description": "Trend-follower â€” long entries when SMA + ADX align with regime",
-            "applicable_tfs": [
-                "15m",
-                "1h",
-                "4h",
-                "1d",
-                "1w"
-            ],
-            "experimental_tfs": [],
-            "skip_tfs": [
-                "1m",
-                "5m",
-                "1mo"
-            ],
-            "skip_reason": "no real trend at sub-15-min granularity; 1mo too coarse",
-            "params": {
-                "n_estimators": 100,
-                "max_depth": 8,
-                "class_weight": "balanced"
-            },
-            "resource_kind": "cpu",
-            "est_minutes_per_run": 27,
-            "depends_on": [],
-            "kpi_threshold": {
-                "wf_acc": 50.0,
-                "wf_win_rate": 35.0,
-                "wf_total_trades": 25
-            }
-        },
-        "futures": {
-            "type": "tabular_histgbt",
-            "label": "Futures Short RF",
-            "description": "Short-side classifier â€” flags overbought / regime-flip setups",
-            "applicable_tfs": [
-                "5m",
-                "15m",
-                "1h",
-                "4h",
-                "1d"
-            ],
-            "experimental_tfs": [
-                "1w"
-            ],
-            "skip_tfs": [
-                "1m",
-                "1mo"
-            ],
-            "skip_reason": "same noise problem as base at 1m; thin samples at 1mo",
-            "params": {
-                "n_estimators": 100,
-                "max_depth": 8,
-                "class_weight": "balanced"
-            },
-            "resource_kind": "cpu",
-            "est_minutes_per_run": 25,
-            "depends_on": [],
-            "kpi_threshold": {
-                "wf_acc": 50.0,
-                "wf_win_rate": 35.0,
-                "wf_total_trades": 20
-            }
-        },
-        "scalping": {
-            "type": "tabular_histgbt_smote",
-            "label": "Scalping RF",
-            "description": "Sub-minute mean-reversion + flow imbalance for HFT exits",
-            "applicable_tfs": [
-                "1m",
-                "5m"
-            ],
-            "experimental_tfs": [],
-            "skip_tfs": [
-                "15m",
-                "1h",
-                "4h",
-                "1d",
-                "1w",
-                "1mo"
-            ],
-            "skip_reason": "scalping logic is sub-minute mean-reversion; 15m+ defeats the purpose (becomes biased trend follower)",
-            "params": {
-                "max_iter": 400,
-                "max_depth": 5,
-                "smote_max_rows": 500000
-            },
-            "resource_kind": "cpu",
-            "est_minutes_per_run": 30,
-            "depends_on": [],
-            "kpi_threshold": {
-                "wf_acc": 50.0,
-                "wf_total_trades": 50
-            }
-        },
-        "meta": {
-            "type": "tabular_histgbt_meta_labeler",
-            "label": "Meta-Labeler",
-            "description": "Gates primary signals on predicted true-positive probability",
-            "applicable_tfs": [
-                "5m",
-                "15m",
-                "1h",
-                "4h"
-            ],
-            "experimental_tfs": [],
-            "skip_tfs": [
-                "1m",
-                "1d",
-                "1w",
-                "1mo"
-            ],
-            "skip_reason": "no primary signals to gate at 1m; no consumer in bot at 1d+",
-            "params": {
-                "n_estimators": 100,
-                "max_depth": 6
-            },
-            "resource_kind": "cpu",
-            "est_minutes_per_run": 12,
-            "depends_on": [
-                "base",
-                "trend",
-                "futures"
-            ],
-            "kpi_threshold": {
-                "wf_acc": 55.0,
-                "auc_roc": 0.55,
-                "wf_win_rate": 40.0
-            },
-            "cio_overrides": {
-                "timeframe": "15m",
-                "train_window_days": 90,
-                "pt_multiplier": 3.0,
-                "sl_multiplier": 1.9,
-                "confidence_threshold": 0.54,
-                "_applied_at": "2026-05-13T14:22:12.551629+00:00",
-                "_study": "macro_parameter_search_v1",
-                "_best_value": 0.1
-            }
-        },
-        "tft": {
-            "type": "neural_darts",
-            "label": "TFT Neural",
-            "description": "Temporal Fusion Transformer â€” multi-horizon attention forecast",
-            "applicable_tfs": [
-                "15m",
-                "1h",
-                "4h"
-            ],
-            "experimental_tfs": [
-                "1d"
-            ],
-            "skip_tfs": [
-                "1m",
-                "5m",
-                "1w",
-                "1mo"
-            ],
-            "skip_reason": "input_chunk_length=168 needs swing horizons; <15m=noise, â‰¥1w=insufficient history",
-            "params": {
-                "n_epochs": 10,
-                "input_chunk_length": 168,
-                "output_chunk_length": 24,
-                "batch_size": 64,
-                "hidden_size": 64,
-                "_note": "n_epochs reduced from 30 to 10 after the 8h-per-TF wedge observed 2026-05-09"
-            },
-            "resource_kind": "neural",
-            "est_minutes_per_run": 80,
-            "depends_on": [],
-            "kpi_threshold": {
-                "wf_acc": 48.0
-            }
-        },
-        "regime": {
-            "type": "bayesian_gmm_classifier",
-            "label": "Regime Classifier (GMM)",
-            "description": "Bayesian GMM â€” classifies bars into bull/bear/sideways regime",
-            "applicable_tfs": [
-                "1h"
-            ],
-            "experimental_tfs": [],
-            "skip_tfs": [
-                "1m",
-                "5m",
-                "15m",
-                "4h",
-                "1d",
-                "1w",
-                "1mo"
-            ],
-            "skip_reason": "GMM uses TF-invariant features (vol, ADX, returns z-score); one canonical TF is enough â€” extra TFs duplicate output",
-            "params": {
-                "n_components": 3
-            },
-            "resource_kind": "cpu",
-            "est_minutes_per_run": 30,
-            "depends_on": [],
-            "kpi_threshold": {
-                "wf_acc": 45.0
-            }
-        },
-        "oft": {
-            "type": "neural_oft_microstructure",
-            "label": "OFT (Order-Flow Transformer)",
-            "description": "L2/L3 microstructure â†’ mu/sigma + liquidity risk",
-            "applicable_tfs": [
-                "1m"
-            ],
-            "experimental_tfs": [
-                "5m"
-            ],
-            "skip_tfs": [
-                "15m",
-                "1h",
-                "4h",
-                "1d",
-                "1w",
-                "1mo"
-            ],
-            "skip_reason": "operates on L2/L3 events; aggregation â‰¥15m kills signal-to-noise",
-            "params": {
-                "n_epochs": 5,
-                "skip_sac": true
-            },
-            "resource_kind": "exclusive",
-            "est_minutes_per_run": 140,
-            "depends_on": [],
-            "kpi_threshold": {
-                "wf_acc": 50.0
-            }
-        }
+  "_doc": "Training rules registry â€” single source of truth for which (model Ã— TF) combos make sense to train. Edit and any new sweep picks it up. Operator override: add 'force_train' or 'force_skip' lists per sweep via /api/cluster/sweep payload.",
+  "_version": "v4_b0_2026_05_09",
+  "_updated_at": "2026-05-09T20:55:00Z",
+  "models": {
+    "base": {
+      "type": "tabular_histgbt",
+      "label": "Base RF (directional buy)",
+      "description": "RF on Triple-Barrier long labels â€” primary directional buy signal",
+      "applicable_tfs": [
+        "15m",
+        "1h",
+        "4h"
+      ],
+      "experimental_tfs": [
+        "1w"
+      ],
+      "skip_tfs": [
+        "1d",
+        "1m",
+        "1mo"
+      ],
+      "skip_reason": "1m too noisy for RF directional; 1mo too few samples (~70/symbol)",
+      "params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "class_weight": "balanced"
+      },
+      "resource_kind": "cpu",
+      "est_minutes_per_run": 30,
+      "depends_on": [],
+      "kpi_threshold": {
+        "wf_acc": 50.0,
+        "wf_win_rate": 35.0,
+        "wf_total_trades": 30,
+        "overfit_ratio": 0.20
+      }
     },
-    "global": {
-        "default_symbol_universe": [
-            "BTC/USDT",
-            "ETH/USDT",
-            "SOL/USDT",
-            "ADA/USDT",
-            "BNB/USDT",
-            "XRP/USDT",
-            "DOGE/USDT",
-            "TRX/USDT",
-            "AVAX/USDT",
-            "SHIB/USDT",
-            "DOT/USDT",
-            "LINK/USDT",
-            "NEAR/USDT",
-            "UNI/USDT",
-            "LTC/USDT",
-            "APT/USDT",
-            "ATOM/USDT",
-            "HBAR/USDT",
-            "ICP/USDT",
-            "SUI/USDT"
-        ],
-        "skip_if_fresh_s": 172800,
-        "between_models_behavior": "auto_continue",
-        "intra_model_parallelism_cap": null,
-        "force_train": [],
-        "force_skip": []
+    "trend": {
+      "type": "tabular_histgbt",
+      "label": "Trend RF (trend-follower)",
+      "description": "Trend-follower â€” long entries when SMA + ADX align with regime",
+      "applicable_tfs": [
+        "15m",
+        "1d",
+        "1h",
+        "4h"
+      ],
+      "experimental_tfs": [],
+      "skip_tfs": [
+        "1m",
+        "1mo",
+        "1w",
+        "5m"
+      ],
+      "skip_reason": "1m/5m: no real trend at sub-15-min granularity; 1mo: too coarse; 1w: only ~416 bars since 2018, too few for ML (WF acc 53.1%, 2211 samples confirmed 2026-05-17)",
+      "params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "class_weight": "balanced"
+      },
+      "resource_kind": "cpu",
+      "est_minutes_per_run": 27,
+      "depends_on": [],
+      "kpi_threshold": {
+        "wf_acc": 50.0,
+        "wf_win_rate": 35.0,
+        "wf_total_trades": 25,
+        "overfit_ratio": 0.20
+      }
+    },
+    "futures": {
+      "type": "tabular_histgbt",
+      "label": "Futures Short RF",
+      "description": "Short-side classifier â€” flags overbought / regime-flip setups",
+      "applicable_tfs": [
+        "15m",
+        "1h",
+        "4h"
+      ],
+      "experimental_tfs": [
+        "1w"
+      ],
+      "skip_tfs": [
+        "1m",
+        "1mo",
+        "5m"
+      ],
+      "skip_reason": "1m: same noise problem as base; 5m: WF acc 51.1% (noise floor, confirmed 2026-05-17); 1mo: thin samples",
+      "params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "class_weight": "balanced"
+      },
+      "resource_kind": "cpu",
+      "est_minutes_per_run": 25,
+      "depends_on": [],
+      "kpi_threshold": {
+        "wf_acc": 50.0,
+        "wf_win_rate": 35.0,
+        "wf_total_trades": 20,
+        "overfit_ratio": 0.20
+      }
+    },
+    "scalping": {
+      "type": "tabular_histgbt_smote",
+      "label": "Scalping RF",
+      "description": "Sub-minute mean-reversion + flow imbalance for HFT exits",
+      "applicable_tfs": [
+        "1m",
+        "5m"
+      ],
+      "experimental_tfs": [],
+      "skip_tfs": [
+        "15m",
+        "1h",
+        "4h",
+        "1d",
+        "1w",
+        "1mo"
+      ],
+      "skip_reason": "scalping logic is sub-minute mean-reversion; 15m+ defeats the purpose (becomes biased trend follower)",
+      "params": {
+        "max_iter": 400,
+        "max_depth": 5,
+        "smote_max_rows": 500000
+      },
+      "resource_kind": "cpu",
+      "est_minutes_per_run": 30,
+      "depends_on": [],
+      "kpi_threshold": {
+        "wf_acc": 50.0,
+        "wf_total_trades": 50,
+        "overfit_ratio": 0.20
+      }
+    },
+    "meta": {
+      "type": "tabular_histgbt_meta_labeler",
+      "label": "Meta-Labeler",
+      "description": "Gates primary signals on predicted true-positive probability",
+      "applicable_tfs": [
+        "15m",
+        "1h",
+        "4h"
+      ],
+      "experimental_tfs": [],
+      "skip_tfs": [
+        "1m",
+        "1d",
+        "1w",
+        "1mo"
+      ],
+      "skip_reason": "no primary signals to gate at 1m; no consumer in bot at 1d+",
+      "params": {
+        "n_estimators": 100,
+        "max_depth": 6
+      },
+      "resource_kind": "cpu",
+      "est_minutes_per_run": 12,
+      "depends_on": [
+        "base",
+        "trend",
+        "futures"
+      ],
+      "kpi_threshold": {
+        "wf_acc": 55.0,
+        "auc_roc": 0.55,
+        "wf_win_rate": 40.0,
+        "overfit_ratio": 0.20
+      },
+      "cio_overrides": {
+        "timeframe": "15m",
+        "train_window_days": 90,
+        "pt_multiplier": 3.0,
+        "sl_multiplier": 1.9,
+        "confidence_threshold": 0.54,
+        "_applied_at": "2026-05-13T14:22:12.551629+00:00",
+        "_study": "macro_parameter_search_v1",
+        "_best_value": 0.1
+      }
+    },
+    "tft": {
+      "type": "neural_darts",
+      "label": "TFT Neural",
+      "description": "Temporal Fusion Transformer â€” multi-horizon attention forecast",
+      "applicable_tfs": [
+        "1h",
+        "4h"
+      ],
+      "experimental_tfs": [
+        "1d"
+      ],
+      "skip_tfs": [
+        "1m",
+        "5m",
+        "1w",
+        "1mo"
+      ],
+      "skip_reason": "input_chunk_length=168 needs swing horizons; <15m=noise, â‰¥1w=insufficient history",
+      "params": {
+        "n_epochs": 25,
+        "min_epochs": 3,
+        "patience": 6,
+        "input_chunk_length": 168,
+        "output_chunk_length": 24,
+        "batch_size": 64,
+        "hidden_size": 64,
+        "_presets": {
+          "_doc": "Operator-curated cost/quality presets. Pick by intent:",
+          "cheap": {
+            "n_epochs": 3,
+            "patience": 5,
+            "min_epochs": 3,
+            "_eta_full_sweep_h": 1.6,
+            "_note": "retire-fast — let kpi_gate decide"
+          },
+          "fair-vs-gbt": {
+            "n_epochs": 12,
+            "patience": 4,
+            "min_epochs": 3,
+            "_eta_full_sweep_h": 6.4,
+            "_note": "fair TFT vs HistGBT comparison"
+          },
+          "max-quality": {
+            "n_epochs": 25,
+            "patience": 6,
+            "min_epochs": 3,
+            "_eta_full_sweep_h": 13,
+            "_note": "cost-no-object — EarlyStopping typically fires at 10-14"
+          }
+        },
+        "_note": "n_epochs: 30 (orig) → 10 (2026-05-09 8h-per-TF wedge) → 3 (2026-05-15 cheap mode) → 10 (2026-05-15 fair mode with min_epochs=3 floor, patience=4). EarlyStopping cannot fire before min_epochs reached."
+      },
+      "resource_kind": "neural",
+      "est_minutes_per_run": 80,
+      "depends_on": [],
+      "kpi_threshold": {}
+    },
+    "regime": {
+      "type": "bayesian_gmm_classifier",
+      "label": "Regime Classifier (GMM)",
+      "description": "Bayesian GMM â€” classifies bars into bull/bear/sideways regime",
+      "applicable_tfs": [
+        "1h"
+      ],
+      "experimental_tfs": [],
+      "skip_tfs": [
+        "1m",
+        "5m",
+        "15m",
+        "4h",
+        "1d",
+        "1w",
+        "1mo"
+      ],
+      "skip_reason": "GMM uses TF-invariant features (vol, ADX, returns z-score); one canonical TF is enough â€” extra TFs duplicate output",
+      "params": {
+        "n_components": 3
+      },
+      "resource_kind": "cpu",
+      "est_minutes_per_run": 30,
+      "depends_on": [],
+      "kpi_threshold": {
+        "wf_acc": 45.0
+      }
+    },
+    "oft": {
+      "type": "neural_oft_microstructure",
+      "label": "OFT (Order-Flow Transformer)",
+      "description": "L2/L3 microstructure â†’ mu/sigma + liquidity risk",
+      "applicable_tfs": [
+        "1m"
+      ],
+      "experimental_tfs": [
+        "5m"
+      ],
+      "skip_tfs": [
+        "15m",
+        "1h",
+        "4h",
+        "1d",
+        "1w",
+        "1mo"
+      ],
+      "skip_reason": "operates on L2/L3 events; aggregation â‰¥15m kills signal-to-noise",
+      "params": {
+        "n_epochs": 5,
+        "skip_sac": true
+      },
+      "resource_kind": "exclusive",
+      "est_minutes_per_run": 140,
+      "depends_on": [],
+      "kpi_threshold": {
+        "wf_acc": 50.0
+      }
     }
+  },
+  "global": {
+    "default_symbol_universe": [
+      "BTC/USDT",
+      "ETH/USDT",
+      "SOL/USDT",
+      "ADA/USDT",
+      "BNB/USDT",
+      "XRP/USDT",
+      "DOGE/USDT",
+      "TRX/USDT",
+      "AVAX/USDT",
+      "SHIB/USDT",
+      "DOT/USDT",
+      "LINK/USDT",
+      "NEAR/USDT",
+      "UNI/USDT",
+      "LTC/USDT",
+      "APT/USDT",
+      "ATOM/USDT",
+      "HBAR/USDT",
+      "ICP/USDT",
+      "SUI/USDT"
+    ],
+    "skip_if_fresh_s": 172800,
+    "between_models_behavior": "auto_continue",
+    "intra_model_parallelism_cap": null,
+    "force_train": [],
+    "force_skip": []
+  }
 }

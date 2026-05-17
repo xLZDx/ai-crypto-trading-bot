@@ -95,7 +95,7 @@ class TelegramMonitor:
     def start(self):
         if not self.is_active:
             logger.warning(
-                "Telegram Monitor disabled — missing TELEGRAM_API_ID/TELEGRAM_API_HASH "
+                "Telegram Monitor disabled -- missing TELEGRAM_API_ID/TELEGRAM_API_HASH "
                 "in .env or no channels configured."
             )
             return

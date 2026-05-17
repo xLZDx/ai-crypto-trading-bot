@@ -102,13 +102,13 @@ def _build_chain() -> list[str]:
     for m in chain:
         provider = m.split("/", 1)[0]
         if provider == "anthropic" and not os.getenv("ANTHROPIC_API_KEY"):
-            print(f"[fallback] skipping {m} — ANTHROPIC_API_KEY not set", file=sys.stderr)
+            print(f"[fallback] skipping {m} -- ANTHROPIC_API_KEY not set", file=sys.stderr)
             continue
         if provider == "openai" and not os.getenv("OPENAI_API_KEY"):
-            print(f"[fallback] skipping {m} — OPENAI_API_KEY not set", file=sys.stderr)
+            print(f"[fallback] skipping {m} -- OPENAI_API_KEY not set", file=sys.stderr)
             continue
         if provider == "gemini" and not os.getenv("GEMINI_API_KEY"):
-            print(f"[fallback] skipping {m} — GEMINI_API_KEY not set", file=sys.stderr)
+            print(f"[fallback] skipping {m} -- GEMINI_API_KEY not set", file=sys.stderr)
             continue
         out.append(m)
     return out
@@ -177,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
         # Quota or rate-limit signal? Try the next model.
         if QUOTA_SIGNAL.search(combined):
             print(f"[fallback] {model} hit quota/rate limit (rc={rc}). "
-                  f"Trying next model in chain…", file=sys.stderr)
+                  f"Trying next model in chain...", file=sys.stderr)
             continue
         # Non-quota failure: don't keep cycling — bail with the error.
         print(f"[fallback] {model} failed with non-quota error (rc={rc}). "

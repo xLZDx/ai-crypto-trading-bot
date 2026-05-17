@@ -127,7 +127,7 @@ def _load_key() -> Optional[bytes]:
         if not raw:
             if not _key_warning_emitted:
                 logger.warning(
-                    "%s unset — model integrity checks bypassed (fail-open). "
+                    "%s unset -- model integrity checks bypassed (fail-open). "
                     "Generate with: python -c \"import secrets; print(secrets.token_urlsafe(48))\" "
                     "and set %s in .env to enforce.",
                     _KEY_ENV, _KEY_ENV,
@@ -171,7 +171,7 @@ def _load_enforcement_mode() -> str:
             mode = _MODE_ENFORCE
         if mode == _MODE_WARN and not _warn_mode_alert_emitted:
             logger.critical(
-                "%s=warn — HMAC mismatches will be LOGGED but ALLOWED. "
+                "%s=warn -- HMAC mismatches will be LOGGED but ALLOWED. "
                 "This mode is for diagnostics only; switch back to %r before "
                 "resuming production loads.",
                 _ENFORCEMENT_ENV, _MODE_ENFORCE,
@@ -198,7 +198,7 @@ def _reject_symlink(path: str) -> None:
     if os.path.islink(path):
         rel = _rel_key(path)
         logger.critical(
-            "Model integrity: refusing to load symlink %s — symlinks are "
+            "Model integrity: refusing to load symlink %s -- symlinks are "
             "rejected to prevent target-swap bypass.", rel,
         )
         raise ModelIntegrityError(f"refusing symlink: {rel}")
@@ -249,7 +249,7 @@ def _check_manifest_entry_shape(rel: str) -> None:
     if not isinstance(expected, str) or len(expected) != _HMAC_LEN_HEX:
         logger.critical(
             "Model integrity: malformed manifest entry for %s (missing or "
-            "short hmac). Refusing to load — manifest may be corrupted "
+            "short hmac). Refusing to load -- manifest may be corrupted "
             "or tampered.", rel,
         )
         raise ModelIntegrityError(f"malformed manifest entry for {rel}")
@@ -273,7 +273,7 @@ def _check_against_manifest(rel: str, actual_hmac: str) -> None:
         # corruption / tampering of the manifest itself, not a benign sign-skip.
         logger.critical(
             "Model integrity: malformed manifest entry for %s (missing or "
-            "short hmac). Refusing to load — manifest may be corrupted "
+            "short hmac). Refusing to load -- manifest may be corrupted "
             "or tampered.", rel,
         )
         raise ModelIntegrityError(f"malformed manifest entry for {rel}")
@@ -282,7 +282,7 @@ def _check_against_manifest(rel: str, actual_hmac: str) -> None:
         if mode == _MODE_WARN:
             logger.critical(
                 "Model integrity FAILURE for %s: HMAC mismatch (expected=%s..., actual=%s...). "
-                "%s=warn — allowing load anyway. Switch %s back to %r before resuming production.",
+                "%s=warn -- allowing load anyway. Switch %s back to %r before resuming production.",
                 rel, expected[:12], actual_hmac[:12],
                 _ENFORCEMENT_ENV, _ENFORCEMENT_ENV, _MODE_ENFORCE,
             )

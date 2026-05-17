@@ -163,7 +163,7 @@ def main() -> int:
         if act_dir == 0 and pred_dir == 1: fp += 1
 
     if total == 0:
-        logger.error("No forecasts produced — aborting")
+        logger.error("No forecasts produced -- aborting")
         return 1
 
     acc       = 100.0 * correct / total

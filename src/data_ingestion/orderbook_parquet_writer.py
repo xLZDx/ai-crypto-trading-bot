@@ -104,7 +104,7 @@ class OrderbookParquetWriter:
                 self._buf = self._buf[-_MAX_BUF_ROWS:]
                 logger.critical(
                     "[L2 writer] buffer overflow: dropped %d oldest rows "
-                    "(buffer capped at %d). Underlying flush is failing — "
+                    "(buffer capped at %d). Underlying flush is failing -- "
                     "check logs/orderbook_parquet_writer.log and disk space.",
                     dropped, _MAX_BUF_ROWS,
                 )
@@ -147,7 +147,7 @@ class OrderbookParquetWriter:
                 n = writer._consec_snap_failures
                 if n == _SNAP_FAILURE_ALERT_AT:
                     logger.error(
-                        "[L2 writer] %d consecutive snapshot parse failures — "
+                        "[L2 writer] %d consecutive snapshot parse failures -- "
                         "bus payload may have changed shape. Last error: %s. "
                         "Sample payload (first 200 chars): %s",
                         n, exc, str(snap)[:200],
@@ -188,7 +188,7 @@ class OrderbookParquetWriter:
             logger.info("[L2 writer] flushed %d rows", written)
             return written
         except Exception as exc:
-            logger.error("[L2 writer] flush failed: %s — re-buffering %d rows",
+            logger.error("[L2 writer] flush failed: %s -- re-buffering %d rows",
                          exc, len(rows))
             with self._buf_lock:
                 # Cap-aware re-buffer: drop oldest if we'd exceed the limit.
@@ -242,7 +242,7 @@ def main() -> None:
                         consec += 1
                         if consec >= 3:
                             logger.critical(
-                                "[registry-hb] orderbook_writer lost role ownership 3x — "
+                                "[registry-hb] orderbook_writer lost role ownership 3x -- "
                                 "exiting so a clean restart can claim"
                             )
                             import os as _os
@@ -274,7 +274,7 @@ def main() -> None:
 
     # Graceful Ctrl+C
     def _handler(_signum, _frame):
-        logger.info("[L2 writer] shutting down; final flush…")
+        logger.info("[L2 writer] shutting down; final flush...")
         writer.stop()
         sys.exit(0)
     signal.signal(signal.SIGINT, _handler)

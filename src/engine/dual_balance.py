@@ -92,7 +92,7 @@ def refresh_real_from_binance(order_manager=None) -> dict:
         write_real(snapshot)
         return snapshot
     except Exception as exc:
-        logger.warning("[balance_real] refresh failed: %s — keeping cache.", exc)
+        logger.warning("[balance_real] refresh failed: %s -- keeping cache.", exc)
         return read_real()
 
 

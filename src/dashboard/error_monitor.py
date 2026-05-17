@@ -961,5 +961,5 @@ if __name__ == "__main__":
     rows = get_active()
     print(f"{len(rows)} active entries (within {ACTIVE_WINDOW_S//60} min):")
     for r in rows[:20]:
-        print(f"  [{r['kind']:<8}] {r['file']:<24} ×{r['count']:<4}"
+        print(f"  [{r['kind']:<8}] {r['file']:<24} x{r['count']:<4}"
               f" age {r['age_s']:>6.1f}s  {r['sample'][:120]}")

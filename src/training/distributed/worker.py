@@ -33,6 +33,32 @@ from pathlib import Path
 
 logger = logging.getLogger("worker")
 
+
+def _prevent_system_sleep() -> None:
+    """Tell Windows to keep the system awake while this worker runs.
+    Uses SetThreadExecutionState with ES_CONTINUOUS | ES_SYSTEM_REQUIRED so
+    AC + DC sleep timers don't fire mid-training. Display can still dim
+    (training is GPU-bound, no visible UI). 2026-05-16 -- operator request:
+    Razer + Ivan must stay awake during long sweeps."""
+    if platform.system() != "Windows":
+        return
+    try:
+        import ctypes
+        ES_CONTINUOUS       = 0x80000000
+        ES_SYSTEM_REQUIRED  = 0x00000001
+        ES_AWAYMODE_REQUIRED = 0x00000040
+        flags = ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED
+        rv = ctypes.windll.kernel32.SetThreadExecutionState(flags)
+        if rv == 0:
+            logger.warning("[Worker] SetThreadExecutionState returned 0 (sleep prevention may not be active)")
+        else:
+            logger.info("[Worker] System sleep prevention armed (SetThreadExecutionState=0x%x)", flags)
+    except Exception as exc:
+        logger.warning("[Worker] Could not arm sleep prevention: %s", exc)
+
+
+_prevent_system_sleep()
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -64,16 +90,16 @@ def _ensure_deps() -> None:
             __import__(pkg)
         except ImportError:
             if install_name:
-                logger.info("Installing %s…", install_name)
+                logger.info("Installing %s...", install_name)
                 subprocess.check_call([sys.executable, "-m", "pip", "install", install_name, "-q"])
 
     # Install PyTorch with CUDA if GPU present and torch not installed
     try:
         import torch
         if not torch.cuda.is_available():
-            logger.info("CUDA not available with current torch — consider reinstalling with CUDA wheels")
+            logger.info("CUDA not available with current torch -- consider reinstalling with CUDA wheels")
     except ImportError:
-        logger.info("Installing PyTorch (CUDA 11.8)…")
+        logger.info("Installing PyTorch (CUDA 11.8)...")
         subprocess.check_call([
             sys.executable, "-m", "pip", "install",
             "torch", "torchvision", "torchaudio",
@@ -203,7 +229,7 @@ def _execute_task(task: dict) -> dict:
                 vram_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
                 if vram_gb < 6.0:
                     logger.warning(
-                        "[Worker] Rejecting TFT task — VRAM %.1f GB < 6 GB minimum. "
+                        "[Worker] Rejecting TFT task -- VRAM %.1f GB < 6 GB minimum. "
                         "Orchestrator should reroute to a larger GPU worker.",
                         vram_gb,
                     )
@@ -244,7 +270,7 @@ def _execute_task(task: dict) -> dict:
         master_result = _invoke_master_trainer(model_type, timeframe, symbol, config)
         if master_result is not None:
             return master_result
-        logger.warning("[Worker] master-trainer dispatch failed for %s — falling back to generic RF",
+        logger.warning("[Worker] master-trainer dispatch failed for %s -- falling back to generic RF",
                        model_type)
 
     # Legacy generic-RF handlers (kept as fallback so a worker-side
@@ -294,7 +320,7 @@ def _invoke_master_trainer(model_type: str, timeframe: str, symbol: str,
     failed and the caller should fall back to the legacy handler."""
     spec = _MASTER_TRAINER_DISPATCH.get(model_type)
     if not spec:
-        logger.info("[Worker] no master trainer registered for model_type=%r — using legacy handler", model_type)
+        logger.info("[Worker] no master trainer registered for model_type=%r -- using legacy handler", model_type)
         return None
     mod_name, fn_name = spec
     import importlib, time as _time, json as _json, os as _os
@@ -316,7 +342,7 @@ def _invoke_master_trainer(model_type: str, timeframe: str, symbol: str,
     try:
         _os.chdir(str(PROJECT_ROOT))
     except Exception as exc:
-        logger.warning("[Worker] chdir(%s) failed: %s — trainer may fail to find data",
+        logger.warning("[Worker] chdir(%s) failed: %s -- trainer may fail to find data",
                        PROJECT_ROOT, exc)
     # Some trainers (oft, regime) don't accept timeframe — call accordingly.
     try:
@@ -326,6 +352,42 @@ def _invoke_master_trainer(model_type: str, timeframe: str, symbol: str,
         elif model_type in ("regime",):
             # train_regime_classifier() — no kwargs
             result = fn()
+        elif model_type == "tft":
+            # 2026-05-15 — TFT accepts tuning kwargs from task.config (and
+            # falls back to training_rules.json via the trainer's
+            # defaults). Pre-fix this call ignored config entirely so
+            # operator-submitted n_epochs / patience / min_epochs were
+            # discarded — the 1-epoch smoke test silently ran 10 epochs.
+            tft_kwargs: dict = {"timeframe": timeframe}
+            for _k in ("n_epochs", "min_epochs", "patience", "history_days",
+                       "input_chunk_length", "output_chunk_length"):
+                _v = config.get(_k)
+                if isinstance(_v, int) and _v > 0:
+                    tft_kwargs[_k] = _v
+            # Also surface the cluster task_id to the trainer so the live
+            # progress entry can be correlated back to the dispatch.
+            _tid = config.get("task_id") or config.get("progress_task_id")
+            if isinstance(_tid, str) and _tid:
+                tft_kwargs["progress_task_id"] = _tid
+            # 2026-05-16 -- forward symbols_filter (or single `symbol`) so a
+            # cluster smoke that targets BTC/USDT does NOT train on the full
+            # 20-symbol watchlist. Without this the TFT trainer ignored
+            # task.symbol entirely (load_symbols() inside train_tft_model
+            # always pulled the full watchlist).
+            sf = config.get("symbols_filter")
+            if isinstance(sf, list) and sf:
+                tft_kwargs["symbols_filter"] = sf
+            else:
+                # Only single-symbol pin when symbol is a real ticker. The
+                # cluster uses "ALL" / "*" / blank as the "train every symbol
+                # in the watchlist" sentinel -- those must NOT be passed
+                # through as symbols_filter or load_frame_from_db('ALL', ...)
+                # returns an empty frame and DataQualityError fires.
+                sym_norm = (symbol or "").strip().lower()
+                if sym_norm and sym_norm not in {"all", "*", "any", "none"}:
+                    tft_kwargs["symbols_filter"] = [symbol]
+            logger.info("[Worker] master_trainer TFT call kwargs=%s", tft_kwargs)
+            result = fn(**tft_kwargs)
         else:
             result = fn(timeframe=timeframe)
     except Exception as exc:
@@ -411,7 +473,7 @@ def _run_smoke_test(task: dict) -> dict:
     t_start = _time.time()
     t_end   = t_start + duration_s
 
-    logger.info("[Worker] SMOKE_TEST start: duration=%ds — CPU lane + GPU lane",
+    logger.info("[Worker] SMOKE_TEST start: duration=%ds -- CPU lane + GPU lane",
                 duration_s)
 
     # ── CPU lane ────────────────────────────────────────────────────────
@@ -467,7 +529,7 @@ def _run_smoke_test(task: dict) -> dict:
                                             name="smoke-gpu")
             gpu_thread.start()
     except Exception as exc:
-        logger.info("[Worker] smoke_test: torch/CUDA unavailable (%s) — CPU-only", exc)
+        logger.info("[Worker] smoke_test: torch/CUDA unavailable (%s) -- CPU-only", exc)
 
     # ── Heartbeat log every 30 s ────────────────────────────────────────
     while _time.time() < t_end:
@@ -687,17 +749,56 @@ def _train_random_forest(task: dict) -> dict:
 
 
 def _train_tft(task: dict) -> dict:
-    """TFT model training — uses darts if available."""
+    """TFT model training — uses darts if available.
+
+    2026-05-15 fixes:
+      1. Previous import `from src.engine.train_tft_model import train_tft`
+         was a NameError — the real function is `train_tft_model`. Every
+         TFT task dispatched via the cluster failed silently with
+         ImportError caught at the outer try. Calling the right name now.
+      2. n_epochs is read from training_rules.json (`models.tft.params.n_epochs`,
+         currently 3 per operator request), with override via task.config.n_epochs.
+         The function default (3) is the last-resort fallback.
+    """
     try:
         import sys
         sys.path.insert(0, str(PROJECT_ROOT))
-        from src.engine.train_tft_model import train_tft
-        symbol    = task.get("symbol", "BTC/USDT")
-        timeframe = task.get("timeframe", "1m")
-        result = train_tft(symbol=symbol, timeframe=timeframe)
-        return result or {"status": "done"}
+        from src.engine.train_tft_model import train_tft_model
+        timeframe = task.get("timeframe", "1h")
+        cfg = task.get("config", {}) or {}
+        # Priority for each param: task.config > training_rules.json > function default
+        rules_params = {}
+        try:
+            import json
+            rules_path = PROJECT_ROOT / "data" / "training_rules.json"
+            rules = json.loads(rules_path.read_text(encoding="utf-8"))
+            rules_params = (rules.get("models") or {}).get("tft", {}).get("params", {})
+        except Exception:
+            rules_params = {}
+        kwargs = {"timeframe": timeframe}
+        for key in ("n_epochs", "patience", "min_epochs"):
+            v = cfg.get(key)
+            if v is None:
+                v = rules_params.get(key)
+            if isinstance(v, int) and v > 0:
+                kwargs[key] = v
+        # TFT is a multi-symbol model — the per-task `symbol` is ignored.
+        # train_tft_model() loads its own symbol list from data/watchlist.json.
+        result = train_tft_model(**kwargs)
+        if isinstance(result, dict):
+            result.setdefault("status", "done")
+            result.setdefault("n_epochs_used", kwargs.get("n_epochs"))
+            result.setdefault("patience_used", kwargs.get("patience"))
+            result.setdefault("min_epochs_used", kwargs.get("min_epochs"))
+            return result
+        return {
+            "status": "done",
+            "n_epochs_used": kwargs.get("n_epochs"),
+            "patience_used": kwargs.get("patience"),
+            "min_epochs_used": kwargs.get("min_epochs"),
+        }
     except Exception as exc:
-        return {"error": str(exc), "status": "failed"}
+        return {"error": f"{type(exc).__name__}: {exc}", "status": "failed"}
 
 
 def _train_oft(task: dict) -> dict:
@@ -792,7 +893,7 @@ class TrainingWorker:
         if not _WORKER_KEY:
             logger.critical(
                 "[Worker] No WORKER_AUTH_KEY / CLUSTER_API_KEY / DASHBOARD_API_KEY "
-                "set — /task, /cancel, /restart are UNPROTECTED. Set the env var "
+                "set -- /task, /cancel, /restart are UNPROTECTED. Set the env var "
                 "to enable auth."
             )
 
@@ -828,6 +929,25 @@ class TrainingWorker:
             task = freq.get_json(force=True) or {}
             if self._current_task:
                 return jsonify({"error": "busy"}), 409
+            # 2026-05-16 -- model-type allow/reject lists. WORKER_ALLOW_MODELS
+            # and WORKER_REJECT_MODELS env vars are comma-separated. When set,
+            # the worker returns 409 for non-matching model_types so the orch
+            # re-queues the task and another worker picks it up. Lets the
+            # operator pin TFT to one GPU box and OFT to another without
+            # changing the orchestrator's scheduler.
+            mt = (task.get("model_type") or "").strip().lower()
+            allow = os.environ.get("WORKER_ALLOW_MODELS", "").strip()
+            reject = os.environ.get("WORKER_REJECT_MODELS", "").strip()
+            if allow:
+                allowed = {x.strip().lower() for x in allow.split(",") if x.strip()}
+                if mt and mt not in allowed:
+                    return jsonify({"error": "not_my_model_type", "model_type": mt,
+                                     "allowed": sorted(allowed)}), 409
+            if reject:
+                rejected = {x.strip().lower() for x in reject.split(",") if x.strip()}
+                if mt and mt in rejected:
+                    return jsonify({"error": "rejected_model_type", "model_type": mt,
+                                     "rejected": sorted(rejected)}), 409
             threading.Thread(target=self._run_task, args=(task,), daemon=True).start()
             return jsonify({"ok": True, "task_id": task.get("task_id")})
 
@@ -868,11 +988,11 @@ class TrainingWorker:
                 }), 400
             def _delayed_exec():
                 time.sleep(1.0)
-                logger.warning("[Worker] /restart received — re-executing self")
+                logger.warning("[Worker] /restart received -- re-executing self")
                 try:
                     os.execv(sys.executable, [sys.executable] + sys.argv)
                 except Exception as exc:
-                    logger.error("[Worker] /restart os.execv failed: %s — exiting", exc)
+                    logger.error("[Worker] /restart os.execv failed: %s -- exiting", exc)
                     os._exit(1)
             threading.Thread(target=_delayed_exec, daemon=True,
                              name="worker-restart").start()
@@ -970,18 +1090,36 @@ class TrainingWorker:
             return {"zmq_available": False, "error": str(exc)}
 
     def _notify_master(self, status: str, task_id: str, result: dict | None = None, error: str = "") -> None:
+        import os as _os
         import requests as req
+        # 2026-05-15 fix — pre-fix this POST went without auth and the
+        # orchestrator silently rejected every status update with 401.
+        # That's why tasks marked 'running' never transitioned to 'done':
+        # the worker finished, called _notify_master, got 401, swallowed
+        # the exception at DEBUG. The watchdog later force-failed them
+        # at the 3h exclusive-lane budget. Now we send the same shared
+        # secret used elsewhere in the worker↔cluster_orch contract.
+        _auth_key = (_os.getenv("WORKER_AUTH_KEY")
+                     or _os.getenv("CLUSTER_API_KEY")
+                     or _os.getenv("DASHBOARD_API_KEY")
+                     or "").strip()
+        _headers = {"X-API-Key": _auth_key} if _auth_key else {}
         try:
-            req.post(
+            r = req.post(
                 f"{self.master_url}/api/cluster/task_update",
                 json={"task_id": task_id, "node_id": self.node_id,
                       "status": status, "result": result or {}, "error": error},
+                headers=_headers,
                 timeout=10,
             )
+            if r.status_code >= 400:
+                logger.warning("[Worker] Notify master returned %s for task %s status=%s",
+                               r.status_code, task_id, status)
         except Exception as exc:
             logger.debug("[Worker] Notify master failed: %s", exc)
 
     def _heartbeat_loop(self) -> None:
+        import os as _os
         import requests as req
         while self._running:
             try:
@@ -1005,6 +1143,15 @@ class TrainingWorker:
                     reported_ip = self.hw["ip"]
                 else:
                     reported_ip = self.bind_host
+                # 2026-05-15 fix: cluster_orch /api/cluster/register requires
+                # the shared secret (CLUSTER_API_KEY / DASHBOARD_API_KEY) once
+                # auth is enabled. Pre-fix the worker POST'd without a header
+                # and every register call returned 401 → 0 workers visible.
+                _auth_key = (_os.getenv("CLUSTER_API_KEY")
+                             or _os.getenv("DASHBOARD_API_KEY")
+                             or _os.getenv("WORKER_AUTH_KEY")
+                             or "").strip()
+                _headers = {"X-API-Key": _auth_key} if _auth_key else {}
                 req.post(
                     f"{self.master_url}/api/cluster/register",
                     json={
@@ -1029,6 +1176,7 @@ class TrainingWorker:
                         "gpu_mem_total_mb": live["gpu_mem_total_mb"],
                         "uptime_s":         int(time.time() - self._start_time),
                     },
+                    headers=_headers,
                     timeout=5,
                 )
             except Exception:
@@ -1040,7 +1188,7 @@ class TrainingWorker:
         self._running = True
         hw = self.hw
         logger.info("=" * 60)
-        logger.info("Training Worker  —  %s  [%s]", self.name, self.node_id)
+        logger.info("Training Worker  --  %s  [%s]", self.name, self.node_id)
         logger.info("GPU: %s  (CUDA: %s)  VRAM: %.1f GB", hw["gpu_name"], hw["cuda_available"], hw["gpu_vram_gb"])
         logger.info("CPU: %d cores  RAM: %.1f GB", hw["cpu_cores"], hw["ram_gb"])
         logger.info("Master: %s", self.master_url)
@@ -1057,7 +1205,7 @@ class TrainingWorker:
         # by refusing any non-localhost inbound traffic.
         logger.info("Bind host: %s", self.bind_host)
         if self.bind_host == "127.0.0.1":
-            logger.info("⚠ LOCALHOST-ONLY MODE — master cannot reach this worker remotely.")
+            logger.info("WARN  LOCALHOST-ONLY MODE -- master cannot reach this worker remotely.")
             logger.info("  For cluster mode: set WORKER_BIND_HOST=0.0.0.0 in .env")
             logger.info("  or restart with --host 0.0.0.0")
         self._app.run(host=self.bind_host, port=self.port, debug=False, use_reloader=False)
@@ -1100,7 +1248,7 @@ def main() -> None:
         # those too for completeness. No-op when those env vars aren't read.
         os.environ['HIP_VISIBLE_DEVICES']  = ''
         logging.getLogger(__name__).info(
-            "[worker] lane=cpu — hiding all GPU adapters via "
+            "[worker] lane=cpu -- hiding all GPU adapters via "
             "CUDA_VISIBLE_DEVICES='' / HIP_VISIBLE_DEVICES=''")
 
     worker = TrainingWorker(

@@ -515,7 +515,7 @@ class MLEngineerAgent:
             level = logging.WARNING
         logger.log(
             level,
-            "[ML Engineer] %s/%s @ %s → %s | reasons=%s | warnings=%s",
+            "[ML Engineer] %s/%s @ %s -> %s | reasons=%s | warnings=%s",
             decision.model_type, decision.timeframe, decision.phase,
             decision.decision, decision.reasons, decision.warnings,
         )

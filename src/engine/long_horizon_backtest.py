@@ -100,7 +100,7 @@ def run(horizon: str = DEFAULT_HORIZON,
         "finished_at": datetime.now(timezone.utc).isoformat(),
         "elapsed_s":   round(time.time() - started, 1),
     }
-    logger.info("[long_horizon_backtest] done — %d rows in %.1fs",
+    logger.info("[long_horizon_backtest] done -- %d rows in %.1fs",
                 rows, out["elapsed_s"])
     return out
 

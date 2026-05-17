@@ -106,7 +106,7 @@ def _try_get_regime(_classifier, _ts: str) -> str | None:
 
 def backfill():
     if not TRADES_PATH.exists():
-        print(f'No trades.json at {TRADES_PATH} — nothing to backfill', file=sys.stderr)
+        print(f'No trades.json at {TRADES_PATH} -- nothing to backfill', file=sys.stderr)
         return 1
 
     with open(TRADES_PATH, encoding='utf-8') as f:

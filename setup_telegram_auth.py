@@ -33,15 +33,15 @@ async def main():
     print(f"\nConnecting to Telegram (session: {SESSION})...")
     async with TelegramClient(SESSION, int(API_ID), API_HASH) as client:
         me = await client.get_me()
-        print(f"\n✅ Authorized as: {me.first_name} (@{me.username})")
+        print(f"\nOK  Authorized as: {me.first_name} (@{me.username})")
         print(f"Session file saved: {SESSION}.session")
         print("\nVerifying channel access...")
         for ch in CHANNELS:
             try:
                 entity = await client.get_entity(ch)
-                print(f"  ✅ {ch} — accessible ({getattr(entity, 'title', ch)})")
+                print(f"  OK  {ch} — accessible ({getattr(entity, 'title', ch)})")
             except Exception as e:
-                print(f"  ⚠️  {ch} — {e}")
+                print(f"  WARN ?  {ch} — {e}")
         print("\nSetup complete. You can now start the bot normally.")
 
 if __name__ == "__main__":

@@ -333,7 +333,7 @@ class ValidationGate:
             level = logging.WARNING
         logger.log(
             level,
-            '[ValidationGate] %s/%s → %s (reasons=%s warnings=%s)',
+            '[ValidationGate] %s/%s -> %s (reasons=%s warnings=%s)',
             report.model_type, report.timeframe, report.decision,
             report.reasons, report.warnings,
         )

@@ -80,20 +80,20 @@ from src.utils.hw_config import configure as _hw_configure
 # the noise combos but useful for ablation studies).
 DEFAULT_PER_KEY_TFS: dict[str, tuple[str, ...]] = {
     'base':     ('5m', '15m', '1h', '4h', '1d'),     # 5 TFs
-    'trend':    ('15m', '1h', '4h', '1d', '1w'),     # 5 TFs
-    'futures':  ('5m', '15m', '1h', '4h', '1d'),     # 5 TFs
+    'trend':    ('15m', '1h', '4h', '1d'),            # 4 TFs — 1w removed: ~416 bars total, too few for ML
+    'futures':  ('15m', '1h', '4h', '1d'),            # 4 TFs — 5m removed: WF acc 51.1% (noise), matches training_rules.json skip_tfs
     'scalping': ('1m', '5m'),                         # 2 TFs
     'meta':     ('5m', '15m', '1h', '4h'),           # 4 TFs
     'tft':      ('15m', '1h', '4h'),                  # 3 TFs
     'regime':   ('1h',),                              # 1 TF
 }
-# 25 (model × TF) tabular combos. OFT is added separately by item 1M
+# 22 (model × TF) tabular combos. OFT is added separately by item 1M
 # (microstructure model on L2/L3, single canonical TF).
 
 if os.getenv('AI_TRADER_TRAIN_TF_MAP', '').lower() in ('strict', 'all', 'strict_all_all'):
     _ALL_TFS = ('1m', '5m', '15m', '1h', '4h', '1d', '1w')
     DEFAULT_PER_KEY_TFS = {k: _ALL_TFS for k in DEFAULT_PER_KEY_TFS}
-    log.info("AI_TRADER_TRAIN_TF_MAP override: strict all×all (49 combos)")
+    log.info("AI_TRADER_TRAIN_TF_MAP override: strict allxall (49 combos)")
 
 
 # 2026-05-10 fix — operator on the same machine had 6 zombie
@@ -192,7 +192,7 @@ def _acquire_run_lock(force: bool = False) -> bool:
     except Exception as exc:
         # Unexpected error inside transaction — log and proceed (better
         # than refusing legitimate training because of an IO glitch).
-        log.warning("lock acquire raised unexpectedly: %s — proceeding anyway", exc)
+        log.warning("lock acquire raised unexpectedly: %s -- proceeding anyway", exc)
     return True
 
 
@@ -226,7 +226,7 @@ def _legacy_acquire_run_lock(force: bool = False) -> bool:
         with open(_LOCK_PATH, 'w', encoding='utf-8') as f:
             _json.dump(payload, f)
     except Exception as exc:
-        log.warning("legacy lock write failed: %s — proceeding anyway", exc)
+        log.warning("legacy lock write failed: %s -- proceeding anyway", exc)
     return True
 
 
@@ -309,13 +309,34 @@ def _train_all_inner(per_key_tfs: dict[str, tuple[str, ...]] | None = None):
     log.info("   Multi-TF: %s", cfg)
     log.info("==========================================")
 
-    # ── 0. Download data ──────────────────────────────────────────────────
+    # ── 0. Download auxiliary data ────────────────────────────────────────
     try:
         log.info(">>> [0/8] Downloading funding rate history (ccxt)...")
         from src.data_ingestion.funding_rate_downloader import download_funding_rates
         download_funding_rates(days=365 * 2)
     except Exception as e:
         log.warning("Funding rate download failed (will train without): %s", e)
+
+    try:
+        log.info(">>> [0/8] Downloading Open Interest history (Binance free)...")
+        from src.data_ingestion.open_interest_downloader import download_open_interest
+        download_open_interest(days=365 * 5)
+    except Exception as e:
+        log.warning("Open Interest download failed (will train without): %s", e)
+
+    try:
+        log.info(">>> [0/8] Downloading Fear & Greed index (Alternative.me free)...")
+        from src.data_ingestion.fear_greed_downloader import download_fear_greed
+        download_fear_greed()
+    except Exception as e:
+        log.warning("Fear & Greed download failed (will train without): %s", e)
+
+    try:
+        log.info(">>> [0/8] Downloading liquidation history...")
+        from src.data_ingestion.liquidation_downloader import download_liquidations
+        download_liquidations()
+    except Exception as e:
+        log.warning("Liquidation download failed (will train without): %s", e)
 
     # Skip-if-fresh — when an overnight run dies at hour 5 of 8 and the
     # operator re-triggers it, we don't want to redo every model from
@@ -365,7 +386,7 @@ def _train_all_inner(per_key_tfs: dict[str, tuple[str, ...]] | None = None):
         for tf in cfg.get(key, ()):
             age = _meta_age_s(key, tf)
             if SKIP_IF_FRESH_S > 0 and age is not None and age < SKIP_IF_FRESH_S:
-                log.info(">>> Skipping %s @ %s — meta written %d min ago "
+                log.info(">>> Skipping %s @ %s -- meta written %d min ago "
                          "(within SKIP_IF_FRESH_S=%ds; resume mode)",
                          label, tf, int(age / 60), SKIP_IF_FRESH_S)
                 continue
@@ -389,7 +410,7 @@ def _train_all_inner(per_key_tfs: dict[str, tuple[str, ...]] | None = None):
     for tf in cfg.get('tft', ()):
         age = _meta_age_s('tft', tf)
         if SKIP_IF_FRESH_S > 0 and age is not None and age < SKIP_IF_FRESH_S:
-            log.info(">>> Skipping TFT @ %s — meta written %d min ago", tf, int(age / 60))
+            log.info(">>> Skipping TFT @ %s -- meta written %d min ago", tf, int(age / 60))
             continue
         try:
             log.info(">>> Training TFT Model @ %s ...", tf)

@@ -96,11 +96,37 @@ _TF_SECONDS = {
 }
 
 
+def _mtime_to_ts(path: Path) -> str | None:
+    """Convert the file's modification time to the audit's "YYYY-MM-DD HH:MM:SS"
+    UTC format. Used as a cheap proxy for last_ts when fast=True (default).
+
+    For ongoing-archive files (Binance dumps that the downloader keeps
+    appending to), mtime ≈ time of the last write ≈ last bar boundary.
+    For frozen historical archives, mtime is stable and "stale" classification
+    still works correctly — it just reflects the file's last update rather
+    than the last bar inside the file.
+
+    Operator request 2026-05-15: the Data Coverage card never loaded because
+    the previous implementation decompressed every gzip end-to-end (BTC 1m
+    alone was 27s; 160 cells × 10 GB total → ~10 min cold scan that always
+    exceeded the 2-min cache TTL). mtime is O(1) per file via stat().
+    """
+    try:
+        dt = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except OSError:
+        return None
+
+
 def _parse_first_last_ts(path: Path) -> tuple[str | None, str | None, int]:
-    """Cheap two-line read: skip header, take the first data row's timestamp,
-    then seek to ~last 2KB to grab the trailing line. Returns (first, last,
-    rows). rows is set to -1 if we don't know cheaply (we don't count by
-    default — full count requires reading the whole file)."""
+    """Two-line read: skip header, take the first data row's timestamp,
+    then drain the file to the last non-empty line for `last_ts`. Returns
+    (first, last, rows). rows is set to -1 because counting requires a
+    full file traversal.
+
+    SLOW PATH: this decompresses the entire gzip stream. Only call from
+    `audit_coverage(..., precise=True)`. The default audit uses mtime
+    instead (see _mtime_to_ts)."""
     try:
         with gzip.open(path, "rt", encoding="utf-8", errors="replace") as f:
             header = f.readline()
@@ -110,11 +136,6 @@ def _parse_first_last_ts(path: Path) -> tuple[str | None, str | None, int]:
             if not first_line:
                 return (None, None, 0)
             first_ts = first_line.split(",", 1)[0].strip()
-            # Tail: read full tail (gzip doesn't support cheap seek-from-end).
-            # We bound by reading only the last 4KB of the *decompressed*
-            # stream by doing a small-buffer drain — still O(file) but no
-            # full parse. For the audit panel this is fast enough; the
-            # alternative is sampling, which gives wrong "last_ts".
             tail = first_line
             for line in f:
                 if line.strip():
@@ -150,13 +171,28 @@ def audit_coverage(
     *,
     raw_dir: Path | None = None,
     fast: bool = True,
+    precise: bool = False,
 ) -> list[dict]:
     """Return [{symbol, timeframe, status, rows, first_ts, last_ts, lag_s,
-    file_size_bytes, path}] for every cell in the grid. fast=True skips
-    full row counts (which would require reading the entire gzip stream).
-    Set fast=False for an accurate row count — significantly slower."""
+    file_size_bytes, path}] for every cell in the grid.
+
+    `fast=True` (default) skips full row counts and uses file mtime as the
+    last-bar proxy. This makes the audit O(1) per file via stat(). With
+    20 symbols × 8 TFs (~10 GB compressed) the audit finishes in <1s
+    instead of ~10 min of gzip decompression. The Data Coverage card on
+    the Strategy tab depends on this finishing inside its 2-min cache TTL.
+
+    `precise=True` opt-in decompresses each gzip to read the exact first
+    and last bar timestamps. Only use when you genuinely need the bar
+    timestamps (e.g. a backfill orchestrator deciding what to download).
+    With the project's 10 GB of compressed data this takes ~10 minutes.
+
+    `fast=False` triggers full row counts AND precise=True semantics —
+    even slower. Kept for backwards-compat with any caller that passes it.
+    """
     raw_dir = Path(raw_dir) if raw_dir else RAW_DIR
     now = datetime.now(timezone.utc)
+    use_gzip_scan = precise or (not fast)
     out: list[dict] = []
     for sym in symbols:
         for tf in timeframes:
@@ -183,15 +219,27 @@ def audit_coverage(
                 row["file_age_s"]      = round((now.timestamp() - stat.st_mtime), 1)
             except OSError:
                 pass
-            first_ts, last_ts, _rows = _parse_first_last_ts(path)
-            if not fast:
-                # Full row count — slow but precise.
-                try:
-                    with gzip.open(path, "rt", encoding="utf-8") as f:
-                        next(f, None)  # header
-                        _rows = sum(1 for _ in f)
-                except Exception:
-                    _rows = -1
+            first_ts: str | None = None
+            last_ts:  str | None = None
+            _rows: int = -1
+            if use_gzip_scan:
+                first_ts, last_ts, _rows = _parse_first_last_ts(path)
+                if not fast:
+                    # Full row count — slow but precise.
+                    try:
+                        with gzip.open(path, "rt", encoding="utf-8") as f:
+                            next(f, None)  # header
+                            _rows = sum(1 for _ in f)
+                    except Exception:
+                        _rows = -1
+            else:
+                # FAST PATH (default): use mtime as last_ts proxy. The Binance
+                # archive downloader rewrites the .csv.gz every time it tops
+                # up the file, so mtime closely tracks last bar boundary for
+                # an actively-maintained archive. For frozen archives, mtime
+                # is stable and the staleness check still classifies them
+                # correctly (lag > 3 * bar_size → stale).
+                last_ts = _mtime_to_ts(path)
             row["first_ts"] = first_ts
             row["last_ts"]  = last_ts
             row["rows"]     = _rows

@@ -303,7 +303,7 @@ class MLPredictor:
             )
             return [f"f{i}" for i in range(expected_n)]
 
-        logger.debug("[MLPredictor] feature_names_in_ not found — using hardcoded list for '%s'", self.model_type)
+        logger.debug("[MLPredictor] feature_names_in_ not found -- using hardcoded list for '%s'", self.model_type)
         return hardcoded or []
 
     def _inspect_model_n_features(self) -> int | None:

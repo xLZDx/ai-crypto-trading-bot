@@ -130,7 +130,7 @@ class CVaROptimizer:
         try:
             import cvxpy as cp
         except ImportError as exc:
-            logger.warning("cvxpy not installed — returning prior weights. (%s)", exc)
+            logger.warning("cvxpy not installed -- returning prior weights. (%s)", exc)
             n = scenario_returns.shape[1]
             w = (prior_weights if prior_weights is not None
                  else np.ones(n) / n)
@@ -167,7 +167,7 @@ class CVaROptimizer:
         try:
             prob.solve(solver=self.solver) if self.solver else prob.solve()
         except Exception as exc:
-            logger.warning("CVaR solve failed (%s) — falling back to prior.", exc)
+            logger.warning("CVaR solve failed (%s) -- falling back to prior.", exc)
             w_out = (prior_weights if prior_weights is not None
                      else np.ones(n_assets) / n_assets)
             return CVaRResult(weights=np.asarray(w_out),

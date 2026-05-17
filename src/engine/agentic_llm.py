@@ -329,7 +329,7 @@ class AgenticLLM:
             except Exception as e:
                 logger.error(f"Failed to initialize Gemini client: {e}")
         else:
-            logger.warning("GEMINI_API_KEY not set. Agentic LLM disabled — trades auto-approved.")
+            logger.warning("GEMINI_API_KEY not set. Agentic LLM disabled -- trades auto-approved.")
 
     def evaluate_trade(self, symbol: str, action: str, technical_reason: str, headlines: list, telegram_monitor=None) -> tuple[str, str]:
         if not self.is_active or self._client is None:
@@ -427,7 +427,7 @@ class AgenticLLM:
                 decision = data.get("decision", "").upper()
                 reason = data.get("reason", "No reason provided.")
                 if decision not in _VALID_DECISIONS:
-                    logger.warning(f"Unexpected LLM decision '{decision}' — defaulting to APPROVED.")
+                    logger.warning(f"Unexpected LLM decision '{decision}' -- defaulting to APPROVED.")
                     decision = "APPROVED"
                 _cache_decision(symbol, action, decision, reason)
                 return decision, reason

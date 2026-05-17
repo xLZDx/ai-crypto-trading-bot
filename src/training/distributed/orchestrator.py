@@ -41,7 +41,7 @@ try:
 except Exception as _mle_imp_err:  # pragma: no cover — defensive
     _get_ml_engineer = None
     logger.critical(
-        "[Orch] ML Engineer agent unavailable at import time: %s — pre/post "
+        "[Orch] ML Engineer agent unavailable at import time: %s -- pre/post "
         "flight AFML gates will not run.", _mle_imp_err,
     )
 
@@ -53,7 +53,7 @@ try:
 except Exception as _kpi_imp_err:  # pragma: no cover
     _kpi_gate = None
     logger.warning(
-        "[Orch] KPI gate unavailable at import time: %s — auto-retire disabled.",
+        "[Orch] KPI gate unavailable at import time: %s -- auto-retire disabled.",
         _kpi_imp_err,
     )
 
@@ -143,11 +143,16 @@ class Orchestrator:
         """Phase C reviewer fix (SSRF): persisted state could carry a worker
         IP that points outside the LAN. _send_task_to_worker POSTs to that
         IP; an attacker with file-write could re-target the orchestrator at
-        an internal/cloud-metadata endpoint. Accept only loopback or RFC1918
-        private addresses + a sane port range. Python's `is_private` includes
-        link-local (169.254.0.0/16) — which is exactly the cloud metadata
-        target — so we explicitly exclude link-local, multicast, reserved,
-        and unspecified ranges.
+        an internal/cloud-metadata endpoint. Accept only loopback / RFC1918
+        / Tailscale-CGNAT (100.64.0.0/10) + a sane port range. Python's
+        `is_private` includes link-local (169.254.0.0/16) — exactly the
+        cloud-metadata target — so we explicitly exclude link-local,
+        multicast, reserved, and unspecified ranges.
+
+        2026-05-15 — added 100.64.0.0/10 (CGNAT) to the allow-list because
+        Tailscale assigns addresses in that range (Ivan workers come in as
+        100.88.71.74). Previously this hit ipaddress.is_global=True and the
+        register handler rejected the (correctly-overridden) entry.
         """
         import ipaddress
         ip = w.get("ip", "")
@@ -161,7 +166,15 @@ class Orchestrator:
         if (addr.is_link_local or addr.is_multicast
                 or addr.is_reserved or addr.is_unspecified):
             return False
-        return addr.is_private or addr.is_loopback
+        if addr.is_private or addr.is_loopback:
+            return True
+        # Tailscale CGNAT range (RFC6598).
+        try:
+            if addr in ipaddress.ip_network("100.64.0.0/10"):
+                return True
+        except (ValueError, TypeError):
+            pass
+        return False
 
     @staticmethod
     def _is_safe_local_path(p: str, allowed_root: Path) -> bool:
@@ -353,7 +366,7 @@ class Orchestrator:
             try:
                 if _kpi_gate.is_retired(model_type, timeframe):
                     logger.error(
-                        "[Orch] Task REFUSED — %s/%s is KPI-retired. "
+                        "[Orch] Task REFUSED -- %s/%s is KPI-retired. "
                         "Restore via POST /api/registry/%s__%s/restore.",
                         model_type, timeframe, model_type, timeframe,
                     )
@@ -419,7 +432,7 @@ class Orchestrator:
                         and existing.get("symbol")     == symbol
                         and existing.get("timeframe")  == timeframe):
                     logger.info(
-                        "[Orch] Task dedup: %s/%s/%s already %s as %s — returning existing id",
+                        "[Orch] Task dedup: %s/%s/%s already %s as %s -- returning existing id",
                         model_type, symbol, timeframe, existing.get("status"), existing_id,
                     )
                     return existing_id
@@ -568,7 +581,7 @@ class Orchestrator:
                             task["kpi_gate"] = kpi_outcome
                             if kpi_outcome.get("retired_now"):
                                 logger.error(
-                                    "[Orch] KPI gate AUTO-RETIRED %s/%s after 3 strikes — "
+                                    "[Orch] KPI gate AUTO-RETIRED %s/%s after 3 strikes -- "
                                     "subsequent submissions will be blocked until restore. "
                                     "Missed fields: %s",
                                     model_type, tf, kpi_outcome.get("missed_fields"),
@@ -583,7 +596,7 @@ class Orchestrator:
                     task["assigned_to"] = ""
                     if task_id not in self._queue:
                         self._queue.append(task_id)
-                    logger.warning("[Orch] Task %s failed — retry %d/%d", task_id, task["retries"], MAX_TASK_RETRIES)
+                    logger.warning("[Orch] Task %s failed -- retry %d/%d", task_id, task["retries"], MAX_TASK_RETRIES)
         # Persist OUTSIDE the lock.
         self._persist()
 
@@ -591,10 +604,18 @@ class Orchestrator:
         cancelled = False
         with self._lock:
             task = self._tasks.get(task_id)
-            if task and task["status"] == "pending":
+            if task and task["status"] in ("pending", "running"):
                 task["status"] = "cancelled"
+                task["finished_at"] = datetime.now(timezone.utc).isoformat()
                 if task_id in self._queue:
                     self._queue.remove(task_id)
+                # Free the assigned worker if it still thinks it owns this task
+                node_id = task.get("assigned_to", "")
+                if node_id and node_id in self._workers:
+                    w = self._workers[node_id]
+                    if w.get("current_task") == task_id:
+                        w["status"] = "idle"
+                        w["current_task"] = ""
                 cancelled = True
         if cancelled:
             self._persist()
@@ -756,12 +777,32 @@ class Orchestrator:
                     kind = _rkind(task.get("model_type", "")) or "cpu"
                 except Exception:
                     pass
+                # 2026-05-16 -- worker_name_pin: if task.config carries
+                # "worker_name_pin" (string) or "worker_name_pins" (list),
+                # only dispatch to a worker whose name (case-insensitive)
+                # matches. Lets the operator say "TFT runs on RAZER only,
+                # OFT runs on WORKER-1-GPU only" without changing lanes.
+                cfg = task.get("config") or {}
+                pin_single = cfg.get("worker_name_pin")
+                pin_list   = cfg.get("worker_name_pins") or []
+                pins: set[str] = set()
+                if isinstance(pin_single, str) and pin_single.strip():
+                    pins.add(pin_single.strip().lower())
+                if isinstance(pin_list, list):
+                    pins.update(str(p).strip().lower() for p in pin_list if str(p).strip())
+
+                def _pin_accepts(w: dict) -> bool:
+                    if not pins:
+                        return True
+                    return str(w.get("name", "")).strip().lower() in pins
+
                 # Find first idle worker (GPU-sorted) whose lane accepts this kind
-                # AND that we haven't already assigned this round.
+                # AND that we haven't already assigned this round AND matches pin.
                 worker = next(
                     (w for w in idle
                      if w["node_id"] not in assigned_workers
-                     and _lane_accepts(w.get("lane", "any"), kind)),
+                     and _lane_accepts(w.get("lane", "any"), kind)
+                     and _pin_accepts(w)),
                     None,
                 )
                 if worker is None:
@@ -787,14 +828,43 @@ class Orchestrator:
             self._persist()
 
     def _send_task_to_worker(self, worker: dict, task: dict) -> None:
+        import os as _os
         import requests
         ip, port, node_id = worker["ip"], worker["port"], worker["node_id"]
+        # 2026-05-15 fix: worker /task endpoint requires the same shared
+        # secret as cluster_orch (WORKER_AUTH_KEY / CLUSTER_API_KEY /
+        # DASHBOARD_API_KEY). Pre-fix the dispatcher POSTed without a
+        # header so every dispatch attempt returned 401 and the task
+        # cycled back to pending forever.
+        _auth_key = (_os.getenv("WORKER_AUTH_KEY")
+                     or _os.getenv("CLUSTER_API_KEY")
+                     or _os.getenv("DASHBOARD_API_KEY")
+                     or "").strip()
+        _headers = {"X-API-Key": _auth_key} if _auth_key else None
         try:
-            r = requests.post(f"http://{ip}:{port}/task", json=task, timeout=15)
+            r = requests.post(f"http://{ip}:{port}/task", json=task,
+                              headers=_headers, timeout=15)
             if r.status_code == 200:
-                logger.info("[Orch] Task %s → %s (%s:%s)", task["task_id"], worker.get("name", node_id), ip, port)
+                logger.info("[Orch] Task %s -> %s (%s:%s)", task["task_id"], worker.get("name", node_id), ip, port)
+            elif r.status_code == 409:
+                # 2026-05-15 fix — worker is already busy with another task
+                # (race between heartbeat reporting 'idle' and the next
+                # dispatch cycle). Pre-fix the master marked the task as
+                # 'failed' permanently; we accumulated 14 false-failures in
+                # a few minutes during a parallel OFT sweep. Now we put it
+                # back on the queue so the next idle worker picks it up.
+                logger.info("[Orch] Worker %s busy (409) -- re-queue task %s",
+                            node_id, task["task_id"])
+                self.update_task(task["task_id"], "pending", node_id)
+                # Also clear the worker's stale current_task so the
+                # status will re-sync on its next heartbeat.
+                with self._lock:
+                    w = self._workers.get(node_id)
+                    if w and w.get("current_task") == task.get("task_id"):
+                        w["current_task"] = ""
             else:
-                logger.warning("[Orch] Worker %s rejected task: %s", node_id, r.text[:200])
+                logger.warning("[Orch] Worker %s rejected task: HTTP %s body=%s",
+                               node_id, r.status_code, r.text[:200])
                 self.update_task(task["task_id"], "failed", node_id, error=f"Worker rejected: {r.status_code}")
         except Exception as exc:
             logger.warning("[Orch] Cannot reach worker %s: %s", node_id, exc)
@@ -898,7 +968,7 @@ def _build_standalone_app(orch: Orchestrator):
                     or "").strip()
     if not _CLUSTER_KEY:
         logger.critical(
-            "[Orch] No CLUSTER_API_KEY / DASHBOARD_API_KEY set — mutation "
+            "[Orch] No CLUSTER_API_KEY / DASHBOARD_API_KEY set -- mutation "
             "endpoints (/submit, /register, /task_update, /cancel) are "
             "UNPROTECTED. Set the env var to enable auth."
         )
@@ -959,6 +1029,26 @@ def _build_standalone_app(orch: Orchestrator):
     def register():
         _require_cluster_auth()
         body = freq.get_json(force=True) or {}
+        # 2026-05-15 fix — remote workers binding their loopback report
+        # ip=127.0.0.1 in the register payload. The master then dispatches
+        # to http://127.0.0.1:<port>/task which hits the MASTER's own
+        # loopback (not the worker's), failing with "actively refused".
+        # When the request came from a non-loopback address (e.g. Ivan
+        # via Tailscale 100.88.71.74), override the reported ip with the
+        # actual remote addr so dispatch can reach the real worker.
+        reported_ip = (body.get("ip") or "").strip()
+        remote_addr = (freq.remote_addr or "").strip()
+        loopback_set = {"127.0.0.1", "0.0.0.0", "::1", "localhost", ""}
+        if (reported_ip in loopback_set
+                and remote_addr
+                and remote_addr not in loopback_set):
+            logger.info(
+                "[Orch] register: overriding loopback-reported ip=%r with "
+                "remote_addr=%r (worker=%r host=%r)",
+                reported_ip, remote_addr,
+                body.get("name"), body.get("hostname"),
+            )
+            body["ip"] = remote_addr
         # SEC-7 fix: validate IP at runtime — was only checked at state-load.
         if hasattr(orch, '_is_safe_worker_entry') and not orch._is_safe_worker_entry(body):
             logger.warning("[Orch] register_worker: rejected unsafe entry ip=%r", body.get("ip"))
@@ -1015,7 +1105,7 @@ def main() -> None:
 
     local_ip = _local_ip()
     logger.info("=" * 60)
-    logger.info("Training Orchestrator — bind=%s port=%d", args.host, args.port)
+    logger.info("Training Orchestrator -- bind=%s port=%d", args.host, args.port)
     logger.info("Master LAN IP (for workers to connect): %s", local_ip)
     if args.host == "127.0.0.1":
         # ASCII-safe — cp1252 console can't encode ⚠ on Windows default stream.
@@ -1077,7 +1167,7 @@ if __name__ == "__main__":
                         consec += 1
                         if consec >= 3:
                             _log.critical(
-                                "[registry-hb] cluster_orch lost role ownership 3x — "
+                                "[registry-hb] cluster_orch lost role ownership 3x -- "
                                 "watchdog should respawn cleanly"
                             )
                     else:

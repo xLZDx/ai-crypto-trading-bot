@@ -1,0 +1,111 @@
+{
+  "kill": [
+    {
+      "pid": 31408,
+      "reason": "orphan_loky",
+      "detail": "declared_parent=None dead",
+      "age_min": 11.843791687488556
+    },
+    {
+      "pid": 39872,
+      "reason": "orphan_loky",
+      "detail": "declared_parent=32424 dead",
+      "age_min": 1361.577301990986
+    },
+    {
+      "pid": 40188,
+      "reason": "orphan_loky",
+      "detail": "declared_parent=None dead",
+      "age_min": 11.970310509204865
+    },
+    {
+      "pid": 42336,
+      "reason": "orphan_loky",
+      "detail": "declared_parent=32424 dead",
+      "age_min": 1361.5782690405845
+    },
+    {
+      "pid": 44444,
+      "reason": "orphan_loky",
+      "detail": "declared_parent=32424 dead",
+      "age_min": 1361.5776502370834
+    },
+    {
+      "pid": 41072,
+      "reason": "duplicate_cluster_orch",
+      "detail": "not port-7700 holder (holder=2384)",
+      "age_min": 331.58129025697707
+    },
+    {
+      "pid": 17140,
+      "reason": "duplicate_data_gov_orch",
+      "detail": "keeping oldest pid=27628",
+      "age_min": 331.49639889001844
+    },
+    {
+      "pid": 2272,
+      "reason": "duplicate_train::train_scalping_model::1m",
+      "detail": "keeping oldest pid=8544 (47.0min old)",
+      "age_min": 47.01607704957326
+    },
+    {
+      "pid": 42880,
+      "reason": "duplicate_train::train_scalping_model::1m",
+      "detail": "keeping oldest pid=8544 (47.0min old)",
+      "age_min": 37.08655064900716
+    },
+    {
+      "pid": 49984,
+      "reason": "duplicate_train::train_scalping_model::1m",
+      "detail": "keeping oldest pid=8544 (47.0min old)",
+      "age_min": 37.082168420155845
+    },
+    {
+      "pid": 23104,
+      "reason": "duplicate_train::train_scalping_model::1m",
+      "detail": "keeping oldest pid=8544 (47.0min old)",
+      "age_min": 24.049659717082978
+    },
+    {
+      "pid": 42960,
+      "reason": "duplicate_train::train_scalping_model::1m",
+      "detail": "keeping oldest pid=8544 (47.0min old)",
+      "age_min": 24.046306041876473
+    },
+    {
+      "pid": 29316,
+      "reason": "duplicate_train::train_scalping_model::1m",
+      "detail": "keeping oldest pid=8544 (47.0min old)",
+      "age_min": 12.560265501340231
+    },
+    {
+      "pid": 32100,
+      "reason": "duplicate_train::train_scalping_model::1m",
+      "detail": "keeping oldest pid=8544 (47.0min old)",
+      "age_min": 12.545036931832632
+    },
+    {
+      "pid": 34628,
+      "reason": "duplicate_train::train_futures_model::15m",
+      "detail": "keeping oldest pid=39864 (13.7min old)",
+      "age_min": 13.710907300313314
+    },
+    {
+      "pid": 29968,
+      "reason": "duplicate_train::train_futures_model::15m",
+      "detail": "keeping oldest pid=39864 (13.7min old)",
+      "age_min": 12.57504298289617
+    },
+    {
+      "pid": 26176,
+      "reason": "duplicate_train::train_futures_model::15m",
+      "detail": "keeping oldest pid=39864 (13.7min old)",
+      "age_min": 12.56946929693222
+    }
+  ],
+  "protected": [
+    8020,
+    22112,
+    49968
+  ]
+}

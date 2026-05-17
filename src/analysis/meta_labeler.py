@@ -47,7 +47,7 @@ class MetaLabeler:
     def _load(self) -> None:
         if not os.path.exists(self.model_path):
             logger.error(
-                "Meta-labeler model not found at %s — second-layer filter is "
+                "Meta-labeler model not found at %s -- second-layer filter is "
                 "DISABLED and will BLOCK all trades until model is trained.",
                 self.model_path,
             )
@@ -72,7 +72,7 @@ class MetaLabeler:
                         )
                 except Exception as e:
                     logger.warning(
-                        "Could not load optimal_threshold from %s: %s — using default %.2f",
+                        "Could not load optimal_threshold from %s: %s -- using default %.2f",
                         meta_json_path, e, self.confidence_threshold,
                     )
         except Exception as e:
@@ -98,7 +98,7 @@ class MetaLabeler:
         """
         if not self.is_loaded or self.model is None:
             logger.error(
-                "Meta-labeler model is not loaded (path=%s, is_loaded=%s) — "
+                "Meta-labeler model is not loaded (path=%s, is_loaded=%s) -- "
                 "BLOCKING trade. The second-layer filter is non-functional.",
                 self.model_path, self.is_loaded,
             )
@@ -124,7 +124,7 @@ class MetaLabeler:
             missing = [f for f in ('prob_base', 'prob_trend', 'regime') if f not in feature_row]
             if missing:
                 logger.warning(
-                    "Meta-labeler: primary-model features missing (%s) — "
+                    "Meta-labeler: primary-model features missing (%s) -- "
                     "scoring with neutral priors. Caller should supply these "
                     "for accurate filtering.",
                     ', '.join(missing),
@@ -159,7 +159,7 @@ class MetaLabeler:
 
         except Exception as e:
             logger.error(
-                "Meta-labeler inference FAILED — BLOCKING trade: %s",
+                "Meta-labeler inference FAILED -- BLOCKING trade: %s",
                 e, exc_info=True,
             )
             return 'BLOCK', 0.0  # fail-CLOSED on any exception
@@ -177,7 +177,7 @@ class MetaLabeler:
         """
         if not self.is_loaded or self.model is None:
             logger.error(
-                "Meta-labeler batch_filter: model not loaded — BLOCKING all signals."
+                "Meta-labeler batch_filter: model not loaded -- BLOCKING all signals."
             )
             out = pd.DataFrame({
                 'decision': 'BLOCK',
@@ -202,7 +202,7 @@ class MetaLabeler:
             expected = getattr(self.model, 'n_features_in_', None)
             if expected is not None and X.shape[1] != expected:
                 logger.error(
-                    "Meta-labeler batch: feature count mismatch — model expects %d, "
+                    "Meta-labeler batch: feature count mismatch -- model expects %d, "
                     "got %d. BLOCKING all signals.",
                     expected, X.shape[1],
                 )
@@ -227,7 +227,7 @@ class MetaLabeler:
 
         except Exception as e:
             logger.error(
-                "Meta-labeler batch_filter FAILED — BLOCKING all signals: %s",
+                "Meta-labeler batch_filter FAILED -- BLOCKING all signals: %s",
                 e, exc_info=True,
             )
             # Fail-CLOSED: return all-BLOCK so backtester treats this window as

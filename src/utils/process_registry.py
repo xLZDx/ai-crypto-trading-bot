@@ -115,7 +115,7 @@ def _pid_alive(pid: int | None) -> bool:
         # without psutil could BOTH succeed, vs. one falsely blocking forever.
         # Operators are warned to install psutil in this module's docstring.
         logger.critical(
-            "[registry] psutil unavailable — every PID will be reported as "
+            "[registry] psutil unavailable -- every PID will be reported as "
             "DEAD. Install psutil to get correct singleton-enforcement; "
             "without it, duplicate processes are possible."
         )
@@ -165,7 +165,7 @@ def _append_audit_log(entry: dict) -> None:
     except Exception as exc:
         if not _AUDIT_LOG_WARN_ONCE:
             logger.warning(
-                "[registry] audit log append failed: %s — "
+                "[registry] audit log append failed: %s -- "
                 "logs/process_registry.log will not be written this run. "
                 "(Suppressing subsequent failures to avoid spam.)", exc,
             )
@@ -358,28 +358,52 @@ def release_role(role: str, reason: str = 'graceful') -> bool:
 def heartbeat(role: str) -> bool:
     """Update last_heartbeat for *role* IF we own it.
 
-    Returns True on success, False if we no longer own the role.
+    Returns True on success, False if we no longer own the role OR if
+    the registry lock could not be acquired within the timeout window.
 
     Reviewer fix 2026-05-13: returning False used to be a silent no-op,
     which masked the case where the reaper had evicted this process while
     it was still running (the runaway scenario). Now logs at WARNING when
     ownership has been lost so callers can react (e.g. exit the bot to
     let the watchdog claim cleanly).
+
+    Operator fix 2026-05-15: heartbeat ran with the safe_json default 5 s
+    filelock timeout. During training the registry lock is contended by
+    many parallel worker subprocesses claiming/heartbeating, and the bot's
+    heartbeat thread surfaced 'The file lock ... could not be acquired'
+    in the dashboard warning banner. Bumped to 15 s because a heartbeat
+    is periodic background work — a slow lock is fine; a missed heartbeat
+    is fine; a noisy operator banner is not.
     """
+    from filelock import Timeout as _LockTimeout
     from src.utils.safe_json import transaction
     my_pid = os.getpid()
     ok = False
-    with transaction(str(REGISTRY_PATH), default={'roles': {}, 'audit': []}) as data:
-        data.setdefault('roles', {})
-        existing = data['roles'].get(role)
-        if existing and existing.get('pid') == my_pid:
-            existing['last_heartbeat'] = _now_iso()
-            existing['last_heartbeat_ts'] = time.time()
-            data['roles'][role] = existing
-            ok = True
+    try:
+        with transaction(str(REGISTRY_PATH),
+                          default={'roles': {}, 'audit': []},
+                          timeout=15.0) as data:
+            data.setdefault('roles', {})
+            existing = data['roles'].get(role)
+            if existing and existing.get('pid') == my_pid:
+                existing['last_heartbeat'] = _now_iso()
+                existing['last_heartbeat_ts'] = time.time()
+                data['roles'][role] = existing
+                ok = True
+    except _LockTimeout:
+        # Contended lock during heavy training is expected; downgrade to
+        # DEBUG so the dashboard banner isn't flooded with WARNINGs that
+        # the operator can't act on. The bot's _hb_loop() bumps its own
+        # consecutive-failure counter, so true persistent failure (5+
+        # consecutive missed beats) still escalates to ERROR.
+        logger.debug(
+            "[registry] heartbeat(%r) lock timeout -- registry busy, will retry next tick",
+            role,
+        )
+        return False
     if not ok:
         logger.warning(
-            "[registry] heartbeat(%r) ignored — current process (PID %s) "
+            "[registry] heartbeat(%r) ignored -- current process (PID %s) "
             "no longer owns this role. Another process may have reclaimed it.",
             role, my_pid,
         )

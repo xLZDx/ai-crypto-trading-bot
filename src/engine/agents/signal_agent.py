@@ -178,7 +178,7 @@ class SignalAgent(BaseAgent):
                         "regime": regime,
                         "regime_name": RegimeClassifier.regime_name(regime),
                     })
-                    logger.info("[SignalAgent] %s regime → %s",
+                    logger.info("[SignalAgent] %s regime -> %s",
                                 sym, RegimeClassifier.regime_name(regime))
 
                 # Signals

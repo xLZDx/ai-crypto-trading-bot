@@ -742,7 +742,7 @@ def _run_one_backtest_cell(
                 logger.warning("Could not load %s: %s", fpath, e)
 
     if df is None or len(df) < 500:
-        logger.warning("Skipping %s @ %s — insufficient data.", symbol, timeframe)
+        logger.warning("Skipping %s @ %s -- insufficient data.", symbol, timeframe)
         return []
 
     df = merge_funding_into_ohlcv(df, symbol.replace("_", "/"))
@@ -1098,7 +1098,7 @@ def run_distributed_backtest(
     if not submitted:
         raise RuntimeError("distributed backtest: zero cells submitted (empty timeframes/symbols?)")
 
-    logger.info("[dist-bt] submitted %d cells across %d tf × %d sym",
+    logger.info("[dist-bt] submitted %d cells across %d tf x %d sym",
                 len(submitted), len(timeframes), len(symbols))
 
     # ── 2. Poll until all done / failed / cancelled ───────────────────────
@@ -1115,7 +1115,7 @@ def run_distributed_backtest(
             with _ur.urlopen(f"{cluster_url}/api/cluster/tasks", timeout=10) as r:
                 tasks = _json.loads(r.read().decode("utf-8"))
         except (_ue.URLError, OSError, _json.JSONDecodeError) as exc:
-            logger.warning("[dist-bt] tasks poll failed (%s) — retrying", exc)
+            logger.warning("[dist-bt] tasks poll failed (%s) -- retrying", exc)
             _time.sleep(poll_interval_s)
             continue
         for t in tasks or []:
@@ -1134,7 +1134,7 @@ def run_distributed_backtest(
         tid = cell["task_id"]
         task = finished.get(tid, {})
         if task.get("status") != "done":
-            logger.warning("[dist-bt] cell %s/%s task=%s status=%s — skipped",
+            logger.warning("[dist-bt] cell %s/%s task=%s status=%s -- skipped",
                            cell["symbol"], cell["timeframe"], tid[:11],
                            task.get("status", "?"))
             continue

@@ -1,0 +1,21 @@
+{
+  "symbols": [
+    "SOL_USDT"
+  ],
+  "timeframe": "1h",
+  "input_chunk_length": 168,
+  "output_chunk_length": 24,
+  "n_epochs": 25,
+  "epochs_completed": 15,
+  "min_epochs": 3,
+  "patience": 6,
+  "model_path": "D:\\test 2\\AI trading assistance\\models\\tft_model.pt",
+  "device": "GPU",
+  "last_trained": "2026-05-17T14:10:46.472905+00:00",
+  "started_at_unix": 1779020339.1976187,
+  "finished_at_unix": 1779027045.916308,
+  "duration_s": 6706.72,
+  "per_epoch_s": 430.85,
+  "n_samples": 40402,
+  "n_features": 27
+}

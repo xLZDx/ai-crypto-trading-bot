@@ -75,7 +75,7 @@ def main() -> int:
 
     if args.dry_run:
         for sym, path in files:
-            logger.info("  • %s → %s", sym, path.name)
+            logger.info("  * %s -> %s", sym, path.name)
         return 0
 
     store = ParquetStore(out_dir)
@@ -85,7 +85,7 @@ def main() -> int:
     t0 = time.time()
 
     for i, (sym, path) in enumerate(files, 1):
-        logger.info("[%d/%d] Ingesting %s (%s, %.0f MB)…",
+        logger.info("[%d/%d] Ingesting %s (%s, %.0f MB)...",
                     i, len(files), sym, path.name, path.stat().st_size / 1e6)
         try:
             res = store.ingest_csv(path, sym)
@@ -93,15 +93,15 @@ def main() -> int:
             grand_months  += res["months_written"]
             grand_skipped += res["skipped_months"]
             logger.info(
-                "    ↳ %d months written, %d skipped, %d rows total",
+                "    ? %d months written, %d skipped, %d rows total",
                 res["months_written"], res["skipped_months"], res["rows_total"],
             )
         except Exception as exc:
-            logger.exception("    ↳ FAILED: %s", exc)
+            logger.exception("    ? FAILED: %s", exc)
 
     elapsed = time.time() - t0
     logger.info("=" * 60)
-    logger.info("Done in %.1f s — %d months written, %d skipped, %d rows total",
+    logger.info("Done in %.1f s -- %d months written, %d skipped, %d rows total",
                 elapsed, grand_months, grand_skipped, grand_rows)
     logger.info("Parquet store: %s", out_dir)
 

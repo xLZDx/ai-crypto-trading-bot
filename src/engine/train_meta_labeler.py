@@ -33,6 +33,7 @@ import sys
 
 import numpy as np
 import pandas as pd
+from src.data_ingestion.ohlcv_parquet_loader import load_ohlcv
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import accuracy_score, classification_report, roc_auc_score
 from sklearn.utils.class_weight import compute_sample_weight
@@ -254,44 +255,38 @@ def train_meta_labeler(
 
     all_frames = []
     for sym in symbols:
-        loaded = False
-        for fname in [f'{sym}_{timeframe}.csv.gz', f'{sym}_spot_{timeframe}.csv.gz']:
-            fpath = os.path.join(raw_dir, fname)
-            if not os.path.exists(fpath):
+        try:
+            df = load_ohlcv(sym, timeframe)
+            if df.empty:
+                log.warning("No data for %s", sym)
                 continue
+            # Phase 4 rollout — F1 data-integrity gate.
             try:
-                df = pd.read_csv(fpath)
-                df['timestamp'] = pd.to_datetime(df['timestamp'])
-                df = df.sort_values('timestamp').reset_index(drop=True)
-                # Phase 4 rollout — F1 data-integrity gate.
-                try:
-                    from src.utils.data_quality import validate_ohlcv, DataQualityError
-                    df, _dq = validate_ohlcv(df, symbol=sym, timeframe=timeframe)
-                    if _dq.soft_warnings:
-                        log.info("[meta][%s/%s] data quality: %s",
-                                 sym, timeframe, _dq.soft_warnings[:3])
-                except Exception as _e:
-                    from src.utils.data_quality import DataQualityError as _DQE
-                    if isinstance(_e, _DQE):
-                        raise
-                    log.warning("[meta][%s/%s] data_quality check skipped: %s",
-                                sym, timeframe, _e)
-                signals_df = _build_signal_dataset(
-                    df, sym,
-                    pt_multiplier=pt, sl_multiplier=sl, max_bars=mb,
-                )
-                signals_df = signals_df.dropna(subset=META_FEATURES + ['meta_label'])
-                if len(signals_df) > 50:
-                    all_frames.append(signals_df)
-                    log.info("%s: %d signal bars collected (win rate=%.1f%%)",
-                             sym, len(signals_df),
-                             signals_df['meta_label'].mean() * 100)
-                    loaded = True
-                    break
-            except Exception as e:
-                log.error("Failed to process %s: %s", sym, e, exc_info=True)
-        if not loaded:
-            log.warning("No data for %s", sym)
+                from src.utils.data_quality import validate_ohlcv, DataQualityError
+                df, _dq = validate_ohlcv(df, symbol=sym, timeframe=timeframe)
+                if _dq.soft_warnings:
+                    log.info("[meta][%s/%s] data quality: %s",
+                             sym, timeframe, _dq.soft_warnings[:3])
+            except Exception as _e:
+                from src.utils.data_quality import DataQualityError as _DQE
+                if isinstance(_e, _DQE):
+                    raise
+                log.warning("[meta][%s/%s] data_quality check skipped: %s",
+                            sym, timeframe, _e)
+            signals_df = _build_signal_dataset(
+                df, sym,
+                pt_multiplier=pt, sl_multiplier=sl, max_bars=mb,
+            )
+            signals_df = signals_df.dropna(subset=META_FEATURES + ['meta_label'])
+            if len(signals_df) > 50:
+                all_frames.append(signals_df)
+                log.info("%s: %d signal bars collected (win rate=%.1f%%)",
+                         sym, len(signals_df),
+                         signals_df['meta_label'].mean() * 100)
+            else:
+                log.warning("No data for %s", sym)
+        except Exception as e:
+            log.error("Failed to process %s: %s", sym, e, exc_info=True)
 
     if not all_frames:
         msg = ("meta-labeler: no signal data collected from any symbol — "
@@ -328,6 +323,7 @@ def train_meta_labeler(
 
     # ── Walk-forward CV on the FULL training portion only (no test leakage) ──
     _wf_fold_accs = []
+    _wf_in_sample_fold_accs = []  # P3
     t1_series = combined['t1_timestamp']
     pct_embargo = (2.0 * 12) / len(X)  # 2× max_bars
     cv = PurgedKFold(n_splits=5, t1=t1_series.iloc[:train_end], pct_embargo=pct_embargo)
@@ -340,10 +336,26 @@ def train_meta_labeler(
         _wf_clf.fit(X.iloc[tr_idx], y.iloc[tr_idx], sample_weight=weights)
         _fold_acc = accuracy_score(y.iloc[te_idx], _wf_clf.predict(X.iloc[te_idx]))
         _wf_fold_accs.append(_fold_acc)
+        _wf_in_sample_fold_accs.append(
+            accuracy_score(y.iloc[tr_idx], _wf_clf.predict(X.iloc[tr_idx]))
+        )
         log.info("Meta-labeler WF fold %d/5: accuracy=%.2f%%", _fi + 1, _fold_acc * 100)
     _wf_mean_acc = float(np.mean(_wf_fold_accs)) * 100 if _wf_fold_accs else 0.0
     _wf_std_acc  = float(np.std(_wf_fold_accs))  * 100 if _wf_fold_accs else 0.0
-    log.info("Meta-labeler WF mean accuracy: %.2f%% ± %.2f%%", _wf_mean_acc, _wf_std_acc)
+    log.info("Meta-labeler WF mean accuracy: %.2f%% +/- %.2f%%", _wf_mean_acc, _wf_std_acc)
+
+    # P3: overfit ratio
+    _wf_mean_frac = _wf_mean_acc / 100.0
+    _in_sample_mean_meta = float(np.mean(_wf_in_sample_fold_accs)) if _wf_in_sample_fold_accs else None
+    _overfit_ratio_meta: float | None = None
+    if _in_sample_mean_meta is not None and _in_sample_mean_meta > 0:
+        _overfit_ratio_meta = (_in_sample_mean_meta - _wf_mean_frac) / _in_sample_mean_meta
+        if _overfit_ratio_meta > 0.20:
+            log.error("[meta] overfit_ratio=%.3f > 0.20 (in_sample=%.2f%% wf=%.2f%%) -- model is memorising",
+                      _overfit_ratio_meta, _in_sample_mean_meta * 100, _wf_mean_acc)
+        elif _overfit_ratio_meta > 0.10:
+            log.warning("[meta] overfit_ratio=%.3f > 0.10 (in_sample=%.2f%% wf=%.2f%%)",
+                        _overfit_ratio_meta, _in_sample_mean_meta * 100, _wf_mean_acc)
 
     # ── Train base classifier on train portion [0, train_end) ──
     base_clf = make_classifier(
@@ -443,6 +455,9 @@ def train_meta_labeler(
         "walk_forward_mean_acc": round(_wf_mean_acc, 2),
         "walk_forward_std_acc":  round(_wf_std_acc,  2),
         "walk_forward_folds":    len(_wf_fold_accs),
+        "wf_fold_scores": [round(v, 6) for v in _wf_fold_accs],
+        "in_sample_mean_acc": round(_in_sample_mean_meta * 100, 2) if _in_sample_mean_meta else None,
+        "overfit_ratio": round(_overfit_ratio_meta, 6) if _overfit_ratio_meta is not None else None,
         "afml_params": {"pt": float(pt), "sl": float(sl), "max_bars": int(mb)},
         "cio_overrides_applied": dict(cio) if cio else None,
         "last_trained": datetime.now(timezone.utc).isoformat(),

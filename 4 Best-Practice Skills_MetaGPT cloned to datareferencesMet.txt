@@ -1,0 +1,45 @@
+MetaGPT cloned to data/references/MetaGPT/ (38MB source; 3GB was Docker image)
+
+Here are the 4 Best-Practice Skills you should add to your agents or automated pipelines to reach true institutional grade:
+
+1. Data Integrity & Poisoning Detection (The "Janitor" Skill)
+Who gets this skill: A dedicated GitHub Action or a pre-processing Python script.
+The Problem: Your HistGBT and Optuna models assume the DuckDB data is perfect. In crypto, DEX data is notorious for flash-crash spikes, missing ticks, and API rate-limit gaps. If bad data gets into the training window, your model will hallucinate.
+The Skill to Add:
+
+Schema & Bounds Checking: Before any model trains, an agent must run a strict validation suite using a library like Great Expectations or pandera.
+
+Anomaly Detection: It must flag: "Alert: BTC volume on DEX dropped to 0 for 45 minutes on Tuesday. Data rejected for training."
+
+Sanity Bounds: Assert that Spread_bps cannot mathematically exceed a certain percentage unless it's a stablecoin de-peg.
+
+2. Concept Drift Detection (The "Watcher" Skill)
+Who gets this skill: The ML Engineer Agent / MLOps Pipeline.
+The Problem: Financial markets are non-stationary. The patterns your model learned in January 2024 might completely disappear by May 2026 due to a new exchange regulation or a change in Binance's fee tier.
+The Skill to Add:
+
+Live vs. Train Distribution Tracking: The agent constantly compares the statistical distribution (mean, variance) of the live incoming features against the features the model was trained on.
+
+The Trigger: If the live OFI_z (Order Flow Imbalance) starts looking statistically alien compared to the training data (a high Kullback-Leibler divergence), the agent automatically fires a "Degradation Alert" and pauses live trading until the CIO (Optuna) completes a retraining cycle.
+
+3. Symbolic Regression / Feature Generation (The "Quant Researcher" Skill)
+Who gets this skill: A background Python agent running over the weekend.
+The Problem: Right now, you are manually coming up with features (e.g., MACD_hist, funding_z). Humans are limited in finding complex non-linear mathematical relationships.
+The Skill to Add:
+
+Use a library like gplearn (Genetic Programming) or PySR (Symbolic Regression in Python/Julia).
+
+The Workflow: Give the agent raw OHLCV + Order Book data and tell it: *"Combine these using math operators (+, -, , /, log, exp) to create a single feature that correlates highly with the next 15-minute price movement."
+
+The agent might discover a bizarre, highly predictive feature like: log(Volume) * (Ask_Depth / Bid_Depth) that you would have never thought to hardcode.
+
+4. Chaos Engineering (The "Stress Tester" Skill)
+Who gets this skill: The QA Agent (Cover-Agent) or a custom script in your test environment.
+The Problem: Backtests assume your orders get filled instantly. Reality is messy.
+The Skill to Add:
+
+Latency Injection: The agent randomly adds 50ms to 2000ms of simulated latency to your paper-trading execution logs.
+
+Exchange Disconnect Simulation: The agent simulates a WebSocketTimeoutException right in the middle of an open position. How does your system react? Does it panic? Does it retry infinitely and get banned by the Binance API?
+
+Partial Fill Simulation: The agent simulates a scenario where you want to buy 10 ETH, but only 2 ETH get filled before the price moves past your limit.

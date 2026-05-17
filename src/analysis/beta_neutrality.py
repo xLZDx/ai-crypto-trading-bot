@@ -66,7 +66,7 @@ class BetaNeutralityFilter:
         if factor not in history_returns.columns:
             raise ValueError(f"factor '{factor}' missing from history_returns")
         if len(history_returns) < min_history:
-            raise ValueError(f"need at least {min_history} return samples for stable β")
+            raise ValueError(f"need at least {min_history} return samples for stable ?")
 
         self.factor = factor
         self.max_beta_exposure = float(max_beta_exposure)

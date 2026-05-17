@@ -29,7 +29,7 @@ if not models_dir.exists():
     sys.exit(1)
 
 if _load_key() is None:
-    print("ERROR: MODEL_MANIFEST_KEY is not set in .env — cannot sign models.")
+    print("ERROR: MODEL_MANIFEST_KEY is not set in .env -- cannot sign models.")
     sys.exit(1)
 
 # All model extensions used in this project

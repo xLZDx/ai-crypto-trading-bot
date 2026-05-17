@@ -72,7 +72,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if not MODELS_DIR.exists():
-        logger.warning("models/ dir doesn't exist — nothing to do")
+        logger.warning("models/ dir doesn't exist -- nothing to do")
         return 0
 
     referenced = discover_referenced(PROJECT_ROOT)
@@ -99,7 +99,7 @@ def main() -> int:
                 logger.warning("could not move %s: %s", p.name, exc)
         logger.info("Moved %d files to %s", moved, ARCHIVE_DIR)
     elif archive_targets:
-        logger.info("DRY-RUN — re-run with --apply to actually move them.")
+        logger.info("DRY-RUN -- re-run with --apply to actually move them.")
     return 0
 
 

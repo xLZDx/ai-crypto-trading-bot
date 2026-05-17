@@ -70,7 +70,7 @@ class SpotAgent(BaseAgent):
     def _on_regime(self, msg) -> None:
         payload = msg.payload or {}
         if payload.get("regime") == 2:
-            logger.info("[SpotAgent] VOLATILE regime — reducing spot exposure.")
+            logger.info("[SpotAgent] VOLATILE regime -- reducing spot exposure.")
 
     def _on_signal(self, msg) -> None:
         payload = msg.payload or {}
@@ -97,7 +97,7 @@ class SpotAgent(BaseAgent):
         if self._base_model is not None or self._trend_model is not None:
             ml_confidence = self._get_ml_confidence(sym, direction)
             if ml_confidence < CONFIDENCE_THRESHOLD:
-                logger.debug("[SpotAgent] %s ML confidence %.2f too low — skip.", sym, ml_confidence)
+                logger.debug("[SpotAgent] %s ML confidence %.2f too low -- skip.", sym, ml_confidence)
                 return
 
         logger.info("[SpotAgent] SIGNAL %s dir=%+d conf=%.2f (spot 1h, regime=%d)",
@@ -162,4 +162,4 @@ class SpotAgent(BaseAgent):
         return 0.5
 
     def _run_cycle(self) -> None:
-        logger.debug("[SpotAgent] heartbeat — %d open positions", len(self._open_positions))
+        logger.debug("[SpotAgent] heartbeat -- %d open positions", len(self._open_positions))

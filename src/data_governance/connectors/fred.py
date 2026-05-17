@@ -39,7 +39,7 @@ class FREDConnector(DataSourceConnector):
     def pull_history(self, *, since=None, **kw) -> int:
         api_key = os.getenv("FRED_API_KEY")
         if not api_key:
-            logger.info("[fred] no FRED_API_KEY — skipping.")
+            logger.info("[fred] no FRED_API_KEY -- skipping.")
             return 0
         qdb = self._qdb()
         rows_total = 0

@@ -56,7 +56,7 @@ def main() -> int:
     size_mb = csv_path.stat().st_size / 1e6
     logger.info("Migrating %s (%.1f MB) -> Parquet", csv_path.name, size_mb)
     if args.dry_run:
-        logger.info("DRY RUN — no files written.")
+        logger.info("DRY RUN -- no files written.")
         return 0
 
     store = ParquetStore(Path(args.out_dir))

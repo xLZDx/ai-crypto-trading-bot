@@ -212,7 +212,7 @@ def test_gdrive_backup():
 
 def main() -> int:
     print("=" * 60)
-    print("Phase 7 — Continuous Pipeline + Retention Tests")
+    print("Phase 7 -- Continuous Pipeline + Retention Tests")
     print("=" * 60)
     test_archive_downloader_multi_tf()
     test_realtime_writer()

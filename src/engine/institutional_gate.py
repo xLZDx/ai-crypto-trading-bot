@@ -120,7 +120,7 @@ class InstitutionalGate:
                 reasons.append(f"circuit_breaker:{cb['trigger']}:{cb['reason']}")
         except Exception as exc:
             logger.error(
-                "[gate] circuit_breaker_check FAILED — blocking trade conservatively: %s",
+                "[gate] circuit_breaker_check FAILED -- blocking trade conservatively: %s",
                 exc, exc_info=True,
             )
             reasons.append(f"circuit_breaker:check_failed:{type(exc).__name__}")
@@ -133,7 +133,7 @@ class InstitutionalGate:
                     reasons.append(f"beta_neutrality:would_push_to_{snap.aggregate_beta:+.2f}")
             except Exception as exc:
                 logger.error(
-                    "[gate] beta_neutrality check FAILED — blocking trade conservatively: %s",
+                    "[gate] beta_neutrality check FAILED -- blocking trade conservatively: %s",
                     exc, exc_info=True,
                 )
                 reasons.append(f"beta_neutrality:check_failed:{type(exc).__name__}")
@@ -180,7 +180,7 @@ class InstitutionalGate:
             return {sym: float(w) * capital_usd
                     for sym, w in zip(symbols, res.weights)}
         except Exception as exc:
-            logger.warning("[gate] CVaR sizing failed (%s) — equal weight", exc)
+            logger.warning("[gate] CVaR sizing failed (%s) -- equal weight", exc)
             return {s: capital_usd / max(len(symbols), 1) for s in symbols}
 
     # ── §15 dynamic threshold ────────────────────────────────────────────

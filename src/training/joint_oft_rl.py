@@ -61,7 +61,7 @@ def train_oft(symbol: str, timeframe: str, *, n_epochs: int = 5,
     start = end - timedelta(days=365)
     df = parquet.query(symbol, start=start, end=end, timeframe=timeframe)
     if df is None or df.empty:
-        logger.error("[oft] no data for %s/%s — abort", symbol, timeframe)
+        logger.error("[oft] no data for %s/%s -- abort", symbol, timeframe)
         return {"status": "no_data"}
 
     df = df.copy()
@@ -81,7 +81,7 @@ def train_oft(symbol: str, timeframe: str, *, n_epochs: int = 5,
     y_bin = labels.binary_y.reset_index(drop=True).astype(np.float32)
     t1   = labels.t1[keep_mask].reset_index(drop=True)
     if len(X_df) < 200:
-        logger.error("[oft] insufficient samples after filter (%d) — abort", len(X_df))
+        logger.error("[oft] insufficient samples after filter (%d) -- abort", len(X_df))
         return {"status": "too_few_samples"}
 
     # Build tensors. The model expects (B, T_e, F_e) and (B, T_o, F_o).
@@ -98,26 +98,37 @@ def train_oft(symbol: str, timeframe: str, *, n_epochs: int = 5,
                     use_regime_cond=False)
     model = OrderFlowTransformer(cfg)
 
-    # Sliding windows
+    # Sliding windows — cap at MAX_WINDOWS to prevent CUDA kernel dimension
+    # overflow on RTX 2060 (sm_75) with large 1m datasets (BTC/ADA/SOL have
+    # ~500k rows which triggers cudaErrorInvalidConfiguration at fold 4).
+    MAX_WINDOWS = 200_000
     T = cfg.max_event_len
-    stride = 1
     feats = X_df[event_cols].fillna(0).to_numpy(np.float32)
     if feats.shape[0] < T + 1:
         logger.error("[oft] not enough rows for windowing")
         return {"status": "no_windows"}
-    win_count = (feats.shape[0] - T) // stride
+    raw_count = feats.shape[0] - T
+    # Use stride-based subsampling so temporal coverage is preserved.
+    # Clamp to MAX_WINDOWS exactly — stride alone can overshoot by up to
+    # one stride-worth of windows (e.g. 263k instead of 200k for ADA 1m).
+    stride = max(1, raw_count // MAX_WINDOWS)
+    indices = list(range(0, raw_count, stride))[:MAX_WINDOWS]
+    win_count = len(indices)
     ev = np.zeros((win_count, T, F_e), dtype=np.float32)
-    for i in range(win_count):
-        block = feats[i:i + T]
-        ev[i, :, :len(event_cols)] = block
+    for out_i, in_i in enumerate(indices):
+        block = feats[in_i:in_i + T]
+        ev[out_i, :, :len(event_cols)] = block
     ob = np.zeros((win_count, T, 4), dtype=np.float32)
-    returns = np.diff(np.log(X_df["close"].astype(float))).astype(np.float32)
-    returns = np.concatenate([np.zeros(1, dtype=np.float32), returns])[T:T + win_count]
-    targets = y_bin.to_numpy()[T:T + win_count].astype(np.float32)
-    t1_w = t1.iloc[T:T + win_count].reset_index(drop=True)
+    log_returns = np.diff(np.log(X_df["close"].astype(float))).astype(np.float32)
+    log_returns = np.concatenate([np.zeros(1, dtype=np.float32), log_returns])
+    returns = np.array([log_returns[T + i] for i in indices], dtype=np.float32)
+    targets = np.array([y_bin.to_numpy()[T + i] for i in indices], dtype=np.float32)
+    t1_w = pd.Series([t1.iloc[T + i] for i in indices]).reset_index(drop=True)
+    logger.info("[oft] %s/%s: %d raw windows -> %d sampled (stride=%d)",
+                symbol, timeframe, raw_count, win_count, stride)
 
     trainer = OFTTrainer(model, OFTTrainerConfig(epochs=n_epochs, n_splits=n_splits,
-                                                  batch_size=32, lr=1e-3, device="auto"))
+                                                  batch_size=32, lr=1e-3, device="cpu"))
     res = trainer.run(
         events=torch.from_numpy(ev),
         orderbook=torch.from_numpy(ob),
@@ -166,7 +177,7 @@ def train_sac(symbol: str, timeframe: str, *, n_episodes: int = 50,
     start = end - timedelta(days=14)
     df = parquet.query(symbol, start=start, end=end, timeframe=timeframe)
     if df is None or df.empty:
-        logger.error("[sac] no data for %s/%s — abort", symbol, timeframe)
+        logger.error("[sac] no data for %s/%s -- abort", symbol, timeframe)
         return {"status": "no_data"}
 
     book_iter = []
@@ -234,7 +245,7 @@ def main() -> int:
     p.add_argument("--skip-oft", action="store_true")
     p.add_argument("--skip-sac", action="store_true")
     p.add_argument("--cpu", action="store_true",
-                   help="Force CPU for SAC stage — surfaces NaN/index bugs "
+                   help="Force CPU for SAC stage -- surfaces NaN/index bugs "
                         "as real tracebacks instead of CUDA-side asserts.")
     args = p.parse_args()
 
@@ -247,13 +258,13 @@ def main() -> int:
     summary = {}
     if not args.skip_oft:
         logger.info("=" * 60)
-        logger.info("[joint] STAGE A — OFT supervised training")
+        logger.info("[joint] STAGE A -- OFT supervised training")
         logger.info("=" * 60)
         summary["oft"] = train_oft(args.symbol, args.tf, n_epochs=args.epochs)
 
     if not args.skip_sac:
         logger.info("=" * 60)
-        logger.info("[joint] STAGE B — SAC inside SyntheticExchange")
+        logger.info("[joint] STAGE B -- SAC inside SyntheticExchange")
         logger.info("=" * 60)
         summary["sac"] = train_sac(args.symbol, args.tf, n_episodes=args.episodes,
                                    device="cpu" if args.cpu else "auto")

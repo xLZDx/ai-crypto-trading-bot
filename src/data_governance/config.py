@@ -61,7 +61,7 @@ class GovernanceConfig:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except Exception as exc:
-            logger.warning("could not parse %s (%s) — using defaults", path, exc)
+            logger.warning("could not parse %s (%s) -- using defaults", path, exc)
             return cls.default()
         sources = {
             name: SourceSetting(**s) for name, s in (data.get("sources") or {}).items()

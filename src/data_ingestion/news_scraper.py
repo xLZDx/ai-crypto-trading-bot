@@ -57,7 +57,7 @@ class NewsScraper:
         
         if not self.api_key:
             print("\n" + "="*60)
-            print("🔑 CryptoCompare API Key is missing or not readable!")
+            print("? CryptoCompare API Key is missing or not readable!")
             user_key = input("Please paste your API key here (or press Enter to skip): ").strip('"\' ')
             if user_key:
                 self.api_key = user_key
@@ -65,9 +65,9 @@ class NewsScraper:
                 try:
                     with open(target_env, 'a', encoding='utf-8') as f:
                         f.write(f'\nCRYPTOCOMPARE_API_KEY="{self.api_key}"\n')
-                    print(f"✅ Key automatically saved to {target_env}!")
+                    print(f"OK  Key automatically saved to {target_env}!")
                 except Exception as e:
-                    print(f"⚠️ Could not save to {target_env}: {e}")
+                    print(f"WARN ? Could not save to {target_env}: {e}")
             print("="*60 + "\n")
 
         if self.api_key:
@@ -369,6 +369,6 @@ if __name__ == "__main__":
     news_df.to_csv(output_path, index=False, encoding="utf-8")
 
     if not news_df.empty:
-        logger.info("✅ Successfully grabbed and saved %d articles to %s", len(news_df), output_path)
+        logger.info("OK  Successfully grabbed and saved %d articles to %s", len(news_df), output_path)
     else:
-        logger.info("✅ Created empty placeholder CSV at %s", output_path)
+        logger.info("OK  Created empty placeholder CSV at %s", output_path)

@@ -1,0 +1,70 @@
+{
+    "schema_version": 1,
+    "tasks": {
+        "tft_1h_1778878971": {
+            "task_id": "tft_1h_1778878971",
+            "model": "tft",
+            "tf": "1h",
+            "trainer": "train_tft_model",
+            "started_at": 1778878971.9065802,
+            "current_epoch": 0,
+            "n_epochs": 1,
+            "epochs_completed": 0,
+            "last_epoch_duration_s": null,
+            "mean_epoch_duration_s": null,
+            "elapsed_s": 0.0,
+            "eta_s": null,
+            "status": "running",
+            "last_update_at": 1778878971.9065802
+        },
+        "gate_d_1778879524": {
+            "task_id": "gate_d_1778879524",
+            "model": "tft",
+            "tf": "1h",
+            "trainer": "train_tft_model",
+            "started_at": 1778879524.149121,
+            "current_epoch": 0,
+            "n_epochs": 1,
+            "epochs_completed": 0,
+            "last_epoch_duration_s": null,
+            "mean_epoch_duration_s": null,
+            "elapsed_s": 0.0,
+            "eta_s": null,
+            "status": "running",
+            "last_update_at": 1778879524.149121
+        },
+        "gate_d_1778879782": {
+            "task_id": "gate_d_1778879782",
+            "model": "tft",
+            "tf": "1h",
+            "trainer": "train_tft_model",
+            "started_at": 1778879782.4897602,
+            "current_epoch": 1,
+            "n_epochs": 1,
+            "epochs_completed": 1,
+            "last_epoch_duration_s": 673.8747651576996,
+            "mean_epoch_duration_s": 673.8747651576996,
+            "elapsed_s": 924.4678518772125,
+            "eta_s": 0.0,
+            "status": "done",
+            "last_update_at": 1778880706.957612,
+            "finished_at": 1778880706.957612
+        },
+        "tft_15m_1778880440": {
+            "task_id": "tft_15m_1778880440",
+            "model": "tft",
+            "tf": "15m",
+            "trainer": "train_tft_model",
+            "started_at": 1778880440.8269548,
+            "current_epoch": 0,
+            "n_epochs": 10,
+            "epochs_completed": 0,
+            "last_epoch_duration_s": null,
+            "mean_epoch_duration_s": null,
+            "elapsed_s": 0.0,
+            "eta_s": null,
+            "status": "running",
+            "last_update_at": 1778880440.8269548
+        }
+    }
+}

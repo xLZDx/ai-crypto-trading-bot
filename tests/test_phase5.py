@@ -141,7 +141,7 @@ def test_beta_neutrality():
 # ─── order_manager circuit breaker ──────────────────────────────────────────
 
 def test_circuit_breaker():
-    print("\n[Order Manager — circuit breakers]")
+    print("\n[Order Manager -- circuit breakers]")
     src = (PROJECT_ROOT / "src" / "engine" / "order_manager.py").read_text(encoding="utf-8")
     check("circuit_breaker_check() defined", "def circuit_breaker_check" in src)
     for trigger in ("max_daily_drawdown", "api_latency", "data_feed_inconsistency"):
@@ -151,7 +151,7 @@ def test_circuit_breaker():
 # ─── risk_agent beta gate ───────────────────────────────────────────────────
 
 def test_risk_agent_beta_gate():
-    print("\n[risk_agent — β-neutrality gate]")
+    print("\n[risk_agent -- ?-neutrality gate]")
     src = (PROJECT_ROOT / "src" / "engine" / "agents" / "risk_agent.py").read_text(encoding="utf-8")
     check("attach_beta_filter() defined", "def attach_beta_filter" in src)
     check("check_beta_neutrality() defined", "def check_beta_neutrality" in src)
@@ -163,7 +163,7 @@ def test_risk_agent_beta_gate():
 
 def main() -> int:
     print("=" * 60)
-    print("Phase 5 — Level 5 Institutional Safeguards Tests")
+    print("Phase 5 -- Level 5 Institutional Safeguards Tests")
     print("=" * 60)
     test_slippage_model()
     test_beta_neutrality()

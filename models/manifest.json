@@ -2,114 +2,114 @@
   "version": 1,
   "entries": {
     "models/scalping_1m_model.joblib": {
-      "hmac_sha256": "945d66fdc1b8a3bf728893f7acd380a6cddb375b1a1f9ab206a97143d7d3f88b",
-      "size_bytes": 107264,
-      "signed_at": "2026-05-13T22:03:54Z"
+      "hmac_sha256": "bd7cf5370c84de04f486381bd62827d4ca16b00efd9793ae4687147a963164e4",
+      "size_bytes": 104352,
+      "signed_at": "2026-05-15T21:26:52Z"
     },
     "models/scalping_model.joblib": {
-      "hmac_sha256": "945d66fdc1b8a3bf728893f7acd380a6cddb375b1a1f9ab206a97143d7d3f88b",
-      "size_bytes": 107264,
-      "signed_at": "2026-05-13T22:03:54Z"
+      "hmac_sha256": "bd7cf5370c84de04f486381bd62827d4ca16b00efd9793ae4687147a963164e4",
+      "size_bytes": 104352,
+      "signed_at": "2026-05-15T21:27:20Z"
     },
     "models/base_15m_model.joblib": {
-      "hmac_sha256": "81e50267b8284c965bc69d305928a70ed041b61d71340a9d8c25355672c62695",
-      "size_bytes": 422216,
-      "signed_at": "2026-05-13T09:17:09Z"
+      "hmac_sha256": "230df6ae7b7bcf33a19299ae5737f7807a9088a01bcf1345473fb83876a2941f",
+      "size_bytes": 422632,
+      "signed_at": "2026-05-17T04:07:39Z"
     },
     "models/base_1d_model.joblib": {
-      "hmac_sha256": "fd80d683c3cfebc351d56f3d2f3339e0ed84a434219e318078bcfd802afa72a3",
-      "size_bytes": 421704,
-      "signed_at": "2026-05-13T09:17:09Z"
+      "hmac_sha256": "28e8eb4062812932048066d8e2efe86f06784f116d8ae8d5bb57ca5b45c696ae",
+      "size_bytes": 321792,
+      "signed_at": "2026-05-17T14:56:36Z"
     },
     "models/base_1h_model.joblib": {
-      "hmac_sha256": "28f86d446f59314dc463ff67ab6c56fc66c649f9c358c3ac05500b19a6628a65",
-      "size_bytes": 583040,
-      "signed_at": "2026-05-13T09:17:09Z"
+      "hmac_sha256": "cd46ccca2a79b666cbc2cc8362526b4506fba1b4542cd5d5ce62bf3da299fd41",
+      "size_bytes": 422888,
+      "signed_at": "2026-05-17T04:13:28Z"
     },
     "models/base_1m_model.joblib": {
-      "hmac_sha256": "1dd82afc162c2ed8632ac053639927ce8cc9f98cbbb2ea2707d31e36547d2c9c",
-      "size_bytes": 425224,
-      "signed_at": "2026-05-13T09:17:09Z"
+      "hmac_sha256": "4e603c9400c9a7de00176cba7e6bd4b302247563fc87b884e40dfc0d18bbef44",
+      "size_bytes": 1802768,
+      "signed_at": "2026-05-14T16:12:06Z"
     },
     "models/base_4h_model.joblib": {
-      "hmac_sha256": "2e44fb04541935b4c2aaaacbb40b0608808faeb7e14da147c2a9cc9d480b71bd",
-      "size_bytes": 421976,
-      "signed_at": "2026-05-13T09:17:09Z"
+      "hmac_sha256": "15f389606727fcedeba1cdade9f374d645e0e90a1a2fc0c4f3798515769fba25",
+      "size_bytes": 422072,
+      "signed_at": "2026-05-17T03:58:04Z"
     },
     "models/base_5m_model.joblib": {
-      "hmac_sha256": "79a2909e38d9bbaecad18b813235ccee0d180bfa331f4ea89f31058530e13574",
-      "size_bytes": 422888,
-      "signed_at": "2026-05-13T09:17:09Z"
+      "hmac_sha256": "b1dbd3e7a21a16d8e568cf7d4815d5c12bcc8ce4dd3e19d63447755fe23578c5",
+      "size_bytes": 423016,
+      "signed_at": "2026-05-17T03:46:03Z"
     },
     "models/btc_rf_model.joblib": {
-      "hmac_sha256": "28f86d446f59314dc463ff67ab6c56fc66c649f9c358c3ac05500b19a6628a65",
-      "size_bytes": 583040,
-      "signed_at": "2026-05-13T09:17:09Z"
+      "hmac_sha256": "cd46ccca2a79b666cbc2cc8362526b4506fba1b4542cd5d5ce62bf3da299fd41",
+      "size_bytes": 422888,
+      "signed_at": "2026-05-17T04:13:31Z"
     },
     "models/futures_15m_model.joblib": {
-      "hmac_sha256": "95bc408384a9b84a5f66e165153a6fa38c3e4669b6bb79b19b84ac9b8d2d4f03",
-      "size_bytes": 1478321,
-      "signed_at": "2026-05-13T09:17:09Z"
+      "hmac_sha256": "5a406e9779fe625ce50a0650b1cd42d5be0664dccee699fc93ecc5f5d236861a",
+      "size_bytes": 1478866,
+      "signed_at": "2026-05-17T04:21:08Z"
     },
     "models/futures_1d_model.joblib": {
-      "hmac_sha256": "86a0c9699b844d4d0904d0a59a732fdd06b6fe1882b75ad4f025c43a5285b167",
-      "size_bytes": 1377169,
-      "signed_at": "2026-05-13T09:17:09Z"
+      "hmac_sha256": "386cfab45712390da0a02d142b3f519d003055bf5a6679faaebd8afa35511846",
+      "size_bytes": 945314,
+      "signed_at": "2026-05-17T04:39:24Z"
     },
     "models/futures_1h_model.joblib": {
-      "hmac_sha256": "ba0d383174d6631143e79926e50dbe430321e07cb029388badbec03516059092",
-      "size_bytes": 1478129,
-      "signed_at": "2026-05-13T09:17:09Z"
+      "hmac_sha256": "2eb6fd45628b6991e37a364fd1dd16f79ad757af5ff38df7becbf00fbc4f656f",
+      "size_bytes": 1478546,
+      "signed_at": "2026-05-17T04:27:28Z"
     },
     "models/futures_1m_model.joblib": {
-      "hmac_sha256": "3d9158ef39c7641626ffd94d3e2d79401080fd79c6cade176b116db3e500aba3",
-      "size_bytes": 1480817,
-      "signed_at": "2026-05-13T09:17:09Z"
+      "hmac_sha256": "c27e3b4e09dd6edd7baf6fb613ce4a2cbf5be81a9c9a50dc94ca46be299dd694",
+      "size_bytes": 1287120,
+      "signed_at": "2026-05-14T16:12:07Z"
     },
     "models/futures_4h_model.joblib": {
-      "hmac_sha256": "6ad239bcaf8e0a387627b45c6e36de5a416255f9bf2747fe30bb9a0b3f684c48",
-      "size_bytes": 1477377,
-      "signed_at": "2026-05-13T09:17:09Z"
+      "hmac_sha256": "b5ccb0f321f09e91a221bbf3e1c43ede3c4e5828fa2a02edf787eef6631d165c",
+      "size_bytes": 1477266,
+      "signed_at": "2026-05-16T21:47:01Z"
     },
     "models/futures_5m_model.joblib": {
-      "hmac_sha256": "f01fefea59dce429f12d7ea637c17701ea06b508d616d4ec0f1a0484397a5c9b",
-      "size_bytes": 1479089,
-      "signed_at": "2026-05-13T09:17:09Z"
+      "hmac_sha256": "be2a346bf5c0156c8015c88e3a8c24b0c0a03dd6e01e45356c338a83efab933d",
+      "size_bytes": 416080,
+      "signed_at": "2026-05-14T19:33:12Z"
     },
     "models/futures_short_model.joblib": {
-      "hmac_sha256": "ba0d383174d6631143e79926e50dbe430321e07cb029388badbec03516059092",
-      "size_bytes": 1478129,
-      "signed_at": "2026-05-13T09:17:09Z"
+      "hmac_sha256": "2eb6fd45628b6991e37a364fd1dd16f79ad757af5ff38df7becbf00fbc4f656f",
+      "size_bytes": 1478546,
+      "signed_at": "2026-05-17T04:27:29Z"
     },
     "models/meta_15m_model.joblib": {
-      "hmac_sha256": "f0e037cc1570ca74f26f10a930e4df58bad5e0e15bdfae547c301f76bbd8d53e",
-      "size_bytes": 581204,
-      "signed_at": "2026-05-13T09:17:09Z"
+      "hmac_sha256": "943c4a952217a432edeeb0c5cb90494b28e46ff7ea89abee5bde77ee9a48d8d8",
+      "size_bytes": 620089,
+      "signed_at": "2026-05-17T08:48:24Z"
     },
     "models/meta_1h_model.joblib": {
-      "hmac_sha256": "0b97a09a12295b6f47ddb50b18aea3ac4b3537c241920c60fb73bfd66c878035",
-      "size_bytes": 521888,
-      "signed_at": "2026-05-13T09:17:09Z"
+      "hmac_sha256": "8553ca1ba46a0cbfb1a0baf5d22d5da16774eb53d62de0ecb14673bef5aecaa1",
+      "size_bytes": 614761,
+      "signed_at": "2026-05-17T08:34:15Z"
     },
     "models/meta_labeler.joblib": {
-      "hmac_sha256": "0b97a09a12295b6f47ddb50b18aea3ac4b3537c241920c60fb73bfd66c878035",
-      "size_bytes": 521888,
-      "signed_at": "2026-05-13T09:17:09Z"
+      "hmac_sha256": "8553ca1ba46a0cbfb1a0baf5d22d5da16774eb53d62de0ecb14673bef5aecaa1",
+      "size_bytes": 614761,
+      "signed_at": "2026-05-17T08:34:17Z"
     },
     "models/oft_model.pt": {
-      "hmac_sha256": "eb509436ab685cd339ae97a7ed295a065cc21a82e88541feeb29ef72925fb046",
-      "size_bytes": 634603,
-      "signed_at": "2026-05-13T09:17:09Z"
+      "hmac_sha256": "c7b8b5f22394145ab0884af634481c39bb0812f2e1b20060650c932e3eff38ce",
+      "size_bytes": 634283,
+      "signed_at": "2026-05-16T18:08:28Z"
     },
     "models/regime_classifier.joblib": {
-      "hmac_sha256": "991a98fcd732abd504544c54b26db6aa36d7e5e6dbacb3ad8a45b7e82643e39f",
+      "hmac_sha256": "43a43d363d4033dbdb724897c933dfb2fd791e43b85c71642176f609810b6b3a",
       "size_bytes": 11556,
-      "signed_at": "2026-05-13T09:17:09Z"
+      "signed_at": "2026-05-17T00:09:14Z"
     },
     "models/tft_model.pt": {
       "hmac_sha256": "ff49ea215067cf305ffd2f8ca823b6ee1bd9e3e913e510ed1e432efb4212f71c",
       "size_bytes": 6812347,
-      "signed_at": "2026-05-13T09:17:10Z"
+      "signed_at": "2026-05-14T16:12:07Z"
     },
     "models/tft_model.pt.ckpt": {
       "hmac_sha256": "3cebddd1a7a62c9571ecaa883f0349ea7bbdc05b9d4fe77381dae911041acf3c",
@@ -117,39 +117,64 @@
       "signed_at": "2026-05-13T09:17:10Z"
     },
     "models/trend_15m_model.joblib": {
-      "hmac_sha256": "018fcf7b51ea11b04b1c5f4de3ec88fb5b7fd5519a994cf43c01e42f84e6bfd1",
-      "size_bytes": 1821009,
-      "signed_at": "2026-05-13T09:17:10Z"
+      "hmac_sha256": "57eb1ab469269cc28a95e3f320cbbfb279cca12fd08125393bc98903bb390ab9",
+      "size_bytes": 1400176,
+      "signed_at": "2026-05-14T19:10:49Z"
     },
     "models/trend_1d_model.joblib": {
-      "hmac_sha256": "54cf87cd8806575842719ab8b3fbccca4ffcd2bbd38ab1dd1cc5217fd3fba4f2",
-      "size_bytes": 1194289,
-      "signed_at": "2026-05-13T09:17:10Z"
+      "hmac_sha256": "1bfb448092db0fc33cac970fe203964b78babb94ca58297f69ae229e38819524",
+      "size_bytes": 155664,
+      "signed_at": "2026-05-14T21:14:14Z"
     },
     "models/trend_1h_model.joblib": {
-      "hmac_sha256": "b0376bfc028e0a1becda41374087f36f29eb3c4cd1424dd0e2e810d4ff67f6b2",
-      "size_bytes": 227360,
-      "signed_at": "2026-05-13T09:17:10Z"
+      "hmac_sha256": "577c6cdb4eb47a7b93c65add2af5d015e9272ce143d185185df47735c83eed2a",
+      "size_bytes": 64112,
+      "signed_at": "2026-05-14T22:38:39Z"
     },
     "models/trend_1w_model.joblib": {
-      "hmac_sha256": "c9333f619fca81ee698d31d620b1ce39f74463cea9b7a75502bf5b3d9d210197",
-      "size_bytes": 94289,
-      "signed_at": "2026-05-13T09:17:10Z"
+      "hmac_sha256": "4214525e5bb804069476069bc55ec12646813388fcb4a018bbddb9dc619a377b",
+      "size_bytes": 55392,
+      "signed_at": "2026-05-14T22:22:31Z"
     },
     "models/trend_4h_model.joblib": {
-      "hmac_sha256": "898e0e9d2c4b3bad18cfb2f2164be11c95a67a57960529a1489480633e9aa3b8",
-      "size_bytes": 1732897,
-      "signed_at": "2026-05-13T09:17:10Z"
+      "hmac_sha256": "b933d1b730adeea8599eb14ce804b0cdb9f62a6edcd49df18110f0bccb6b4395",
+      "size_bytes": 447072,
+      "signed_at": "2026-05-14T21:08:13Z"
     },
     "models/trend_BTC_USDT_worker.joblib": {
       "hmac_sha256": "65e9ddc205827f23ed5f529f4fe0d49edc1a330417e93c26f058d23046fbd23c",
       "size_bytes": 42095833,
-      "signed_at": "2026-05-13T09:17:10Z"
+      "signed_at": "2026-05-14T16:12:07Z"
     },
     "models/trend_model.joblib": {
-      "hmac_sha256": "b0376bfc028e0a1becda41374087f36f29eb3c4cd1424dd0e2e810d4ff67f6b2",
-      "size_bytes": 227360,
-      "signed_at": "2026-05-13T09:17:10Z"
+      "hmac_sha256": "577c6cdb4eb47a7b93c65add2af5d015e9272ce143d185185df47735c83eed2a",
+      "size_bytes": 64112,
+      "signed_at": "2026-05-14T22:38:45Z"
+    },
+    "models/meta_1d_model.joblib": {
+      "hmac_sha256": "5e0f51e2dd21dd394f453e7b7e07d80cacbde455d86331ccf5a9b159295753f5",
+      "size_bytes": 60496,
+      "signed_at": "2026-05-14T21:12:52Z"
+    },
+    "models/meta_1m_model.joblib": {
+      "hmac_sha256": "c98bf022ced602593e4b2700c7153f3c49492e00bb5538ce31a6d2ae5bc95a19",
+      "size_bytes": 525840,
+      "signed_at": "2026-05-14T16:12:07Z"
+    },
+    "models/meta_4h_model.joblib": {
+      "hmac_sha256": "ef36dee31dd199434a33475ecebdcc0d4cae3ca2a5bdebd541a41fd40c916479",
+      "size_bytes": 600681,
+      "signed_at": "2026-05-17T08:35:25Z"
+    },
+    "models/trend_1m_model.joblib": {
+      "hmac_sha256": "42f5836b6e71f6369f4dccd59186e77fcc15897fda71658fd93c8f5fd5775407",
+      "size_bytes": 609712,
+      "signed_at": "2026-05-14T16:12:07Z"
+    },
+    "models/meta_5m_model.joblib": {
+      "hmac_sha256": "54e1d807d56e222080397d320fb9a8ec616b062d965d9a68e5185fc4a3fb059a",
+      "size_bytes": 621481,
+      "signed_at": "2026-05-17T08:47:41Z"
     }
   }
 }

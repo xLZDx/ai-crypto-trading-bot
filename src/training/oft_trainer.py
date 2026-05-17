@@ -81,7 +81,7 @@ def purged_kfold(
     t1_dt = pd.to_datetime(t1)
     if not t1_dt.is_monotonic_increasing:
         import warnings
-        warnings.warn("[purged_kfold] t1_times is not monotonic — sorting. "
+        warnings.warn("[purged_kfold] t1_times is not monotonic -- sorting. "
                       "Make sure this matches the row order of your features!")
         order = np.argsort(t1_dt.to_numpy())
         t1 = t1.iloc[order].reset_index(drop=True)
@@ -205,7 +205,7 @@ class OFTTrainer:
             returns[idx], binary_y[idx],
             regime[idx] if regime is not None else torch.zeros(len(idx), dtype=torch.long),
         )
-        return DataLoader(ds, batch_size=self.cfg.batch_size, shuffle=True, drop_last=False)
+        return DataLoader(ds, batch_size=self.cfg.batch_size, shuffle=True, drop_last=True)
 
     # ── training loop ───────────────────────────────────────────────────────
 
@@ -221,6 +221,12 @@ class OFTTrainer:
         """Full purged walk-forward training, then post-hoc calibration."""
         import torch
         device = self._device()
+        # Disable flash/fused attention on sm_75 (RTX 2060): both kernels
+        # trigger intermittent cudaErrorInvalidConfiguration with seq_len=16.
+        # Forces the math (non-flash) SDPA path which is stable on Turing.
+        if device.type == "cuda":
+            torch.backends.cuda.enable_flash_sdp(False)
+            torch.backends.cuda.enable_mem_efficient_sdp(False)
         self.model.to(device)
         events    = events.to(device)
         orderbook = orderbook.to(device)
@@ -263,13 +269,21 @@ class OFTTrainer:
                 logger.info("[OFT] fold %d epoch %d  loss=%.4f", k, epoch,
                             running / max(len(train_loader), 1))
 
-            # Test-fold predictions for calibration
+            # Test-fold predictions for calibration — batched to avoid OOM on
+            # large test sets (full-batch transformer forward allocates huge
+            # intermediate tensors proportional to test_size × T × d_model).
             self.model.eval()
+            test_p_chunks = []
+            eval_bs = self.cfg.batch_size * 4  # larger than train batch; no gradients
             with torch.no_grad():
-                out = self.model(events[test_idx], orderbook[test_idx],
-                                 regime=regime[test_idx] if regime is not None else None)
-                all_test_p.append(out.p_move.detach().cpu().numpy())
-                all_test_y.append(binary_y[test_idx].detach().cpu().numpy())
+                for start in range(0, len(test_idx), eval_bs):
+                    chunk = test_idx[start:start + eval_bs]
+                    reg_chunk = (regime[chunk] if regime is not None else None)
+                    out = self.model(events[chunk], orderbook[chunk],
+                                    regime=reg_chunk)
+                    test_p_chunks.append(out.p_move.detach().cpu().numpy())
+            all_test_p.append(np.concatenate(test_p_chunks))
+            all_test_y.append(binary_y[test_idx].detach().cpu().numpy())
             self._fold_metrics.append({"fold": k, "n_train": len(train_idx),
                                        "n_test": len(test_idx)})
 
