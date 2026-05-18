@@ -944,6 +944,163 @@ def causal_audit(df: pd.DataFrame) -> dict:
     return {"ok": not warnings, "warnings": warnings}
 
 
+def add_coinglass_features(df: pd.DataFrame, symbol: str, timeframe: str) -> pd.DataFrame:
+    """Merge CoinGlass v4 features into a bar DataFrame.
+
+    Stable-schema contract: all columns are filled with 0.0 when data files
+    are missing — the trainer keeps a consistent feature schema regardless of
+    whether CoinGlass data has been downloaded yet.
+
+    Per-symbol futures features (1h/4h depending on timeframe):
+        oi_close          — open interest in USD (close of bar)
+        ls_ratio          — global long/short account ratio
+        ls_long_pct       — % accounts long
+        ls_short_pct      — % accounts short
+        fr_close          — funding rate (close of bar)
+        liq_long_usd      — long liquidations in USD
+        liq_short_usd     — short liquidations in USD
+        fut_taker_buy_usd — futures taker buy volume
+        fut_taker_sell_usd— futures taker sell volume
+        spot_taker_buy_usd— spot taker buy volume
+        spot_taker_sell_usd
+        cbp_premium_rate  — Coinbase premium index (sentiment)
+
+    Global macro features (daily, forward-filled to bar frequency):
+        fear_greed        — 0-100
+        btc_dominance     — BTC market dominance %
+        stablecoin_mcap   — total stablecoin market cap proxy
+
+    Derived features added after merge:
+        taker_cvd         — cumulative volume delta (buy-sell) futures
+        liq_dom           — liquidation dominance (long_usd / total_usd)
+        oi_change_pct     — OI % change vs previous bar
+    """
+    df = df.copy()
+    try:
+        from pathlib import Path
+        import numpy as np
+        _root   = Path(__file__).resolve().parents[2]
+        _cg_dir = _root / "data" / "coinglass"
+        sym_cg  = symbol.replace("/", "")
+
+        # Pick closest available interval for intraday data
+        _tf_map = {"1m": "1h", "5m": "1h", "15m": "1h", "1h": "1h",
+                   "4h": "4h", "1d": "1d"}
+        interval = _tf_map.get(timeframe, "4h")
+        ts_col   = "timestamp"
+
+        # --- columns we will populate ---
+        _FUTURES_COLS = [
+            "oi_close", "ls_ratio", "ls_long_pct", "ls_short_pct",
+            "fr_close", "liq_long_usd", "liq_short_usd",
+            "fut_taker_buy_usd", "fut_taker_sell_usd",
+            "spot_taker_buy_usd", "spot_taker_sell_usd",
+            "cbp_premium_rate",
+        ]
+        _MACRO_COLS = ["fear_greed", "btc_dominance", "stablecoin_mcap"]
+        _DERIVED    = ["taker_cvd", "liq_dom", "oi_change_pct"]
+        _ALL = _FUTURES_COLS + _MACRO_COLS + _DERIVED
+
+        for col in _ALL:
+            if col not in df.columns:
+                df[col] = 0.0
+
+        if ts_col not in df.columns:
+            return df
+
+        df[ts_col] = pd.to_datetime(df[ts_col])
+
+        def _merge(source_df: pd.DataFrame, col_map: dict) -> None:
+            """Left-merge source_df onto df, forward-fill, zero-fill missing."""
+            if source_df.empty or ts_col not in source_df.columns:
+                return
+            source_df = source_df.copy()
+            source_df[ts_col] = pd.to_datetime(source_df[ts_col])
+            source_df = source_df.sort_values(ts_col).drop_duplicates(ts_col)
+            merged = pd.merge_asof(
+                df[[ts_col]].sort_values(ts_col),
+                source_df,
+                on=ts_col,
+                direction="backward",
+                tolerance=pd.Timedelta("2d"),
+            )
+            for src, dst in col_map.items():
+                if src in merged.columns:
+                    vals = merged[src].ffill().fillna(0.0).values
+                    df[dst] = vals
+
+        def _load(path: Path) -> pd.DataFrame:
+            return pd.read_parquet(path) if path.exists() else pd.DataFrame()
+
+        # ── OI ──
+        oi_df = _load(_cg_dir / "futures" / sym_cg / f"oi_{interval}.parquet")
+        _merge(oi_df, {"oi_close": "oi_close"})
+
+        # ── L/S global ──
+        ls_df = _load(_cg_dir / "futures" / sym_cg / f"ls_global_{interval}.parquet")
+        _merge(ls_df, {"ls_ratio": "ls_ratio", "ls_long_pct": "ls_long_pct",
+                       "ls_short_pct": "ls_short_pct"})
+
+        # ── Funding rate (8h or 1d) ──
+        fr_interval = "8h" if timeframe in ("1h", "4h") else "1d"
+        fr_df = _load(_cg_dir / "futures" / sym_cg / f"funding_rate_{fr_interval}.parquet")
+        _merge(fr_df, {"fr_close": "fr_close"})
+
+        # ── Liquidations ──
+        liq_df = _load(_cg_dir / "futures" / sym_cg / f"liquidations_{interval}.parquet")
+        _merge(liq_df, {"liq_long_usd": "liq_long_usd", "liq_short_usd": "liq_short_usd"})
+
+        # ── Futures taker ──
+        ft_df = _load(_cg_dir / "futures" / sym_cg / f"fut_taker_{interval}.parquet")
+        _merge(ft_df, {"fut_taker_buy_usd": "fut_taker_buy_usd",
+                       "fut_taker_sell_usd": "fut_taker_sell_usd"})
+
+        # ── Spot taker ──
+        st_df = _load(_cg_dir / "spot" / sym_cg / f"spot_taker_{interval}.parquet")
+        _merge(st_df, {"spot_taker_buy_usd": "spot_taker_buy_usd",
+                       "spot_taker_sell_usd": "spot_taker_sell_usd"})
+
+        # ── Coinbase premium (global) ──
+        cbp_df = _load(_cg_dir / "macro" / f"coinbase_premium_{interval}.parquet")
+        _merge(cbp_df, {"cbp_premium_rate": "cbp_premium_rate"})
+
+        # ── Macro (daily, forward-fill to any bar freq) ──
+        fg_df = _load(_cg_dir / "macro" / "fear_greed.parquet")
+        _merge(fg_df, {"fear_greed": "fear_greed"})
+
+        dom_df = _load(_cg_dir / "macro" / "btc_dominance.parquet")
+        _merge(dom_df, {"btc_dominance": "btc_dominance"})
+
+        sc_df = _load(_cg_dir / "macro" / "stablecoin_mcap.parquet")
+        _merge(sc_df, {"stablecoin_mcap_total": "stablecoin_mcap"})
+
+        # ── Derived ──
+        df["taker_cvd"] = (
+            df["fut_taker_buy_usd"] - df["fut_taker_sell_usd"]
+        ).clip(-1e12, 1e12)
+
+        # Only overwrite if new CoinGlass liquidation data is actually present;
+        # otherwise preserve the value already computed by the old liq block.
+        if df["liq_long_usd"].ne(0).any() or df["liq_short_usd"].ne(0).any():
+            liq_total = df["liq_long_usd"] + df["liq_short_usd"]
+            df["liq_dom"] = np.where(
+                liq_total > 0,
+                df["liq_long_usd"] / liq_total,
+                0.5,
+            )
+
+        # Only overwrite oi_change_pct if we have real OI data; otherwise
+        # preserve the value from load_open_interest() (old parquet store).
+        if df["oi_close"].ne(0).any():
+            oi_series = pd.to_numeric(df["oi_close"], errors="coerce").replace(0, np.nan)
+            df["oi_change_pct"] = oi_series.pct_change().clip(-1, 1).fillna(0.0)
+
+    except Exception as exc:
+        logging.getLogger(__name__).warning("add_coinglass_features failed: %s", exc)
+
+    return df
+
+
 __all__ = [name for name in globals() if name.startswith("add_")] + [
     "add_kalman_close", "add_l2_features", "causal_audit", "normalize_tensors",
 ]

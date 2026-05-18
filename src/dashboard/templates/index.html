@@ -1689,9 +1689,14 @@ document.addEventListener('DOMContentLoaded', function() {
               <div style="width:1px;background:rgba(148,163,184,.1);align-self:stretch;flex-shrink:0"></div>
               <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:4px 0">
                 <div class="pivot-node" style="border-color:rgba(167,139,250,.25)">
-                  <span style="color:#a78bfa;font-size:.62rem;font-weight:800">◆ ACCURACY</span>
+                  <span style="color:#a78bfa;font-size:.62rem;font-weight:800">◆ WF ACC</span>
                   <span style="font-family:'JetBrains Mono';font-size:.73rem;font-weight:700;color:#a78bfa"><span id="chart-ml-acc">--</span>%</span>
-                  <span style="font-size:.54rem;color:#475569">Overall</span>
+                  <span style="font-size:.54rem;color:#475569">Walk-forward</span>
+                </div>
+                <div class="pivot-node" style="border-color:rgba(100,116,139,.2)">
+                  <span style="color:#94a3b8;font-size:.62rem;font-weight:800">◇ IN-SAMPLE</span>
+                  <span style="font-family:'JetBrains Mono';font-size:.73rem;font-weight:700;color:#94a3b8"><span id="chart-ml-acc-is">--</span>%</span>
+                  <span style="font-size:.54rem;color:#475569">In-sample</span>
                 </div>
                 <div class="pivot-node" style="border-color:rgba(52,211,153,.25)">
                   <span style="color:#34d399;font-size:.62rem;font-weight:800">▲ <span id="ml-badge-label-l">BUY</span></span>
@@ -3963,8 +3968,11 @@ function setActiveSym(sym) {
     setText('chart-ml-long', fmt(sd.ml_accuracy_long, 1));
     setText('chart-ml-short', fmt(sd.ml_accuracy_short, 1));
     const mlKey2 = activeMarket === 'FUTURES' ? 'futures' : activeMarket === 'SCALPING' ? 'scalping' : 'spot';
-    const mlAcc2 = (modelMeta[mlKey2] || {}).accuracy;
-    setText('chart-ml-acc', mlAcc2 != null ? (+mlAcc2).toFixed(1) : fmt(sd.ml_accuracy, 1));
+    const _mm2 = modelMeta[mlKey2] || {};
+    const mlAccWF2 = _mm2.accuracy_walk_forward ?? _mm2.accuracy;
+    const mlAccIS2 = _mm2.accuracy_test ?? _mm2.accuracy;
+    setText('chart-ml-acc', mlAccWF2 != null ? (+mlAccWF2).toFixed(1) : fmt(sd.ml_accuracy, 1));
+    setText('chart-ml-acc-is', mlAccIS2 != null ? (+mlAccIS2).toFixed(1) : '--');
     renderPivots(sd.recent_pivots || []);
   }
   if (activeTab === 'overview') { chartInitialized = false; initTVChart(sym); chartInitialized = true; }
@@ -4165,8 +4173,11 @@ function updateUI(state) {
   setText('chart-ml-long', fmt(sd.ml_accuracy_long, 1));
   setText('chart-ml-short', fmt(sd.ml_accuracy_short, 1));
   const mlKey = activeMarket === 'FUTURES' ? 'futures' : activeMarket === 'SCALPING' ? 'scalping' : 'spot';
-  const mlAcc = (modelMeta[mlKey] || {}).accuracy;
-  setText('chart-ml-acc', mlAcc != null ? (+mlAcc).toFixed(1) : fmt(sd.ml_accuracy, 1));
+  const _mm = modelMeta[mlKey] || {};
+  const mlAccWF = _mm.accuracy_walk_forward ?? _mm.accuracy;
+  const mlAccIS = _mm.accuracy_test ?? _mm.accuracy;
+  setText('chart-ml-acc', mlAccWF != null ? (+mlAccWF).toFixed(1) : fmt(sd.ml_accuracy, 1));
+  setText('chart-ml-acc-is', mlAccIS != null ? (+mlAccIS).toFixed(1) : '--');
   renderPivots(sd.recent_pivots || []);
   renderSymbolCards(md, prices);
   syncSymSelect([...new Set([...Object.keys(md), ...watchlistSymbols])]);
@@ -6672,9 +6683,15 @@ function _renderMLCards(data) {
 
   cont.innerHTML = models.map(m => {
     const trained = m.model_exists;
-    const acc     = m.accuracy > 0 ? m.accuracy.toFixed(1) : '--';
-    const accNum  = parseFloat(acc) || 0;
-    const accCol  = accNum >= 55 ? '#34d399' : accNum >= 50 ? '#fbbf24' : (accNum > 0 ? '#fb7185' : '#475569');
+    const wfRaw   = m.accuracy_walk_forward != null ? m.accuracy_walk_forward : m.accuracy;
+    const isRaw   = m.accuracy_test != null ? m.accuracy_test : m.accuracy;
+    const wfAcc   = wfRaw > 0 ? (+wfRaw).toFixed(1) : '--';
+    const isAcc   = isRaw > 0 ? (+isRaw).toFixed(1) : '--';
+    const wfNum   = parseFloat(wfAcc) || 0;
+    const isNum   = parseFloat(isAcc) || 0;
+    const wfCol   = wfNum >= 55 ? '#34d399' : wfNum >= 50 ? '#fbbf24' : (wfNum > 0 ? '#fb7185' : '#475569');
+    // keep legacy acc/accNum/accCol for progress bar
+    const acc     = wfAcc; const accNum = wfNum; const accCol = wfCol;
     const long    = m.long_accuracy  > 0 ? m.long_accuracy.toFixed(1)  : '--';
     const shrt    = m.short_accuracy > 0 ? m.short_accuracy.toFixed(1) : '--';
     const ns      = m.n_samples ? Number(m.n_samples).toLocaleString() : '--';
@@ -6692,11 +6709,17 @@ function _renderMLCards(data) {
         </div>
         <span class="ml-badge ${trained ? 'ok' : 'no'}">${trained ? 'TRAINED' : 'NO MODEL'}</span>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:8px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:5px">
         <div style="text-align:center;background:rgba(5,8,22,.55);border-radius:7px;padding:6px">
-          <div style="font-size:.5rem;color:#475569">ACCURACY</div>
-          <div style="font-size:1.4rem;font-weight:900;color:${accCol};line-height:1.1">${acc}${accNum>0?'%':''}</div>
+          <div style="font-size:.5rem;color:#a78bfa;font-weight:700">WF ACC</div>
+          <div style="font-size:1.4rem;font-weight:900;color:${wfCol};line-height:1.1">${wfAcc}${wfNum>0?'%':''}</div>
         </div>
+        <div style="text-align:center;background:rgba(5,8,22,.55);border-radius:7px;padding:6px">
+          <div style="font-size:.5rem;color:#475569">IN-SAMPLE</div>
+          <div style="font-size:1.4rem;font-weight:900;color:#64748b;line-height:1.1">${isAcc}${isNum>0?'%':''}</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:8px">
         <div style="text-align:center;background:rgba(5,8,22,.55);border-radius:7px;padding:6px">
           <div style="font-size:.5rem;color:#475569">↑ BULL</div>
           <div style="font-size:1rem;font-weight:800;color:#34d399">${long}${long!=='--'?'%':''}</div>

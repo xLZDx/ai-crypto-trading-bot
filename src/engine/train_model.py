@@ -28,12 +28,13 @@ from src.analysis.feature_engineering import (
     add_taker_and_trade_features, add_rsi, add_macd,
     add_bollinger_bands, add_roc, add_time_features,
     add_ofi, add_vwap, add_funding_zscore, add_liquidity_proximity, add_atr,
-    add_news_sentiment
+    add_news_sentiment, add_coinglass_features,
 )
 from src.analysis.fractional_diff import add_fractional_diff
 from src.analysis.triple_barrier import triple_barrier_labels_vectorized, label_stats
 from src.data_ingestion.open_interest_downloader import load_open_interest
 from src.data_ingestion.fear_greed_downloader import load_fear_greed
+from src.data_ingestion.liquidation_downloader import load_liquidations
 
 
 _RULES_PATH = os.path.join(
@@ -166,6 +167,24 @@ FEATURE_COLUMNS = [
     # Market-context features (exact join, no resampling):
     'oi_change_pct',    # 1h OI % change (Binance); 0 for non-1h TFs
     'fear_greed_norm',  # Fear & Greed 0-1 scaled (daily); 0.5 for non-1d TFs
+    'liq_long_z',       # rolling z-score of long liquidations USD (Coinglass); 0 if no key
+    'liq_short_z',      # rolling z-score of short liquidations USD; 0 if no key
+    'liq_dom',          # short_liq / total_liq — squeeze bias (0.5 neutral); 0 if no key
+    # CoinGlass v4 features (0.0 when data not downloaded yet — stable schema)
+    'oi_close',         # open interest USD close
+    'ls_ratio',         # global long/short account ratio
+    'ls_long_pct',      # % accounts long
+    'ls_short_pct',     # % accounts short
+    'fr_close',         # funding rate close
+    'liq_long_usd',     # long liquidations USD
+    'liq_short_usd',    # short liquidations USD
+    'fut_taker_buy_usd',    # futures taker buy volume
+    'fut_taker_sell_usd',   # futures taker sell volume
+    'taker_cvd',        # cumulative volume delta (futures)
+    'cbp_premium_rate', # Coinbase premium index
+    'fear_greed',       # Fear & Greed raw 0-100
+    'btc_dominance',    # BTC market dominance %
+    'stablecoin_mcap',  # stablecoin market cap proxy
 ]
 
 
@@ -281,6 +300,43 @@ def prepare_data(filepath, timeframe: str = '1h', symbol: str | None = None):
     else:
         df["oi_change_pct"] = 0.0
 
+    # 1h only: Liquidation data (Coinglass — requires COINGLASS_API_KEY).
+    # liq_long_z / liq_short_z: rolling 24h z-score of USD liquidated.
+    # liq_dom: short_liq / total_liq — high = more shorts squeezed = bullish bias.
+    # Falls back to 0 silently when no key or no data.
+    if timeframe == '1h' and symbol:
+        try:
+            liq = load_liquidations(symbol)
+            if not liq.empty:
+                liq = liq[["timestamp", "liq_long_usd", "liq_short_usd", "liq_total_usd"]].copy()
+                _w = 24  # 24-bar rolling window for z-score
+                for col, zcol in [("liq_long_usd", "liq_long_z"), ("liq_short_usd", "liq_short_z")]:
+                    mu = liq[col].rolling(_w, min_periods=1).mean()
+                    sd = liq[col].rolling(_w, min_periods=1).std().replace(0, 1e-9)
+                    liq[zcol] = ((liq[col] - mu) / sd).clip(-4, 4)
+                liq["liq_dom"] = (liq["liq_short_usd"] / (liq["liq_total_usd"] + 1e-9)).clip(0, 1)
+                df = df.merge(
+                    liq[["timestamp", "liq_long_z", "liq_short_z", "liq_dom"]],
+                    on="timestamp", how="left",
+                )
+                for col in ("liq_long_z", "liq_short_z", "liq_dom"):
+                    df[col] = df[col].fillna(0.0)
+                matched = df["liq_long_z"].ne(0).sum()
+                log.info("[%s/1h] Liq join: %d/%d bars matched", symbol, matched, len(df))
+            else:
+                df["liq_long_z"] = 0.0
+                df["liq_short_z"] = 0.0
+                df["liq_dom"]     = 0.0
+        except Exception as e:
+            log.warning("Liquidation join failed for %s: %s", symbol, e)
+            df["liq_long_z"] = 0.0
+            df["liq_short_z"] = 0.0
+            df["liq_dom"]     = 0.0
+    else:
+        df["liq_long_z"] = 0.0
+        df["liq_short_z"] = 0.0
+        df["liq_dom"]     = 0.0
+
     # 1d only: Fear & Greed index (normalized 0-1, 0.5 = neutral)
     if timeframe == '1d':
         try:
@@ -303,6 +359,17 @@ def prepare_data(filepath, timeframe: str = '1h', symbol: str | None = None):
             df["fear_greed_norm"] = 0.5
     else:
         df["fear_greed_norm"] = 0.5
+
+    # CoinGlass v4 enrichment — OI, L/S ratio, funding, liquidations, taker
+    # flow, Coinbase premium, and macro (fear/greed, BTC dominance, stablecoin
+    # mcap). Stable schema: all columns default to 0.0 if files not present.
+    if symbol:
+        try:
+            df = add_coinglass_features(df, symbol, timeframe)
+            log.info("[base][%s/%s] CoinGlass features merged", symbol, timeframe)
+        except Exception as _cg_exc:
+            log.warning("[base][%s/%s] CoinGlass features skipped: %s",
+                        symbol, timeframe, _cg_exc)
 
     # Dynamic Volatility-based Triple Barrier (asymmetric: pt=4, sl=2)
     # Wizard 2026-05-16: symmetric 2:2 collapsed AUC to ~0.50 (noise floor).

@@ -23,7 +23,7 @@ if base_dir not in sys.path:
 from src.analysis.feature_engineering import (
     add_macd, add_adx, add_time_features, add_atr,
     add_ofi, add_vwap, add_donchian, add_keltner, add_funding_zscore,
-    add_taker_and_trade_features,
+    add_taker_and_trade_features, add_coinglass_features,
 )
 from src.analysis.fractional_diff import add_fractional_diff
 from src.analysis.triple_barrier import triple_barrier_labels_vectorized, label_stats
@@ -53,7 +53,12 @@ FEATURE_COLUMNS = [
     'vol_regime',
     'is_trending',
     'is_volatile',
-    'news_sentiment',     # Phase I (2026-05-14) — operator request, news bias
+    'news_sentiment',
+    # CoinGlass v4 features (0.0 when data not downloaded yet — stable schema)
+    'oi_close', 'ls_ratio', 'ls_long_pct', 'ls_short_pct',
+    'fr_close', 'liq_long_usd', 'liq_short_usd',
+    'fut_taker_buy_usd', 'fut_taker_sell_usd', 'taker_cvd',
+    'cbp_premium_rate', 'fear_greed', 'btc_dominance', 'stablecoin_mcap',
 ]
 
 
@@ -197,6 +202,14 @@ def prepare_trend_data(filepath, timeframe: str = '1h', symbol: str | None = Non
         log.warning("[trend] add_news_sentiment skipped: %s", e)
         if 'news_sentiment' not in df.columns:
             df['news_sentiment'] = 0.0
+
+    if symbol:
+        try:
+            df = add_coinglass_features(df, symbol, timeframe)
+            log.info("[trend][%s/%s] CoinGlass features merged", symbol, timeframe)
+        except Exception as _cg_exc:
+            log.warning("[trend][%s/%s] CoinGlass features skipped: %s",
+                        symbol, timeframe, _cg_exc)
 
     # Per-TF asymmetric barriers (pt=4, sl=2 — let winners run, tight stops).
     tb_params = _trend_tb_params(timeframe)

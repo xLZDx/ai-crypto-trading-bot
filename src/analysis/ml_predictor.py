@@ -397,10 +397,15 @@ class MLPredictor:
             "signal_rsi", "signal_macd", "signal_bb",
         ]
 
-    def _build_all_features(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _build_all_features(
+        self, df: pd.DataFrame, symbol: str = "", timeframe: str = "1h"
+    ) -> pd.DataFrame:
         """
         Build every feature that any model type might need — a full superset.
         Each indicator is wrapped individually so one failure doesn't abort prediction.
+        Pass symbol/timeframe to also merge CoinGlass v4 features (macro always
+        available; per-symbol futures features require the futures download to
+        have run).  If symbol is empty, only macro features are merged.
         """
         from src.analysis.feature_engineering import (
             add_taker_and_trade_features, add_rsi, add_macd,
@@ -526,5 +531,14 @@ class MLPredictor:
         df["signal_bb"]   = np.where(bb_p < 0.1, 1.0, np.where(bb_p > 0.9, -1.0, 0.0))
 
         df["news_sentiment"] = 0.0
+
+        # CoinGlass v4 enrichment — macro always available (fear_greed,
+        # btc_dominance, stablecoin_mcap); per-symbol futures features only
+        # when symbol is provided and the futures download has run.
+        try:
+            from src.analysis.feature_engineering import add_coinglass_features
+            df = add_coinglass_features(df, symbol, timeframe)
+        except Exception as _cg_exc:
+            logger.debug("[MLPredictor] CoinGlass features skipped: %s", _cg_exc)
 
         return df

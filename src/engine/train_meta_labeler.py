@@ -97,6 +97,7 @@ def _build_signal_dataset(
     pt_multiplier: float = 2.5,
     sl_multiplier: float = 1.5,
     max_bars: int = 12,
+    timeframe: str = "1h",
 ) -> pd.DataFrame:
     """
     Run primary models over df to generate probabilities, then label each
@@ -125,7 +126,7 @@ def _build_signal_dataset(
     # --- 2. Engineer a superset of all features ---
     from src.analysis.ml_predictor import MLPredictor
     feature_builder = MLPredictor()
-    df_feat = feature_builder._build_all_features(df).copy()  # avoid SettingWithCopyWarning
+    df_feat = feature_builder._build_all_features(df, symbol=symbol, timeframe=timeframe).copy()
     df_feat['volatility_7'] = df_feat['return'].rolling(7).std()
 
     # Compute signal_don from don_pos_20 if missing (trend model expects it)
@@ -276,6 +277,7 @@ def train_meta_labeler(
             signals_df = _build_signal_dataset(
                 df, sym,
                 pt_multiplier=pt, sl_multiplier=sl, max_bars=mb,
+                timeframe=timeframe,
             )
             signals_df = signals_df.dropna(subset=META_FEATURES + ['meta_label'])
             if len(signals_df) > 50:

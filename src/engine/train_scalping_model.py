@@ -30,7 +30,7 @@ if base_dir not in sys.path:
 from src.analysis.feature_engineering import (
     add_taker_and_trade_features, add_rsi, add_macd,
     add_bollinger_bands, add_roc, add_time_features, resample_1s_to_1m,
-    add_ofi, add_vwap, add_keltner, add_atr,
+    add_ofi, add_vwap, add_keltner, add_atr, add_coinglass_features,
 )
 from src.analysis.fractional_diff import add_fractional_diff
 from src.analysis.triple_barrier import triple_barrier_labels_vectorized, label_stats
@@ -54,7 +54,11 @@ FEATURE_COLUMNS = [
     'vol_regime',
     'is_trending',
     'is_volatile',
-    'news_sentiment',     # Phase I (2026-05-14) — operator request
+    'news_sentiment',
+    # CoinGlass v4 macro context (0.0 when data absent; 1h resolution for 1m bars)
+    'fear_greed', 'btc_dominance', 'stablecoin_mcap',
+    'oi_close', 'ls_ratio', 'fr_close',
+    'liq_long_usd', 'liq_short_usd', 'taker_cvd', 'cbp_premium_rate',
 ]
 
 
@@ -155,6 +159,13 @@ def prepare_scalping_data(filepath, timeframe: str = '1m', symbol: str | None = 
             raise
         log.warning("[scalping][%s/%s] data_quality check skipped: %s",
                     symbol, timeframe, e)
+    if symbol:
+        try:
+            df = add_coinglass_features(df, symbol, timeframe)
+            log.info("[scalping][%s/%s] CoinGlass features merged", symbol, timeframe)
+        except Exception as _cg_exc:
+            log.warning("[scalping][%s/%s] CoinGlass features skipped: %s",
+                        symbol, timeframe, _cg_exc)
     return _engineer_scalping_features(df)
 
 

@@ -10964,6 +10964,7 @@ def main():
     test_phase107_worker_bind_host_env_default()
     test_phase108_training_progress_instrumentation()
     test_phase109_gzip_to_parquet_migration()
+    test_phase110_live_perf_monitor()
 
     if not args.offline:
         test_api(args.url)
@@ -10975,6 +10976,82 @@ def main():
     print(f"  Results: {results['pass']} passed, {results['fail']} failed, {results['skip']} skipped / {total} total")
     print('=' * 55)
     sys.exit(0 if results['fail'] == 0 else 1)
+
+
+def test_phase110_live_perf_monitor():
+    """P1 degradation monitoring: live performance monitor tracks per-strategy
+    rolling win rates vs historical baseline and flags WARN / DEGRADED status.
+    """
+    print('\n[Phase 110 -- P1 Live Performance Monitor]')
+
+    # 1. Module exists and exports the required API.
+    from src.risk import live_perf_monitor as lpm
+    for name in ('run_once', 'get_cached_state', 'is_degraded', 'start', 'stop',
+                 'DEFAULT_INTERVAL_S', 'StrategyPerf'):
+        check(f'live_perf_monitor exports {name}', hasattr(lpm, name))
+
+    # 2. run_once() returns a correctly-shaped dict (uses real trade_events data).
+    state = lpm.run_once()
+    check('run_once returns dict', isinstance(state, dict))
+    for key in ('last_run_iso', 'next_run_iso', 'summary', 'strategies'):
+        check(f'state has key {key!r}', key in state)
+    summary = state['summary']
+    for k in ('ok', 'warn', 'degraded', 'no_data'):
+        check(f'summary has {k!r}', k in summary)
+        check(f'summary[{k!r}] is int', isinstance(summary[k], int))
+
+    # 3. Each strategy row has the mandatory fields.
+    for row in state['strategies']:
+        for field_name in ('strategy', 'n_trades_total', 'n_trades_window',
+                           'status', 'last_trade_ts'):
+            check(f'strategy row has {field_name!r}', field_name in row)
+        check('status is valid', row['status'] in ('OK', 'WARN', 'DEGRADED', 'NO_DATA'))
+        check('n_trades_total >= 0', row['n_trades_total'] >= 0)
+
+    # 4. State file written to data/risk/live_perf_state.json.
+    state_path = os.path.join(BASE_DIR, 'data', 'risk', 'live_perf_state.json')
+    check('live_perf_state.json written', os.path.exists(state_path))
+    with open(state_path, encoding='utf-8') as f:
+        cached = __import__('json').load(f)
+    check('cached state has strategies list', isinstance(cached.get('strategies'), list))
+
+    # 5. get_cached_state() reads back what run_once() wrote.
+    from src.risk.live_perf_monitor import get_cached_state
+    cs = get_cached_state()
+    check('get_cached_state returns dict', isinstance(cs, dict))
+    check('cached strategies count matches',
+          len(cs.get('strategies', [])) == len(state['strategies']))
+
+    # 6. is_degraded() returns (bool, str) for known and unknown strategy.
+    from src.risk.live_perf_monitor import is_degraded
+    result = is_degraded('NONEXISTENT_STRATEGY_XYZ')
+    check('is_degraded returns 2-tuple', isinstance(result, tuple) and len(result) == 2)
+    check('is_degraded[0] is bool', isinstance(result[0], bool))
+    check('is_degraded[1] is str', isinstance(result[1], str))
+    check('unknown strategy not degraded', result[0] is False)
+
+    # 7. Dashboard routes registered.
+    src_path = os.path.join(BASE_DIR, 'src', 'dashboard', 'app.py')
+    with open(src_path, encoding='utf-8') as f:
+        app_src = f.read()
+    check("GET /api/live_perf/state route registered",
+          "'/api/live_perf/state'" in app_src)
+    check("POST /api/live_perf/run route registered",
+          "'/api/live_perf/run'" in app_src)
+    check('_ensure_live_perf_monitor helper present',
+          '_ensure_live_perf_monitor' in app_src)
+
+    # 8. StrategyPerf.to_dict() round-trips correctly.
+    sp = lpm.StrategyPerf(
+        strategy='TestStrat', n_trades_total=60, n_trades_window=50,
+        win_rate_recent=0.42, win_rate_baseline=0.55,
+        degradation_pct=0.236, avg_pnl_usd=-1.2, status='WARN',
+        last_trade_ts='2026-05-17T00:00:00+00:00',
+    )
+    d = sp.to_dict()
+    check('to_dict has strategy', d['strategy'] == 'TestStrat')
+    check('to_dict has status WARN', d['status'] == 'WARN')
+    check('to_dict rounds win_rate_recent', d['win_rate_recent'] == 0.42)
 
 
 if __name__ == '__main__':

@@ -359,7 +359,13 @@ def _build_portfolio_context():
             'trend':    'models/trend_model_meta.json',
             'tft':      'models/tft_model_meta.json',
         }
-        ml_acc = {k: read_json(v, default={}).get('accuracy', 'N/A') for k, v in _META.items()}
+        ml_acc = {
+            k: {
+                'in_sample':    read_json(v, default={}).get('accuracy', 'N/A'),
+                'walk_forward': read_json(v, default={}).get('walk_forward_mean_acc', 'N/A'),
+            }
+            for k, v in _META.items()
+        }
 
         open_summary = []
         for t in open_trades[:10]:
@@ -1169,6 +1175,58 @@ def api_drift_run():
     when the operator wants fresh numbers right after a training cycle."""
     try:
         from src.risk.drift_monitor import run_once
+        state = run_once()
+        return jsonify({'ok': True, 'state': state})
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
+
+
+# ============================================================
+# P1 (2026-05-17) — Live Performance Monitor endpoints.
+# /api/live_perf/state  GET  — cached per-strategy win rate report
+# /api/live_perf/run    POST — operator-driven immediate refresh
+# ============================================================
+
+_live_perf_started = False
+_live_perf_lock    = threading.Lock()
+
+
+def _ensure_live_perf_monitor() -> None:
+    global _live_perf_started
+    if _live_perf_started:
+        return
+    with _live_perf_lock:
+        if _live_perf_started:
+            return
+        try:
+            from src.risk.live_perf_monitor import start
+            start()
+            _live_perf_started = True
+        except Exception as exc:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "Failed to start live_perf_monitor: %s", exc,
+            )
+
+
+@app.route('/api/live_perf/state', methods=['GET'])
+@require_api_key
+def api_live_perf_state():
+    """Cached per-strategy live win rate vs baseline (data/risk/live_perf_state.json)."""
+    try:
+        _ensure_live_perf_monitor()
+        from src.risk.live_perf_monitor import get_cached_state
+        return jsonify({'ok': True, 'state': get_cached_state()})
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 500
+
+
+@app.route('/api/live_perf/run', methods=['POST'])
+@require_api_key
+def api_live_perf_run():
+    """Force an immediate live-performance evaluation pass."""
+    try:
+        from src.risk.live_perf_monitor import run_once
         state = run_once()
         return jsonify({'ok': True, 'state': state})
     except Exception as exc:
@@ -2223,21 +2281,17 @@ def strategy_full():
         # near the headline, the test-set accuracy is misleading. Prefer the
         # walk-forward mean (when present) and surface a warning to the UI.
         accuracy_warning = None
-        headline_acc = acc_pct
-        # Meta-labeler is a binary win-or-not classifier — long/short fields
-        # don't apply, so suppress the "Long 0% Short 0%" rendering and don't
-        # treat the perfect 0/0 split as imbalance.
+        # Always prefer walk-forward as the headline; fall back to in-sample when WF not yet computed.
+        headline_acc = wf_pct if wf_pct is not None else acc_pct
         is_directionless = (key == 'meta')
         if acc_pct is not None and (long_pct or shrt_pct) and not is_directionless:
             spread = abs(long_pct - shrt_pct)
             if spread >= 30 and min(long_pct, shrt_pct) < 10:
                 accuracy_warning = (
                     f"Class-imbalance: long={long_pct:.1f}% short={shrt_pct:.1f}% — "
-                    f"the headline {acc_pct:.1f}% over-reports. "
-                    + (f"Walk-forward mean {wf_pct:.1f}% is more honest." if wf_pct is not None else "")
+                    f"in-sample {acc_pct:.1f}% over-reports. "
+                    + (f"WF mean {wf_pct:.1f}%." if wf_pct is not None else "WF not yet computed.")
                 ).strip()
-                if wf_pct is not None:
-                    headline_acc = wf_pct
         # Training-history derived fields. We don't yet have a training_runs
         # table populated, so we derive a lower-bound from archived metas
         # plus the current artifact mtime for "trained today / staleness".
