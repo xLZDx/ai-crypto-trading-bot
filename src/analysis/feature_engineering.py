@@ -1101,6 +1101,53 @@ def add_coinglass_features(df: pd.DataFrame, symbol: str, timeframe: str) -> pd.
     return df
 
 
+def add_explicit_regime(df: pd.DataFrame) -> pd.DataFrame:
+    """Add one-hot explicit regime features: regime_bull / regime_bear / regime_chop / regime_high_vol.
+
+    Computed from SMA200 position, EMA-spread trend strength, and short/long vol ratio.
+    All four can be True simultaneously (not mutually exclusive).
+    Safe to call after any indicator pipeline — computes missing prereqs defensively.
+    """
+    try:
+        if 'sma_200' not in df.columns:
+            df['sma_200'] = df['close'].rolling(200, min_periods=20).mean()
+        if 'trend_strength' not in df.columns:
+            ema_f = df['close'].ewm(span=12, adjust=False).mean()
+            ema_s = df['close'].ewm(span=26, adjust=False).mean()
+            _atr  = df['high'].sub(df['low']).rolling(14, min_periods=1).mean().replace(0, 1e-9)
+            df['trend_strength'] = (ema_f - ema_s).abs() / _atr
+        if 'vol_regime' not in df.columns:
+            _ret = df['close'].pct_change()
+            df['vol_regime'] = (
+                _ret.rolling(7).std()
+                / _ret.rolling(100, min_periods=10).std().replace(0, 1e-9)
+            )
+
+        _above_sma = df['close'] > df['sma_200'].fillna(df['close'])
+        _ts = df['trend_strength'].fillna(0)
+        _vr = df['vol_regime'].fillna(1.0)
+
+        df['regime_bull']     = (_above_sma  & (_ts > 1.0)).astype(float)
+        df['regime_bear']     = (~_above_sma & (_ts > 1.0)).astype(float)
+        df['regime_chop']     = (_ts < 0.5).astype(float)
+        df['regime_high_vol'] = (_vr > 1.5).astype(float)
+    except Exception:
+        for _col in ('regime_bull', 'regime_bear', 'regime_chop', 'regime_high_vol'):
+            if _col not in df.columns:
+                df[_col] = 0.0
+    return df
+
+
+def add_symbol_id(df: pd.DataFrame, symbol: str, known_symbols: list) -> pd.DataFrame:
+    """Add ordinal symbol_id feature (1-based; 0 = unknown symbol not in training set)."""
+    try:
+        symbol_map = {s: i + 1 for i, s in enumerate(sorted(known_symbols))}
+        df['symbol_id'] = float(symbol_map.get(symbol, 0))
+    except Exception:
+        df['symbol_id'] = 0.0
+    return df
+
+
 __all__ = [name for name in globals() if name.startswith("add_")] + [
     "add_kalman_close", "add_l2_features", "causal_audit", "normalize_tensors",
 ]

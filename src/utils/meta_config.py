@@ -51,6 +51,10 @@ META_FEATURES: list[str] = [
     'signal_rsi',
     'signal_macd',
     'signal_bb',
+    # Symbol identity
+    'symbol_id',        # ordinal symbol encoding (1-based; 0 = unknown)
+    # Explicit regime one-hot features
+    'regime_bull', 'regime_bear', 'regime_chop', 'regime_high_vol',
 ]
 
 # Default confidence threshold — overridden by `optimal_threshold` stored in

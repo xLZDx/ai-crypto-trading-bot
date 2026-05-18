@@ -19,6 +19,8 @@ from sklearn.metrics import accuracy_score, classification_report
 from sklearn.utils.class_weight import compute_sample_weight
 import joblib
 from src.utils.purged_kfold import PurgedKFold
+from src.engine.kpi_gate import hard_gate_wf, KPIGateFailure
+from src.utils.threshold_optimizer import find_optimal_threshold
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger('train_scalping')
@@ -31,6 +33,7 @@ from src.analysis.feature_engineering import (
     add_taker_and_trade_features, add_rsi, add_macd,
     add_bollinger_bands, add_roc, add_time_features, resample_1s_to_1m,
     add_ofi, add_vwap, add_keltner, add_atr, add_coinglass_features,
+    add_explicit_regime,
 )
 from src.analysis.fractional_diff import add_fractional_diff
 from src.analysis.triple_barrier import triple_barrier_labels_vectorized, label_stats
@@ -59,6 +62,9 @@ FEATURE_COLUMNS = [
     'fear_greed', 'btc_dominance', 'stablecoin_mcap',
     'oi_close', 'ls_ratio', 'fr_close',
     'liq_long_usd', 'liq_short_usd', 'taker_cvd', 'cbp_premium_rate',
+    'symbol_id',        # ordinal symbol encoding (1-based; 0 = unknown)
+    # Explicit regime one-hot features
+    'regime_bull', 'regime_bear', 'regime_chop', 'regime_high_vol',
 ]
 
 
@@ -195,6 +201,7 @@ def _process_single_symbol(sym):
         # Downcast float64 to float32 to cut memory usage in half
         float_cols = df_tail.select_dtypes(include=['float64']).columns
         df_tail[float_cols] = df_tail[float_cols].astype('float32')
+        df_tail['_sym'] = sym
         return df_tail
 
     return None
@@ -242,11 +249,18 @@ def train_scalping_model(timeframe: str = '1m'):
     combined_df = combined_df.sort_values('timestamp')
     combined_df.set_index('timestamp', inplace=True)
 
+    _syms_sorted = sorted(symbols)
+    _sym_id_map = {s: float(i + 1) for i, s in enumerate(_syms_sorted)}
+    combined_df['symbol_id'] = combined_df['_sym'].map(_sym_id_map).fillna(0.0)
+    combined_df.drop(columns=['_sym'], inplace=True, errors='ignore')
+    combined_df = add_explicit_regime(combined_df)
+
     for col in [f for f in FEATURE_COLUMNS if f not in combined_df.columns]:
         combined_df[col] = 0.0
 
     X = combined_df[FEATURE_COLUMNS].fillna(0)
     y = combined_df['target_scalp']
+    _close_returns = combined_df['close'].pct_change().fillna(0)
 
     log.info("Scalping dataset: %d total | features %d | symbols %s | timeframe 1m",
              len(combined_df), len(FEATURE_COLUMNS), symbols)
@@ -316,9 +330,7 @@ def train_scalping_model(timeframe: str = '1m'):
     _scalp_hp, _scalp_applied = _merge('scalping', _SCALP_HP_DEFAULTS, _SCALP_HP_SCHEMA)
 
     t1_series = combined_df['t1_timestamp']
-    # Embargo = 2 * horizon (5 bars for scalping model)
-    pct_embargo = (2.0 * 5) / len(X)
-    cv = PurgedKFold(n_splits=5, t1=t1_series, pct_embargo=pct_embargo)
+    cv = PurgedKFold(n_splits=5, t1=t1_series, embargo_td=pd.Timedelta(minutes=10))
     fold_accs = []
     in_sample_fold_accs = []  # P3
     for i, (tr, te) in enumerate(cv.split(X)):
@@ -355,6 +367,8 @@ def train_scalping_model(timeframe: str = '1m'):
         elif _overfit_ratio > 0.10:
             log.warning("[scalping] overfit_ratio=%.3f > 0.10 (in_sample=%.2f%% wf=%.2f%%)",
                         _overfit_ratio, _in_sample_mean * 100, _wf_mean * 100)
+
+    hard_gate_wf(_wf_mean, 'scalping')
 
     n = len(X)
     calib_split = int(n * 0.80)
@@ -427,6 +441,11 @@ def train_scalping_model(timeframe: str = '1m'):
 
     log.info("Scalping Model | Accuracy: %.2f%% | Long: %.2f%% | Short: %.2f%% | Iters: %d",
              accuracy * 100, long_acc, short_acc, n_iter)
+    _cal_end = int(n * 0.90)
+    _best_thr, _best_thr_score = find_optimal_threshold(
+        calibrated, X.iloc[calib_split:_cal_end], y.iloc[calib_split:_cal_end],
+        _close_returns.iloc[calib_split:_cal_end],
+    )
 
     # ── Persist via canonical model_paths helper (canonical TF is 1m) ─────
     from src.utils.model_paths import artifact_paths
@@ -464,6 +483,8 @@ def train_scalping_model(timeframe: str = '1m'):
     meta = {
         "model": "Scalping (HistGBT + Calibrated)",
         "accuracy": accuracy * 100,
+        "optimal_threshold": _best_thr,
+        "optimal_sortino": round(_best_thr_score, 4),
         "long_accuracy": long_acc, "short_accuracy": short_acc,
         "n_samples": len(combined_df), "n_train": calib_split, "n_test": len(X_test),
         "n_features": len(FEATURE_COLUMNS),
@@ -475,7 +496,7 @@ def train_scalping_model(timeframe: str = '1m'):
         "in_sample_mean_acc": round(_in_sample_mean * 100, 2) if _in_sample_mean else None,
         "overfit_ratio": round(_overfit_ratio, 6) if _overfit_ratio is not None else None,
         "target": "triple_barrier_long_win_1m",
-        "symbols": symbols, "timeframe": timeframe,
+        "symbols": symbols, "symbols_sorted": _syms_sorted, "timeframe": timeframe,
         "smote_used": bool(_SMOTE_AVAILABLE),
         "pos_rate_pct": round(pos_rate * 100, 2),
         "last_trained": datetime.now(timezone.utc).isoformat()
@@ -486,6 +507,12 @@ def train_scalping_model(timeframe: str = '1m'):
         from src.utils.model_metrics import merge_metrics_into_meta
         merge_metrics_into_meta(meta, y_test, proba_test)
     write_json(str(paths['meta']), meta)
+    try:
+        from src.engine.champion_challenger import ChampionRegistry
+        meta['model_path'] = str(paths['model'])
+        ChampionRegistry().register_challenger('scalping', timeframe, meta)
+    except Exception as _cc_e:
+        log.warning("[scalping] champion_challenger failed: %s", _cc_e)
     if paths['is_canonical']:
         joblib.dump(calibrated, paths['legacy_model'])
         sign_model(str(paths['legacy_model']))

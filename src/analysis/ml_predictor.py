@@ -35,6 +35,8 @@ class MLPredictor:
         self.last_error = ""
         self.last_status = "init"          # 'ok'|'low_confidence'|'no_data'|'not_loaded'|'error'|'init'
         self._last_confidence = 0.5
+        self.optimal_threshold = 0.52      # overridden from meta JSON after load
+        self._symbols_sorted: list = []    # overridden from meta JSON after load
         self._embedded_features: list[str] | None = None
         # Locked feature list — resolved once at __init__ via the same
         # priority chain that _get_model_features() uses (embedded → meta
@@ -63,9 +65,11 @@ class MLPredictor:
                 logger.info("ML Model loaded: %s", self.model_path)
                 meta_path = self.model_path.replace(".joblib", "_meta.json")
                 meta = read_json(meta_path, default={})
-                self.accuracy       = meta.get("accuracy", 0.0)
-                self.long_accuracy  = meta.get("long_accuracy", 0.0)
-                self.short_accuracy = meta.get("short_accuracy", 0.0)
+                self.accuracy          = meta.get("accuracy", 0.0)
+                self.long_accuracy     = meta.get("long_accuracy", 0.0)
+                self.short_accuracy    = meta.get("short_accuracy", 0.0)
+                self.optimal_threshold  = float(meta.get("optimal_threshold", 0.52))
+                self._symbols_sorted    = meta.get("symbols_sorted", [])
                 # Resolve and freeze the feature list NOW so it stays in
                 # lockstep with the in-memory model object.
                 self._features = self._resolve_features()
@@ -83,7 +87,7 @@ class MLPredictor:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def predict(self, data) -> int | None:
+    def predict(self, data, symbol: str = "") -> int | None:
         """
         Return 1 (bullish), 0 (bearish), or None (no signal / low confidence).
         Accepts a list of OHLCV dicts or a DataFrame.
@@ -115,7 +119,7 @@ class MLPredictor:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors="coerce")
 
-            df = self._build_all_features(df)
+            df = self._build_all_features(df, symbol=symbol)
             features = self._get_model_features()
 
             # Ensure every expected column exists (fill unknown with 0)
@@ -129,9 +133,9 @@ class MLPredictor:
                 proba = self.model.predict_proba(last_row)[0]
                 p_long = float(proba[1]) if len(proba) > 1 else float(proba[0])
                 self._last_confidence = p_long
-                if p_long >= 0.52:
+                if p_long >= self.optimal_threshold:
                     return 1
-                elif (1.0 - p_long) >= 0.52:
+                elif (1.0 - p_long) >= self.optimal_threshold:
                     return 0
                 else:
                     # Low confidence is a normal, expected outcome — do NOT
@@ -531,6 +535,25 @@ class MLPredictor:
         df["signal_bb"]   = np.where(bb_p < 0.1, 1.0, np.where(bb_p > 0.9, -1.0, 0.0))
 
         df["news_sentiment"] = 0.0
+
+        # Explicit regime one-hot features
+        try:
+            from src.analysis.feature_engineering import add_explicit_regime
+            df = add_explicit_regime(df)
+        except Exception as _reg_exc:
+            logger.debug("[MLPredictor] add_explicit_regime failed: %s", _reg_exc)
+            for _rc in ('regime_bull', 'regime_bear', 'regime_chop', 'regime_high_vol'):
+                if _rc not in df.columns:
+                    df[_rc] = 0.0
+
+        # symbol_id — ordinal encoding (1-based); 0 = unknown/not in training set
+        try:
+            if symbol and self._symbols_sorted:
+                df['symbol_id'] = float(self._symbols_sorted.index(symbol) + 1)
+            else:
+                df['symbol_id'] = 0.0
+        except (ValueError, AttributeError):
+            df['symbol_id'] = 0.0
 
         # CoinGlass v4 enrichment — macro always available (fear_greed,
         # btc_dominance, stablecoin_mcap); per-symbol futures features only

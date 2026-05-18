@@ -45,10 +45,12 @@ class PurgedKFold:
         n_splits: int = 5,
         t1: Optional[pd.Series] = None,
         pct_embargo: float = 0.0,
+        embargo_td: Optional[pd.Timedelta] = None,
     ) -> None:
         self.n_splits = n_splits
         self.t1 = t1
         self.pct_embargo = pct_embargo
+        self.embargo_td = embargo_td
 
     def split(
         self,
@@ -69,9 +71,19 @@ class PurgedKFold:
         """
         n_samples = len(X)
         fold_size = n_samples // self.n_splits
-        # BUG-N: previous max(1, ...) silently forced minimum 1-bar embargo
-        # even when pct_embargo=0. Honour the caller's intent exactly.
-        embargo_size = int(n_samples * self.pct_embargo)
+
+        # Prefer time-based embargo (embargo_td) over row-fraction (pct_embargo).
+        # Convert timedelta → bars using the median bar interval of X.index.
+        if self.embargo_td is not None and hasattr(X, 'index') and isinstance(X.index, pd.DatetimeIndex) and len(X.index) > 1:
+            median_bar = pd.Series(X.index).diff().median()
+            if pd.notna(median_bar) and median_bar.total_seconds() > 0:
+                embargo_size = max(1, int(self.embargo_td / median_bar))
+            else:
+                embargo_size = int(n_samples * self.pct_embargo)
+        else:
+            # BUG-N: previous max(1, ...) silently forced minimum 1-bar embargo
+            # even when pct_embargo=0. Honour the caller's intent exactly.
+            embargo_size = int(n_samples * self.pct_embargo)
 
         # Resolve X.index for t1 comparison if X is a DataFrame.
         x_index = X.index if hasattr(X, 'index') else None

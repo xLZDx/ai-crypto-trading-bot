@@ -35,6 +35,51 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+# ── Simple hard gate (called by trainers after WF CV) ───────────────────────
+
+class KPIGateFailure(Exception):
+    """Raised when a model's walk-forward accuracy is below its KPI threshold."""
+
+
+def hard_gate_wf(wf_acc: float, model_key: str, threshold: float | None = None) -> None:
+    """
+    Raise KPIGateFailure if wf_acc is below the model-specific threshold.
+
+    Reads the threshold from training_rules.json kpi_threshold.wf_acc (as %).
+    Falls back to 50% for models without an explicit entry.
+
+    Parameters
+    ----------
+    wf_acc     : walk-forward mean accuracy, 0.0–1.0 scale
+    model_key  : key in training_rules.json (e.g. 'base', 'meta')
+    threshold  : explicit override (0.0–1.0); if None, read from rules
+    """
+    if threshold is None:
+        try:
+            rules = json.load(open(TRAINING_RULES_PATH, encoding='utf-8'))
+            threshold_pct = (
+                rules.get('models', {})
+                     .get(model_key, {})
+                     .get('kpi_threshold', {})
+                     .get('wf_acc', 50.0)
+            )
+            threshold = float(threshold_pct) / 100.0
+        except Exception as exc:
+            logger.warning("[kpi_gate] Cannot read threshold for %s: %s — using 50%%", model_key, exc)
+            threshold = 0.50
+
+    if wf_acc < threshold:
+        msg = (
+            f"[kpi_gate] {model_key}: WF accuracy {wf_acc * 100:.2f}% "
+            f"< threshold {threshold * 100:.0f}% — model NOT saved."
+        )
+        logger.error(msg)
+        raise KPIGateFailure(msg)
+
+    logger.info("[kpi_gate] %s: WF %.2f%% >= %.0f%% — PASS",
+                model_key, wf_acc * 100, threshold * 100)
 TRAINING_RULES_PATH = PROJECT_ROOT / 'data' / 'training_rules.json'
 TRAINING_RUNS_DIR   = PROJECT_ROOT / 'data' / 'training_runs'
 RETIRED_REGISTRY_PATH = PROJECT_ROOT / 'data' / 'kpi_retired_registry.json'

@@ -16,6 +16,9 @@ from sklearn.metrics import accuracy_score, classification_report
 from sklearn.utils.class_weight import compute_sample_weight
 import joblib
 from src.utils.purged_kfold import PurgedKFold
+from src.engine.kpi_gate import hard_gate_wf, KPIGateFailure
+from src.utils.sample_weights import compute_afml_weights
+from src.utils.threshold_optimizer import find_optimal_threshold
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger('train_base')
@@ -28,7 +31,7 @@ from src.analysis.feature_engineering import (
     add_taker_and_trade_features, add_rsi, add_macd,
     add_bollinger_bands, add_roc, add_time_features,
     add_ofi, add_vwap, add_funding_zscore, add_liquidity_proximity, add_atr,
-    add_news_sentiment, add_coinglass_features,
+    add_news_sentiment, add_coinglass_features, add_explicit_regime,
 )
 from src.analysis.fractional_diff import add_fractional_diff
 from src.analysis.triple_barrier import triple_barrier_labels_vectorized, label_stats
@@ -185,6 +188,9 @@ FEATURE_COLUMNS = [
     'fear_greed',       # Fear & Greed raw 0-100
     'btc_dominance',    # BTC market dominance %
     'stablecoin_mcap',  # stablecoin market cap proxy
+    'symbol_id',        # ordinal symbol encoding (1-based; 0 = unknown)
+    # Explicit regime one-hot features
+    'regime_bull', 'regime_bear', 'regime_chop', 'regime_high_vol',
 ]
 
 
@@ -430,11 +436,14 @@ def train_model(timeframe: str = '1h'):
             symbols = [s.replace('/', '_') for s in json.load(f)]
     else:
         symbols = ['BTC_USDT', 'SOL_USDT', 'ADA_USDT', 'ETH_USDT']
+    _syms_sorted = sorted(symbols)
     all_data = []
     for sym in symbols:
         log.info("Processing %s...", sym)
         try:
             df = prepare_data(None, timeframe=timeframe, symbol=sym)
+            df = add_explicit_regime(df)
+            df['symbol_id'] = float(_syms_sorted.index(sym) + 1)
             all_data.append(df)
         except FileNotFoundError:
             log.warning("Data for %s not found. Auto-downloading...", sym)
@@ -442,6 +451,8 @@ def train_model(timeframe: str = '1h'):
             backfill_history(symbol=sym.replace('_', '/'), timeframe=timeframe, days=6 * 365)
             try:
                 df = prepare_data(None, timeframe=timeframe, symbol=sym)
+                df = add_explicit_regime(df)
+                df['symbol_id'] = float(_syms_sorted.index(sym) + 1)
                 all_data.append(df)
             except Exception as e:
                 log.error("Failed to prepare %s after download: %s", sym, e)
@@ -475,9 +486,8 @@ def train_model(timeframe: str = '1h'):
 
     # Walk-forward cross-validation
     t1_series = combined_df['t1_timestamp']
-    # Embargo = 2 * horizon (24 bars for base model)
-    pct_embargo = (2.0 * 24) / len(X)
-    cv = PurgedKFold(n_splits=5, t1=t1_series, pct_embargo=pct_embargo)
+    _close_returns = combined_df['close'].pct_change().fillna(0)
+    cv = PurgedKFold(n_splits=5, t1=t1_series, embargo_td=pd.Timedelta(hours=48))
     fold_accuracies = []
     in_sample_fold_accs = []  # P3: in-sample accuracy per fold for overfit_ratio
     for fold_i, (train_idx, test_idx) in enumerate(cv.split(X)):
@@ -490,7 +500,7 @@ def train_model(timeframe: str = '1h'):
             early_stopping=True,
             class_weight=hp['class_weight'],
         )
-        weights = compute_sample_weight('balanced', y.iloc[train_idx])
+        weights = compute_afml_weights(y.iloc[train_idx], t1_series.iloc[train_idx], _close_returns.iloc[train_idx])
         base_clf.fit(X.iloc[train_idx], y.iloc[train_idx], sample_weight=weights)
         fold_acc = accuracy_score(y.iloc[test_idx], base_clf.predict(X.iloc[test_idx]))
         fold_accuracies.append(fold_acc)
@@ -515,6 +525,8 @@ def train_model(timeframe: str = '1h'):
             log.warning("[base] overfit_ratio=%.3f > 0.10 (in_sample=%.2f%% wf=%.2f%%)",
                         _overfit_ratio, _in_sample_mean_acc * 100, _wf_mean_acc * 100)
 
+    hard_gate_wf(_wf_mean_acc, 'base')
+
     # Final model — B2: three non-overlapping splits
     #   train  [0 : 70%]   — model fit
     #   cal    [70% : 85%] — isotonic calibration (held out, no leakage)
@@ -537,9 +549,13 @@ def train_model(timeframe: str = '1h'):
     safe_train_idx = np.arange(train_end)[valid_train_mask]
 
     calibrated = CalibratedClassifierCV(base_clf, method='isotonic', cv='prefit', n_jobs=-1)
-    weights_calib = compute_sample_weight('balanced', y.iloc[safe_train_idx])
+    weights_calib = compute_afml_weights(y.iloc[safe_train_idx], t1_series.iloc[safe_train_idx], _close_returns.iloc[safe_train_idx])
     base_clf.fit(X.iloc[safe_train_idx], y.iloc[safe_train_idx], sample_weight=weights_calib)
     calibrated.fit(X.iloc[train_end:cal_end], y.iloc[train_end:cal_end])
+    _best_thr, _best_thr_score = find_optimal_threshold(
+        calibrated, X.iloc[train_end:cal_end], y.iloc[train_end:cal_end],
+        _close_returns.iloc[train_end:cal_end],
+    )
 
     X_test = X.iloc[cal_end:]
     y_test = y.iloc[cal_end:]
@@ -590,6 +606,8 @@ def train_model(timeframe: str = '1h'):
     meta = {
         "model": "Base (HistGBT + Calibrated)",
         "accuracy": accuracy * 100,
+        "optimal_threshold": _best_thr,
+        "optimal_sortino": round(_best_thr_score, 4),
         "long_accuracy": long_acc, "short_accuracy": short_acc,
         "n_samples": len(combined_df), "n_train": train_end, "n_test": len(X_test),
         "n_features": len(FEATURE_COLUMNS),
@@ -602,7 +620,7 @@ def train_model(timeframe: str = '1h'):
         "in_sample_mean_acc": round(_in_sample_mean_acc * 100, 2) if _in_sample_mean_acc else None,
         "overfit_ratio": round(_overfit_ratio, 6) if _overfit_ratio is not None else None,
         "target": "triple_barrier_long_win",
-        "symbols": symbols, "timeframe": timeframe,
+        "symbols": symbols, "symbols_sorted": _syms_sorted, "timeframe": timeframe,
         "last_trained": datetime.now(timezone.utc).isoformat(),
         # 2026-05-15 — wall-clock instrumentation.
         "started_at_unix":  _train_started_at,
@@ -624,6 +642,12 @@ def train_model(timeframe: str = '1h'):
         from src.utils.model_metrics import merge_metrics_into_meta
         merge_metrics_into_meta(meta, y_test, proba_test)
     write_json(str(paths['meta']), meta)
+    try:
+        from src.engine.champion_challenger import ChampionRegistry
+        meta['model_path'] = str(paths['model'])
+        ChampionRegistry().register_challenger('base', timeframe, meta)
+    except Exception as _cc_e:
+        log.warning("[base] champion_challenger failed: %s", _cc_e)
     if paths['is_canonical']:
         joblib.dump(calibrated, paths['legacy_model'])
         sign_model(str(paths['legacy_model']))

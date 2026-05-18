@@ -94,53 +94,49 @@ Multi-source governance: `src/data_governance/orchestrator.py` (Bybit, CoinGecko
 
 ## Key Files — Go Directly, Don't Grep
 
-### Phase 1 fixes (NOT YET IMPLEMENTED as of 2026-05-18)
+### Phase 1 fixes (COMPLETED 2026-05-18)
 
-| Bug | File | Line | Fix |
-|-----|------|------|-----|
-| Embargo too small (multi-symbol) | `src/utils/purged_kfold.py` | 74 | Add `embargo_td: pd.Timedelta` param |
-| Embargo wrong (base trainer) | `src/engine/train_model.py` | 453 | `embargo_td=pd.Timedelta(hours=48)` |
-| Embargo wrong (futures trainer) | `src/engine/train_futures_model.py` | 209 | `embargo_td=pd.Timedelta(hours=24)` |
-| Embargo wrong (meta trainer) | `src/engine/train_meta_labeler.py` | 328 | `embargo_td=pd.Timedelta(hours=24)` |
-| WF gate missing | `src/engine/kpi_gate.py` | — | Add `KPIGateFailure` + `hard_gate_wf(wf_acc, model_key, threshold=0.50)` |
-| WF gate call (base) | `src/engine/train_model.py` | after 490 | `hard_gate_wf(_wf_mean_acc, 'base')` |
-| WF gate call (futures) | `src/engine/train_futures_model.py` | after 243 | same |
-| Dashboard shows wrong accuracy | `src/dashboard/app.py` | 362 | `.get('walk_forward_mean_acc') or .get('accuracy')` |
-| Dashboard shows wrong accuracy | `src/dashboard/app.py` | 2278–2321 | `headline_acc = wf_pct` not `acc_pct` |
-| Dashboard shows wrong accuracy | `src/dashboard/templates/index.html` | 3966–3967, 4168–4169 | `modelMeta.walk_forward_mean_acc ?? modelMeta.accuracy` |
-| Dashboard label wrong | `src/dashboard/templates/index.html` | 1692 | `◆ ACCURACY` → `◆ WF ACC` |
-| Dashboard model card wrong | `src/dashboard/templates/index.html` | 6675 | `m.accuracy_walk_forward ?? m.accuracy` |
+| Fix | File | Status |
+|-----|------|--------|
+| `embargo_td: pd.Timedelta` param | `src/utils/purged_kfold.py` | ✅ Done |
+| `embargo_td=pd.Timedelta(hours=48)` (base) | `src/engine/train_model.py` | ✅ Done |
+| `embargo_td=pd.Timedelta(hours=24)` (futures) | `src/engine/train_futures_model.py` | ✅ Done |
+| `embargo_td=pd.Timedelta(hours=24)` (meta) | `src/engine/train_meta_labeler.py` | ✅ Done |
+| `KPIGateFailure` + `hard_gate_wf()` | `src/engine/kpi_gate.py` | ✅ Done |
+| WF gate call in base/futures trainers | `train_model.py`, `train_futures_model.py` | ✅ Done |
+| Dashboard WF accuracy display | `app.py`, `index.html` | ✅ Done |
 
-### Phase 2 (NOT YET IMPLEMENTED)
+### Phase 2 (COMPLETED 2026-05-18)
 
-| Task | File | Note |
-|------|------|------|
-| Symbol feature | `src/analysis/feature_engineering.py` | Add `add_symbol_id(df, symbol, known_symbols)` |
-| Symbol in FEATURE_COLUMNS | All 5 trainers | Add `'symbol_id'` |
-| Symbol at inference | `src/analysis/ml_predictor.py` | Read map from meta JSON |
-| AFML weights | New `src/utils/sample_weights.py` | `compute_afml_weights(y, t1, returns)` |
-| Replace balanced weights | All 5 trainers | Replace `compute_sample_weight('balanced', y)` |
-| Threshold optimizer | New `src/utils/threshold_optimizer.py` | Extracted from `train_meta_labeler.py` lines 68–91 |
-| Save optimal_threshold | 4 trainers (base/futures/trend/scalping) | Add to meta JSON |
-| Use optimal_threshold | `src/analysis/ml_predictor.py` | Instead of fixed 0.5 |
+| Task | File | Status |
+|------|------|--------|
+| `add_symbol_id()` + `add_explicit_regime()` | `src/analysis/feature_engineering.py` | ✅ Done |
+| `symbol_id` + regime columns in FEATURE_COLUMNS | All 5 trainers | ✅ Done |
+| `symbol_id` + `optimal_threshold` at inference | `src/analysis/ml_predictor.py` | ✅ Done |
+| AFML weights (`compute_afml_weights`) | `src/utils/sample_weights.py` (new) | ✅ Done |
+| AFML weights in fold + final model | base, futures, trend, meta trainers | ✅ Done |
+| AFML weights skipped (SMOTE incompatible) | scalping trainer | ✅ Done (by design) |
+| `find_optimal_threshold()` | `src/utils/threshold_optimizer.py` (new) | ✅ Done |
+| `optimal_threshold` + `optimal_sortino` in meta JSON | All 5 trainers | ✅ Done |
+| `symbols_sorted` list in meta JSON | All 5 trainers | ✅ Done |
+| Symbol + `symbols_sorted` loaded at inference | `ml_predictor.py`, `multi_tf_predictor.py` | ✅ Done |
+| `symbol=symbol` passed from main loop | `src/main.py` (4 call sites) | ✅ Done |
 
-### Phase 3 (NOT YET IMPLEMENTED)
+### Phase 3 (COMPLETED 2026-05-18)
 
-| Task | File |
-|------|------|
-| Regime detection (explicit rules) | `src/analysis/regime_classifier.py` — add `compute_explicit_regime(df)` |
-| Regime features | `src/analysis/feature_engineering.py` — add `add_explicit_regime(df)` |
-| BTC dominance + market cap | New `src/data_ingestion/global_market_downloader.py` |
-| Global market features | `src/analysis/feature_engineering.py` — add `add_global_market_features()` |
+| Task | File | Status |
+|------|------|--------|
+| `add_explicit_regime(df)` (bull/bear/chop/high_vol) | `src/analysis/feature_engineering.py` | ✅ Done |
+| Regime columns in FEATURE_COLUMNS | All 5 trainers | ✅ Done |
+| Regime computed at inference | `src/analysis/ml_predictor.py` | ✅ Done |
 
-### Phase 4 (NOT YET IMPLEMENTED)
+### Phase 4 (COMPLETED 2026-05-18)
 
-| Task | File |
-|------|------|
-| Trading metrics | New `src/utils/trading_metrics.py` — Sharpe, PF, Expectancy, MaxDD |
-| Champion/Challenger | New `src/engine/champion_challenger.py` |
-| Registry file | `data/champion_registry.json` |
-| Inference routing | `src/analysis/ml_predictor.py` — `get_active_artifact()` |
+| Task | File | Status |
+|------|------|--------|
+| `ChampionRegistry` | `src/engine/champion_challenger.py` (new) | ✅ Done |
+| Registry file | `data/champion_registry.json` (auto-created) | ✅ Done |
+| `register_challenger()` in all 5 trainers | All trainers after `write_json` | ✅ Done |
 
 ---
 
@@ -171,15 +167,18 @@ State files: `data/process_ids.json`, `data/process_deaths.json`, `data/error_st
 - `ml_predictor.py` — single model inference, reads `optimal_threshold` from meta JSON (Phase 2)
 - `multi_tf_predictor.py` — multi-timeframe ensemble
 
-FEATURE_COLUMNS (38 features, defined in `train_model.py` lines 143–173): frac_diff_d40, volatility, dist_sma_7/30, rsi_14, macd/hist, volume_momentum, stoch_k, return_lag1-5, atr_pct, taker_buy_ratio, avg_trade_size, hour, day_of_week, roc_3/7/14, bb_pb, news_sentiment, ofi_z, vwap_dist, liq_proximity, trend_strength, vol_regime, is_trending, is_volatile, signal_rsi/macd/bb, oi_change_pct, fear_greed_norm, liq_long_z, liq_short_z, liq_dom
+FEATURE_COLUMNS (43 features as of 2026-05-18): frac_diff_d40, volatility, dist_sma_7/30, rsi_14, macd/hist, volume_momentum, stoch_k, return_lag1-5, atr_pct, taker_buy_ratio, avg_trade_size, hour, day_of_week, roc_3/7/14, bb_pb, news_sentiment, ofi_z, vwap_dist, liq_proximity, trend_strength, vol_regime, is_trending, is_volatile, signal_rsi/macd/bb, oi_change_pct, fear_greed_norm, liq_long_z, liq_short_z, liq_dom, **symbol_id**, **regime_bull**, **regime_bear**, **regime_chop**, **regime_high_vol** (new Phase 2/3)
 
 ---
 
 ## Utils (`src/utils/`)
 
 21 modules. Critical ones:
-- `purged_kfold.py` — AFML walk-forward CV with embargo + t1-span purging (⚠️ embargo bug at line 74)
-- `kpi_gate.py` — `evaluate_run()`, `_check_thresholds()` — auto-retire on 3 failures (⚠️ `KPIGateFailure` not yet added)
+- `purged_kfold.py` — AFML walk-forward CV with embargo + t1-span purging; `embargo_td: pd.Timedelta` param (fixed 2026-05-18)
+- `kpi_gate.py` — `evaluate_run()`, `_check_thresholds()`, `hard_gate_wf()`, `KPIGateFailure` — auto-retire on 3 failures (fixed 2026-05-18)
+- `sample_weights.py` — `compute_afml_weights(y, t1, returns)` — AFML uniqueness × event-strength × class-balance (new 2026-05-18)
+- `threshold_optimizer.py` — `find_optimal_threshold(model, X_cal, y_cal, returns_cal)` → `(best_thr, best_sortino)` (new 2026-05-18)
+- `champion_challenger.py` — `ChampionRegistry` backed by `data/champion_registry.json`; PROMOTION_DELTA=0.005 (new 2026-05-18)
 - `model_paths.py` — `artifact_paths(model_key, tf)` returns paths for joblib + meta JSON
 - `safe_json.py` — atomic JSON writes (filelock)
 - `gpu_classifier.py` — `make_classifier()` returns XGBoost-CUDA or HistGBT fallback
@@ -293,11 +292,12 @@ Dashboard now shows both WF accuracy and in-sample accuracy per model (Phase 1.1
 |---|---|---|
 | Блок 0: Data sync | 🔄 CG done; OHLCV stale symbols + funding still pending | — |
 | Phase 1.1: Dashboard WF + in-sample accuracy | ✅ Done | — |
-| Phase 1.2: kpi_gate.py hard WF gate | ❌ Not started | — |
-| Phase 1.3: purged_kfold embargo param | ❌ Not started | — |
-| Phase 2: Symbol feature + AFML weights + threshold opt | ❌ Not started | Needs Phase 1 done |
-| Phase 3: Regime + global market features | ❌ Not started | — |
-| Phase 4: Trading metrics + Champion/Challenger | ❌ Not started | — |
+| Phase 1.2: kpi_gate.py hard WF gate | ✅ Done 2026-05-18 | — |
+| Phase 1.3: purged_kfold embargo param | ✅ Done 2026-05-18 | — |
+| Phase 2: Symbol feature + AFML weights + threshold opt | ✅ Done 2026-05-18 | — |
+| Phase 3: Regime features (explicit rules) | ✅ Done 2026-05-18 | — |
+| Phase 4: Champion/Challenger registry | ✅ Done 2026-05-18 | — |
+| **NEXT: Retrain all models** | ❌ Not started | All pre-training prep complete |
 
 ### Degradation monitoring (completed)
 - ✅ P1 live_perf_monitor.py

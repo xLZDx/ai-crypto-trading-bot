@@ -92,11 +92,11 @@ class MultiTFPredictor:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def predict(self, data) -> int | None:
+    def predict(self, data, symbol: str = "") -> int | None:
         """Backwards-compat single-TF prediction. Routes to canonical TF."""
-        return self._predictors[self._canonical_tf].predict(data)
+        return self._predictors[self._canonical_tf].predict(data, symbol=symbol)
 
-    def predict_at(self, tf: str, data) -> int | None:
+    def predict_at(self, tf: str, data, symbol: str = "") -> int | None:
         """Run inference at a specific timeframe.
 
         Returns None if no predictor is loaded for that TF — callers can
@@ -105,7 +105,7 @@ class MultiTFPredictor:
         p = self._predictors.get(tf)
         if p is None or not p.is_loaded:
             return None
-        return p.predict(data)
+        return p.predict(data, symbol=symbol)
 
     def predict_all(self, data_by_tf: dict) -> dict[str, int | None]:
         """Run inference at every loaded TF. `data_by_tf` is {tf: features}.

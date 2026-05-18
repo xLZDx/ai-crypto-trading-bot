@@ -776,7 +776,7 @@ class MultiAssetTrader:
         rsi_7_val = rsi_7.iloc[-1]
 
         # Get prediction from the scalping model
-        scalp_pred = self.scalping_predictor.predict(data_1m)
+        scalp_pred = self.scalping_predictor.predict(data_1m, symbol=symbol)
 
         if scalp_pred is None and hasattr(self.scalping_predictor, 'last_error') and self.scalping_predictor.last_error:
             return "HOLD", self.scalping_predictor.last_error, "ML_Error"
@@ -1016,8 +1016,8 @@ class MultiAssetTrader:
         _trend_data = self._get_tf_data(symbol, self._trend_tf) if self._trend_tf != self.timeframe else data
         _raw_ml    = self.ml_predictor.predict_at(self._base_tf, _base_data)    if _base_data  else None
         _raw_trend = self.trend_predictor.predict_at(self._trend_tf, _trend_data) if _trend_data else None
-        ml_pred    = _raw_ml    if _raw_ml    is not None else self.ml_predictor.predict(data)
-        trend_pred = _raw_trend if _raw_trend is not None else self.trend_predictor.predict(data)
+        ml_pred    = _raw_ml    if _raw_ml    is not None else self.ml_predictor.predict(data, symbol=symbol)
+        trend_pred = _raw_trend if _raw_trend is not None else self.trend_predictor.predict(data, symbol=symbol)
         rsi_value = self.calculate_rsi(data)
         
         # --- 📈 OU Process (Ornstein-Uhlenbeck) + Feature Store ---
@@ -1260,7 +1260,7 @@ class MultiAssetTrader:
         # Build FUTURES state with specific Futures ML Model predictions
         _fut_data = self._get_tf_data(symbol, self._fut_tf) if self._fut_tf != self.timeframe else data
         _raw_fut  = self.futures_predictor.predict_at(self._fut_tf, _fut_data) if _fut_data else None
-        fut_pred  = _raw_fut if _raw_fut is not None else self.futures_predictor.predict(data)
+        fut_pred  = _raw_fut if _raw_fut is not None else self.futures_predictor.predict(data, symbol=symbol)
         if not self.futures_predictor.is_loaded:
             fut_ml_text = "MODEL NOT FOUND"
         elif fut_pred is None:

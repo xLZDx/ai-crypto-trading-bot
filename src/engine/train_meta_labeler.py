@@ -40,6 +40,8 @@ from sklearn.utils.class_weight import compute_sample_weight
 from src.utils.gpu_classifier import make_classifier  # 2026-05-10 GPU migration
 import joblib
 from src.utils.purged_kfold import PurgedKFold
+from src.engine.kpi_gate import hard_gate_wf, KPIGateFailure
+from src.utils.sample_weights import compute_afml_weights
 from src.utils.meta_config import (
     META_FEATURES,
     CONFIDENCE_THRESHOLD,
@@ -59,6 +61,7 @@ from src.analysis.feature_engineering import (
     add_rsi, add_macd, add_bollinger_bands, add_roc, add_atr,
     add_ofi, add_vwap, add_funding_zscore, add_liquidity_proximity,
     add_donchian, add_keltner, add_time_features, add_taker_and_trade_features,
+    add_explicit_regime,
 )
 from src.analysis.regime_classifier import _compute_regime_features
 from src.analysis.fractional_diff import add_fractional_diff
@@ -254,6 +257,7 @@ def train_meta_labeler(
     else:
         symbols = ['BTC_USDT', 'ETH_USDT', 'SOL_USDT']
 
+    _syms_sorted = sorted(symbols)
     all_frames = []
     for sym in symbols:
         try:
@@ -279,6 +283,8 @@ def train_meta_labeler(
                 pt_multiplier=pt, sl_multiplier=sl, max_bars=mb,
                 timeframe=timeframe,
             )
+            signals_df = add_explicit_regime(signals_df)
+            signals_df['symbol_id'] = float(_syms_sorted.index(sym) + 1)
             signals_df = signals_df.dropna(subset=META_FEATURES + ['meta_label'])
             if len(signals_df) > 50:
                 all_frames.append(signals_df)
@@ -327,14 +333,13 @@ def train_meta_labeler(
     _wf_fold_accs = []
     _wf_in_sample_fold_accs = []  # P3
     t1_series = combined['t1_timestamp']
-    pct_embargo = (2.0 * 12) / len(X)  # 2× max_bars
-    cv = PurgedKFold(n_splits=5, t1=t1_series.iloc[:train_end], pct_embargo=pct_embargo)
+    cv = PurgedKFold(n_splits=5, t1=t1_series.iloc[:train_end], embargo_td=pd.Timedelta(hours=24))
     for _fi, (tr_idx, te_idx) in enumerate(cv.split(X.iloc[:train_end])):
         _wf_clf = make_classifier(
             random_state=42, n_estimators=200, max_depth=4,
             learning_rate=0.05, l2_regularization=0.3, class_weight='balanced'
         )
-        weights = compute_sample_weight('balanced', y.iloc[tr_idx])
+        weights = compute_afml_weights(y.iloc[tr_idx], t1_series.iloc[tr_idx], combined['return'].iloc[tr_idx])
         _wf_clf.fit(X.iloc[tr_idx], y.iloc[tr_idx], sample_weight=weights)
         _fold_acc = accuracy_score(y.iloc[te_idx], _wf_clf.predict(X.iloc[te_idx]))
         _wf_fold_accs.append(_fold_acc)
@@ -359,6 +364,8 @@ def train_meta_labeler(
             log.warning("[meta] overfit_ratio=%.3f > 0.10 (in_sample=%.2f%% wf=%.2f%%)",
                         _overfit_ratio_meta, _in_sample_mean_meta * 100, _wf_mean_acc)
 
+    hard_gate_wf(_wf_mean_frac, 'meta')
+
     # ── Train base classifier on train portion [0, train_end) ──
     base_clf = make_classifier(
         random_state=42, n_estimators=300, max_depth=4,
@@ -366,7 +373,7 @@ def train_meta_labeler(
         early_stopping=True, class_weight='balanced'
     )
     log.info("Training meta-labeler base on %d samples [0:%d]...", train_end, train_end)
-    weights_tr = compute_sample_weight('balanced', y.iloc[:train_end])
+    weights_tr = compute_afml_weights(y.iloc[:train_end], t1_series.iloc[:train_end], combined['return'].iloc[:train_end])
     base_clf.fit(X.iloc[:train_end], y.iloc[:train_end], sample_weight=weights_tr)
 
     # ── Calibrate on [calib_start, calib_end) — never seen by base_clf ──
@@ -452,7 +459,7 @@ def train_meta_labeler(
         "n_features": len(META_FEATURES),
         "meta_features": list(META_FEATURES),       # canonical feature list snapshot
         "win_rate_pct": round(float(y.mean()) * 100, 1),
-        "symbols": symbols,
+        "symbols": symbols, "symbols_sorted": _syms_sorted,
         "timeframe": timeframe,
         "walk_forward_mean_acc": round(_wf_mean_acc, 2),
         "walk_forward_std_acc":  round(_wf_std_acc,  2),
@@ -465,6 +472,12 @@ def train_meta_labeler(
         "last_trained": datetime.now(timezone.utc).isoformat(),
     }
     write_json(str(paths['meta']), meta)
+    try:
+        from src.engine.champion_challenger import ChampionRegistry
+        meta['model_path'] = str(paths['model'])
+        ChampionRegistry().register_challenger('meta', timeframe, meta)
+    except Exception as _cc_e:
+        log.warning("[meta] champion_challenger failed: %s", _cc_e)
     if paths['is_canonical']:
         joblib.dump(calibrated, paths['legacy_model'])
         sign_model(str(paths['legacy_model']))

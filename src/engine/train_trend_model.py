@@ -12,6 +12,10 @@ from sklearn.metrics import accuracy_score, classification_report
 from sklearn.utils.class_weight import compute_sample_weight
 import joblib
 from src.utils.purged_kfold import PurgedKFold
+from src.engine.kpi_gate import hard_gate_wf, KPIGateFailure
+from src.utils.sample_weights import compute_afml_weights
+from src.utils.threshold_optimizer import find_optimal_threshold
+from src.analysis.feature_engineering import add_explicit_regime
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger('train_trend')
@@ -59,6 +63,9 @@ FEATURE_COLUMNS = [
     'fr_close', 'liq_long_usd', 'liq_short_usd',
     'fut_taker_buy_usd', 'fut_taker_sell_usd', 'taker_cvd',
     'cbp_premium_rate', 'fear_greed', 'btc_dominance', 'stablecoin_mcap',
+    'symbol_id',        # ordinal symbol encoding (1-based; 0 = unknown)
+    # Explicit regime one-hot features
+    'regime_bull', 'regime_bear', 'regime_chop', 'regime_high_vol',
 ]
 
 
@@ -257,11 +264,14 @@ def train_trend_model(timeframe: str = '1h'):
     else:
         symbols = ['BTC_USDT', 'SOL_USDT', 'ADA_USDT']
 
+    _syms_sorted = sorted(symbols)
     all_data = []
     for sym in symbols:
         log.info("Processing %s...", sym)
         try:
             df = prepare_trend_data(None, timeframe=timeframe, symbol=sym)
+            df = add_explicit_regime(df)
+            df['symbol_id'] = float(_syms_sorted.index(sym) + 1)
             all_data.append(df)
         except FileNotFoundError:
             log.warning("Data for %s not found. Auto-downloading...", sym)
@@ -269,6 +279,8 @@ def train_trend_model(timeframe: str = '1h'):
             backfill_history(symbol=sym.replace('_', '/'), timeframe=timeframe, days=6 * 365)
             try:
                 df = prepare_trend_data(None, timeframe=timeframe, symbol=sym)
+                df = add_explicit_regime(df)
+                df['symbol_id'] = float(_syms_sorted.index(sym) + 1)
                 all_data.append(df)
             except Exception as e:
                 log.error("Failed to prepare %s after download: %s", sym, e)
@@ -313,15 +325,12 @@ def train_trend_model(timeframe: str = '1h'):
     _trend_hp, _trend_applied = _merge('trend', _TREND_HP_DEFAULTS, _TREND_HP_SCHEMA)
 
     t1_series = combined_df['t1_timestamp']
+    _close_returns = combined_df['close'].pct_change().fillna(0)
     # Phase 3.5 — embargo MUST be derived from the actual max_bars used for
     # this timeframe's barriers, not hardcoded to 48. Previously bumping
     # max_bars (e.g. to 96 for 1h) silently halved the embargo coverage,
     # leaking future-leaking train rows into the validation fold.
-    _tb_horizon = _trend_tb_params(timeframe)['max_bars']
-    pct_embargo = (2.0 * _tb_horizon) / max(1, len(X))
-    log.info("[trend] embargo=%.4f (2 x max_bars=%d / len(X)=%d)",
-             pct_embargo, _tb_horizon, len(X))
-    cv = PurgedKFold(n_splits=5, t1=t1_series, pct_embargo=pct_embargo)
+    cv = PurgedKFold(n_splits=5, t1=t1_series, embargo_td=pd.Timedelta(hours=48))
     fold_accs = []
     in_sample_fold_accs = []  # P3
     for i, (tr, te) in enumerate(cv.split(X)):
@@ -334,7 +343,7 @@ def train_trend_model(timeframe: str = '1h'):
             class_weight=_trend_hp['class_weight'],
             early_stopping=True,
         )
-        weights = compute_sample_weight('balanced', y.iloc[tr])
+        weights = compute_afml_weights(y.iloc[tr], t1_series.iloc[tr], _close_returns.iloc[tr])
         clf.fit(X.iloc[tr], y.iloc[tr], sample_weight=weights)
         fold_accs.append(accuracy_score(y.iloc[te], clf.predict(X.iloc[te])))
         in_sample_fold_accs.append(accuracy_score(y.iloc[tr], clf.predict(X.iloc[tr])))
@@ -356,6 +365,8 @@ def train_trend_model(timeframe: str = '1h'):
             log.warning("[trend] overfit_ratio=%.3f > 0.10 (in_sample=%.2f%% wf=%.2f%%)",
                         _overfit_ratio, _in_sample_mean * 100, _wf_mean * 100)
 
+    hard_gate_wf(_wf_mean, 'trend')
+
     n = len(X)
     calib_split = int(n * 0.80)
     base_clf = make_classifier(
@@ -371,13 +382,18 @@ def train_trend_model(timeframe: str = '1h'):
     valid_train_mask = combined_df['t1_timestamp'].iloc[:calib_split] < calib_start_time
     safe_train_idx = np.arange(calib_split)[valid_train_mask]
     
-    weights_calib = compute_sample_weight('balanced', y.iloc[safe_train_idx])
+    weights_calib = compute_afml_weights(y.iloc[safe_train_idx], t1_series.iloc[safe_train_idx], _close_returns.iloc[safe_train_idx])
     base_clf.fit(X.iloc[safe_train_idx], y.iloc[safe_train_idx], sample_weight=weights_calib)
     calibrated = CalibratedClassifierCV(base_clf, method='isotonic', cv='prefit', n_jobs=-1)
     calibrated.fit(X.iloc[calib_split:], y.iloc[calib_split:])
+    _cal_end = int(n * 0.90)
+    _best_thr, _best_thr_score = find_optimal_threshold(
+        calibrated, X.iloc[calib_split:_cal_end], y.iloc[calib_split:_cal_end],
+        _close_returns.iloc[calib_split:_cal_end],
+    )
 
-    X_test = X.iloc[int(n * 0.90):]
-    y_test = y.iloc[int(n * 0.90):]
+    X_test = X.iloc[_cal_end:]
+    y_test = y.iloc[_cal_end:]
     predictions = calibrated.predict(X_test)
     accuracy = accuracy_score(y_test, predictions)
     report = classification_report(y_test, predictions, output_dict=True, zero_division=0)
@@ -418,6 +434,8 @@ def train_trend_model(timeframe: str = '1h'):
     meta = {
         "model": "Trend (HistGBT + Calibrated)",
         "accuracy": accuracy * 100,
+        "optimal_threshold": _best_thr,
+        "optimal_sortino": round(_best_thr_score, 4),
         "long_accuracy": long_acc, "short_accuracy": short_acc,
         "n_samples": len(combined_df), "n_train": calib_split, "n_test": len(X_test),
         "n_features": len(FEATURE_COLUMNS),
@@ -434,13 +452,19 @@ def train_trend_model(timeframe: str = '1h'):
         "in_sample_mean_acc": round(_in_sample_mean * 100, 2) if _in_sample_mean else None,
         "overfit_ratio": round(_overfit_ratio, 6) if _overfit_ratio is not None else None,
         "target": "triple_barrier_long_win",
-        "symbols": symbols, "timeframe": timeframe,
+        "symbols": symbols, "symbols_sorted": _syms_sorted, "timeframe": timeframe,
         "last_trained": datetime.now(timezone.utc).isoformat()
     }
     if proba_test is not None:
         from src.utils.model_metrics import merge_metrics_into_meta
         merge_metrics_into_meta(meta, y_test, proba_test)
     write_json(str(paths['meta']), meta)
+    try:
+        from src.engine.champion_challenger import ChampionRegistry
+        meta['model_path'] = str(paths['model'])
+        ChampionRegistry().register_challenger('trend', timeframe, meta)
+    except Exception as _cc_e:
+        log.warning("[trend] champion_challenger failed: %s", _cc_e)
     if paths['is_canonical']:
         joblib.dump(calibrated, paths['legacy_model'])
         sign_model(str(paths['legacy_model']))
