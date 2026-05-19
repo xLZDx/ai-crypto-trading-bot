@@ -305,3 +305,28 @@ Dashboard now shows both WF accuracy and in-sample accuracy per model (Phase 1.1
 - ✅ P3 overfit_ratio in all trainers + kpi_gate.py
 - ✅ P4 per-fold WF slope gate
 - ✅ P5 per-strategy regression guard
+
+### VPS Clean-Slate Migration (started 2026-05-20)
+**Branch:** `dev/vps-clean-slate` (ahead of main). **VPS:** 5.104.81.27.
+
+| Phase | Status | Notes |
+|---|---|---|
+| Phase 0: git branch + VPS hardening | ✅ Done 2026-05-20 | UFW (22/5000), fail2ban, SSH key-only. Branch pushed. Baseline 132 passed. |
+| Phase 1A–C: secrets / agent_status / WS timeouts | ✅ Done 2026-05-20 | All .env keys verified. agent_status.json reset. ping_timeout 20→60, close_timeout 10→15 at main.py:1437-1438 |
+| Phase 2: Upload 51.95 GB data/parquet to VPS | 🔄 In progress | SFTP PID 23508 on local. Phase3 auto-trigger on VPS (PID 44633) monitors for completion |
+| Phase 3: Migrate 121 CSV.gz → Parquet | 🔄 Auto (VPS) | Script at /root/phase3_auto.sh — runs automatically after Phase 2 upload stabilizes (~20 min flat) |
+| Phase 4: Harden ohlcv_parquet_loader.py | ❌ Not started | Needs Aider + caller audit. Defer to next session. |
+| Phase 5: rclone daily cron | ✅ Done 2026-05-20 | Cron: 3 AM UTC sync to gdrive:trading-bot-backup/ (excl parquet, raw_archive, logs). Archive cleanup: 4 AM UTC. |
+| Phase 6: Smoke-tests synthetic data | ❌ Not started | Needs Hetzner/Vast.ai + manual |
+| Phase 7: Archive training state | ❌ Not started | Stop bot first |
+| Phase 8: Retrain all models | ❌ Not started | After Phase 6-7 |
+
+**Completed code changes on dev/vps-clean-slate:**
+- Added PLAN_VPS_CLEAN_SLATE.md / PLAN_VPS_CLEAN_SLATE_RU.md (v11) and PLAN_POST_PRODUCTION_TUNING.md
+- src/main.py: ping_timeout=60, close_timeout=15 (commit c24b789)
+- .gitignore: added *.bak, data/coinglass/, data/risk/live_perf_state.json
+- binance_sync.py: tz-naive/aware datetime fix in step_rest_topup
+
+**To check when user wakes up:**
+1. `Get-Content "D:\test 2\AI trading assistance\logs\parquet_upload.log" | Select-Object -Last 10` — upload progress
+2. `ssh -i ~/.ssh/trading_bot root@5.104.81.27 "cat /root/trading-bot/logs/phase3_auto.log | tail -20"` — Phase 3 status
