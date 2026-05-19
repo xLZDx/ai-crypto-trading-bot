@@ -153,12 +153,17 @@ class TestIsDriftPaused(_TmpRoot):
     def setUp(self) -> None:
         super().setUp()
         self._old_mode = os.environ.pop("LLM_DRIFT_PAUSE", None)
+        self._old_enforce_feats = os.environ.pop("DRIFT_ENFORCE_FEATURES", None)
 
     def tearDown(self) -> None:
         if self._old_mode is not None:
             os.environ["LLM_DRIFT_PAUSE"] = self._old_mode
         else:
             os.environ.pop("LLM_DRIFT_PAUSE", None)
+        if self._old_enforce_feats is not None:
+            os.environ["DRIFT_ENFORCE_FEATURES"] = self._old_enforce_feats
+        else:
+            os.environ.pop("DRIFT_ENFORCE_FEATURES", None)
         super().tearDown()
 
     def test_warn_mode_never_pauses(self) -> None:
@@ -195,13 +200,14 @@ class TestIsDriftPaused(_TmpRoot):
         self.assertEqual(why, "cell_clean")
 
     def test_enforce_paused_cell_blocks_trading(self) -> None:
-        """Hard-feature pause severity + enforce → return (True, reason)."""
+        """Enforce-tier feature with pause severity → immediate halt on first poll."""
         os.environ["LLM_DRIFT_PAUSE"] = "enforce"
+        os.environ["DRIFT_ENFORCE_FEATURES"] = "ofi_z"  # enforce-tier: halt on first poll
         np.random.seed(11)
         ref = np.random.normal(0, 1, 2000)
         payload = _baseline_payload(ref, feat="ofi_z")
         (self.baselines / "trend__1h.json").write_text(json.dumps(payload))
-        # 5σ shift → pause
+        # 5σ shift → PSI >> 0.25 → pause severity
         actual = pd.DataFrame({"ofi_z": np.random.normal(5.0, 0.5, 2000)})
         actual.to_parquet(self.training_runs / "trend__1h.parquet")
         dm.run_once()
