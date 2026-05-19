@@ -1434,8 +1434,8 @@ class MultiAssetTrader:
                 async with websockets.connect(
                     url,
                     ping_interval=20,
-                    ping_timeout=20,
-                    close_timeout=10,
+                    ping_timeout=60,
+                    close_timeout=15,
                     max_size=2**22,  # 4 MiB — combined kline streams stay well under this
                 ) as ws:
                     backoff = WEBSOCKET_RECONNECT_DELAY  # reset on successful connect
