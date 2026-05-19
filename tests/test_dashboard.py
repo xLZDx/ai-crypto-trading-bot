@@ -11219,5 +11219,48 @@ def test_phase113_oos_signals():
           .endswith('oos_signals/abc'))
 
 
+def test_phase114_dataset_fingerprint():
+    """Phase 114 — dataset_fingerprint.py: fingerprint a small parquet dir;
+    verify fast-path cache hit; verify changed file invalidates cache."""
+    import tempfile
+    import pandas as pd
+    from pathlib import Path
+    print('\n[Phase 114 -- dataset fingerprint]')
+
+    from src.utils.dataset_fingerprint import compute_dataset_fingerprint
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        parquet_dir = root / 'parquet'
+        parquet_dir.mkdir()
+        cache_path = root / 'fingerprint_cache.json'
+
+        # Write two small parquet files
+        df = pd.DataFrame({'close': [100.0, 101.0], 'volume': [1000.0, 2000.0]})
+        df.to_parquet(parquet_dir / 'a.parquet', index=False)
+        df.to_parquet(parquet_dir / 'b.parquet', index=False)
+
+        fp1 = compute_dataset_fingerprint(parquet_dir, cache_path)
+        check('fingerprint has schema_hash', 'schema_hash' in fp1)
+        check('fingerprint file_count = 2', fp1['file_count'] == 2)
+        check('fingerprint total_bytes > 0', fp1['total_bytes'] > 0)
+
+        # Second call should hit fast-path cache
+        fp2 = compute_dataset_fingerprint(parquet_dir, cache_path)
+        check('fast-path returns same schema_hash', fp1['schema_hash'] == fp2['schema_hash'])
+
+        # Changing file content should produce different hash
+        df2 = pd.DataFrame({'close': [999.0, 1000.0], 'volume': [1.0, 2.0]})
+        df2.to_parquet(parquet_dir / 'a.parquet', index=False)
+        fp3 = compute_dataset_fingerprint(parquet_dir, cache_path)
+        check('schema_hash changes after file modification', fp3['schema_hash'] != fp1['schema_hash'])
+
+        # Empty dir returns schema_hash of empty bytes
+        empty_dir = root / 'empty'
+        empty_dir.mkdir()
+        fp_empty = compute_dataset_fingerprint(empty_dir)
+        check('empty dir returns file_count=0', fp_empty['file_count'] == 0)
+
+
 if __name__ == '__main__':
     main()
