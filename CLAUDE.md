@@ -313,7 +313,7 @@ Dashboard now shows both WF accuracy and in-sample accuracy per model (Phase 1.1
 |---|---|---|
 | Phase 0: git branch + VPS hardening | ✅ Done 2026-05-20 | UFW (22/5000), fail2ban, SSH key-only. Branch pushed. Baseline 132 passed. |
 | Phase 1A–C: secrets / agent_status / WS timeouts | ✅ Done 2026-05-20 | All .env keys verified. agent_status.json reset. ping_timeout 20→60, close_timeout 10→15 at main.py:1437-1438 |
-| Phase 2: Upload 51.95 GB data/parquet to VPS | 🔄 In progress | SFTP PID 23508 on local. Phase3 auto-trigger on VPS (PID 44633) monitors for completion |
+| Phase 2: Upload 51.95 GB data/parquet to VPS | 🔄 In progress | SFTP PID 27712 on local (72 MB RAM, confirmed alive). 2260 files / 1.6 GB on VPS as of 23:50 UTC. Phase3 auto-trigger on VPS (PID 44633) monitors for completion |
 | Phase 3: Migrate 121 CSV.gz → Parquet | 🔄 Auto (VPS) | Script at /root/phase3_auto.sh — runs automatically after Phase 2 upload stabilizes (~20 min flat) |
 | Phase 4: Harden ohlcv_parquet_loader.py | ❌ Not started | Needs Aider + caller audit. Defer to next session. |
 | Phase 5: rclone daily cron | ✅ Done 2026-05-20 | Cron: 3 AM UTC sync to gdrive:trading-bot-backup/ (excl parquet, raw_archive, logs). Archive cleanup: 4 AM UTC. |
@@ -331,10 +331,12 @@ Dashboard now shows both WF accuracy and in-sample accuracy per model (Phase 1.1
 - src/utils/env_manifest.py: Phase 8 training reproducibility manifest (commit 4346711) — synced to VPS
 - src/utils/oos_signals.py: Phase 8 OOS run_id guard for meta training (commit ea45008) — synced to VPS
 - src/utils/dataset_fingerprint.py: Phase 9 logical SHA-256 fingerprint streaming (commit 814011b) — synced to VPS
-- tests/test_dashboard.py: Phase 111-114 tests — 136 passed 1 skipped
+- src/risk/kill_switch.py: Phase 10 slippage trigger (slippage_pct_threshold=0.005, trigger #6 in _iter_triggers, commit 951b900) — synced to VPS
+- src/risk/drift_psi.py: Phase 11 per-category PSI thresholds (PSI_THRESHOLD_PRICE_RETURN=0.20, PSI_THRESHOLD_VOLUME_FLOW=0.30, MIN_PSI_SAMPLES=500, commit 2a51631) — synced to VPS
+- tests/test_dashboard.py: Phase 111-115 tests — **137 passed, 1 skipped** (1 pre-existing failure in test_drift_monitor.py::TestIsDriftPaused::test_enforce_paused_cell_blocks_trading — unrelated to drift_psi changes, confirmed via git stash)
 
 **VPS code sync status (2026-05-20):**
-All Phase 1-4 changes confirmed on VPS (kpi_gate, purged_kfold, sample_weights, threshold_optimizer, champion_challenger, binance_sync tz fix). main.py, preflight_train.py, generate_synthetic_data.py, env_manifest.py, oos_signals.py, dataset_fingerprint.py synced via SCP.
+All Phase 1-4 changes confirmed on VPS (kpi_gate, purged_kfold, sample_weights, threshold_optimizer, champion_challenger, binance_sync tz fix). main.py, preflight_train.py, generate_synthetic_data.py, env_manifest.py, oos_signals.py, dataset_fingerprint.py, kill_switch.py, drift_psi.py synced via SCP.
 
 **To check when user wakes up:**
 1. `Get-Content "D:\test 2\AI trading assistance\logs\parquet_upload.log" | Select-Object -Last 10` — upload progress
