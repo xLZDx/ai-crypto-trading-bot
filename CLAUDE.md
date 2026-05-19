@@ -333,7 +333,9 @@ Dashboard now shows both WF accuracy and in-sample accuracy per model (Phase 1.1
 - src/utils/dataset_fingerprint.py: Phase 9 logical SHA-256 fingerprint streaming (commit 814011b) — synced to VPS
 - src/risk/kill_switch.py: Phase 10 slippage trigger (slippage_pct_threshold=0.005, trigger #6 in _iter_triggers, commit 951b900) — synced to VPS
 - src/risk/drift_psi.py: Phase 11 per-category PSI thresholds (PSI_THRESHOLD_PRICE_RETURN=0.20, PSI_THRESHOLD_VOLUME_FLOW=0.30, MIN_PSI_SAMPLES=500, commit 2a51631) — synced to VPS
-- tests/test_dashboard.py: Phase 111-115 tests — **137 passed, 1 skipped** (1 pre-existing failure in test_drift_monitor.py::TestIsDriftPaused::test_enforce_paused_cell_blocks_trading — unrelated to drift_psi changes, confirmed via git stash)
+- tests/test_dashboard.py: Phase 111-115 tests — 137 passed, 1 skipped
+- tests/test_drift_monitor.py: fixed pre-existing failure test_enforce_paused_cell_blocks_trading (added DRIFT_ENFORCE_FEATURES=ofi_z to test setUp for enforce-tier path)
+- **Full suite: 153 passed, 1 skipped, 0 failures** (test_dashboard.py + test_drift_monitor.py)
 
 **VPS code sync status (2026-05-20):**
 All Phase 1-4 changes confirmed on VPS (kpi_gate, purged_kfold, sample_weights, threshold_optimizer, champion_challenger, binance_sync tz fix). main.py, preflight_train.py, generate_synthetic_data.py, env_manifest.py, oos_signals.py, dataset_fingerprint.py, kill_switch.py, drift_psi.py synced via SCP.
