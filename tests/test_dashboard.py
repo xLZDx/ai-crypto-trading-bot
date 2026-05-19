@@ -11137,5 +11137,33 @@ def test_phase111_preflight_train_checks():
     check('check_vastai PASS on HTTP 200', result_va is True)
 
 
+def test_phase112_env_manifest():
+    """Phase 112 — env_manifest.py: capture_env_manifest() returns required
+    keys; save_env_manifest() writes valid JSON to a temp path."""
+    import tempfile
+    print('\n[Phase 112 -- env_manifest utility]')
+
+    from src.utils.env_manifest import capture_env_manifest, save_env_manifest
+
+    manifest = capture_env_manifest()
+
+    check('manifest has python key', 'python' in manifest)
+    check('manifest has platform key', 'platform' in manifest)
+    check('manifest has scikit-learn key', 'scikit-learn' in manifest)
+    check('manifest has numpy key', 'numpy' in manifest)
+    check('manifest has pyarrow key', 'pyarrow' in manifest)
+    check('manifest has torch key', 'torch' in manifest)
+    check('manifest has cuda key', 'cuda' in manifest)
+    check('python version is non-empty string', isinstance(manifest['python'], str) and manifest['python'])
+
+    # save_env_manifest creates subdirectory and writes JSON
+    with tempfile.TemporaryDirectory() as td:
+        out_path = __import__('pathlib').Path(td) / 'sub' / 'env_manifest.json'
+        out = save_env_manifest(out_path)
+        saved = __import__('json').loads(out_path.read_text(encoding='utf-8'))
+    check('save_env_manifest returns dict', isinstance(out, dict))
+    check('saved JSON matches capture output', saved['python'] == manifest['python'])
+
+
 if __name__ == '__main__':
     main()
