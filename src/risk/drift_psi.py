@@ -72,6 +72,13 @@ PSI_WARN_THRESHOLD = 0.10
 PSI_PAUSE_THRESHOLD = 0.25
 WASSERSTEIN_WARN_THRESHOLD = 0.15  # relative — see compute_wasserstein()
 
+# Phase 11: per-category thresholds (fat-tailed series need looser bounds)
+PSI_THRESHOLD_PRICE_RETURN = 0.20   # price & return features
+PSI_THRESHOLD_VOLUME_FLOW  = 0.30   # volume, liquidation, funding, OI
+
+# Phase 11: minimum window size before PSI is computed (prevents unstable estimates)
+MIN_PSI_SAMPLES = 500
+
 
 _MODE_ENV = "LLM_DRIFT_PAUSE"
 _MODE_ENFORCE = "enforce"
@@ -328,6 +335,7 @@ def check_drift(
 __all__ = [
     "DRIFT_HARD_FEATURES", "DriftFinding", "DriftReport", "DriftPauseError",
     "PSI_WARN_THRESHOLD", "PSI_PAUSE_THRESHOLD",
+    "PSI_THRESHOLD_PRICE_RETURN", "PSI_THRESHOLD_VOLUME_FLOW", "MIN_PSI_SAMPLES",
     "compute_psi", "compute_wasserstein_relative", "check_drift",
     "_enforce_features",
 ]
