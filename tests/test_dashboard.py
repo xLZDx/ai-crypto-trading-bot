@@ -11165,5 +11165,59 @@ def test_phase112_env_manifest():
     check('saved JSON matches capture output', saved['python'] == manifest['python'])
 
 
+def test_phase113_oos_signals():
+    """Phase 113 — oos_signals.py: save_oos_signal writes parquet with run_id
+    column; validate_oos_signals passes when all 3 files present and raises
+    RuntimeError on missing file or run_id mismatch."""
+    import tempfile
+    import pandas as pd
+    from pathlib import Path
+    print('\n[Phase 113 -- OOS signals run_id guard]')
+
+    from src.utils.oos_signals import save_oos_signal, validate_oos_signals
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        run_id = '2026-05-20_140000'
+        dummy_df = pd.DataFrame({'pred': [0.6, 0.7], 'label': [1, 0]})
+
+        # Save all three required signals
+        for m in ('base', 'trend', 'futures'):
+            save_oos_signal(root, run_id, m, dummy_df)
+
+        # Validate should pass when all present
+        try:
+            validate_oos_signals(root, run_id)
+            all_ok = True
+        except RuntimeError:
+            all_ok = False
+        check('validate_oos_signals PASS with all 3 files', all_ok)
+
+        # Missing one file should raise
+        (root / 'oos_signals' / run_id / 'futures.parquet').unlink()
+        try:
+            validate_oos_signals(root, run_id)
+            missing_raises = False
+        except RuntimeError:
+            missing_raises = True
+        check('validate_oos_signals raises on missing file', missing_raises)
+
+        # Stale run_id in file content should raise
+        save_oos_signal(root, run_id, 'futures', dummy_df)  # restore
+        stale_df = dummy_df.copy()
+        stale_df['run_id'] = 'stale-run-id'
+        stale_df.to_parquet(root / 'oos_signals' / run_id / 'futures.parquet', index=False)
+        try:
+            validate_oos_signals(root, run_id)
+            stale_raises = False
+        except RuntimeError:
+            stale_raises = True
+        check('validate_oos_signals raises on stale run_id in file', stale_raises)
+
+    check('oos_dir returns correct path',
+          str(__import__('src.utils.oos_signals', fromlist=['oos_dir']).oos_dir(Path('/root'), 'abc'))
+          .endswith('oos_signals/abc'))
+
+
 if __name__ == '__main__':
     main()
