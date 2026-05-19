@@ -15,6 +15,7 @@ Triggers (configurable thresholds in KillSwitchConfig):
   - latency_p99_ms: rolling 5-min p99 exchange latency > 500ms
   - drawdown_pct: equity drawdown from peak > 8%
   - calibration_brier_z: model Brier score z-score vs 30-day baseline > 2.0
+  - slippage_pct: actual fill slippage vs expected price > 0.5% (Phase 10)
 
 Persistence:
   data/risk/kill_switch_state.json   — current state, last trigger, reset history
@@ -50,6 +51,7 @@ class KillSwitchConfig:
     latency_p99_ms_threshold:     float = 500.0   # pause if p99 latency > 500ms
     drawdown_pct_threshold:       float = 0.08    # pause at 8% peak-to-trough drawdown
     calibration_brier_z_threshold: float = 2.0    # pause when Brier z > 2σ
+    slippage_pct_threshold:        float = 0.005  # pause when fill slippage > 0.5%
     rolling_window_minutes:       int   = 5       # window for latency & brier
     enabled:                      bool  = True    # master enable flag
 
@@ -206,6 +208,11 @@ class KillSwitch:
         brier_z = m.get('calibration_brier_z')
         if brier_z is not None and abs(brier_z) >= self.cfg.calibration_brier_z_threshold:
             yield 'calibration_brier_z', True
+            return
+        # 6. Slippage
+        slip = m.get('slippage_pct')
+        if slip is not None and slip > self.cfg.slippage_pct_threshold:
+            yield 'slippage_pct', True
             return
         yield None, False
 

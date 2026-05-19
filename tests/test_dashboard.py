@@ -11262,5 +11262,37 @@ def test_phase114_dataset_fingerprint():
         check('empty dir returns file_count=0', fp_empty['file_count'] == 0)
 
 
+def test_phase115_kill_switch_slippage_trigger():
+    """Phase 115 — kill_switch.py: slippage_pct_threshold field added to
+    KillSwitchConfig; evaluate() fires 'slippage_pct' trigger when
+    slippage_pct metric exceeds threshold."""
+    import tempfile
+    from datetime import datetime, timezone
+    from unittest.mock import patch
+    print('\n[Phase 115 -- kill switch slippage trigger]')
+
+    from src.risk.kill_switch import KillSwitch, KillSwitchConfig
+
+    cfg = KillSwitchConfig(slippage_pct_threshold=0.005)
+    check('slippage_pct_threshold field exists', hasattr(cfg, 'slippage_pct_threshold'))
+    check('default slippage threshold is 0.005', cfg.slippage_pct_threshold == 0.005)
+
+    with tempfile.TemporaryDirectory() as td:
+        state_file = __import__('pathlib').Path(td) / 'kill_switch_state.json'
+        with patch('src.risk.kill_switch.STATE_FILE', state_file), \
+             patch('src.risk.kill_switch.LOSSES_FILE', state_file.with_name('losses.json')):
+            ks = KillSwitch(cfg=cfg)
+
+            # Slippage below threshold — should not trigger
+            ks.evaluate(datetime.now(timezone.utc), metrics={'slippage_pct': 0.003})
+            check('no trigger at slippage 0.003 < 0.005', not ks.is_paused())
+
+            # Slippage above threshold — should trigger
+            ks.evaluate(datetime.now(timezone.utc), metrics={'slippage_pct': 0.010})
+            check('triggered at slippage 0.010 > 0.005', ks.is_paused())
+            check("trigger name is 'slippage_pct'",
+                  ks._state.last_trigger == 'slippage_pct')
+
+
 if __name__ == '__main__':
     main()
