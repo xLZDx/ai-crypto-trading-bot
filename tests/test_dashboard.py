@@ -11054,5 +11054,88 @@ def test_phase110_live_perf_monitor():
     check('to_dict rounds win_rate_recent', d['win_rate_recent'] == 0.42)
 
 
+def test_phase111_preflight_train_checks():
+    """Phase 8 pre-flight: preflight_train.py exists and individual check
+    functions behave correctly under mocked conditions."""
+    print('\n[Phase 111 -- preflight_train.py checks]')
+    import importlib.util
+    from unittest.mock import patch, MagicMock
+    import tempfile
+
+    # 1. Script exists.
+    script_path = os.path.join(BASE_DIR, 'scripts', 'preflight_train.py')
+    check('preflight_train.py exists', os.path.isfile(script_path))
+
+    spec = importlib.util.spec_from_file_location('preflight_train', script_path)
+    mod  = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    # 2. check_disk_space() passes on any machine with >= 1 GB free.
+    free_gb = __import__('shutil').disk_usage(BASE_DIR).free / (1024 ** 3)
+    result  = mod.check_disk_space()
+    check('check_disk_space returns bool', isinstance(result, bool))
+    if free_gb >= 20:
+        check('check_disk_space PASS when >= 20 GB', result is True)
+
+    # 3. check_parquet_count() PASS when expected=None and parquet dir has files.
+    with patch.object(mod, 'PARQUET_DIR', __import__('pathlib').Path(BASE_DIR) / 'data' / 'parquet'):
+        result_none = mod.check_parquet_count(None)
+    check('check_parquet_count(None) returns bool', isinstance(result_none, bool))
+
+    # 4. check_no_running_jobs() PASS when dashboard_jobs.json has no running entries.
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tf:
+        json.dump({'job_a': {'status': 'done'}, 'job_b': {'status': 'pending'}}, tf)
+        tf_path = tf.name
+    with patch.object(mod, 'JOBS_FILE', __import__('pathlib').Path(tf_path)):
+        result_clean = mod.check_no_running_jobs()
+    os.unlink(tf_path)
+    check('check_no_running_jobs PASS on clean jobs', result_clean is True)
+
+    # 5. check_no_running_jobs() FAIL when a job is running.
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tf:
+        json.dump({'job_a': {'status': 'running'}}, tf)
+        tf_path = tf.name
+    with patch.object(mod, 'JOBS_FILE', __import__('pathlib').Path(tf_path)):
+        result_running = mod.check_no_running_jobs()
+    os.unlink(tf_path)
+    check('check_no_running_jobs FAIL when job running', result_running is False)
+
+    # 6. check_api_keys() with mocked env vars.
+    keys = {'API_KEY': 'k', 'API_SECRET': 's', 'HETZNER_API_TOKEN': 'h',
+            'VASTAI_API_KEY': 'v', 'GEMINI_API_KEY': 'g'}
+    with patch.dict('os.environ', keys, clear=False):
+        result_keys = mod.check_api_keys()
+    check('check_api_keys PASS when all set', result_keys is True)
+
+    # 7. check_oos_writable() on a real temp dir.
+    with tempfile.TemporaryDirectory() as td:
+        with patch.object(mod, 'OOS_DIR', __import__('pathlib').Path(td)):
+            result_oos = mod.check_oos_writable()
+    check('check_oos_writable PASS on writable dir', result_oos is True)
+
+    # 8. check_training_rules() PASS on valid JSON with required fields.
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tf:
+        json.dump({'models': {'base': {}}, 'timeframes': ['1h', '4h']}, tf)
+        tf_path = tf.name
+    with patch.object(mod, 'RULES_FILE', __import__('pathlib').Path(tf_path)):
+        result_rules = mod.check_training_rules()
+    os.unlink(tf_path)
+    check('check_training_rules PASS on valid JSON', result_rules is True)
+
+    # 9. check_hetzner() with mocked HTTP 200.
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    with patch('requests.get', return_value=mock_resp), \
+         patch.dict('os.environ', {'HETZNER_API_TOKEN': 'fake-token'}, clear=False):
+        result_hz = mod.check_hetzner()
+    check('check_hetzner PASS on HTTP 200', result_hz is True)
+
+    # 10. check_vastai() with mocked HTTP 200.
+    with patch('requests.get', return_value=mock_resp), \
+         patch.dict('os.environ', {'VASTAI_API_KEY': 'fake-key'}, clear=False):
+        result_va = mod.check_vastai()
+    check('check_vastai PASS on HTTP 200', result_va is True)
+
+
 if __name__ == '__main__':
     main()
