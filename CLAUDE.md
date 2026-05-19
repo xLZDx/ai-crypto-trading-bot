@@ -321,12 +321,20 @@ Dashboard now shows both WF accuracy and in-sample accuracy per model (Phase 1.1
 | Phase 7: Archive training state | ❌ Not started | Stop bot first |
 | Phase 8: Retrain all models | ❌ Not started | After Phase 6-7 |
 
-**Completed code changes on dev/vps-clean-slate:**
+**Completed code changes on dev/vps-clean-slate (136 tests — wait, 134 passed, 1 skipped):**
 - Added PLAN_VPS_CLEAN_SLATE.md / PLAN_VPS_CLEAN_SLATE_RU.md (v11) and PLAN_POST_PRODUCTION_TUNING.md
-- src/main.py: ping_timeout=60, close_timeout=15 (commit c24b789)
+- src/main.py: ping_timeout=60, close_timeout=15 (commit c24b789) — synced to VPS
 - .gitignore: added *.bak, data/coinglass/, data/risk/live_perf_state.json
-- binance_sync.py: tz-naive/aware datetime fix in step_rest_topup
+- binance_sync.py: tz-naive/aware datetime fix in step_rest_topup — already on VPS
+- scripts/preflight_train.py: Phase 8 pre-flight checks (commit 4f7e841); fixed 'global' key check (commit e430841) — synced to VPS
+- scripts/generate_synthetic_data.py: Phase 6 smoke test data gen (commit 46d55ae) — synced to VPS
+- src/utils/env_manifest.py: Phase 8 training reproducibility manifest (commit 4346711) — synced to VPS
+- tests/test_dashboard.py: Phase 111 preflight tests, Phase 112 env_manifest tests — 134 passed 1 skipped
+
+**VPS code sync status (2026-05-20):**
+All Phase 1-4 changes confirmed on VPS (kpi_gate, purged_kfold, sample_weights, threshold_optimizer, champion_challenger, binance_sync tz fix). main.py, preflight_train.py, generate_synthetic_data.py, env_manifest.py synced via SCP.
 
 **To check when user wakes up:**
 1. `Get-Content "D:\test 2\AI trading assistance\logs\parquet_upload.log" | Select-Object -Last 10` — upload progress
 2. `ssh -i ~/.ssh/trading_bot root@5.104.81.27 "cat /root/trading-bot/logs/phase3_auto.log | tail -20"` — Phase 3 status
+3. `ssh -i ~/.ssh/trading_bot root@5.104.81.27 "find /root/trading-bot/data/parquet -name '*.parquet' | wc -l"` — VPS parquet count
