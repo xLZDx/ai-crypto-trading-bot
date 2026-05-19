@@ -89,7 +89,9 @@ def _fetch_klines(symbol: str, timeframe: str, start_ms: int, end_ms: int,
     weight = 2 if limit > 100 else 1   # /klines weight scales with limit
     with limiter.acquire(weight=weight):
         try:
-            r = requests.get(url, timeout=15)
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            r = requests.get(url, timeout=15, verify=False)
             limiter.react_to_response(r)
             if r.status_code != 200:
                 return []
@@ -118,7 +120,14 @@ def step_rest_topup(symbols: list[str], timeframes: list[str],
                               if last_pq else None)
             except Exception:
                 last_pq_dt = None
-            last = max([t for t in (last_qdb, last_pq_dt) if t is not None],
+            # Normalise both to UTC-aware before comparing
+            def _to_utc(t):
+                if t is None:
+                    return None
+                if hasattr(t, 'tzinfo') and t.tzinfo is None:
+                    return t.replace(tzinfo=timezone.utc)
+                return t
+            last = max([_to_utc(t) for t in (last_qdb, last_pq_dt) if t is not None],
                        default=None)
             now_dt = datetime.now(timezone.utc)
             start = (last if last and last.tzinfo else

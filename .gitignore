@@ -50,3 +50,10 @@ darts_logs/
 =*
 * - Copy.md
 .claude/scheduled_tasks.lock
+
+# Backup files from unicode-fix pass
+*.bak
+
+# Coinglass / misc runtime data
+data/coinglass/
+data/risk/live_perf_state.json
