@@ -329,10 +329,12 @@ Dashboard now shows both WF accuracy and in-sample accuracy per model (Phase 1.1
 - scripts/preflight_train.py: Phase 8 pre-flight checks (commit 4f7e841); fixed 'global' key check (commit e430841) — synced to VPS
 - scripts/generate_synthetic_data.py: Phase 6 smoke test data gen (commit 46d55ae) — synced to VPS
 - src/utils/env_manifest.py: Phase 8 training reproducibility manifest (commit 4346711) — synced to VPS
-- tests/test_dashboard.py: Phase 111 preflight tests, Phase 112 env_manifest tests — 134 passed 1 skipped
+- src/utils/oos_signals.py: Phase 8 OOS run_id guard for meta training (commit ea45008) — synced to VPS
+- src/utils/dataset_fingerprint.py: Phase 9 logical SHA-256 fingerprint streaming (commit 814011b) — synced to VPS
+- tests/test_dashboard.py: Phase 111-114 tests — 136 passed 1 skipped
 
 **VPS code sync status (2026-05-20):**
-All Phase 1-4 changes confirmed on VPS (kpi_gate, purged_kfold, sample_weights, threshold_optimizer, champion_challenger, binance_sync tz fix). main.py, preflight_train.py, generate_synthetic_data.py, env_manifest.py synced via SCP.
+All Phase 1-4 changes confirmed on VPS (kpi_gate, purged_kfold, sample_weights, threshold_optimizer, champion_challenger, binance_sync tz fix). main.py, preflight_train.py, generate_synthetic_data.py, env_manifest.py, oos_signals.py, dataset_fingerprint.py synced via SCP.
 
 **To check when user wakes up:**
 1. `Get-Content "D:\test 2\AI trading assistance\logs\parquet_upload.log" | Select-Object -Last 10` — upload progress
