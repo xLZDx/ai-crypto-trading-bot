@@ -11115,7 +11115,7 @@ def test_phase111_preflight_train_checks():
 
     # 8. check_training_rules() PASS on valid JSON with required fields.
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tf:
-        json.dump({'models': {'base': {}}, 'timeframes': ['1h', '4h']}, tf)
+        json.dump({'models': {'base': {}}, 'global': {'default_symbol_universe': ['BTC/USDT']}}, tf)
         tf_path = tf.name
     with patch.object(mod, 'RULES_FILE', __import__('pathlib').Path(tf_path)):
         result_rules = mod.check_training_rules()

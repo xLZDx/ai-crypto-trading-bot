@@ -112,7 +112,7 @@ def check_training_rules() -> bool:
         return _check("training_rules.json valid", False, "file missing")
     try:
         rules = json.loads(RULES_FILE.read_text(encoding="utf-8"))
-        required_fields = ["models", "timeframes"]
+        required_fields = ["models", "global"]
         missing = [f for f in required_fields if f not in rules]
         return _check(
             "training_rules.json valid",
