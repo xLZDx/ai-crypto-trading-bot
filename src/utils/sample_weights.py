@@ -135,7 +135,7 @@ def compute_afml_weights(
         t1_aligned = t1.reindex(y.index)
         missing = t1_aligned.isna().sum()
         if missing > 0:
-            logger.warning("[sample_weights] %d/%d t1 entries missing after reindex — filling with index value", missing, n)
+            logger.warning("[sample_weights] %d/%d t1 entries missing after reindex -- filling with index value", missing, n)
             t1_aligned = t1_aligned.fillna(pd.Series(y.index, index=y.index))
 
         # 1. Average uniqueness
@@ -164,7 +164,7 @@ def compute_afml_weights(
 
     except Exception as exc:
         logger.warning(
-            "[sample_weights] compute_afml_weights failed (%s) — using uniform weights",
+            "[sample_weights] compute_afml_weights failed (%s) -- using uniform weights",
             exc,
         )
         return np.ones(n, dtype=float)

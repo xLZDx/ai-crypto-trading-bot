@@ -115,12 +115,12 @@ class PreTradeGate:
     @safe_mode.setter
     def safe_mode(self, value: str) -> None:
         if value not in _VALID_MODES:
-            logger.warning("[gate] invalid safe_mode=%r — keeping %r", value, self._safe_mode)
+            logger.warning("[gate] invalid safe_mode=%r -- keeping %r", value, self._safe_mode)
             return
         old = self._safe_mode
         self._safe_mode = value
         if old != value:
-            logger.warning("[gate] SAFE_MODE %r → %r", old, value)
+            logger.warning("[gate] SAFE_MODE %r -> %r", old, value)
 
     def record_warmup_tick(self) -> None:
         """Call once per received WebSocket kline to advance warmup counter.
@@ -173,7 +173,7 @@ class PreTradeGate:
                         reason=f"kill_switch PAUSED (trigger={trigger})",
                     )
             except Exception as e:
-                logger.warning("[gate] kill_switch check failed: %s — allowing", e)
+                logger.warning("[gate] kill_switch check failed: %s -- allowing", e)
 
         # 4. WebSocket disconnected — close/reduce allowed
         if not ws_connected and not is_close:

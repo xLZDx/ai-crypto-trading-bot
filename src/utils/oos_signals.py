@@ -60,5 +60,5 @@ def validate_oos_signals(root: Path, run_id: str) -> None:
         if bad_rows > 0:
             raise RuntimeError(
                 f"OOS file {model_key}.parquet has {bad_rows} rows with "
-                f"run_id != '{run_id}' — likely a stale file from a prior run."
+                f"run_id != '{run_id}' -- likely a stale file from a prior run."
             )

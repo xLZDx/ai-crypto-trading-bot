@@ -48,7 +48,7 @@ def _read_csv_gz(path: Path, is_funding: bool) -> pd.DataFrame:
     expected = FUNDING_COLS if is_funding else OHLCV_COLS
     missing = [c for c in expected if c not in df.columns]
     if missing:
-        log.warning("  %s missing columns %s — skipping", path.name, missing)
+        log.warning("  %s missing columns %s -- skipping", path.name, missing)
         return pd.DataFrame()
     return df[expected].sort_values("timestamp").reset_index(drop=True)
 
@@ -128,7 +128,7 @@ def migrate(
 
     log.info(
         "Migration complete: %d files processed, %d skipped, %d new rows total %s",
-        total_files, skipped, total_rows, "(DRY RUN — nothing written)" if dry_run else "",
+        total_files, skipped, total_rows, "(DRY RUN -- nothing written)" if dry_run else "",
     )
 
 

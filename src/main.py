@@ -11,6 +11,18 @@ import traceback
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
+# 2026-05-15: inject truststore so Python's SSL stack uses the Windows native
+# CA root store. Without this, the bot's Binance testnet calls fail with
+# "Basic Constraints of CA cert not marked critical" / "unable to get local
+# issuer certificate" because Binance's CA chain is in the Windows trust
+# store but NOT in Python's bundled certifi list. Must run BEFORE any
+# urllib/requests/ccxt HTTPS call.
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except ImportError:
+    pass  # truststore is optional — bot still tries the default chain
+
 # Global startup error interceptor
 try:
     import websockets
@@ -132,7 +144,7 @@ class MultiAssetTrader:
         except Exception as exc:
             import logging as _l
             _l.getLogger(__name__).warning(
-                "live_news_buffer failed to start: %s — sentiment will use parquet path", exc)
+                "live_news_buffer failed to start: %s -- sentiment will use parquet path", exc)
             self.live_news_buffer = None
 
         # --- Regime Classifier ---
@@ -141,7 +153,7 @@ class MultiAssetTrader:
             self.regime_clf = RegimeClassifier()
         except Exception as e:
             logger.error(
-                "[init] RegimeClassifier load FAILED — regime will default to TRENDING "
+                "[init] RegimeClassifier load FAILED -- regime will default to TRENDING "
                 "for all signals; size_mult will be unscaled. Reason: %s",
                 e, exc_info=True,
             )
@@ -154,7 +166,7 @@ class MultiAssetTrader:
             self.meta_labeler = MetaLabeler()
         except Exception as e:
             logger.error(
-                "[init] MetaLabeler load FAILED — second-layer filter is DISABLED. "
+                "[init] MetaLabeler load FAILED -- second-layer filter is DISABLED. "
                 "Trades will pass without meta-labeler confidence check. Reason: %s",
                 e, exc_info=True,
             )
@@ -212,11 +224,11 @@ class MultiAssetTrader:
                 decay_rate=0.10,
                 decay_exit_threshold=0.20,
             )
-            logger.info("[gate] InstitutionalGate ready (§11-18 wired).")
+            logger.info("[gate] InstitutionalGate ready (?11-18 wired).")
         except Exception as e:
             self.gate = None
             logger.critical(
-                "[gate] InstitutionalGate init FAILED — §11-18 risk controls "
+                "[gate] InstitutionalGate init FAILED -- ?11-18 risk controls "
                 "(beta-neutrality, circuit breakers, CVaR sizing, alpha-decay) "
                 "are ALL DISABLED. Reason: %s",
                 e, exc_info=True,
@@ -280,7 +292,7 @@ class MultiAssetTrader:
         except Exception as _e:
             self.pre_trade_gate = None
             self.sizing_gate = None
-            logger.warning("[gate] PreTradeGate init failed — safety gate DISABLED: %s", _e)
+            logger.warning("[gate] PreTradeGate init failed -- safety gate DISABLED: %s", _e)
 
         self._update_state()
 
@@ -950,7 +962,7 @@ class MultiAssetTrader:
             MultiAssetTrader._close_fail_counts[trade_id] = fails
             if fails >= MultiAssetTrader._CLOSE_FAIL_LIMIT:
                 logger.error(
-                    f"[{symbol}] Close failed {fails}x for ID {trade_id} — force-closing internally."
+                    f"[{symbol}] Close failed {fails}x for ID {trade_id} -- force-closing internally."
                 )
                 return self._force_close_internally(
                     trade, current_price,
@@ -982,7 +994,7 @@ class MultiAssetTrader:
         # 1. Risk priority: Check trailing stops. Execute on Binance before closing internally.
         triggered_stops = self.tracker.update_trailing_stops(symbol, current_price)
         for t in triggered_stops:
-            logger.info(f"[{symbol}] 🛡️ TRAILING STOP TRIGGERED for ID {t['id']} ({t['market']}). Executing on Binance...")
+            logger.info(f"[{symbol}] ?? TRAILING STOP TRIGGERED for ID {t['id']} ({t['market']}). Executing on Binance...")
             self._execute_close(t, current_price)
 
         # Phase 10B — alpha-decay exit: close trades whose signal has decayed
@@ -1001,7 +1013,7 @@ class MultiAssetTrader:
                     t0 = float(self._signal_entry_ts.get(tid, time.time()))
                     bars_open = max(0.0, (time.time() - t0) / 3600.0)   # 1h-bar units
                     if self.gate.should_exit_decay(s0, bars_open):
-                        logger.info(f"[{symbol}] ⏳ alpha-decay exit for {tid}")
+                        logger.info(f"[{symbol}] ? alpha-decay exit for {tid}")
                         self._execute_close(tr, current_price)
             except Exception as e:
                 logger.debug(f"[{symbol}] alpha-decay check skipped: {e}")
@@ -1057,7 +1069,7 @@ class MultiAssetTrader:
             garch_result = self.risk_managers[symbol].vol_forecaster.forecast_garch(returns_series)
             if garch_result.get('volatility_spike'):
                 trade_amount = max(MIN_TRADE_USDT, trade_amount * 0.5)
-                logger.warning(f"[{symbol}] ⚠️ GARCH spike! Position halved → {trade_amount:.2f} USDT")
+                logger.warning(f"[{symbol}] WARN ? GARCH spike! Position halved -> {trade_amount:.2f} USDT")
         except Exception as e:
             logger.debug(f"[{symbol}] GARCH skipped: {e}")
 
@@ -1149,7 +1161,7 @@ class MultiAssetTrader:
                 norm   = max(0.0, min(1.0, (p_move - OFT_GATE_P_MOVE_MIN) / span_p))
                 oft_weight = OFT_WEIGHT_FLOOR + norm * (OFT_WEIGHT_CEILING - OFT_WEIGHT_FLOOR)
             if oft_block:
-                logger.info(f"[{symbol}] 🚫 OFT BLOCK: {oft_block_reason}")
+                logger.info(f"[{symbol}] ? OFT BLOCK: {oft_block_reason}")
             else:
                 trade_amount = float(trade_amount) * oft_weight
 
@@ -1158,7 +1170,7 @@ class MultiAssetTrader:
         # `None` means no cap. Applies AFTER Kelly + GARCH + OFT weight.
         _cap = _runtime_overrides.max_position_cap()
         if _cap is not None and float(trade_amount) > float(_cap):
-            logger.info(f"[{symbol}] 🛑 Runtime cap: trimming {trade_amount:.2f} → {_cap:.2f} USDT")
+            logger.info(f"[{symbol}] ? Runtime cap: trimming {trade_amount:.2f} -> {_cap:.2f} USDT")
             trade_amount = float(_cap)
 
         # Min-notional floor — Binance rejects orders smaller than ~$50 with
@@ -1171,7 +1183,7 @@ class MultiAssetTrader:
         _intended = float(trade_amount or 0)
         if 0 < _intended < MIN_TRADE_USDT:
             logger.info(
-                f"[{symbol}] ⏭ Trade skipped — intended size {_intended:.2f} USDT "
+                f"[{symbol}] ? Trade skipped -- intended size {_intended:.2f} USDT "
                 f"below Binance min-notional floor (MIN_TRADE_USDT={MIN_TRADE_USDT})"
             )
             return  # bail out of this evaluate_market call before order submission
@@ -1193,13 +1205,13 @@ class MultiAssetTrader:
                 api_latency_ms=float(getattr(self.engine, "last_api_latency_ms", 0) or 0),
             )
             if not res["ok"]:
-                logger.warning(f"[{symbol}] 🛑 gate blocked {side}: {res['reasons']}")
+                logger.warning(f"[{symbol}] ? gate blocked {side}: {res['reasons']}")
             return res["ok"]
 
         if expected_return <= -_tft_threshold:
-            logger.warning(f"[{symbol}] 📉 TFT predicts DROP ({expected_return*100:.1f}%) [{_regime_name}]. Shifting to SHORT.")
+            logger.warning(f"[{symbol}] ? TFT predicts DROP ({expected_return*100:.1f}%) [{_regime_name}]. Shifting to SHORT.")
             if oft_block:
-                logger.info(f"[{symbol}] 🚫 OFT vetoed SHORT entry: {oft_block_reason}")
+                logger.info(f"[{symbol}] ? OFT vetoed SHORT entry: {oft_block_reason}")
             elif _gate_ok("sell"):
                 _allow_mm, _sized_mm = self._check_pre_trade(
                     symbol, action="open", trade_usdt=float(trade_amount))
@@ -1219,9 +1231,9 @@ class MultiAssetTrader:
                     except Exception as e:
                         logger.error(f"MM Execution Error: {e}")
         elif expected_return >= _tft_threshold:
-            logger.info(f"[{symbol}] 🚀 TFT predicts PUMP ({expected_return*100:.1f}%) [{_regime_name}]. Shifting to LONG.")
+            logger.info(f"[{symbol}] START  TFT predicts PUMP ({expected_return*100:.1f}%) [{_regime_name}]. Shifting to LONG.")
             if oft_block:
-                logger.info(f"[{symbol}] 🚫 OFT vetoed LONG entry: {oft_block_reason}")
+                logger.info(f"[{symbol}] ? OFT vetoed LONG entry: {oft_block_reason}")
             elif _gate_ok("buy"):
                 _allow_mm, _sized_mm = self._check_pre_trade(
                     symbol, action="open", trade_usdt=float(trade_amount))
@@ -1434,12 +1446,12 @@ class MultiAssetTrader:
             if has_open:
                 logger.info(f"[{symbol}] BUY signal ignored: position already open.")
             else:
-                logger.info(f"[{symbol}] 🤖 Requesting Gemini Agent for macro check...")
+                logger.info(f"[{symbol}] ? Requesting Gemini Agent for macro check...")
                 headlines = getattr(self.sentiment_analyzer, 'cached_headlines', [])[:10]
                 decision, agent_reason = self.agent.evaluate_trade(symbol, "BUY", reason, headlines, self.telegram_monitor)
                 
                 if decision == "APPROVED":
-                    logger.info(f"[{symbol}] ✅ AGENT APPROVED ({agent_reason}). Buying for {trade_amount} USDT...")
+                    logger.info(f"[{symbol}] OK  AGENT APPROVED ({agent_reason}). Buying for {trade_amount} USDT...")
                     _allow, _sized = self._check_pre_trade(
                         symbol, action="open", trade_usdt=float(trade_amount))
                     if _allow:
@@ -1450,7 +1462,7 @@ class MultiAssetTrader:
                             self.tracker.open_trade(symbol, _sized, real_price, strategy=strategy_used, market="SPOT", side="LONG")
                             logger.info(f"-> [SPOT] Trade LONG {_sized:.2f} USDT opened on Binance (Real Price: {real_price:.2f}).")
                 else:
-                    logger.warning(f"[{symbol}] 🚫 GEMINI VETO (Trade cancelled): {agent_reason}")
+                    logger.warning(f"[{symbol}] ? GEMINI VETO (Trade cancelled): {agent_reason}")
                     self.current_state["market_data"]["SPOT"][symbol]["last_signal"] = "HOLD"
                     self.current_state["market_data"]["SPOT"][symbol]["reason"] = f"🚫 Gemini Veto: {agent_reason}"
                     self._update_state()
@@ -1550,7 +1562,7 @@ class MultiAssetTrader:
                                     if current_price <= 0:
                                         raise ValueError(f"Non-positive price: {current_price}")
                                 except (KeyError, ValueError, TypeError) as e:
-                                    logger.warning(f"Invalid kline price data: {e} — skipping tick.")
+                                    logger.warning(f"Invalid kline price data: {e} -- skipping tick.")
                                     continue
                                 if self.pre_trade_gate is not None:
                                     self.pre_trade_gate.record_warmup_tick()
@@ -1580,14 +1592,14 @@ class MultiAssetTrader:
         for attempt in range(1, max_attempts + 1):
             try:
                 server_time = self.engine.exchange.fetch_time()
-                logger.info(f"✅ Connection successful! Binance Server Time: {server_time}")
+                logger.info(f"OK  Connection successful! Binance Server Time: {server_time}")
 
                 usdt_balance = self.get_real_or_sim_balance('USDT')
-                logger.info(f"✅ Available USDT balance: {usdt_balance} USDT")
+                logger.info(f"OK  Available USDT balance: {usdt_balance} USDT")
 
                 logger.info("Testing download of 1000 candles (Checking for IP ban)...")
                 test_candles = self.engine.exchange.fetch_ohlcv('BTC/USDT', '1h', limit=1000)
-                logger.info(f"✅ Successfully downloaded {len(test_candles)} candles. IP is not blocked!")
+                logger.info(f"OK  Successfully downloaded {len(test_candles)} candles. IP is not blocked!")
                 last_exc = None
                 break  # success
             except Exception as e:
@@ -1606,7 +1618,7 @@ class MultiAssetTrader:
                 # else: fall through to permanent-failure block below
 
         if last_exc is not None:
-            logger.error(f"❌ All {max_attempts} connectivity attempts failed; last error: {last_exc}")
+            logger.error(f"FAIL  All {max_attempts} connectivity attempts failed; last error: {last_exc}")
             logger.error("Bot entering hold mode. Check internet/VPN/API key, then restart bot.")
             self._update_state(
                 status="❌ ERROR: Binance unreachable after retries",
@@ -1619,7 +1631,7 @@ class MultiAssetTrader:
                 time.sleep(60)
                 try:
                     self.engine.exchange.fetch_time()
-                    logger.info("Binance reachable again — exiting hold mode and restarting startup.")
+                    logger.info("Binance reachable again -- exiting hold mode and restarting startup.")
                     self._update_state(
                         status="Binance reachable again — recovering...",
                         reason="Connectivity restored after outage",
@@ -1666,7 +1678,7 @@ class MultiAssetTrader:
             from src.engine.agents.futures_agent   import FuturesAgent
             from src.engine.agents.scalping_agent  import ScalpingAgent
         except ImportError as exc:
-            logger.warning("Agent import error — agents not started: %s", exc)
+            logger.warning("Agent import error -- agents not started: %s", exc)
             return
 
         # data_getter reads the last 200 rows of the 1h CSV for a symbol
@@ -1752,7 +1764,7 @@ if __name__ == "__main__":
                         if consec_failures >= 3:
                             logger.critical(
                                 "[registry-hb] lost role ownership for 3 consecutive "
-                                "heartbeats — exiting to let a clean restart take over"
+                                "heartbeats -- exiting to let a clean restart take over"
                             )
                             os._exit(0)
                     else:
@@ -1762,7 +1774,7 @@ if __name__ == "__main__":
                     logger.warning("[registry-hb] heartbeat exception: %s", exc)
                     if consec_failures >= 5:
                         logger.error(
-                            "[registry-hb] 5 consecutive heartbeat failures — "
+                            "[registry-hb] 5 consecutive heartbeat failures -- "
                             "registry file likely unreachable"
                         )
         threading.Thread(target=_hb_loop, daemon=True, name='registry-hb').start()

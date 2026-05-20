@@ -39,9 +39,9 @@ async def main():
         for ch in CHANNELS:
             try:
                 entity = await client.get_entity(ch)
-                print(f"  OK  {ch} — accessible ({getattr(entity, 'title', ch)})")
+                print(f"  OK  {ch} -- accessible ({getattr(entity, 'title', ch)})")
             except Exception as e:
-                print(f"  WARN ?  {ch} — {e}")
+                print(f"  WARN ?  {ch} -- {e}")
         print("\nSetup complete. You can now start the bot normally.")
 
 if __name__ == "__main__":

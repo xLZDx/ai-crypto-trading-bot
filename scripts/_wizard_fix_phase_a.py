@@ -121,7 +121,7 @@ def step3_resubmit():
 
 
 def main():
-    print(f"Wizard fix Phase A — sweep={SWEEP_ID}")
+    print(f"Wizard fix Phase A -- sweep={SWEEP_ID}")
     print(f"Targets: {TARGET_MODEL_TYPES}, pins after resubmit: {IVAN_PINS}\n")
 
     n_cancelled, cancel_breakdown = step1_cancel_pending()

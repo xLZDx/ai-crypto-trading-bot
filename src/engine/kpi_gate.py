@@ -67,7 +67,7 @@ def hard_gate_wf(wf_acc: float, model_key: str, threshold: float | None = None) 
             )
             threshold = float(threshold_pct) / 100.0
         except Exception as exc:
-            logger.warning("[kpi_gate] Cannot read threshold for %s: %s — using 50%%", model_key, exc)
+            logger.warning("[kpi_gate] Cannot read threshold for %s: %s -- using 50%%", model_key, exc)
             threshold = 0.50
 
     if wf_acc < threshold:
@@ -78,7 +78,7 @@ def hard_gate_wf(wf_acc: float, model_key: str, threshold: float | None = None) 
         logger.error(msg)
         raise KPIGateFailure(msg)
 
-    logger.info("[kpi_gate] %s: WF %.2f%% >= %.0f%% — PASS",
+    logger.info("[kpi_gate] %s: WF %.2f%% >= %.0f%% -- PASS",
                 model_key, wf_acc * 100, threshold * 100)
 TRAINING_RULES_PATH = PROJECT_ROOT / 'data' / 'training_rules.json'
 TRAINING_RUNS_DIR   = PROJECT_ROOT / 'data' / 'training_runs'

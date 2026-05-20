@@ -11556,5 +11556,29 @@ def test_phase119_main_check_pre_trade_wiring():
     check('record_warmup_tick called on kline', 'record_warmup_tick()' in src)
 
 
+def test_phase120_unicode_audit_zero_violations():
+    """Phase 120 -- Z1 gate: no non-ASCII chars in logger/print/raise call sites.
+
+    Runs _unicode_audit_fix.py --dry-run and asserts 0 files need fixing.
+    This is a behavioral test: it actually invokes the auditor subprocess.
+    """
+    print('\n[Phase 120 -- Z1 unicode audit gate]')
+    import subprocess
+    audit_script = os.path.join(BASE_DIR, 'scripts', '_unicode_audit_fix.py')
+    result = subprocess.run(
+        [sys.executable, audit_script, '--dry-run',
+         '--root', BASE_DIR],
+        capture_output=True, text=True
+    )
+    output = result.stdout + result.stderr
+    # Parse "files needing fix: N" line
+    import re
+    m = re.search(r'files needing fix:\s*(\d+)', output)
+    files_needing_fix = int(m.group(1)) if m else -1
+    check('_unicode_audit_fix exits 0', result.returncode == 0)
+    check('0 files need non-ASCII fix (Z1 gate)', files_needing_fix == 0,
+          f'Got {files_needing_fix} -- run scripts/_unicode_audit_fix.py to fix')
+
+
 if __name__ == '__main__':
     main()

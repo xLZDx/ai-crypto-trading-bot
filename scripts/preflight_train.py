@@ -198,10 +198,10 @@ def main() -> None:
     passed = sum(checks)
     total  = len(checks)
     if passed == total:
-        print(f"\033[32mALL {total} CHECKS PASSED — safe to retrain\033[0m")
+        print(f"\033[32mALL {total} CHECKS PASSED -- safe to retrain\033[0m")
         sys.exit(0)
     else:
-        print(f"\033[31m{total - passed}/{total} CHECKS FAILED — fix before retraining\033[0m")
+        print(f"\033[31m{total - passed}/{total} CHECKS FAILED -- fix before retraining\033[0m")
         sys.exit(1)
 
 

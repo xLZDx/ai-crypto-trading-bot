@@ -56,7 +56,7 @@ def upload(dry_run: bool = False) -> None:
         size_mb = round(src.stat().st_size / 1024**2, 1)
 
         if dst.exists() and dst.stat().st_size == src.stat().st_size:
-            log.info("  SKIP %s (%s MB) — already on GDrive", src.name, size_mb)
+            log.info("  SKIP %s (%s MB) -- already on GDrive", src.name, size_mb)
             skip += 1
             continue
 

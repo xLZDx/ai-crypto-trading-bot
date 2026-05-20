@@ -77,7 +77,7 @@ def find_optimal_threshold(
     try:
         proba = model.predict_proba(X_cal)[:, 1]
     except Exception as exc:
-        logger.warning("[threshold_optimizer] predict_proba failed: %s — using default %.2f", exc, _DEFAULT_THRESHOLD)
+        logger.warning("[threshold_optimizer] predict_proba failed: %s -- using default %.2f", exc, _DEFAULT_THRESHOLD)
         return _DEFAULT_THRESHOLD, 0.0
 
     y = np.asarray(y_cal, dtype=int)
@@ -108,7 +108,7 @@ def find_optimal_threshold(
 
     if best_score == -np.inf:
         logger.warning(
-            "[threshold_optimizer] No threshold had >= %d trades — using default %.2f",
+            "[threshold_optimizer] No threshold had >= %d trades -- using default %.2f",
             _MIN_TRADES, _DEFAULT_THRESHOLD,
         )
         return _DEFAULT_THRESHOLD, 0.0

@@ -84,7 +84,7 @@ def _download_coinglass(symbol: str, api_key: str, days: int) -> pd.DataFrame:
                 logger.error("CoinGlass: invalid API key or subscription expired.")
                 return pd.DataFrame()
             if resp.status_code == 403:
-                logger.warning("CoinGlass: liquidation 1h not on current plan — trying 4h.")
+                logger.warning("CoinGlass: liquidation 1h not on current plan -- trying 4h.")
                 params["interval"] = "4h"
                 resp = requests.get(_BASE_URL + _LIQ_PATH, headers=headers,
                                     params=params, timeout=20)

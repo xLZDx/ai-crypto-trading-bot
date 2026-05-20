@@ -56,7 +56,7 @@ def load_ohlcv(symbol: str, timeframe: str) -> pd.DataFrame:
     spot_path = RAW_DIR / f"{sym}_spot_{timeframe}.csv.gz"
     for p in (csv_path, spot_path):
         if p.exists():
-            log.warning("Parquet missing for %s/%s — falling back to %s", sym, timeframe, p.name)
+            log.warning("Parquet missing for %s/%s -- falling back to %s", sym, timeframe, p.name)
             df = pd.read_csv(p)
             df["timestamp"] = pd.to_datetime(df["timestamp"])
             return df.sort_values("timestamp").reset_index(drop=True)

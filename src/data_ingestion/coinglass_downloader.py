@@ -213,10 +213,10 @@ def _get(path: str, params: dict, api_key: str) -> Optional[dict]:
     try:
         resp = requests.get(url, headers=headers, params=params, timeout=20, verify=False)
         if resp.status_code == 401:
-            logger.warning("CoinGlass 401 — key invalid or subscription expired.")
+            logger.warning("CoinGlass 401 -- key invalid or subscription expired.")
             return None
         if resp.status_code == 403:
-            logger.warning("CoinGlass 403 — endpoint not on current plan: %s", path)
+            logger.warning("CoinGlass 403 -- endpoint not on current plan: %s", path)
             return None
         resp.raise_for_status()
         data = resp.json()
@@ -490,7 +490,7 @@ def download_futures_metrics(symbols: list[str], api_key: str) -> None:
                     continue
                 df = _fetch_symbol_metric(sym_cg, metric_key, cfg, interval, api_key)
                 if df.empty:
-                    logger.debug("  %s %s %s — no data", metric_key, symbol, interval)
+                    logger.debug("  %s %s %s -- no data", metric_key, symbol, interval)
                     continue
                 if no_symbol:
                     out = DATA_DIR / "macro" / f"{metric_key}_{interval}.parquet"
@@ -523,7 +523,7 @@ def download_macro_metrics(api_key: str) -> None:
     for metric_key, cfg in MACRO_ENDPOINTS.items():
         df = _fetch_macro_metric(metric_key, cfg, api_key)
         if df.empty:
-            logger.debug("  %s — no data", metric_key)
+            logger.debug("  %s -- no data", metric_key)
             continue
         out = macro_dir / f"{metric_key}.parquet"
         _merge_and_save(df, out)
@@ -544,7 +544,7 @@ def main(symbols: Optional[list[str]] = None,
     api_key = _api_key()
     if not api_key:
         logger.warning(
-            "COINGLASS_API_KEY not set in .env — macro metrics will use free fallbacks only.\n"
+            "COINGLASS_API_KEY not set in .env -- macro metrics will use free fallbacks only.\n"
             "Add: COINGLASS_API_KEY=<your_key>"
         )
 
@@ -552,7 +552,7 @@ def main(symbols: Optional[list[str]] = None,
         wl_path = PROJECT_ROOT / "data" / "watchlist.json"
         symbols = json.loads(wl_path.read_text(encoding="utf-8")) if wl_path.exists() else ["BTC/USDT", "ETH/USDT"]
 
-    logger.info("CoinGlass download — %d symbols, futures=%s macro=%s",
+    logger.info("CoinGlass download -- %d symbols, futures=%s macro=%s",
                 len(symbols), not macro_only, not futures_only)
 
     if not macro_only and api_key:
