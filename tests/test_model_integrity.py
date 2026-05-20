@@ -120,18 +120,18 @@ class TestVerifyAndLoadBytes(_BaseIntegrityTest):
         with self.assertRaises(FileNotFoundError):
             mi.verify_and_load_bytes(os.path.join(self.tmp_root, "models", "nope.joblib"))
 
-    def test_no_key_returns_bytes_fail_open(self) -> None:
-        # No key set: integrity is bypassed but bytes are still returned
-        # (so the load path stays functional in dev / bootstrap).
+    def test_no_key_raises_fail_closed(self) -> None:
+        # No key set: I4 -- fail-closed, refuse to load regardless.
         p = self._make_model("nokey.joblib", b"raw-bytes")
-        out = mi.verify_and_load_bytes(p)
-        self.assertEqual(out, b"raw-bytes")
+        with self.assertRaises(mi.ModelIntegrityError):
+            mi.verify_and_load_bytes(p)
 
 
 class TestPolicyFailOpenAndFailClosed(_BaseIntegrityTest):
-    def test_missing_key_bypasses_verify(self) -> None:
+    def test_missing_key_raises_fail_closed(self) -> None:
         p = self._make_model("d.joblib", b"tampered-but-no-key-set")
-        mi.verify_model_or_raise(p)  # must NOT raise
+        with self.assertRaises(mi.ModelIntegrityError):
+            mi.verify_model_or_raise(p)
 
     def test_missing_key_skips_sign(self) -> None:
         p = self._make_model("e.joblib")
@@ -139,12 +139,14 @@ class TestPolicyFailOpenAndFailClosed(_BaseIntegrityTest):
         manifest_path = os.path.join(self.tmp_root, "models", "manifest.json")
         self.assertFalse(os.path.exists(manifest_path))
 
-    def test_missing_entry_warns_but_allows(self) -> None:
+    def test_missing_entry_raises_fail_closed(self) -> None:
+        # I4: unsigned/untracked model must be refused (no-entry is as suspicious as mismatch).
         self._set_key()
         a = self._make_model("a.joblib")
         mi.sign_model(a)
         b = self._make_model("b.joblib", b"untracked-model")
-        mi.verify_model_or_raise(b)
+        with self.assertRaises(mi.ModelIntegrityError):
+            mi.verify_model_or_raise(b)
 
     def test_verify_with_missing_file_does_not_raise(self) -> None:
         self._set_key()
@@ -165,17 +167,17 @@ class TestPolicyFailOpenAndFailClosed(_BaseIntegrityTest):
         with self.assertRaises(mi.ModelIntegrityError):
             mi.verify_and_load_bytes(p)
 
-    def test_deleted_manifest_entry_falls_back_to_untracked_allow(self) -> None:
-        """After sign, an attacker who can edit the manifest could delete the
-        entry — they cannot forge a valid one without the key. That branch
-        must reach the 'untracked, allow' path (and warn), not crash."""
+    def test_deleted_manifest_entry_raises_fail_closed(self) -> None:
+        """I4: If an attacker strips the manifest entry after sign, we now
+        fail-closed -- a missing entry is as suspicious as a bad HMAC."""
         self._set_key()
         p = self._make_model("del.joblib")
         mi.sign_model(p)
         manifest_path = os.path.join(self.tmp_root, "models", "manifest.json")
         with open(manifest_path, "w") as fp:
             json.dump({"version": 1, "entries": {}}, fp)
-        mi.verify_model_or_raise(p)  # must NOT raise
+        with self.assertRaises(mi.ModelIntegrityError):
+            mi.verify_model_or_raise(p)
 
 
 class TestSymlinkRejection(_BaseIntegrityTest):
@@ -255,8 +257,9 @@ class TestKeyDerivation(_BaseIntegrityTest):
         """Operator setting a weak key gets a one-shot warning."""
         with self.assertLogs("src.utils.model_integrity", level="WARNING") as cap:
             self._set_key("short")
-            # Trigger _load_key
-            mi.verify_and_load_bytes(self._make_model("sk.joblib", b"x"))
+            p = self._make_model("sk.joblib", b"x")
+            mi.sign_model(p)   # must sign so manifest entry exists before verify
+            mi.verify_and_load_bytes(p)
         self.assertTrue(
             any("only 5 chars" in m or "only" in m for m in cap.output),
             f"expected short-key warning, got: {cap.output}",
@@ -479,6 +482,30 @@ class TestEnforcementMode(_BaseIntegrityTest):
         os.environ[mi._ENFORCEMENT_ENV] = "enforce"
         second = mi._load_enforcement_mode()
         self.assertEqual(second, "warn", "mode must be cached; env changes need _reset_for_tests")
+
+
+class TestCheckStartupRequirements(_BaseIntegrityTest):
+    """check_startup_requirements() is the process-startup gate for MODEL_MANIFEST_KEY."""
+
+    def test_raises_systemexit_when_key_absent(self) -> None:
+        os.environ.pop("MODEL_MANIFEST_KEY", None)
+        with self.assertRaises(SystemExit):
+            mi.check_startup_requirements()
+
+    def test_raises_systemexit_when_key_whitespace(self) -> None:
+        os.environ["MODEL_MANIFEST_KEY"] = "   "
+        with self.assertRaises(SystemExit):
+            mi.check_startup_requirements()
+
+    def test_passes_when_key_set(self) -> None:
+        os.environ["MODEL_MANIFEST_KEY"] = "valid-key-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+        mi.check_startup_requirements()  # must NOT raise
+
+    def test_systemexit_message_contains_key_name(self) -> None:
+        os.environ.pop("MODEL_MANIFEST_KEY", None)
+        with self.assertRaises(SystemExit) as cm:
+            mi.check_startup_requirements()
+        self.assertIn("MODEL_MANIFEST_KEY", str(cm.exception))
 
 
 if __name__ == "__main__":

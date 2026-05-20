@@ -1787,6 +1787,15 @@ if __name__ == "__main__":
     except Exception:
         pass
 
+    # I4: fail-closed model signing key gate -- refuse to start without key.
+    try:
+        from src.utils.model_integrity import check_startup_requirements as _mi_check
+        _mi_check()
+    except SystemExit:
+        raise
+    except Exception as _mi_e:
+        raise SystemExit(f"FATAL: model_integrity startup check failed: {_mi_e}") from _mi_e
+
     wl_path = 'data/watchlist.json'
     if os.path.exists(wl_path):
         with open(wl_path, 'r', encoding='utf-8') as f:

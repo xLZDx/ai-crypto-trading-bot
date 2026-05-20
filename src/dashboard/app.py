@@ -8897,7 +8897,16 @@ if __name__ == '__main__':
             "Set it to a strong random secret and restart."
         )
 
-    # Phase 11 — bind via env var. SEC-2 fix: default to 127.0.0.1 (loopback).
+    # I4: fail-closed model signing key gate -- refuse to start without key.
+    try:
+        from src.utils.model_integrity import check_startup_requirements as _mi_check
+        _mi_check()
+    except SystemExit:
+        raise
+    except Exception as _mi_e:
+        raise SystemExit(f"FATAL: model_integrity startup check failed: {_mi_e}") from _mi_e
+
+    # Phase 11 -- bind via env var. SEC-2 fix: default to 127.0.0.1 (loopback).
     # To expose on the LAN, operator must explicitly set DASHBOARD_BIND_HOST
     # to the desired interface IP AND set DASHBOARD_API_KEY.
     _host = os.getenv('DASHBOARD_BIND_HOST', '127.0.0.1')

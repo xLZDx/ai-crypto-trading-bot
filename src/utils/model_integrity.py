@@ -9,14 +9,14 @@ RCE vector. This module signs every saved model with HMAC-SHA256
 every load. A tampered file fails the HMAC check and the load is
 refused.
 
-Policy (fail-open when key unset, fail-closed on mismatch or malformed):
-  - MODEL_MANIFEST_KEY unset       -> log WARNING once, bypass all checks.
+Policy (fail-closed when key unset at startup; also fail-closed on missing entry):
+  - MODEL_MANIFEST_KEY unset at startup -> check_startup_requirements() raises SystemExit.
+  - MODEL_MANIFEST_KEY unset at load time -> raises ModelIntegrityError (fail-closed).
   - Key set, manifest missing      -> bootstrap, allow load (next save signs).
-  - Key set, no entry for this file -> log WARNING (untracked), allow load.
+  - Key set, no entry for this file -> log CRITICAL, raise ModelIntegrityError.
   - Key set, malformed manifest entry -> log CRITICAL, raise ModelIntegrityError.
   - Key set, HMAC mismatch          -> log CRITICAL, raise ModelIntegrityError.
-  - Path is a symlink              -> log CRITICAL, raise ModelIntegrityError
-    (a swapped symlink defeats untracked-entry allow; reject across the board).
+  - Path is a symlink              -> log CRITICAL, raise ModelIntegrityError.
 
 Manifest lives at `models/manifest.json` (atomic via safe_json).
 
@@ -127,9 +127,9 @@ def _load_key() -> Optional[bytes]:
         if not raw:
             if not _key_warning_emitted:
                 logger.warning(
-                    "%s unset -- model integrity checks bypassed (fail-open). "
+                    "%s unset -- model loads will be REFUSED (fail-closed). "
                     "Generate with: python -c \"import secrets; print(secrets.token_urlsafe(48))\" "
-                    "and set %s in .env to enforce.",
+                    "and set %s in .env.",
                     _KEY_ENV, _KEY_ENV,
                 )
                 _key_warning_emitted = True
@@ -256,17 +256,17 @@ def _check_manifest_entry_shape(rel: str) -> None:
 
 
 def _check_against_manifest(rel: str, actual_hmac: str) -> None:
-    """Compare actual HMAC against the manifest entry. Raises on mismatch
-    (subject to MODEL_HMAC_ENFORCEMENT mode) or malformed entry (always).
-    Returns silently on missing-entry-allow path."""
+    """Compare actual HMAC against the manifest entry. Raises on mismatch,
+    missing entry, or malformed entry. Missing entry = unsigned model = fail-closed."""
     manifest = _load_manifest()
     entry = manifest["entries"].get(rel)
     if entry is None:
-        logger.warning(
-            "Model integrity: no manifest entry for %s (untracked, allowing). "
-            "It will be signed on the next training save.", rel,
+        logger.critical(
+            "Model integrity: no manifest entry for %s. Refusing to load -- "
+            "run scripts/sign_existing_models.py or retrain to sign this artifact.",
+            rel,
         )
-        return
+        raise ModelIntegrityError(f"no manifest entry for {rel}")
     expected = entry.get("hmac_sha256")
     if not isinstance(expected, str) or len(expected) != _HMAC_LEN_HEX:
         # Malformed entries always raise regardless of mode — they signal
@@ -304,7 +304,10 @@ def verify_model_or_raise(path: str) -> None:
     """
     key = _load_key()
     if key is None:
-        return  # fail-open
+        raise ModelIntegrityError(
+            "MODEL_MANIFEST_KEY not set -- refusing to load model. "
+            "Set the key in .env and run scripts/sign_existing_models.py."
+        )
     if not os.path.isfile(path):
         # Defer file-not-found to caller's normal error handling.
         return
@@ -337,7 +340,10 @@ def verify_and_load_bytes(path: str) -> bytes:
         data = f.read()
     key = _load_key()
     if key is None:
-        return data  # fail-open
+        raise ModelIntegrityError(
+            "MODEL_MANIFEST_KEY not set -- refusing to load model. "
+            "Set the key in .env and run scripts/sign_existing_models.py."
+        )
     rel = _rel_key(path)
     if _load_enforcement_mode() == _MODE_OFF:
         # off: skip HMAC computation, but still validate manifest entry shape
@@ -395,9 +401,26 @@ def _reset_for_tests() -> None:
         _warn_mode_alert_emitted = False
 
 
+def check_startup_requirements() -> None:
+    """Call at process startup to enforce MODEL_MANIFEST_KEY is set.
+
+    Raises SystemExit if the key is absent or empty. Call from app.py and
+    main.py __main__ blocks before any model is loaded. This is the
+    production enforcement gate; unit tests do not call this function.
+    """
+    raw = (os.environ.get(_KEY_ENV) or "").strip()
+    if not raw:
+        raise SystemExit(
+            f"FATAL: {_KEY_ENV} is not set or empty in .env. "
+            "Generate with: python -c \"import secrets; print(secrets.token_urlsafe(48))\" "
+            f"and set {_KEY_ENV} in .env before starting."
+        )
+
+
 __all__ = [
     "ModelIntegrityError",
     "verify_model_or_raise",
     "verify_and_load_bytes",
     "sign_model",
+    "check_startup_requirements",
 ]
