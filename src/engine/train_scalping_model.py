@@ -145,8 +145,6 @@ def prepare_scalping_data(filepath, timeframe: str = '1m', symbol: str | None = 
     if symbol:
         log.info("Loading data for Scalping Pipeline: %s/%s from parquet...", symbol, timeframe)
         df = load_ohlcv(symbol, timeframe)
-        if df.empty:
-            raise FileNotFoundError(f"No OHLCV data for {symbol}/{timeframe}")
     else:
         log.info("Loading data for Scalping Pipeline from %s...", filepath)
         df = pd.read_csv(filepath)

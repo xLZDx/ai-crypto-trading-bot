@@ -261,9 +261,10 @@ def train_meta_labeler(
     all_frames = []
     for sym in symbols:
         try:
-            df = load_ohlcv(sym, timeframe)
-            if df.empty:
-                log.warning("No data for %s", sym)
+            try:
+                df = load_ohlcv(sym, timeframe)
+            except FileNotFoundError:
+                log.warning("[meta][%s/%s] no parquet data — skipping", sym, timeframe)
                 continue
             # Phase 4 rollout — F1 data-integrity gate.
             try:

@@ -4,7 +4,7 @@ OHLCV + funding loader from the parquet partition store.
 Reads data/parquet/{SYM}/{tf}/yyyymm=YYYY-MM/data_0.parquet
 Returns a single sorted DataFrame with deduped timestamps.
 
-Falls back to CSV.gz if parquet partition doesn't exist (transition period).
+Raises FileNotFoundError when data is absent — no silent empty returns.
 """
 from __future__ import annotations
 
@@ -26,12 +26,15 @@ def _safe_sym(symbol: str) -> str:
 
 
 def load_ohlcv(symbol: str, timeframe: str) -> pd.DataFrame:
-    """Load OHLCV data for symbol/timeframe from parquet, falling back to CSV.gz.
+    """Load OHLCV data for symbol/timeframe from the parquet store.
 
     Returns DataFrame with columns:
       timestamp, open, high, low, close, volume, quote_volume,
       trades_count, taker_buy_base, taker_buy_quote
     sorted ascending by timestamp.
+
+    Raises FileNotFoundError if no parquet partition exists. During the
+    CSV.gz transition period, falls back to data/raw/*.csv.gz before raising.
     """
     sym = _safe_sym(symbol)
     part_dir = PARQUET_DIR / sym / timeframe
@@ -58,13 +61,17 @@ def load_ohlcv(symbol: str, timeframe: str) -> pd.DataFrame:
             df["timestamp"] = pd.to_datetime(df["timestamp"])
             return df.sort_values("timestamp").reset_index(drop=True)
 
-    return pd.DataFrame()
+    raise FileNotFoundError(
+        f"No parquet data for {symbol}/{timeframe}. Run backfill first."
+    )
 
 
 def load_funding(symbol: str) -> pd.DataFrame:
-    """Load funding rate data from parquet, falling back to CSV.gz.
+    """Load funding rate data from the parquet store.
 
-    Returns DataFrame with columns: timestamp, funding_rate
+    Returns DataFrame with columns: timestamp, funding_rate.
+    Raises FileNotFoundError if no parquet partition exists (spot-only
+    assets like SHIB have no funding; callers should catch and skip).
     """
     sym = _safe_sym(symbol)
     part_dir = PARQUET_DIR / sym / "funding"
@@ -79,13 +86,6 @@ def load_funding(symbol: str) -> pd.DataFrame:
                   .reset_index(drop=True))
             return df
 
-    # Fallback to CSV.gz
-    for ext in (".csv.gz", ".csv"):
-        p = RAW_DIR / f"{sym}_funding{ext}"
-        if p.exists():
-            log.warning("Funding parquet missing for %s — falling back to %s", sym, p.name)
-            df = pd.read_csv(p)
-            df["timestamp"] = pd.to_datetime(df["timestamp"])
-            return df.sort_values("timestamp").reset_index(drop=True)
-
-    return pd.DataFrame()
+    raise FileNotFoundError(
+        f"No parquet funding data for {symbol}. Run funding_rate_downloader first."
+    )

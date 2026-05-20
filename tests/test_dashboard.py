@@ -10965,6 +10965,12 @@ def main():
     test_phase108_training_progress_instrumentation()
     test_phase109_gzip_to_parquet_migration()
     test_phase110_live_perf_monitor()
+    test_phase111_preflight_train_checks()
+    test_phase112_env_manifest()
+    test_phase113_oos_signals()
+    test_phase114_dataset_fingerprint()
+    test_phase115_kill_switch_slippage_trigger()
+    test_phase116_ohlcv_loader_raises_on_missing_data()
 
     if not args.offline:
         test_api(args.url)
@@ -11292,6 +11298,61 @@ def test_phase115_kill_switch_slippage_trigger():
             check('triggered at slippage 0.010 > 0.005', ks.is_paused())
             check("trigger name is 'slippage_pct'",
                   ks._state.last_trigger == 'slippage_pct')
+
+
+def test_phase116_ohlcv_loader_raises_on_missing_data():
+    """Phase 116 — ohlcv_parquet_loader.py hardening:
+    load_ohlcv and load_funding raise FileNotFoundError instead of
+    returning silent empty DataFrames when data is absent."""
+    import tempfile
+    from unittest.mock import patch
+    from src.data_ingestion.ohlcv_parquet_loader import load_ohlcv, load_funding
+
+    check('load_ohlcv raises FileNotFoundError (not empty DF) when parquet absent',
+          'raise FileNotFoundError' in open(
+              'src/data_ingestion/ohlcv_parquet_loader.py', encoding='utf-8').read())
+    check('load_funding has no CSV.gz fallback',
+          'csv.gz' not in open(
+              'src/data_ingestion/ohlcv_parquet_loader.py', encoding='utf-8').read().lower()
+          or 'load_funding' not in open(
+              'src/data_ingestion/ohlcv_parquet_loader.py', encoding='utf-8').read().split(
+              'load_funding')[1].split('\ndef ')[0].lower())
+
+    with tempfile.TemporaryDirectory() as td:
+        from pathlib import Path
+        empty_parquet_root = Path(td)
+
+        with patch('src.data_ingestion.ohlcv_parquet_loader.PARQUET_DIR', empty_parquet_root), \
+             patch('src.data_ingestion.ohlcv_parquet_loader.RAW_DIR', empty_parquet_root):
+            # load_ohlcv: raises FileNotFoundError when no data
+            try:
+                load_ohlcv('BTC/USDT', '1h')
+                check('load_ohlcv raises FileNotFoundError on missing data', False)
+            except FileNotFoundError as e:
+                check('load_ohlcv FileNotFoundError message mentions backfill',
+                      'backfill' in str(e).lower())
+
+            # load_funding: raises FileNotFoundError (no CSV.gz fallback)
+            try:
+                load_funding('BTC/USDT')
+                check('load_funding raises FileNotFoundError on missing data', False)
+            except FileNotFoundError as e:
+                check('load_funding FileNotFoundError message mentions downloader',
+                      'downloader' in str(e).lower())
+
+    # train_meta_labeler handles FileNotFoundError with continue (skips symbol)
+    with open('src/engine/train_meta_labeler.py', encoding='utf-8') as f:
+        meta_src = f.read()
+    check('train_meta_labeler catches FileNotFoundError on load_ohlcv',
+          'except FileNotFoundError' in meta_src)
+
+    # Other trainers no longer have dead empty-check code
+    for fname in ('train_model.py', 'train_futures_model.py',
+                  'train_scalping_model.py', 'train_trend_model.py'):
+        with open(f'src/engine/{fname}', encoding='utf-8') as f:
+            src = f.read()
+        check(f'{fname}: no dead df.empty FileNotFoundError check',
+              'if df.empty' not in src or 'FileNotFoundError' not in src.split('load_ohlcv')[1].split('\ndef ')[0])
 
 
 if __name__ == '__main__':

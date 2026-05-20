@@ -66,8 +66,6 @@ def prepare_futures_data(filepath, timeframe: str = '1h', symbol: str | None = N
     if symbol:
         log.info("Loading data for Futures Pipeline: %s/%s from parquet...", symbol, timeframe)
         df = load_ohlcv(symbol, timeframe)
-        if df.empty:
-            raise FileNotFoundError(f"No OHLCV data for {symbol}/{timeframe}")
     else:
         log.info("Loading data for Futures (Shorting) Pipeline from %s...", filepath)
         df = pd.read_csv(filepath)

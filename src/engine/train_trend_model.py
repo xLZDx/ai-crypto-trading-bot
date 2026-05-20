@@ -122,8 +122,6 @@ def prepare_trend_data(filepath, timeframe: str = '1h', symbol: str | None = Non
     if symbol:
         log.info("Loading data for Trend Pipeline: %s/%s from parquet...", symbol, timeframe)
         df = load_ohlcv(symbol, timeframe)
-        if df.empty:
-            raise FileNotFoundError(f"No OHLCV data for {symbol}/{timeframe}")
     else:
         log.info("Loading data for Trend Pipeline from %s...", filepath)
         df = pd.read_csv(filepath)
