@@ -315,7 +315,7 @@ Dashboard now shows both WF accuracy and in-sample accuracy per model (Phase 1.1
 | Phase 1A–C: secrets / agent_status / WS timeouts | ✅ Done 2026-05-20 | All .env keys verified. agent_status.json reset. ping_timeout 20→60, close_timeout 10→15 at main.py:1437-1438 |
 | Phase 2: Upload 51.95 GB data/parquet to VPS | 🔄 In progress | SFTP PID 27712 on local (72 MB RAM, confirmed alive). 2260 files / 1.6 GB on VPS as of 23:50 UTC. Phase3 auto-trigger on VPS (PID 44633) monitors for completion |
 | Phase 3: Migrate 121 CSV.gz → Parquet | 🔄 Auto (VPS) | Script at /root/phase3_auto.sh — runs automatically after Phase 2 upload stabilizes (~20 min flat) |
-| Phase 4: Harden ohlcv_parquet_loader.py | ❌ Not started | Needs Aider + caller audit. Defer to next session. |
+| Phase 4: Harden ohlcv_parquet_loader.py | ✅ Done 2026-05-20 | load_ohlcv: raises FileNotFoundError (CSV.gz fallback retained for transition). load_funding: CSV.gz fallback removed, raises. Callers updated. (commit 6882836) |
 | Phase 5: rclone daily cron | ✅ Done 2026-05-20 | Cron: 3 AM UTC sync to gdrive:trading-bot-backup/ (excl parquet, raw_archive, logs). Archive cleanup: 4 AM UTC. |
 | Phase 6: Smoke-tests synthetic data | ❌ Not started | Needs Hetzner/Vast.ai + manual |
 | Phase 7: Archive training state | ❌ Not started | Stop bot first |
@@ -333,9 +333,12 @@ Dashboard now shows both WF accuracy and in-sample accuracy per model (Phase 1.1
 - src/utils/dataset_fingerprint.py: Phase 9 logical SHA-256 fingerprint streaming (commit 814011b) — synced to VPS
 - src/risk/kill_switch.py: Phase 10 slippage trigger (slippage_pct_threshold=0.005, trigger #6 in _iter_triggers, commit 951b900) — synced to VPS
 - src/risk/drift_psi.py: Phase 11 per-category PSI thresholds (PSI_THRESHOLD_PRICE_RETURN=0.20, PSI_THRESHOLD_VOLUME_FLOW=0.30, MIN_PSI_SAMPLES=500, commit 2a51631) — synced to VPS
-- tests/test_dashboard.py: Phase 111-115 tests — 137 passed, 1 skipped
-- tests/test_drift_monitor.py: fixed pre-existing failure test_enforce_paused_cell_blocks_trading (added DRIFT_ENFORCE_FEATURES=ofi_z to test setUp for enforce-tier path)
-- **Full suite: 153 passed, 1 skipped, 0 failures** (test_dashboard.py + test_drift_monitor.py)
+- src/data_ingestion/ohlcv_parquet_loader.py: Phase 4 — FileNotFoundError, CSV.gz fallback removed from load_funding (commit 6882836) — synced to VPS
+- src/engine/train_meta_labeler.py: Phase 4 — FileNotFoundError handling (commit 6882836) — synced to VPS
+- src/engine/train_{model,futures_model,scalping_model,trend_model}.py: Phase 4 — dead df.empty checks removed (commit 6882836) — synced to VPS
+- tests/test_dashboard.py: Phase 111-116 tests — 138 passed, 1 skipped
+- tests/test_drift_monitor.py: fixed pre-existing failure test_enforce_paused_cell_blocks_trading (added DRIFT_ENFORCE_FEATURES=ofi_z for enforce-tier path)
+- **Full suite: 154 passed, 1 skipped, 0 failures** (test_dashboard.py + test_drift_monitor.py)
 
 **VPS code sync status (2026-05-20):**
 All Phase 1-4 changes confirmed on VPS (kpi_gate, purged_kfold, sample_weights, threshold_optimizer, champion_challenger, binance_sync tz fix). main.py, preflight_train.py, generate_synthetic_data.py, env_manifest.py, oos_signals.py, dataset_fingerprint.py, kill_switch.py, drift_psi.py synced via SCP.
