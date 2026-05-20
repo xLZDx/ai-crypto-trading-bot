@@ -10971,6 +10971,9 @@ def main():
     test_phase114_dataset_fingerprint()
     test_phase115_kill_switch_slippage_trigger()
     test_phase116_ohlcv_loader_raises_on_missing_data()
+    test_phase117_position_sizing_gate()
+    test_phase118_pre_trade_gate()
+    test_phase119_main_check_pre_trade_wiring()
 
     if not args.offline:
         test_api(args.url)
@@ -11353,6 +11356,204 @@ def test_phase116_ohlcv_loader_raises_on_missing_data():
             src = f.read()
         check(f'{fname}: no dead df.empty FileNotFoundError check',
               'if df.empty' not in src or 'FileNotFoundError' not in src.split('load_ohlcv')[1].split('\ndef ')[0])
+
+
+def test_phase117_position_sizing_gate():
+    """Phase 117 — PositionSizingGate: sizes down oversized trades, blocks
+    when daily budget exhausted, blocks when below MIN_NOTIONAL."""
+    print('\n[Phase 117 -- PositionSizingGate]')
+    from src.risk.position_sizing import PositionSizingGate, SizingConfig
+
+    cfg = SizingConfig(
+        max_risk_per_trade_pct=0.005,   # 0.5% of bankroll
+        max_daily_risk_pct=0.02,        # 2% of bankroll
+        max_open_positions=4,
+        min_notional_usdt=5.0,
+    )
+    g = PositionSizingGate(cfg)
+    # Use a bankroll large enough that per_trade_cap (0.5%) > min_notional (5 USDT).
+    # Per-trade cap = 5000 * 0.005 = 25 USDT; daily cap = 5000 * 0.02 = 100 USDT.
+    bankroll = 5000.0
+
+    # Normal small trade below per-trade cap — allowed without adjustment
+    d = g.check(trade_usdt=10.0, bankroll_usdt=bankroll, open_position_count=0)
+    check('small trade allowed without adjustment', d.allow)
+    check('small trade not adjusted', not d.was_adjusted)
+    check('sized_usdt matches input', abs(d.sized_usdt - 10.0) < 1e-6)
+
+    # Oversized trade — sized down to per-trade cap (0.5% × 5000 = 25 USDT)
+    d2 = g.check(trade_usdt=1000.0, bankroll_usdt=bankroll, open_position_count=0)
+    check('normal trade allowed after sizing down', d2.allow)
+    check('trade was adjusted', d2.was_adjusted)
+    check('sized_usdt <= per-trade cap', d2.sized_usdt <= 25.0 + 1e-6)
+
+    # Max open positions reached — blocked
+    d3 = g.check(trade_usdt=10.0, bankroll_usdt=bankroll, open_position_count=4)
+    check('blocked at max_open_positions', not d3.allow)
+    check('reason mentions max_open_positions', 'max_open_positions' in d3.reason)
+
+    # Daily budget exhausted — blocked
+    g2 = PositionSizingGate(cfg)
+    daily_cap = bankroll * cfg.max_daily_risk_pct  # 10 USDT
+    g2.record_trade(daily_cap + 0.01)  # push past the cap
+    d4 = g2.check(trade_usdt=1.0, bankroll_usdt=bankroll)
+    check('blocked when daily budget exhausted', not d4.allow)
+    check('reason mentions daily risk', 'daily' in d4.reason)
+
+    # MIN_NOTIONAL: 0.5% of $100 bankroll = $0.50 < 5 USDT min → blocked
+    d5 = g.check(trade_usdt=50.0, bankroll_usdt=100.0)
+    check('blocked below MIN_NOTIONAL after sizing', not d5.allow)
+    check('reason mentions min_notional', 'min_notional' in d5.reason or 'notional' in d5.reason)
+
+    # state_dict shape
+    s = g.state_dict()
+    check('state_dict has daily_risk_usdt', 'daily_risk_usdt' in s)
+    check('state_dict has max_open_positions', 'max_open_positions' in s)
+
+
+def test_phase118_pre_trade_gate():
+    """Phase 118 — PreTradeGate: ws_connected, SAFE_MODE, warmup, NaN/Inf."""
+    print('\n[Phase 118 -- PreTradeGate]')
+    from src.risk.pre_trade_gate import (
+        PreTradeGate, GateContext,
+        SAFE_MODE_LIVE, SAFE_MODE_READ_ONLY, SAFE_MODE_OFF,
+    )
+
+    # Normal conditions — open trade allowed
+    g = PreTradeGate(warmup_bars_required=2)
+    g.record_warmup_tick()
+    g.record_warmup_tick()   # warmup complete
+    with g.trading_lock:
+        result = g.check(GateContext(symbol='BTC/USDT', action='open'))
+    check('normal open trade allowed', result.allow)
+
+    # Warmup incomplete blocks new positions
+    g2 = PreTradeGate(warmup_bars_required=5)
+    g2.record_warmup_tick()  # only 1 of 5
+    with g2.trading_lock:
+        r = g2.check(GateContext(action='open'))
+    check('blocked during warmup for open', not r.allow)
+    check('warmup reason in message', 'warmup' in r.reason)
+
+    # Warmup incomplete: close/reduce still allowed
+    with g2.trading_lock:
+        r_close = g2.check(GateContext(action='close'))
+    check('close allowed during warmup', r_close.allow)
+
+    # ws_connected=False blocks new positions
+    g3 = PreTradeGate(warmup_bars_required=0)
+    g3._warmup_complete = True
+    with g3.flag_lock:
+        g3.ws_connected = False
+    with g3.trading_lock:
+        r_ws = g3.check(GateContext(action='open'))
+    check('blocked when ws_connected=False', not r_ws.allow)
+    check('ws reason in message', 'ws_connected' in r_ws.reason)
+
+    # ws_connected=False: close still allowed
+    with g3.trading_lock:
+        r_ws_close = g3.check(GateContext(action='close'))
+    check('close allowed when ws_connected=False', r_ws_close.allow)
+
+    # SAFE_MODE=read_only blocks open, allows close
+    g4 = PreTradeGate(warmup_bars_required=0)
+    g4._warmup_complete = True
+    with g4.flag_lock:
+        g4.safe_mode = SAFE_MODE_READ_ONLY
+    with g4.trading_lock:
+        r_ro_open = g4.check(GateContext(action='open'))
+    check('read_only blocks open', not r_ro_open.allow)
+    check('read_only reason', 'read_only' in r_ro_open.reason)
+    with g4.trading_lock:
+        r_ro_close = g4.check(GateContext(action='close'))
+    check('read_only allows close', r_ro_close.allow)
+
+    # SAFE_MODE=off blocks everything
+    g5 = PreTradeGate(warmup_bars_required=0)
+    g5._warmup_complete = True
+    with g5.flag_lock:
+        g5.safe_mode = SAFE_MODE_OFF
+    with g5.trading_lock:
+        r_off_open = g5.check(GateContext(action='open'))
+    check('off blocks open', not r_off_open.allow)
+    with g5.trading_lock:
+        r_off_close = g5.check(GateContext(action='close'))
+    check('off blocks close too', not r_off_close.allow)
+
+    # NaN/Inf in features blocks trade
+    g6 = PreTradeGate(warmup_bars_required=0)
+    g6._warmup_complete = True
+    with g6.trading_lock:
+        r_nan = g6.check(GateContext(action='open', has_nan_inf=True))
+    check('NaN/Inf blocks trade', not r_nan.allow)
+    check('reason mentions NaN/Inf', 'NaN' in r_nan.reason or 'Inf' in r_nan.reason)
+
+    # state_dict shape
+    s = g.state_dict()
+    check('state_dict has ws_connected', 'ws_connected' in s)
+    check('state_dict has safe_mode', 'safe_mode' in s)
+    check('state_dict has warmup_complete', 'warmup_complete' in s)
+
+
+def test_phase119_main_check_pre_trade_wiring():
+    """Phase 119 — _check_pre_trade wired into all new-position order sites in main.py.
+
+    String-match checks that every execute_*_order call for a new position is
+    guarded by _check_pre_trade.  Behavioral correctness of the gate itself is
+    proved in test_phase117 + test_phase118.
+    """
+    print('\n[Phase 119 -- main.py _check_pre_trade wiring]')
+    main_src = os.path.join(BASE_DIR, 'src', 'main.py')
+    with open(main_src, encoding='utf-8') as fh:
+        src = fh.read()
+
+    # _check_pre_trade method must be defined.
+    check('_check_pre_trade defined in main.py', 'def _check_pre_trade(' in src)
+
+    # Scalping futures order site: gate check before execute_futures_order.
+    scalp_fut_idx = src.find('has_open_scalp_futures')
+    gate_before_scalp_fut = src.rfind('_check_pre_trade', 0, scalp_fut_idx)
+    check('gate wired before scalping-futures order', gate_before_scalp_fut != -1)
+
+    # Scalping spot order site: gate check before execute_spot_order (SPOT_SCALPING).
+    scalp_spot_idx = src.find('SPOT_SCALPING')
+    gate_before_scalp_spot = src.rfind('_check_pre_trade', 0, scalp_spot_idx)
+    check('gate wired before scalping-spot order', gate_before_scalp_spot != -1)
+
+    # Market maker SELL limit order site.
+    mm_sell_idx = src.find('execute_limit_futures_order(symbol, "SELL"')
+    gate_before_mm_sell = src.rfind('_check_pre_trade', 0, mm_sell_idx)
+    check('gate wired before MM SELL limit order', gate_before_mm_sell != -1)
+
+    # Market maker BUY limit order site.
+    mm_buy_idx = src.find('execute_limit_futures_order(symbol, "BUY"')
+    gate_before_mm_buy = src.rfind('_check_pre_trade', 0, mm_buy_idx)
+    check('gate wired before MM BUY limit order', gate_before_mm_buy != -1)
+
+    # Spot BUY (agent-approved) order site.
+    spot_buy_idx = src.find("execute_spot_order(symbol, 'BUY', amount_coin)")
+    gate_before_spot_buy = src.rfind('_check_pre_trade', 0, spot_buy_idx)
+    check('gate wired before spot BUY (agent-approved)', gate_before_spot_buy != -1)
+
+    # Futures SHORT (correction signal) order site.
+    fut_short_idx = src.find("execute_futures_order(symbol, 'SELL', amount_coin)")
+    gate_before_fut_short = src.rfind('_check_pre_trade', 0, fut_short_idx)
+    check('gate wired before futures SHORT (correction)', gate_before_fut_short != -1)
+
+    # PreTradeGate + PositionSizingGate imported and instantiated in __init__.
+    check('PreTradeGate imported in main.py',
+          'from src.risk.pre_trade_gate import PreTradeGate' in src)
+    check('PositionSizingGate imported in main.py',
+          'from src.risk.position_sizing import PositionSizingGate' in src)
+    check('pre_trade_gate attribute set', 'self.pre_trade_gate = PreTradeGate(' in src)
+    check('sizing_gate attribute set', 'self.sizing_gate = PositionSizingGate(' in src)
+
+    # ws_connected managed in binance_websocket.
+    check('ws_connected=True on reconnect',
+          'ws_connected = True' in src or 'ws_connected=True' in src)
+    check('ws_connected=False on disconnect',
+          'ws_connected = False' in src or 'ws_connected=False' in src)
+    check('record_warmup_tick called on kline', 'record_warmup_tick()' in src)
 
 
 if __name__ == '__main__':

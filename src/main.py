@@ -268,6 +268,20 @@ class MultiAssetTrader:
         self._signal_strength_at_entry: dict = {}      # trade_id -> float
         self._signal_entry_ts:         dict = {}       # trade_id -> unix ts
 
+        # Phase 10 — unified pre-trade safety gate + position sizing gate.
+        try:
+            from src.risk.pre_trade_gate import PreTradeGate
+            from src.risk.position_sizing import PositionSizingGate
+            from src.risk.kill_switch import get_kill_switch
+            _ks = get_kill_switch()
+            self.pre_trade_gate = PreTradeGate(warmup_bars_required=14, kill_switch=_ks)
+            self.sizing_gate = PositionSizingGate()
+            logger.info("[gate] PreTradeGate + PositionSizingGate ready.")
+        except Exception as _e:
+            self.pre_trade_gate = None
+            self.sizing_gate = None
+            logger.warning("[gate] PreTradeGate init failed — safety gate DISABLED: %s", _e)
+
         self._update_state()
 
     def _attach_beta_history(self) -> None:
@@ -299,6 +313,47 @@ class MultiAssetTrader:
                                           max_beta_exposure=1.5)
         except Exception as e:
             logger.debug("[gate] _attach_beta_history failed: %s", e)
+
+    def _check_pre_trade(
+        self,
+        symbol: str,
+        action: str = "open",
+        trade_usdt: float = 0.0,
+        bankroll_usdt: float = 0.0,
+        has_nan_inf: bool = False,
+    ) -> tuple:
+        """Run PreTradeGate + PositionSizingGate before placing a new position.
+
+        Returns (allow: bool, sized_usdt: float).
+        Falls through with (True, trade_usdt) if either gate is not initialised.
+        """
+        if self.pre_trade_gate is None:
+            return True, trade_usdt
+        from src.risk.pre_trade_gate import GateContext
+        ctx = GateContext(symbol=symbol, action=action, has_nan_inf=has_nan_inf)
+        with self.pre_trade_gate.trading_lock:
+            gate_result = self.pre_trade_gate.check(ctx)
+            if not gate_result.allow:
+                logger.warning("[pre_trade] %s blocked (%s): %s",
+                               symbol, action, gate_result.reason)
+                return False, 0.0
+            if action == "open" and self.sizing_gate is not None and trade_usdt > 0:
+                open_count = sum(
+                    1 for t in self.tracker.trades if t.get("status") == "OPEN"
+                )
+                sizing = self.sizing_gate.check(
+                    trade_usdt=trade_usdt,
+                    bankroll_usdt=bankroll_usdt or float(
+                        self.get_real_or_sim_balance('USDT') or 0
+                    ),
+                    open_position_count=open_count,
+                )
+                if not sizing.allow:
+                    logger.warning("[pre_trade] %s sizing blocked: %s",
+                                   symbol, sizing.reason)
+                    return False, 0.0
+                return True, sizing.sized_usdt
+        return True, trade_usdt
 
     def _refresh_dynamic_thresholds(self) -> None:
         """Phase 10D — every ~1h refit the entry threshold per symbol from
@@ -1146,38 +1201,44 @@ class MultiAssetTrader:
             if oft_block:
                 logger.info(f"[{symbol}] 🚫 OFT vetoed SHORT entry: {oft_block_reason}")
             elif _gate_ok("sell"):
-                try:
-                    self.engine.cancel_all_orders(symbol)
-                    # §16 slippage-aware limit price (small adjustment)
-                    ask = float(mm_quotes.get("optimal_ask", current_price))
-                    if self.gate:
-                        ask = self.gate.executed_price(
-                            ask, "sell", float(trade_amount / current_price),
-                            book_volume=max(float(trade_amount / current_price) * 5, 1.0),
-                        )
-                    self.engine.execute_limit_futures_order(symbol, "SELL", trade_amount / current_price, ask)
-                    if self.gate:
-                        self.gate.update_position(symbol, "short", float(trade_amount))
-                except Exception as e:
-                    logger.error(f"MM Execution Error: {e}")
+                _allow_mm, _sized_mm = self._check_pre_trade(
+                    symbol, action="open", trade_usdt=float(trade_amount))
+                if _allow_mm:
+                    try:
+                        self.engine.cancel_all_orders(symbol)
+                        # §16 slippage-aware limit price (small adjustment)
+                        ask = float(mm_quotes.get("optimal_ask", current_price))
+                        if self.gate:
+                            ask = self.gate.executed_price(
+                                ask, "sell", float(_sized_mm / current_price),
+                                book_volume=max(float(_sized_mm / current_price) * 5, 1.0),
+                            )
+                        self.engine.execute_limit_futures_order(symbol, "SELL", _sized_mm / current_price, ask)
+                        if self.gate:
+                            self.gate.update_position(symbol, "short", float(_sized_mm))
+                    except Exception as e:
+                        logger.error(f"MM Execution Error: {e}")
         elif expected_return >= _tft_threshold:
             logger.info(f"[{symbol}] 🚀 TFT predicts PUMP ({expected_return*100:.1f}%) [{_regime_name}]. Shifting to LONG.")
             if oft_block:
                 logger.info(f"[{symbol}] 🚫 OFT vetoed LONG entry: {oft_block_reason}")
             elif _gate_ok("buy"):
-                try:
-                    self.engine.cancel_all_orders(symbol)
-                    bid = float(mm_quotes.get("optimal_bid", current_price))
-                    if self.gate:
-                        bid = self.gate.executed_price(
-                            bid, "buy", float(trade_amount / current_price),
-                            book_volume=max(float(trade_amount / current_price) * 5, 1.0),
-                        )
-                    self.engine.execute_limit_futures_order(symbol, "BUY", trade_amount / current_price, bid)
-                    if self.gate:
-                        self.gate.update_position(symbol, "long", float(trade_amount))
-                except Exception as e:
-                    logger.error(f"MM Execution Error: {e}")
+                _allow_mm, _sized_mm = self._check_pre_trade(
+                    symbol, action="open", trade_usdt=float(trade_amount))
+                if _allow_mm:
+                    try:
+                        self.engine.cancel_all_orders(symbol)
+                        bid = float(mm_quotes.get("optimal_bid", current_price))
+                        if self.gate:
+                            bid = self.gate.executed_price(
+                                bid, "buy", float(_sized_mm / current_price),
+                                book_volume=max(float(_sized_mm / current_price) * 5, 1.0),
+                            )
+                        self.engine.execute_limit_futures_order(symbol, "BUY", _sized_mm / current_price, bid)
+                        if self.gate:
+                            self.gate.update_position(symbol, "long", float(_sized_mm))
+                    except Exception as e:
+                        logger.error(f"MM Execution Error: {e}")
 
         # --- 📊 Push quant metrics to dashboard state (read by /api/state) ---
         _ou_r = self.ou_results.get(symbol, {})
@@ -1325,21 +1386,29 @@ class MultiAssetTrader:
                 # 1. Scalping on Futures (LONG and SHORT)
                 has_open_scalp_futures = any(t["status"] == "OPEN" and t["symbol"] == symbol and t.get("market") == "SCALPING" for t in self.tracker.trades)
                 if not has_open_scalp_futures:
-                    order = self.engine.execute_futures_order(symbol, exec_side, amount_coin)
-                    if order:
-                        real_price = order.get('average') or order.get('price') or current_price
-                        self.tracker.open_trade(symbol, scalp_trade_amount, real_price, strategy=scalp_strategy, market="SCALPING", side=side)
-                        logger.info(f"-> [SCALPING FUTURES] Trade {side} {scalp_trade_amount:.2f} USDT opened on Binance (Real Price: {real_price}).")
-                        
+                    _allow, _sized = self._check_pre_trade(
+                        symbol, action="open", trade_usdt=scalp_trade_amount)
+                    if _allow:
+                        amount_coin = _sized / current_price
+                        order = self.engine.execute_futures_order(symbol, exec_side, amount_coin)
+                        if order:
+                            real_price = order.get('average') or order.get('price') or current_price
+                            self.tracker.open_trade(symbol, _sized, real_price, strategy=scalp_strategy, market="SCALPING", side=side)
+                            logger.info(f"-> [SCALPING FUTURES] Trade {side} {_sized:.2f} USDT opened on Binance (Real Price: {real_price}).")
+
                 # 2. Scalping on Spot (LONG only)
                 if scalp_signal == "BUY":
                     has_open_scalp_spot = any(t["status"] == "OPEN" and t["symbol"] == symbol and t.get("market") == "SPOT_SCALPING" for t in self.tracker.trades)
                     if not has_open_scalp_spot:
-                        order = self.engine.execute_spot_order(symbol, 'BUY', amount_coin)
-                        if order:
-                            real_price = order.get('average') or order.get('price') or current_price
-                            self.tracker.open_trade(symbol, scalp_trade_amount, real_price, strategy=scalp_strategy, market="SPOT_SCALPING", side="LONG")
-                            logger.info(f"-> [SCALPING SPOT] Trade LONG {scalp_trade_amount:.2f} USDT opened on Binance (Real Price: {real_price}).")
+                        _allow_s, _sized_s = self._check_pre_trade(
+                            symbol, action="open", trade_usdt=scalp_trade_amount)
+                        if _allow_s:
+                            amount_coin_s = _sized_s / current_price
+                            order = self.engine.execute_spot_order(symbol, 'BUY', amount_coin_s)
+                            if order:
+                                real_price = order.get('average') or order.get('price') or current_price
+                                self.tracker.open_trade(symbol, _sized_s, real_price, strategy=scalp_strategy, market="SPOT_SCALPING", side="LONG")
+                                logger.info(f"-> [SCALPING SPOT] Trade LONG {_sized_s:.2f} USDT opened on Binance (Real Price: {real_price}).")
                             
                 # 3. Scalping on Spot (Instant close LONG on SELL signal)
                 elif scalp_signal == "SELL":
@@ -1371,12 +1440,15 @@ class MultiAssetTrader:
                 
                 if decision == "APPROVED":
                     logger.info(f"[{symbol}] ✅ AGENT APPROVED ({agent_reason}). Buying for {trade_amount} USDT...")
-                    amount_coin = trade_amount / current_price
-                    order = self.engine.execute_spot_order(symbol, 'BUY', amount_coin)
-                    if order:
-                        real_price = order.get('average') or order.get('price') or current_price
-                        self.tracker.open_trade(symbol, trade_amount, real_price, strategy=strategy_used, market="SPOT", side="LONG")
-                        logger.info(f"-> [SPOT] Trade LONG {trade_amount:.2f} USDT opened on Binance (Real Price: {real_price:.2f}).")
+                    _allow, _sized = self._check_pre_trade(
+                        symbol, action="open", trade_usdt=float(trade_amount))
+                    if _allow:
+                        amount_coin = _sized / current_price
+                        order = self.engine.execute_spot_order(symbol, 'BUY', amount_coin)
+                        if order:
+                            real_price = order.get('average') or order.get('price') or current_price
+                            self.tracker.open_trade(symbol, _sized, real_price, strategy=strategy_used, market="SPOT", side="LONG")
+                            logger.info(f"-> [SPOT] Trade LONG {_sized:.2f} USDT opened on Binance (Real Price: {real_price:.2f}).")
                 else:
                     logger.warning(f"[{symbol}] 🚫 GEMINI VETO (Trade cancelled): {agent_reason}")
                     self.current_state["market_data"]["SPOT"][symbol]["last_signal"] = "HOLD"
@@ -1393,12 +1465,15 @@ class MultiAssetTrader:
             if strategy_used in ["Elliott_Wave_Correction", "Funding_Contrarian"]:
                 has_open_short = any(t["status"] == "OPEN" and t["symbol"] == symbol and t.get("side") == "SHORT" and t.get("market") == "FUTURES" for t in self.tracker.trades)
                 if not has_open_short:
-                    amount_coin = trade_amount / current_price
-                    order = self.engine.execute_futures_order(symbol, 'SELL', amount_coin)
-                    if order:
-                        real_price = order.get('average') or order.get('price') or current_price
-                        self.tracker.open_trade(symbol, trade_amount, real_price, strategy=strategy_used, market="FUTURES", side="SHORT")
-                        logger.info(f"-> [FUTURES] Trade SHORT {trade_amount:.2f} USDT opened on Binance (Real Price: {real_price:.2f}).")
+                    _allow, _sized = self._check_pre_trade(
+                        symbol, action="open", trade_usdt=float(trade_amount))
+                    if _allow:
+                        amount_coin = _sized / current_price
+                        order = self.engine.execute_futures_order(symbol, 'SELL', amount_coin)
+                        if order:
+                            real_price = order.get('average') or order.get('price') or current_price
+                            self.tracker.open_trade(symbol, _sized, real_price, strategy=strategy_used, market="FUTURES", side="SHORT")
+                            logger.info(f"-> [FUTURES] Trade SHORT {_sized:.2f} USDT opened on Binance (Real Price: {real_price:.2f}).")
 
     async def binance_websocket(self):
         # Perform initial analysis before starting WebSocket so the dashboard updates instantly
@@ -1439,6 +1514,10 @@ class MultiAssetTrader:
                     max_size=2**22,  # 4 MiB — combined kline streams stay well under this
                 ) as ws:
                     backoff = WEBSOCKET_RECONNECT_DELAY  # reset on successful connect
+                    if self.pre_trade_gate is not None:
+                        with self.pre_trade_gate.flag_lock:
+                            self.pre_trade_gate.ws_connected = True
+                        logger.info("[gate] ws_connected=True on reconnect")
                     while True:
                         is_running = True
                         ctrl = read_json('data/control.json', default={})
@@ -1473,9 +1552,15 @@ class MultiAssetTrader:
                                 except (KeyError, ValueError, TypeError) as e:
                                     logger.warning(f"Invalid kline price data: {e} — skipping tick.")
                                     continue
+                                if self.pre_trade_gate is not None:
+                                    self.pre_trade_gate.record_warmup_tick()
                                 await self.process_kline(symbol, current_price)
                                 
             except Exception as e:
+                if self.pre_trade_gate is not None:
+                    with self.pre_trade_gate.flag_lock:
+                        self.pre_trade_gate.ws_connected = False
+                    logger.warning("[gate] ws_connected=False on disconnect")
                 logger.error(f"WebSocket disconnected or error: {e}. Reconnecting in {backoff}s...")
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 60)  # cap at 60 s
