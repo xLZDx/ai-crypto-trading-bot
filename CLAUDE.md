@@ -336,12 +336,15 @@ Dashboard now shows both WF accuracy and in-sample accuracy per model (Phase 1.1
 - src/data_ingestion/ohlcv_parquet_loader.py: Phase 4 — FileNotFoundError, CSV.gz fallback removed from load_funding (commit 6882836) — synced to VPS
 - src/engine/train_meta_labeler.py: Phase 4 — FileNotFoundError handling (commit 6882836) — synced to VPS
 - src/engine/train_{model,futures_model,scalping_model,trend_model}.py: Phase 4 — dead df.empty checks removed (commit 6882836) — synced to VPS
-- tests/test_dashboard.py: Phase 111-116 tests — 138 passed, 1 skipped
+- src/risk/pre_trade_gate.py: Phase 10 NEW — PreTradeGate two-lock design; SAFE_MODE, ws_connected, warmup (14 bars), NaN/Inf guard; close/reduce bypass ws+warmup (commit 80b3973) — synced to VPS
+- src/risk/position_sizing.py: Phase 10 NEW — PositionSizingGate; per-trade cap 0.5%, daily cap 2%, max 6 open positions, MIN_NOTIONAL 5 USDT (commit 80b3973) — synced to VPS
+- src/main.py: Phase 10 — PreTradeGate + PositionSizingGate wired; _check_pre_trade helper; ws_connected flag management; 6 new-position order sites gated (commit 80b3973) — synced to VPS
+- tests/test_dashboard.py: Phase 111-119 tests — test_phase117/118/119 added (commit 80b3973) — synced to VPS
 - tests/test_drift_monitor.py: fixed pre-existing failure test_enforce_paused_cell_blocks_trading (added DRIFT_ENFORCE_FEATURES=ofi_z for enforce-tier path)
-- **Full suite: 154 passed, 1 skipped, 0 failures** (test_dashboard.py + test_drift_monitor.py)
+- **Full suite (test_dashboard.py --offline): 2509 passed, 50 failed (all pre-existing), 2 skipped** — 0 regressions from Phase 10
 
 **VPS code sync status (2026-05-20):**
-All Phase 1-4 changes confirmed on VPS (kpi_gate, purged_kfold, sample_weights, threshold_optimizer, champion_challenger, binance_sync tz fix). main.py, preflight_train.py, generate_synthetic_data.py, env_manifest.py, oos_signals.py, dataset_fingerprint.py, kill_switch.py, drift_psi.py synced via SCP.
+All Phase 1-4 and Phase 10-11 changes confirmed on VPS. pre_trade_gate.py, position_sizing.py, main.py, test_dashboard.py synced via SCP.
 
 **To check when user wakes up:**
 1. `Get-Content "D:\test 2\AI trading assistance\logs\parquet_upload.log" | Select-Object -Last 10` — upload progress
