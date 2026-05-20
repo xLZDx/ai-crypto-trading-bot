@@ -14,6 +14,16 @@ project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+# 2026-05-15: inject truststore so Python uses the Windows native CA store.
+# Without this, ccxt / requests calls to Binance fail with strict-OpenSSL
+# "Basic Constraints of CA cert not marked critical". Must run before any
+# HTTPS call. Same one-liner mirrored in src/main.py.
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
+
 # Redirect caches to project drive to protect C: drive
 cache_dir = os.path.join(project_root, 'data', 'cache')
 os.makedirs(os.path.join(cache_dir, 'temp'), exist_ok=True)
@@ -136,13 +146,10 @@ def _schedule_probe():
         _probe_models_bg()
 threading.Thread(target=_schedule_probe, daemon=True).start()
 
-DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "")
-
-if not DASHBOARD_API_KEY:
-    import logging
-    logging.getLogger(__name__).warning(
-        "DASHBOARD_API_KEY is not set in .env -- dashboard API is unprotected!"
-    )
+DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "").strip()
+# A3/I1: the startup guard (SystemExit on blank key) lives in __main__ block below,
+# not here -- module-level check breaks test imports that intentionally set key=''.
+# require_api_key enforces auth at request time.
 
 
 # Phase A9 (2026-05-12) — short-lived session tokens.
@@ -194,6 +201,8 @@ def require_api_key(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not DASHBOARD_API_KEY:
+            # Blank key = test/open-dev mode. Production startup guard (in __main__)
+            # raises SystemExit before app.run() so this path is unreachable in prod.
             return f(*args, **kwargs)
         token = request.headers.get("X-API-Key", "")
         # Phase A9: accept either the raw master key OR a session
@@ -287,19 +296,30 @@ def set_control():
     `trade_mode` (and any other field added later). Merge keeps every
     previously-set field and only touches what the caller specified.
     """
+    # I2: only allow explicitly whitelisted fields to prevent arbitrary key injection.
+    _CONTROL_ALLOWED_KEYS = frozenset({
+        "running", "trade_mode", "safe_mode", "paper_mode",
+        "max_positions", "risk_pct", "debug_mode",
+    })
     try:
         data = request.json
         if not isinstance(data, dict):
             return jsonify({"success": False,
                             "error": "expected JSON object body"}), 400
+        unknown = set(data.keys()) - _CONTROL_ALLOWED_KEYS
+        if unknown:
+            return jsonify({
+                "success": False,
+                "error": f"unknown control keys: {sorted(unknown)}",
+            }), 400
         existing = read_json('data/control.json', default={}) or {}
         if not isinstance(existing, dict):
             existing = {}
-        existing.update(data)
+        existing.update({k: v for k, v in data.items() if k in _CONTROL_ALLOWED_KEYS})
         write_json('data/control.json', existing)
         return jsonify({"success": True, "control": existing})
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
+        return jsonify({"success": False, "error": str(e).replace('\n', ' ')})
 
 
 @app.route('/api/trades')
@@ -1830,15 +1850,23 @@ def bake_off():
       top=N (default 50)
       retire_pct=0.20 (bottom fraction to recommend for retirement)
     """
+    _BAKEOFF_METRIC_ALLOWLIST = frozenset({
+        'wf_sharpe', 'wf_calmar', 'wf_acc', 'wf_win_rate', 'wf_max_dd', 'auc_roc',
+    })
     try:
         from src.engine.bake_off import run_bake_off
         metric = request.args.get('metric', 'wf_sharpe')
-        top    = int(request.args.get('top', 50))
-        rpct   = float(request.args.get('retire_pct', 0.20))
+        if metric not in _BAKEOFF_METRIC_ALLOWLIST:
+            return jsonify({'ok': False, 'error': f'invalid metric: {metric!r}'}), 400
+        try:
+            top = int(request.args.get('top', 50))
+            rpct = float(request.args.get('retire_pct', 0.20))
+        except (ValueError, TypeError) as ve:
+            return jsonify({'ok': False, 'error': f'invalid parameter: {ve}'}), 400
         result = run_bake_off(metric=metric, top_n=top, retire_below_pct=rpct)
         return jsonify({'ok': True, **result})
     except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)}), 500
+        return jsonify({'ok': False, 'error': str(e).replace('\n', ' ')}), 500
 
 
 # ── CIO Agent (Optuna orchestrator) endpoints ────────────────────────────────
@@ -8860,6 +8888,14 @@ if __name__ == '__main__':
             _lb.apply_priorities()
     except Exception as _e:
         print(f"[dashboard] load_balancer init failed: {_e}")
+
+    # A3: fail-closed -- refuse to start without a real API key.
+    # This runs at server start, not at import, so test imports are unaffected.
+    if not os.getenv("DASHBOARD_API_KEY", "").strip():
+        raise SystemExit(
+            "FATAL: DASHBOARD_API_KEY is not set or empty in .env. "
+            "Set it to a strong random secret and restart."
+        )
 
     # Phase 11 — bind via env var. SEC-2 fix: default to 127.0.0.1 (loopback).
     # To expose on the LAN, operator must explicitly set DASHBOARD_BIND_HOST

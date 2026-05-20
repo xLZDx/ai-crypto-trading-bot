@@ -11556,6 +11556,52 @@ def test_phase119_main_check_pre_trade_wiring():
     check('record_warmup_tick called on kline', 'record_warmup_tick()' in src)
 
 
+def test_phase121_gate0b_auth_and_input_sanitization():
+    """Phase 121 -- Gate 0-B: auth fail-closed + I2 input sanitization.
+
+    Behavioral: uses Flask test_client() to hit real route handlers.
+    Verifies /api/control rejects unknown keys, /api/bake_off rejects
+    invalid metric names and non-integer top param.
+    """
+    print('\n[Phase 121 -- Gate 0-B auth + I2 sanitization]')
+    import os as _os
+    import sys as _sys
+    import importlib
+    PRJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if PRJ not in _sys.path:
+        _sys.path.insert(0, PRJ)
+
+    _os.environ['DASHBOARD_API_KEY'] = ''
+    try:
+        from src.dashboard import app as _dash_app
+    except Exception as exc:
+        check(f'import src.dashboard.app succeeds ({exc})', False)
+        return
+
+    client = _dash_app.app.test_client()
+
+    # /api/control unknown key must return 400
+    resp = client.post('/api/control', json={'UNKNOWN_KEY': 'evil'},
+                       headers={'X-API-Key': ''})
+    check('/api/control rejects unknown key with 400', resp.status_code == 400)
+    body = resp.get_json() or {}
+    check('/api/control error mentions unknown key',
+          'unknown control keys' in body.get('error', ''))
+
+    # /api/bake_off with injected metric returns 400
+    resp = client.get('/api/bake_off?metric=drop_table', headers={'X-API-Key': ''})
+    check('/api/bake_off rejects invalid metric with 400', resp.status_code == 400)
+
+    # /api/bake_off with non-integer top returns 400
+    resp = client.get('/api/bake_off?top=abc', headers={'X-API-Key': ''})
+    check('/api/bake_off rejects non-integer top with 400', resp.status_code == 400)
+
+    # Startup guard: DASHBOARD_API_KEY is read in __main__ block, not at import.
+    # Verify the module-level var is whatever was set before import.
+    check('module-level DASHBOARD_API_KEY equals env value',
+          _dash_app.DASHBOARD_API_KEY == _os.environ.get('DASHBOARD_API_KEY', ''))
+
+
 def test_phase120_unicode_audit_zero_violations():
     """Phase 120 -- Z1 gate: no non-ASCII chars in logger/print/raise call sites.
 
